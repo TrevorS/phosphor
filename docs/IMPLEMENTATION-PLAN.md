@@ -2,8 +2,12 @@
 
 Derived from `docs/design/` (Design Brief, Design Language v0.2, TUI Mockups, Component
 Breakdown) per `docs/design/CLAUDE-CODE-HANDOFF.md`. The design docs are the contract; this
-document is the route through them. Where the docs are silent or disagree, this plan **flags
-and recommends** — it does not decide. See [Open questions](#5-open-questions).
+document is the route through them.
+
+The eleven questions this plan raised were **answered on 2026-08-11** and are recorded in
+[§5 Decisions](#5-decisions). Two of them amend the design docs rather than merely filling a
+gap, and are marked as amendments there. Nothing below is an open question any more; where a
+decision has consequences for a phase, those are folded into the phase.
 
 ---
 
@@ -51,14 +55,14 @@ holds. **Two entries do not**, and one carries far more risk than the doc implie
 | `edtui` | 0.11.6 | `ratatui-core ^0.1` | OK — healthy; but see [Q3](#q3) on data-model impedance |
 | `tui-textarea` | 0.7.0 (2024-10-22) | **`ratatui ^0.29`** | **BROKEN** — stale 2 yrs, incompatible with 0.30 |
 | `ratatui-textarea` | 0.9.2 | `ratatui-core ^0.1.1` | **USE THIS** — the maintained fork |
-| `ratatui-markdown` | 0.3.6 | **`ratatui ^0.29`** | **BROKEN** — incompatible with 0.30; gate stays off, see [Q4](#q4) |
+| `ratatui-markdown` | 0.3.6 | **`ratatui ^0.29`** | **VENDOR + PATCH** — unbuildable as published; forked and bumped to 0.30, see [Q4](#q4) |
 | `nucleo` | 0.5.0 | none (pure matcher) | OK — no ratatui coupling; helix's engine |
 | `tui-tree-widget` | 0.24.1 | `ratatui-core ^0.1.0` | OK |
 | `throbber-widgets-tui` | 0.11.1 | `ratatui ^0.30` | OK |
 | `ratatui-comfy-tabs` | 0.5.12 | `ratatui-core ^0.1.2` | 600 downloads — **build TabBar instead**, the doc already allows it |
 | `ratatui-explorer` | 0.3.0 | `ratatui ^0.30` | study only; nucleo + Picker likely covers it |
 | `tui-logger` | 0.18.3 | `ratatui ^0.30` | OK — dev-only |
-| `steel-core` | 0.8.2 (2026-02-22) | — | **RISK** — pre-1.0, small; pin exact, see [Q5](#q5) |
+| `steel-core` | 0.8.2 (2026-02-22) | — | **PIN `=0.8.2`** — pre-1.0, small, load-bearing; see [Q5](#q5) |
 | `ropey` | 1.6.1 | — | OK |
 | `tree-sitter` | 0.26.12 | — | OK |
 | `crossterm` | 0.29.0 | — | OK |
@@ -72,14 +76,23 @@ holds. **Two entries do not**, and one carries far more risk than the doc implie
   handoff's settled-decisions list already says `ratatui-textarea` — that list is correct, the
   Component Breakdown row is loose. **Resolved in favour of `ratatui-textarea`; no user
   decision needed.**
-- `agent-client-protocol` and `rmcp` were not named in the docs but are the obvious transports
-  for the ACP session and the MCP editor-tool server. Proposed, not decided — see [Q6](#q6).
+- `agent-client-protocol` and `rmcp` were not named in the docs but are the transports for the
+  ACP session and the MCP editor-tool server. **Confirmed** — see [Q6](#q6).
+- `ratatui-markdown` is a **second vendored fork** ([Q4](#q4)), so §2's fork discipline applies
+  to two crates, not one.
 - `steel-core`'s `dylibs` / `dylib-build` features are what make `define-language`'s
   "loadable as dylibs" story real. Confirmed available.
 
 ---
 
-## 2. Vendored-fork strategy — `ratatui-code-editor`
+## 2. Vendored-fork strategy
+
+Two crates are vendored: `ratatui-code-editor` (the BufferView core) and `ratatui-markdown`
+(transcript prose, [Q4](#q4)). The mechanics below are written for the first and applied to
+both; the second is a much smaller carry — a version bump and whatever follows from it, with
+no phosphor-specific behaviour layered on.
+
+### `ratatui-code-editor`
 
 The handoff calls this out as "the one dependency we must be able to patch same-day," and the
 crates.io data makes the case stronger than the doc does: **v0.0.6, six releases since
@@ -140,7 +153,22 @@ directly on `ropey` + `tree-sitter` and we own one large widget. That is a real 
 not leak past `phosphor-ui` — which is precisely why those boundaries land in M-0 and S2,
 before any of this is decided.
 
----
+### `ratatui-markdown`
+
+Vendored for one reason: it pins `ratatui ^0.29` and the workspace is 0.30 ([Q4](#q4)). Same
+subtree, same `VENDOR.md`, same `just vendor-*` recipes — but a deliberately thinner
+relationship. **We carry a version bump, not a feature fork.** No phosphor-specific behaviour
+goes into it; if upstream ever ships a 0.30-compatible release the subtree is replaced by the
+published crate and the fork is deleted.
+
+Two guardrails, since this is a non-core surface carrying maintenance cost:
+
+- **Feature-gate it anyway.** The transcript must still render readably with the gate off, so a
+  broken bump is a degraded surface rather than a broken build. The plain-text path is the
+  fallback that keeps the fork optional.
+- **Keep the language features off.** The crate ships per-language highlight features
+  (`highlight-lang-*`) and mermaid/JSON-tree extras; enable only what the transcript actually
+  needs. Every enabled feature is more surface to keep compiling across the bump.
 
 ## 3. Phased plan
 
@@ -190,7 +218,8 @@ mockups."*
 - `Theme`: actor/state palette struct (`claude, you, attention, trouble, transient, steel`) +
   neutral ramp + syntax map. base16-style loading. **Actor-hue validation at load** — a theme
   reassigning actor hues is rejected, not themed (Design Language §10).
-- Phosphor dark + light built in. Catppuccin and Ayu as the first two mappings.
+- Phosphor dark + light built in. **Catppuccin and Tokyo Night as the first two mappings**
+  ([Q7](#q7) — Ayu is dropped; this amends the Design Brief).
 - `BufferView` over the vendored editor: 3-column contract (1-cell state bar → line numbers →
   text), soft-wrap `↪` continuations without line numbers, fold rows.
 - `StatusLine` shell: mode chip, file + dirty flag, spring, `SessionState` (rendering `None`
@@ -204,14 +233,19 @@ markers, no review-ready float, statusline session segment reads idle-empty) · 
 original) and `8c` (light) render the same slice with the actor contract intact · `8d`
 (80 columns) — the statusline sheds right-to-left and nothing wraps.
 
-> **Flag:** `9a` / `9b` (Catppuccin / Ayu) are acceptance targets for this step's theme system
-> but appear in no build step in the docs. Assigned here. Note `9b`'s own caveat: Ayu's
-> identity colour is orange, which the language reserves for attention — see [Q7](#q7).
+> **Amendment:** `9a` (Catppuccin) is an acceptance target for this step's theme system but
+> appears in no build step in the docs; assigned here. `9b` (Ayu) is **superseded** — Ayu's
+> identity colour is orange, which the language reserves for attention, and the actor contract
+> wins ([Q7](#q7)). **Tokyo Night replaces it**, chosen because blue-violet collides with no
+> actor hue and Tokyo Night Day is a real light variant rather than an afterthought. There is
+> no mockup for it; `9b` stands as the *shape* of the acceptance test — same slice of UI, a
+> second palette, actor contract intact — with a different palette substituted.
 
 **Scope**
 - Files: `phosphor-ui/{theme,buffer_view,status_line}.rs`, `phosphor-buffer/{rope,ts}.rs`,
   3 theme files
-- Named units: 3 widgets, 4 built-in themes, 1 theme validator, 1 synchronized-output wrapper
+- Named units: 3 widgets, 2 built-in themes + 2 mappings (each dark + light), 1 theme
+  validator, 1 synchronized-output wrapper
 - Verification: golden-frame snapshot tests per screen id + a manual terminal pass at 80 and
   120 columns
 - Risk: public API no · data migration no · cross-module no · reversible yes · external
@@ -228,8 +262,10 @@ This step defines the `Action` enum and the query vocabulary — the decision th
 build is hardest to reverse. Get the vocabulary right and invariants 1, 2 and 4 hold
 themselves up.
 
-- Embed `steel-core` (pinned exact). Boot sequence: `init.scm` is just the REPL session that
-  runs at boot.
+- Embed `steel-core`, pinned **`=0.8.2`** exactly, not caret ([Q5](#q5)) — a Steel upgrade is
+  its own scheduled task gated by the door-parity test, so 0.x embedding-API churn can never
+  arrive unannounced in an unrelated build. Boot sequence: `init.scm` is just the REPL session
+  that runs at boot.
 - **`Action` enum** — the single mutation API. Buffer edits, seen marks, session messages,
   float open/close. Everything that changes state is one of these.
 - **Query vocabulary** — the read side, over the store's ViewModels.
@@ -265,11 +301,14 @@ with the error in a float.
 
 **Goal:** plain editor complete.
 
-- `edtui`'s `KeyEventHandler` wired so that it emits `Action`s rather than mutating its own
-  state (see [Q3](#q3) — this is the step's main technical risk).
+- **Step 0 of this step is the edtui spike** ([Q3](#q3)): can its `KeyEventHandler` emit
+  `Action`s instead of mutating state it owns? That question gates everything below it, and is
+  answered *before* agent nouns are wired, not after. If the answer is no, the fallback is a
+  custom input machine behind the same `Action` layer — the docs already budget for it.
 - Agent nouns registered as custom text objects: `viu`, `sib`, `dih`, `:'<,'>c`.
-- **Persistent undo** on disk, surviving restarts (see [Q2](#q2) — ownership is ambiguous in
-  the docs).
+- **Persistent undo** on disk, surviving restarts. **`phosphor-buffer` owns the undo model,
+  `phosphor-core` owns persistence** ([Q2](#q2)) — `phosphor-core` already owns the on-disk
+  story for seen-state, and the two share one file format and one compaction path.
 - The gutter/virtual-text layer: `GutterBar` (1-cell state column, priority trouble >
   attention > claude-unseen > none, `▎` degradation) and `VirtualText` (`┊`-prefixed rows
   owned by a region id).
@@ -344,30 +383,43 @@ bought at S1, so this step is diagnostics, completion, signature help, and hover
   **line + content matching as the fallback so markers work on any file at all.** The fallback
   is not a degraded extra — it is what makes the store a store feature rather than a language
   feature.
-- **Seen-state persistence** — format and location are [Q1](#q1), and the "no VCS required"
-  bet makes "per-repo" ill-defined for a plain directory.
+- **Seen-state persistence** ([Q1](#q1)): **out-of-tree, keyed on the canonicalised workspace
+  root path** — `$XDG_STATE_HOME/phosphor/<hash-of-root>/`, never VCS identity. This is what
+  makes "no VCS required, ever" literally true: the same code path serves a jj repo and a bare
+  directory, with no second keying mode and no migration when a directory later becomes a repo.
+  It also keeps phosphor from ever dirtying the user's own VCS. Format is an **append-only log
+  with periodic compaction**, so a crash mid-session loses at most the tail. Shares its format
+  and compaction path with persistent undo ([Q2](#q2)).
+  - *Accepted cost:* seen-state does not travel with the checkout — a fresh clone or a moved
+    directory starts with everything unseen. That is the honest failure mode (nothing is lost,
+    only re-shown), and it is the right one to accept for a per-user, per-machine reading log.
 - `Picker` on the `nucleo` engine: filter line (`ratatui-textarea`) + off-thread matcher +
   list + preview split (dropped under 100 cols). **Sources are Steel** —
   `(define-picker-source …)`, so adding one is userspace.
 - Picker sources shipped here: unseen regions, files (with agent-activity columns).
+- **`:arch` (`6a`)** ([Q11](#q11)): an `ArchDiagram` float body over a store query. Cheap once
+  the store exists, and it is what turns "every surface is a query over one store" from an
+  assertion into something you can look at.
 
 **Acceptance:** `1a` **in full** (unseen gutter markers + review-ready float + statusline
 counters) · `2a` (review-block picker with diff preview) · `3d` (files picker carrying unseen
-counts and activity) · `8a` (grep with agent context — same picker anatomy) · unseen markers
-demonstrably working on a file type with **no** tree-sitter grammar · a picker source added
-live from the REPL appears without restart.
+counts and activity) · `8a` (grep with agent context — same picker anatomy) · `6a` (`:arch`) ·
+unseen markers demonstrably working on a file type with **no** tree-sitter grammar · a picker
+source added live from the REPL appears without restart · seen-state survives a restart *and* a
+`kill -9` mid-session.
 
-> **Flag:** `8a` (search picker) and `6c` (anchors survive a rewrite) are unassigned in the
-> docs. `8a` assigned here — it is the same Picker with a different Steel source. `6c` is the
-> *proof* of node anchoring and is assigned here as an acceptance test rather than a feature.
+> **Flag:** `8a` (search picker), `6c` (anchors survive a rewrite) and `6a` (`:arch`) are
+> unassigned in the docs. `8a` assigned here — it is the same Picker with a different Steel
+> source. `6c` is the *proof* of node anchoring and is assigned here as an acceptance test
+> rather than a feature. `6a` is in v1 by decision ([Q11](#q11)).
 
 **Scope**
 - Files: `phosphor-core/{store,region,anchor,seen}.rs`, `phosphor-ui/picker.rs`,
   `runtime/pickers/*.scm`
 - Named units: 1 store, 1 region state machine, 2 anchor strategies, 1 Picker widget, 3 Steel
-  picker sources
+  picker sources, 1 `ArchDiagram` body
 - Verification: anchor-survival tests (apply a real refactor, assert threads/seen/watches
-  follow); line-fallback tests on an extensionless file; restart-persistence test
+  follow); line-fallback tests on an extensionless file; restart- and crash-persistence tests
 - Risk: public API no · data migration **yes — seen-state on disk** · cross-module **yes** ·
   reversible yes · external blocker **yes — [Q1](#q1)**
 
@@ -379,18 +431,31 @@ live from the REPL appears without restart.
 
 - **ACP session client** (`agent-client-protocol`) — one Claude Code session per editor per
   repo in v1.
-- **MCP server** (`rmcp`) exposing editor tools to Claude — review-block signals,
-  notifications. Generated from the S2 registry, so the vocabulary matches the other doors by
-  construction.
+- **MCP server** (`rmcp`) exposing editor tools to Claude, generated from the S2 registry so the
+  vocabulary matches the other doors by construction. **Review blocks are an MCP tool call**
+  ([Q6](#q6)) — `phosphor/declare-review-block`, carrying a file+range list and per-group
+  annotations. It is an editor-facing capability, which is exactly what the docs reserve MCP
+  for, and routing it through the registry means Steel and the CLI can declare one too.
 - `TranscriptPane` — **a pane, not a float**: turn list, prompt lines (`❯`), prose, tool rows
   (`▸ verb file ±counts`, OSC 8 jump links), seam markers (`⏸` paused, `✕` lost). Folds by
-  turn at scale. Streams during Working.
+  turn at scale. Streams during Working. Prose renders through the **vendored `ratatui-markdown`**
+  ([Q4](#q4)), feature-gated, with the plain-text path as the fallback that keeps the fork
+  optional.
 - `PromptLine` — the `:` line; `⚓` anchor chip when a selection rides along; routes to command
   parse or Claude message. **Selections anchor automatically** — visual-select, hit the
   prompt, file and range ride along.
 - `QuestionBody` — needs-input and permission asks; amber digit options `[1]`–`[n]`;
-  always-allow **writes a legible rule to `init.scm`**. Never steals focus (but see
-  [Q9](#q9), which this step must resolve).
+  always-allow **writes a legible rule to `init.scm`**.
+  - **Asks are queued, never barged in** ([Q9](#q9)). When a question arrives while another
+    float holds focus, it sets the statusline `!` flag immediately and waits; the float surfaces
+    once no other float has focus, and `]!` jumps to a pending ask. This keeps both design rules
+    literally true — the one-float rule is never broken, and nothing is destroyed under the
+    user. *Accepted cost:* an ask can sit unnoticed, so the statusline flag is not optional
+    chrome — it is the whole notification, and it must survive statusline shedding at narrow
+    widths (`✻`/`●n`/`!` are the last things standing).
+  - The **queue is a store query**, not widget state — pending asks are a ViewModel like
+    everything else, which is what lets `]!`, the inbox, and the statusline all read the same
+    truth (invariant 4).
 - `SessionState` becomes real: Idle, Working{elapsed}, Waiting, Paused, Lost, None — one enum,
   rendered identically everywhere.
 - `esc` pauses at the next tool boundary → steer / resume / abort, and the seam is recorded.
@@ -403,7 +468,15 @@ untouched while Claude works, zero tearing) · `7b` (session dropped — editing
 
 > **Flag:** the docs name only `1b, 1c, 4a, 7a, 7e` for this step, but `2c, 7b, 7d, 5d, 2d`
 > are all session-lifecycle screens with no other possible home. Assigned here. This makes S6
-> the largest step by surface count (10 screens) — see [Q10](#q10) on splitting it.
+> the largest step by surface count (10 screens).
+
+**Internal checkpoint** ([Q10](#q10)). S6 is reviewed in two halves rather than renumbered:
+
+1. **Session attaches and streams** — ACP client, MCP server, `SessionState`, `TranscriptPane`,
+   and the lifecycle screens (`2c`, `7b`, `7d`, `5d`, `2d`). Shippable on its own: Claude is
+   visible in the editor.
+2. **Directing** — `PromptLine`, `QuestionBody`, the ask queue, permissions, interrupt-and-steer
+   (`1b`, `1c`, `4a`, `7a`, `7e`).
 
 **Scope**
 - Files: `phosphor-agent/{acp,mcp,transcript,session}.rs`,
@@ -462,6 +535,9 @@ above — the store (S5), the session (S6), and virtual text (S3).
 - `WatchOverlay`: `◉ ⇒` value sequences with a run-provenance line, rendered through
   `BufferView`'s virtual-text rows. **This widget only formats** — values arrive over the
   session from real executions.
+- **Values stream as ACP session notifications** ([Q6](#q6)), not MCP tool calls: they arrive
+  continuously during a turn and are session state rather than an editor mutation, so the
+  request/response shape of a tool call fits them badly.
 - `(watch-place …)` from the REPL sprouts virtual text in the buffer.
 - Watches are first-class-language only (they need node anchoring); second tier does not get
   them, and says so honestly.
@@ -503,161 +579,218 @@ slot into S5 if it's wanted in v1. Raised as [Q11](#q11), not assumed.
 ## 4. Screen coverage
 
 The Component Breakdown's build order names **18 of the 37 mockup screens** as acceptance
-targets. The remaining 19 have no assigned home. This plan places **16 of them into build
-steps** and defers 3 — `4c` (explicitly v1.5), `4d` (v1.5 apart from "coexists politely with
-tmux", which S1 already covers), and `6a` (raised as [Q11](#q11)):
+targets. The remaining 19 had no assigned home. This plan places **16 of them into build
+steps**, leaving **34 of 37 screens built in v1**:
 
 | step | from the docs | added by this plan |
 |---|---|---|
-| S1 | — | `9c`, `8c`, `8d`, `9a`, `9b` |
+| S1 | — | `9c`, `8c`, `8d`, `9a` |
 | S2 | — | `6b` |
 | S3 | `3c`, `6d`, (`7c` → S4) | `8e` |
 | S4 | — | `7c` (moved from S3) |
-| S5 | `1a`, `2a`, `3d` | `8a`, `6c` |
+| S5 | `1a`, `2a`, `3d` | `8a`, `6c`, `6a` |
 | S6 | `1b`, `1c`, `4a`, `7a`, `7e` | `2c`, `7b`, `7d`, `5d`, `2d` |
 | S7 | `2b`, `4b`, `5c`, `1d`, `5b`, `3b` | `8b`, `3a` |
 | S8 | `5a` | — |
-| v1.5 | — | `4c`, `4d`, `6a` (see [Q11](#q11)) |
+
+**The 3 not built:** `9b` is **superseded** — the Ayu mockup, replaced by a Tokyo Night mapping
+([Q7](#q7)); its acceptance *shape* survives at S1 with a different palette. `4c` (the pane
+Claude built) and `4d` (tmux control mode) are v1.5, apart from `4d`'s "coexists politely with
+your panes," which S1 already covers.
 
 ---
 
-## 5. Open questions
+## 5. Decisions
 
-Per the handoff: *"Flag anything in the docs that's contradictory or underspecified rather
-than deciding silently — open questions go to the user, not into code."* Each carries a
-recommendation; none are decided.
+The eleven questions this plan raised were answered on **2026-08-11**. They keep their `Q`
+numbers as stable ids, since the phases cross-reference them. Each records what was decided,
+why, and what cost the decision accepts.
+
+**Two amend the design docs** rather than filling a gap in them — [Q4](#q4) and [Q7](#q7) — and
+each says so where it sits. The handoff asks that nothing in the Design Brief be relitigated without
+flagging it explicitly; both were flagged before being decided, and the amendment is recorded
+here rather than absorbed silently into the build.
 
 <a id="q1"></a>
-### Q1 · Seen-state file format and location — *blocks S5*
+### Q1 · Seen-state lives out-of-tree, keyed on the workspace root path
 
-Named as open in the handoff. Sharpened by a contradiction: the handoff says seen-state is
-**per-repo**, but the Design Brief says **"no VCS required, ever"** and "works in any
-directory." *Per-repo* is undefined without a repo.
+*Was: the handoff says "per-repo," but the brief says no VCS is ever required — "per-repo" is
+undefined for a plain directory.*
 
-**Recommendation:** key on the canonicalised workspace root path, not on VCS identity. Store
-under `$XDG_STATE_HOME/phosphor/<hash-of-root>/` rather than in-tree — an in-tree file would
-show up as a dirty file in the user's own VCS, which the "safety net, not a dependency" stance
-argues against. Format: append-only log + periodic compaction, so a crash mid-session loses at
-most the tail. Needs your call on in-tree vs out-of-tree, since it is user-visible.
+**Decided:** `$XDG_STATE_HOME/phosphor/<hash-of-canonical-root>/`, keyed on the canonicalised
+workspace root path and never on VCS identity. Append-only log with periodic compaction, sharing
+its format and compaction path with persistent undo ([Q2](#q2)).
+
+One keying mode serves a jj repo and a bare directory identically, which is what makes "no VCS
+required, ever" true in the code rather than only in the brief — there is no second path to
+maintain and no migration when a directory later becomes a repo. Staying out of the tree also
+keeps phosphor from ever showing up as a dirty file in the user's own VCS.
+
+**Accepted cost:** seen-state does not travel with the checkout. A fresh clone, or a moved
+directory, starts with everything unseen. Nothing is lost — material is only re-shown — and for
+a per-user, per-machine reading log that is the right failure mode.
 
 <a id="q2"></a>
-### Q2 · Who owns persistent undo? — *blocks S3*
+### Q2 · `phosphor-buffer` owns the undo model, `phosphor-core` owns persistence
 
-The crate layout assigns *"persistence (undo history + seen-state on disk)"* to
-`phosphor-core` **and** *"rope, edits, persistent undo"* to `phosphor-buffer`. Both cannot own
-it. Compounding this: `ratatui-code-editor` is bought partly *for* its undo/redo, and bought
-undo stacks are typically in-memory and not serialisable — so "persistent undo" may require
-owning the undo stack ourselves and reducing the bought editor to a renderer + edit primitives.
+*Was: the crate layout assigns undo persistence to `phosphor-core` and persistent undo to
+`phosphor-buffer`. Both cannot own it.*
 
-**Recommendation:** `phosphor-buffer` owns the undo *model*; `phosphor-core` owns *persistence*
-(it already owns the on-disk story for seen-state, and the two want one file format and one
-compaction path). Confirm after the M-0 spike answers whether the vendored undo history is
-reachable.
+**Decided:** the text engine owns the undo tree and edit semantics; the store serialises it.
+`phosphor-core` already owns the on-disk story for seen-state, and the two want one file format,
+one compaction path, and one crash-safety story rather than two.
+
+**Still to confirm:** whether the vendored editor's undo history is reachable and serialisable
+at all — that is one of the three questions the M-0 spike answers. If it isn't, we own the undo
+stack outright and the bought editor is reduced to a renderer plus edit primitives.
 
 <a id="q3"></a>
-### Q3 · The edtui ceiling is nearer than the docs suggest — *risks S3*
+### Q3 · Spike edtui before wiring agent nouns; keep the fallback budgeted
 
-The handoff budgets for `edtui`'s *operator-pending grammar* failing to host agent nouns. The
-more immediate problem is different: `edtui` is a full editor widget ("A TUI based vim inspired
-editor"), and its `KeyEventHandler` operates on **edtui's own `EditorState` / buffer model**,
-not on `ropey` and not on an `Action` enum. Adopting "the input machine only" therefore means
-adapting a handler that expects to mutate state it owns.
+*Was: the handoff budgets for edtui's operator-pending grammar failing to host agent nouns, but
+the nearer problem is that edtui is a full editor widget whose `KeyEventHandler` mutates state it
+owns, rather than emitting Actions over a rope.*
 
-**Recommendation:** spike this in S3 *before* wiring agent nouns — the question "can the
-handler emit Actions instead of mutating?" gates the rest of the step. The docs' fallback (a
-custom input machine behind the same `Action` layer) stays budgeted, but it should be
-triggered by this test, not by the noun test that comes later.
+**Decided:** answer "can the handler emit Actions instead of mutating?" first, before any agent
+nouns are wired. A proven vim grammar is worth adapting to if it can be adapted at all, and the
+question is cheap to answer by reading. If the answer is no, the fallback is a custom input
+machine behind the same `Action` layer — already budgeted by the docs, and now triggered by the
+*right* test rather than by the noun test that would have come much later.
+
+**Alternative considered:** making edtui the buffer core outright and dropping
+`ratatui-code-editor`, on the strength of 242k downloads against 3.4k. Rejected for now — it
+trades the riskier dependency for the loss of the bought diff view and per-viewport highlight
+caching, and the gutter contract still has to be built either way. The M-0 spike may reopen it.
 
 <a id="q4"></a>
-### Q4 · `ratatui-markdown` cannot compile against ratatui 0.30 — *affects S6*
+### Q4 · Vendor and patch `ratatui-markdown` to ratatui 0.30 — *amends the Component Breakdown*
 
-It pins `ratatui ^0.29`; the workspace is 0.30. The Component Breakdown's reasoning ("Claude
-writes markdown whether we render it or not; buying now beats plain text + a later migration")
-is sound, but the crate is not currently buyable.
+*Was: the crate pins `ratatui ^0.29` and cannot compile against the 0.30 workspace the same
+document specifies.*
 
-**Recommendation:** ship S6's transcript with plain text behind the already-planned feature
-gate, off. Revisit if upstream bumps; the ~3k-download, single-maintainer profile means don't
-count on it. Vendoring a second fork for prose rendering is not worth it — the fallback is
-honest, and the design's voice rules ("telegraphic, factual") make unrendered markdown
-tolerable.
+**Decided:** fork it and do the bump ourselves, so rendered transcript prose ships in v1. The
+Component Breakdown's reasoning stands — Claude writes markdown whether we render it or not, and
+buying now beats plain text plus a later migration — so the fix is to make the buy possible
+rather than to give up the surface.
+
+**Amendment recorded:** the Component Breakdown lists this as a straightforward feature-gated
+buy. It is now a **second vendored fork**, with the maintenance that implies. §2 sets the terms
+that keep it cheap: a version bump rather than a feature fork, no phosphor-specific behaviour
+inside it, the feature gate retained so a broken bump degrades to plain text instead of breaking
+the build, and the crate's per-language highlight features left off. If upstream ever ships a
+0.30-compatible release, the subtree is replaced by the published crate and the fork is deleted.
+
+**Accepted cost:** two forks to carry instead of one, for a non-core surface.
 
 <a id="q5"></a>
-### Q5 · `steel-core` version pinning — *affects S2*
+### Q5 · Pin `steel-core` at `=0.8.2` exactly
 
-0.8.2, released 2026-02-22, nothing since; pre-1.0 with a small user base. The entire editor
-layer sits on it, and 0.x embedding APIs move.
+*Was: 0.8.2 released February 2026 with nothing since, pre-1.0, small user base — and the entire
+editor layer sits on it.*
 
-**Recommendation:** pin `=0.8.2` exactly (not `^`), and treat a Steel upgrade as its own
-scheduled task with the door-parity test as the gate. Confirm you're comfortable with that
-dependency profile for a load-bearing choice — it's a settled decision, so flagging only.
+**Decided:** exact pin, not caret. 0.x crates routinely move embedding APIs in patch releases,
+and this one carries the whole editor layer, so an upgrade becomes its own scheduled task gated
+by the door-parity test. Churn can never arrive unannounced inside an unrelated build.
+
+**Alternative considered:** vendoring Steel too. Rejected — it is a far larger body of code to
+carry than a widget, and an exact pin already buys the control that matters.
 
 <a id="q6"></a>
-### Q6 · ACP/MCP wire details — *blocks S6 and S8*
+### Q6 · Review blocks over MCP, watch values over ACP
 
-Named as open in the handoff: how Claude signals a review block, how watch values stream.
+*Was: named as open in the handoff — the design says only "over the session."*
 
-**Recommendation:** `agent-client-protocol` 2.0.0 for the session and `rmcp` 3.1.2 for the
-editor-tool server (both verified, both heavily used). Then: **review blocks as an MCP tool
-call** Claude makes (`phosphor/declare-review-block` with a file+range list and per-group
-annotations) — it is an editor-facing capability, which is exactly what the docs reserve MCP
-for. **Watch values as ACP session notifications**, since they stream continuously during a
-turn and are session state rather than an editor mutation. Both need your sign-off before S6.
+**Decided:** `agent-client-protocol` 2.0.0 for the session, `rmcp` 3.1.2 for the editor-tool
+server. Then the split follows the nature of each signal:
+
+- **Review blocks are an MCP tool call** — `phosphor/declare-review-block`, carrying a file+range
+  list and per-group annotations. Declaring one is an editor-facing capability, which is exactly
+  what the docs reserve MCP for. Routing it through the S2 registry means Steel and the CLI can
+  declare a review block too, which invariant 2 requires and which a session-only mechanism
+  would have quietly denied them.
+- **Watch values are ACP session notifications** — they stream continuously during a turn and
+  are session state, not an editor mutation. The request/response shape of a tool call fits
+  them badly.
 
 <a id="q7"></a>
-### Q7 · Ayu's identity colour collides with the actor contract — *affects S1*
+### Q7 · Ayu is dropped; Tokyo Night is the second mapping — *amends the Design Brief*
 
-Screen `9b` names the tension itself: Ayu's signature is orange, which the language reserves
-for **attention**. Theme validation "rejects a theme that reassigns actor hues," so a faithful
-Ayu mapping may be unshippable as written.
+*Was: screen `9b` flags the tension itself — Ayu's identity colour is orange, which the language
+reserves for attention, and theme validation rejects a theme that reassigns actor hues.*
 
-**Recommendation:** the actor contract wins — Ayu ships with its orange demoted to syntax and
-attention keeping the amber slot. It will not look like stock Ayu, and that is the correct
-trade under "hue is the contract." Low stakes, but it is a visible product decision.
+**Decided:** the actor contract holds without exception, and Ayu is replaced rather than bent.
+Tokyo Night takes its place: blue-violet collides with no actor hue, and Tokyo Night Day is a
+real light variant rather than an afterthought, so the dark/light pair is honest.
+
+**Amendment recorded:** the Design Brief's "Decided since" list names *"Catppuccin and Ayu as the
+first two mappings."* Catppuccin is unchanged; Ayu is out. Screen `9b` is superseded — there is
+no Tokyo Night mockup, so `9b` stands as the *shape* of the S1 acceptance test (same slice of UI,
+a second palette, actor contract intact) with a different palette substituted.
+
+**Alternatives considered:** demoting Ayu's orange to a syntax role and shipping it anyway
+(rejected — it would not look like Ayu, so the recognition that justified choosing it is gone);
+and relaxing validation to hue *families* so Ayu could shift attention within a warm band
+(rejected — it makes "hue is the contract" fuzzy and needs a distinguishability test to replace
+a rule that currently needs none).
 
 <a id="q8"></a>
-### Q8 · Two S3 acceptance targets are unreachable at S3 — *sequencing*
+### Q8 · Accept the retargeting of `7c` and `6d`
 
-`7c` is *"lsp completion + signature help"* but LSP is S4. `6d` displays agent nouns, but `viu`
-("inside unseen") cannot resolve without the store at S5.
+*Was: the build order puts `7c` at S3, but `7c` is LSP completion and signature help and LSP is
+S4; and `6d` displays agent nouns that cannot resolve without the store at S5.*
 
-**Recommendation:** as applied above — `7c`-minus-completion at S3 and full `7c` at S4; `6d`
-renders at S3 from the live keymap and becomes functional at S5. No design change, just honest
-acceptance criteria. Flagging because it changes what "step 3 done" means.
+**Decided:** `7c`-minus-completion at S3, full `7c` at S4; `6d` renders from the live keymap at
+S3 and becomes functional at S5. No design change and no resequencing — just acceptance criteria
+that describe what is actually true at each boundary.
+
+**Alternatives considered:** swapping S3 and S4 so `7c` lands whole (rejected — it builds
+completion floats before there is a modal input machine to drive them, inverting a natural
+dependency); and merging S3 and S4 into one "plain editor" milestone (rejected — it is a large
+step, and it breaks the 8-step numbering the design docs cross-reference).
 
 <a id="q9"></a>
-### Q9 · One-float rule vs. needs-you-never-steals-focus — *blocks S6*
+### Q9 · Asks are queued; the one-float rule is never broken
 
-Design Language §9 states both *"opening a second float replaces the first; there is no
-float-over-float, ever"* and *"needs-you never steals focus."* When Claude asks a question
-while a picker is open, these conflict: replacing the picker destroys the user's work (stealing
-focus in every sense that matters), and coexisting breaks the one-float rule.
+*Was: the design language states both "opening a second float replaces the first, there is no
+float-over-float, ever" and "needs-you never steals focus." These conflict when Claude asks a
+question while a picker is open.*
 
-**Recommendation:** queue it. The question sets the statusline `!` flag immediately and the
-float surfaces when no other float holds focus; `]!` or similar jumps to a pending ask. This
-keeps both rules literally true and matches "the user reads when they get a chance." Needs your
-call — it changes the felt behaviour of `4a` and `7a`.
+**Decided:** queue the ask. It sets the statusline `!` flag immediately and waits; the float
+surfaces once no other float holds focus, and `]!` jumps to a pending ask. Both written rules stay
+literally true, nothing is destroyed under the user, and it matches the brief's "the user reads
+when they get a chance."
+
+Two consequences the build has to honour:
+
+- **The statusline flag is the whole notification**, not decoration. It must survive shedding at
+  narrow widths — `✻` / `●n` / `!` are the last things standing.
+- **The queue is a store query, not widget state.** Pending asks are a ViewModel like everything
+  else, so `]!`, the inbox, and the statusline all read one truth (invariant 4).
+
+**Accepted cost:** an ask can sit unnoticed. That is the deliberate trade against destroying an
+open picker, and the flag plus the inbox are what keep it from being lost.
 
 <a id="q10"></a>
-### Q10 · S6 and S7 are much larger than their neighbours — *sequencing*
+### Q10 · Internal checkpoints for S6 and S7; the 8-step numbering stands
 
-By acceptance surface: S6 lands 10 screens and both transports; S7 bundles three independent
-workstreams (review surfaces, dirty state, VCS) behind one step boundary. S8 lands one screen.
+*Was: S6 carries ten screens and both transports, S7 bundles three independent workstreams, and
+S8 carries one — the steps are very unevenly sized.*
 
-**Recommendation:** keep the 8-step numbering (it is referenced across the docs) but treat S6
-and S7 as having internal checkpoints — S6 at "session attaches and streams" before the
-question/permission surfaces; S7 split at the 7a/7b/7c boundaries above, each independently
-shippable. No renumbering, just review points.
+**Decided:** keep the numbering, since all four design docs cross-reference it, and add review
+points inside the two large steps. S6 splits at *session attaches and streams* / *directing*;
+S7 splits at its three workstream boundaries (review surfaces, dirty state, VCS), each
+independently shippable. Both are recorded in the phases above.
 
 <a id="q11"></a>
-### Q11 · Is `:arch` (`6a`) in v1? — *scope*
+### Q11 · `:arch` ships in v1, at S5
 
-The mockups include it and it is the clearest demonstration of invariant 4 — the editor drawing
-its own architecture is a store query rendered in a float. It appears in no build step and no
-scope list.
+*Was: screen `6a` — the editor drawing its own architecture — is in the mockups but in no build
+step and no scope list.*
 
-**Recommendation:** cheap once S5 exists (an `ArchDiagram` body over a query already written).
-Worth including if you want the "every feature is a query over one store" claim to be
-*demonstrable* rather than asserted. Your call — it is genuinely optional.
+**Decided:** in scope, slotted into S5 as an `ArchDiagram` float body over a store query. It is
+cheap once the store exists, and it turns "every surface is a query over one store" from a claim
+into something you can look at — which is worth having when explaining the project to anyone,
+including a future contributor.
 
 ---
 
@@ -673,15 +806,26 @@ Worth including if you want the "every feature is a query over one store" claim 
 | Torn frames | new async event source | synchronized output from S1; re-check at each phase boundary | S1 |
 | Anchors don't survive real rewrites | S5 | `6c` as an executable acceptance test, not a demo | S5 |
 | Second-tier languages feel broken rather than honest | S5 | line-fallback markers tested on an extensionless file as an S5 gate | S5 |
+| Two vendored forks to carry ([Q4](#q4)) | every upstream bump | `ratatui-markdown` stays a version bump, not a feature fork; feature gate retained so a broken bump degrades to plain text | S6 |
+| A queued ask sits unnoticed ([Q9](#q9)) | Claude asks while a float is open | the statusline `!` survives shedding at every width; the ask is also in the inbox | S6 |
+| Seen-state doesn't survive a fresh clone ([Q1](#q1)) | new machine or moved checkout | accepted — everything re-shows as unseen, nothing is lost; documented in the UI's cold-start copy (`7d`) | S5 |
 
 ---
 
 ## 7. Immediate next steps
 
-1. **M-0 scaffolding** — workspace, pins, structural lints. Unblocked, no decisions needed.
-2. **The `ratatui-code-editor` spike** — the one action that removes the most uncertainty; it
-   sizes S1 and settles half of [Q2](#q2).
-3. **Answers to [Q1](#q1), [Q6](#q6), [Q9](#q9)** — the three that block work rather than
-   colour it. The rest can ride along.
+**Nothing is blocked on a decision.** All eleven questions are answered (§5), so what remains is
+two spikes and the scaffolding — and the spikes are reads, not builds.
 
-`tui-textarea` → `ratatui-textarea` is already resolved (§1) and needs no input.
+1. **M-0 scaffolding** — workspace, the `=0.8.2` and 0.30.2 pins, both vendored subtrees, the
+   two structural lints.
+2. **The `ratatui-code-editor` spike** — the one action that removes the most uncertainty. It
+   sizes S1 and settles the open half of [Q2](#q2): whether the bought undo history is
+   serialisable, or whether we own the undo stack outright.
+3. **The `edtui` spike** ([Q3](#q3)) — can the handler emit Actions rather than mutate state it
+   owns? Cheap to answer by reading, and it decides whether S3 adapts a bought grammar or builds
+   one. Worth doing alongside the first spike rather than waiting for S3, since a "no" from both
+   would reopen the buy-vs-build shape of the whole UI layer.
+
+Two things are settled and need no further input: `tui-textarea` → `ratatui-textarea` (§1), and
+the `ratatui-markdown` bump, which is scoped in §2 and only has to land before S6.

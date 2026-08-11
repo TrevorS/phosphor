@@ -25,8 +25,8 @@ Then:
 
 - **[IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md)** — the route through the above: phased
   plan mapped to the build order, per-step acceptance criteria tied to mockup ids, the
-  vendored-fork strategy, a verified dependency table, and **11 open questions** that need
-  answers rather than assumptions.
+  vendored-fork strategy, a dependency table verified against crates.io, and a **decision log**
+  recording the 11 questions the plan raised, all answered 2026-08-11.
 - **[design/CLAUDE-CODE-HANDOFF.md](design/CLAUDE-CODE-HANDOFF.md)** — the brief that produced
   the plan. Useful as a summary of the five things most likely to be lost in translation.
 
@@ -42,6 +42,19 @@ open "docs/design/Design Brief.dc.html"
 They were imported verbatim from the claude.ai Design project
 (`9234741f-228d-4014-9e3c-aea1475f8270`). Filenames match the remote paths exactly so the
 project round-trips; edit them there, not here.
+
+## Amendments to the design docs
+
+The design docs are the contract, and they are imported unmodified — so where a decision has
+since changed one, the change lives in the plan's decision log, not in the doc. Two so far:
+
+- **Ayu is no longer the second theme mapping** (Design Brief, "Decided since"). Its identity
+  colour is orange, which the language reserves for attention. Tokyo Night replaces it, and
+  mockup `9b` is superseded. → [Q7](IMPLEMENTATION-PLAN.md#q7)
+- **`ratatui-markdown` is a vendored fork, not a plain buy** (Component Breakdown). It pins
+  ratatui 0.29 and the workspace is 0.30. → [Q4](IMPLEMENTATION-PLAN.md#q4)
+
+If you are reading the design docs cold, read this list first — everything else in them stands.
 
 ## The five invariants
 
