@@ -27,6 +27,10 @@ Then:
   plan mapped to the build order, per-step acceptance criteria tied to mockup ids, the
   vendored-fork strategy, a dependency table verified against crates.io, and a **decision log**
   recording the 11 questions the plan raised, all answered 2026-08-11.
+- **[TASKS.md](TASKS.md)** — the plan decomposed into 77 tasks across the 9 phases, with **12
+  checkpoints** where work stops for manual verification. Each checkpoint splits what can be
+  proven mechanically from what needs eyes on a real terminal, because most of this design
+  language is perceptual and none of that half survives CI.
 - **[design/CLAUDE-CODE-HANDOFF.md](design/CLAUDE-CODE-HANDOFF.md)** — the brief that produced
   the plan. Useful as a summary of the five things most likely to be lost in translation.
 
