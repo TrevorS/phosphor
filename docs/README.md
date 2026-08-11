@@ -27,6 +27,10 @@ Then:
   plan mapped to the build order, per-step acceptance criteria tied to mockup ids, the
   vendored-fork strategy, a dependency table verified against crates.io, and a **decision log**
   recording the 11 questions the plan raised, all answered 2026-08-11.
+- **[SPIKES.md](SPIKES.md)** — the M-0 findings: both dependency spikes read against the exact
+  published sources with `file:line` citations, the full dependency manifest with verified
+  versions, and the hygiene tooling. **Read this before T001** — it inverts one recorded
+  decision and uncovers unbudgeted work.
 - **[TASKS.md](TASKS.md)** — the plan decomposed into 77 tasks across the 9 phases, with **12
   checkpoints** where work stops for manual verification. Each checkpoint splits what can be
   proven mechanically from what needs eyes on a real terminal, because most of this design
