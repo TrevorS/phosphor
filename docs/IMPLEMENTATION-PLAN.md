@@ -55,7 +55,11 @@ holds. **Two entries do not**, and one carries far more risk than the doc implie
 | `ratatui` | 0.30.2 | — | OK — pin workspace here |
 | `ratatui-core` | 0.1.2 | — | OK — `phosphor-ui` depends on this only |
 | `ratatui-code-editor` | **0.0.6** | `ratatui-core ~0.1.0` | **RISK** — compatible, but 3.4k downloads, 6 releases, single maintainer. Vendor; see §2 |
-| `edtui` | 0.11.6 | `ratatui-core ^0.1` | OK — healthy; but see [Q3](#q3) on data-model impedance |
+| ~~`edtui`~~ | 0.11.6 | `ratatui-core ^0.1` | **DROPPED** — healthy crate, wrong fit; the T009 spike inverted this, see [Q3](#q3) |
+| `notify` + `notify-debouncer-full` | 8.2.0 / 0.7.0 | — | **ADDED** — changed-on-disk detection (`1d`); required by the design, listed in no doc |
+| `similar` | 3.1.2 | — | **ADDED** — `DiffBody`'s engine now that the bought diff view turns out not to be separable ([Q3](#q3) spike) |
+| `async-lsp` | 0.2.4 | — | **ADDED** — maintained LSP client; `tower-lsp` is 2023 and `lsp-types` alone is 2024-06 |
+| `etcetera` | 0.11.0 | — | **ADDED** — XDG paths for [Q1](#q1); preferred over `directories` |
 | `tui-textarea` | 0.7.0 (2024-10-22) | **`ratatui ^0.29`** | **BROKEN** — stale 2 yrs, incompatible with 0.30 |
 | `ratatui-textarea` | 0.9.2 | `ratatui-core ^0.1.1` | **USE THIS** — the maintained fork |
 | `ratatui-markdown` | 0.3.6 | **`ratatui ^0.29`** | **VENDOR + PATCH** — unbuildable as published; forked and bumped to 0.30, see [Q4](#q4) |
@@ -83,6 +87,9 @@ holds. **Two entries do not**, and one carries far more risk than the doc implie
   ACP session and the MCP editor-tool server. **Confirmed** — see [Q6](#q6).
 - `ratatui-markdown` is a **second vendored fork** ([Q4](#q4)), so §2's fork discipline applies
   to two crates, not one.
+- **The M-0 spikes have run.** [`SPIKES.md`](SPIKES.md) carries the findings with `file:line`
+  citations; the rows above marked DROPPED and ADDED are their consequences. The full verified
+  manifest and the hygiene tooling live there rather than being duplicated here.
 - `steel-core`'s `dylibs` / `dylib-build` features are what make `define-language`'s
   "loadable as dylibs" story real. Confirmed available.
 
@@ -121,40 +128,30 @@ editor rests on it. Treat it as *our code that happens to have an upstream*.
   goes upstream as a PR. Phosphor-specific behaviour (the 3-column gutter contract, region
   tints, virtual-text interleaving) stays local, permanently.
 
-### The seams we need from it
+### The seams we need from it — spike results
 
-The phosphor layer wraps the bought editor; these are the extension points the fork must
-provide:
+The T008 spike read these against the published source. Full citations in
+[`SPIKES.md`](SPIKES.md); the verdicts:
 
-1. **Marks API** — the substrate for unseen regions and region tints.
-2. **Gutter column injection** — the 1-cell state bar left of line numbers.
-3. **Virtual-text row interleaving** — `┊`-prefixed rows that consume screen rows without
-   existing in the rope.
-4. **Scroll authority** — the wrapper, not the widget, decides when the viewport moves
-   (invariant 3).
-5. **Diff view restyle** — seeds `DiffBody`.
+| Seam | Verdict |
+|---|---|
+| **Marks API** | **Partial.** Exists as `(start, end, Color)` with no id, no style, and wholesale replacement only (`editor.rs:660-682`). Carries region tints; **cannot** carry the gutter contract or undercurl. |
+| **Gutter column injection** | **Not injectable — compose-around works.** `set_left_code_padding` reserves cells (`editor.rs:1009`); we overpaint the state column into the same `Buffer` after the widget renders. Line-number style is hardcoded `DarkGray` (`render.rs:33`) and wants a one-line patch. |
+| **Virtual-text rows** | **Absent, but the hook is already there.** The renderer iterates `VisualRow`, not source lines (`render.rs:57`), and fold separators and diff ghosts already insert non-source rows (`types.rs:20-36`). A `Virtual` variant plus a render arm — an enum arm, not an architecture change. |
+| **Scroll authority** | **Clean.** `fit_cursor()` is called from exactly two explicit places (`editor.rs:143`, `509`). **The widget does not self-scroll on render**, so invariant 3 is enforceable by not calling them. |
+| **Diff view** | **Not separable.** `mod diff` is private (`lib.rs:4`); the diff is a *mode of the Editor*, not a component. `DiffBody` loses its bought base and is built on `similar` instead. |
 
-### Spike before commitment (M-0)
+**Plus one thing nobody asked about: there is no soft-wrap in the crate at all.** `VisualRow` has
+no wrapped variant and no wrapping logic exists anywhere. Our design requires `↪` continuations
+without line numbers. This is the largest unbudgeted item the spike found, and it lands in S1.
 
-The design doc asserts the crate "carries more than expected": tree-sitter highlighting with
-per-viewport caching, full editing + undo/redo, visual marks, diff views with expandable
-unchanged sections, grapheme-correct cursor/selection, mouse. At 0.0.6 those claims must be
-**read against the actual source before the plan depends on them.** The published feature
-flags are only `bench-internals, crossterm, default`, which tells us nothing about the marks
-or diff APIs.
+**Verdict: vendor it, with a larger fork than planned.** The reassurance is the size — 4,936
+lines total, of which the renderer is 281. That is small enough to own with confidence. The risk
+was never that the fork would be unmaintainable; it was that the design doc credited the crate
+with capabilities it does not have.
 
-The spike answers three questions:
-
-- Does a marks/decoration API exist that can carry per-region state, or would we be adding it?
-- Is the diff view a separable widget, or entangled with its own editor state?
-- Is the undo history reachable and serialisable? (This is [Q2](#q2) — persistent undo is a
-  v1 scope item and bought undo stacks are usually in-memory only.)
-
-**Fallback, budgeted now:** if the spike says the seams aren't there, `BufferView` is built
-directly on `ropey` + `tree-sitter` and we own one large widget. That is a real possibility at
-0.0.x, not a remote one. The `Action` layer and the ViewModel boundary mean this choice does
-not leak past `phosphor-ui` — which is precisely why those boundaries land in M-0 and S2,
-before any of this is decided.
+**The fallback is not triggered.** `BufferView` stays on the vendored core rather than being
+rebuilt on `ropey` + `tree-sitter` directly.
 
 ### `ratatui-markdown`
 
@@ -224,7 +221,12 @@ mockups."*
 - Phosphor dark + light built in. **Catppuccin and Tokyo Night as the first two mappings**
   ([Q7](#q7) — Ayu is dropped; this amends the Design Brief).
 - `BufferView` over the vendored editor: 3-column contract (1-cell state bar → line numbers →
-  text), soft-wrap `↪` continuations without line numbers, fold rows.
+  text) via padding-reserve plus overpaint, fold rows.
+- **Soft-wrap — unbudgeted, and it lands here.** The vendored crate has none, so we own `↪`
+  continuations outright. This is the largest surprise from the T008 spike, and it is not a
+  contained one: soft-wrap touches row↔line mapping, cursor positioning, click targeting and
+  virtual-text placement at the same time. Build it against `VisualRow` alongside the fold and
+  ghost variants rather than layering it on afterwards.
 - `StatusLine` shell: mode chip, file + dirty flag, spring, `SessionState` (rendering `None`
   for now), counters. **Truncation enforced in the widget** — never wraps, a second line is a
   bug.
@@ -309,10 +311,12 @@ with the error in a float.
 
 **Goal:** plain editor complete.
 
-- **Step 0 of this step is the edtui spike** ([Q3](#q3)): can its `KeyEventHandler` emit
-  `Action`s instead of mutating state it owns? That question gates everything below it, and is
-  answered *before* agent nouns are wired, not after. If the answer is no, the fallback is a
-  custom input machine behind the same `Action` layer — the docs already budget for it.
+- **The input machine is ours** ([Q3](#q3), resolved by the T009 spike). Modes, counts,
+  registers, operator-pending, text objects — built against the `Action` layer, over
+  Steel-defined keymaps. **Counts and named registers are designed in from the start**, since
+  they are precisely what the bought option could not express. Diff our verb/object coverage
+  against edtui's `Action` enum before `CP-3`: a good completeness checklist even though we no
+  longer depend on the crate.
 - Agent nouns registered as custom text objects: `viu`, `sib`, `dih`, `:'<,'>c`.
 - **Persistent undo** on disk, surviving restarts. **`phosphor-buffer` owns the undo model,
   `phosphor-core` owns persistence** ([Q2](#q2)) — `phosphor-core` already owns the on-disk
@@ -359,6 +363,15 @@ bought at S1, so this step is diagnostics, completion, signature help, and hover
 - **`define-language`** lands here: the first-class set ships *as `define-language` calls in
   `runtime/`*, not as Rust tables. TS, JS, Rust, Python, Steel, Markdown, JSON, CSV, TOML,
   YAML, HTML, CSS.
+  - **CSV is not tree-sitter.** The only grammar crate is 2.5 years stale with ~5k downloads,
+    and CSV gets a hand-tuned surface (virtual column alignment) rather than generic buffer
+    treatment. A small parser is more reliable than a stale grammar and yields exactly the
+    column model that surface needs.
+  - **Steel uses `tree-sitter-scheme`** (0.24.7) — verify it parses real `runtime/*.scm`
+    before committing to it. Steel is a Scheme dialect, not Scheme.
+  - **Check grammar ABI compatibility first.** The eleven grammar crates were built against
+    tree-sitter bindings spanning 0.23–0.25 while the runtime is 0.26. Cheap to check — load
+    all of them and parse a fixture — and expensive to discover later.
 
 > **Flag:** `define-language` is required for v1 (the Component Breakdown puts the
 > first-class-set declarations in `runtime/`) but appears in no build step. Assigned here,
@@ -503,15 +516,22 @@ untouched while Claude works, zero tearing) · `7b` (session dropped — editing
 
 Three workstreams the docs bundle into one step (see [Q10](#q10)):
 
-**7a — Review surfaces.** `DiffBody` (vendored diff view restyled + per-hunk seen state +
-directory grouping via `tui-tree-widget` + Claude's group annotations). Review blocks. The
-inbox — one list of everything Claude said, severity as a single MCP flag, unread = unseen.
+**7a — Review surfaces.** `DiffBody` — **built on `similar` and our own body**, not on a bought
+widget: the T008 spike found the vendored crate's diff is a *mode of the Editor* rather than a
+separable component (`mod diff` is private), so there is nothing to restyle. Since `DiffBody`
+needs per-hunk seen state, directory grouping and Claude's annotations anyway, driving the
+Editor's diff mode would have fought us harder than owning it. `similar` is already a
+transitive dependency of the vendored crate, so this costs no new dependency. Plus review
+blocks, and the inbox — one list of everything Claude said, severity as a single MCP flag,
+unread = unseen.
 → `2b` (hunk peek), `4b` (block diff), `5c` (inbox), `8b` (the 40-file block: grouping, not
 scrolling).
 
 **7b — Dirty state.** The changed-underneath indicator (`✱`) and offer to refresh;
 `:diff-disk` with its three-exit footer and **no auto-merge**. This is invariant 3 at its
-sharpest. → `1d`, `5b`.
+sharpest. Watching disk is `notify` + `notify-debouncer-full` — a dependency the design requires
+and no document listed until the spike. Debouncing is load-bearing: an agent writing a file
+produces a burst of events, and one `✱` per burst is the honest signal. → `1d`, `5b`.
 
 **7c — VCS.** `phosphor-vcs`: jj first, git second, both behind a trait, compiled in and
 activated on detection. **No feature may assume a repo exists** — the adapter's absence is a
@@ -649,27 +669,53 @@ a per-user, per-machine reading log that is the right failure mode.
 `phosphor-core` already owns the on-disk story for seen-state, and the two want one file format,
 one compaction path, and one crash-safety story rather than two.
 
-**Still to confirm:** whether the vendored editor's undo history is reachable and serialisable
-at all — that is one of the three questions the M-0 spike answers. If it isn't, we own the undo
-stack outright and the bought editor is reduced to a renderer plus edit primitives.
+**Confirmed by the T008 spike** ([SPIKES.md](SPIKES.md)) — the decision stands, the mechanism
+changed. The bought `History` has private fields, no iterator and no serde, so it **cannot** be
+serialised. It doesn't need to be: `Edit`, `EditBatch`, `EditState` and `Operation` are public
+with public fields (`code.rs:22`, `28`, `35`, `52`) and `Editor::apply_batch` is public
+(`editor.rs:482`). **We keep our own log of batches and replay them, bypassing upstream `History`
+rather than extending it** — which also means the on-disk format is ours to version instead of
+being hostage to an upstream struct.
 
 <a id="q3"></a>
-### Q3 · Spike edtui before wiring agent nouns; keep the fallback budgeted
+### Q3 · Build the input machine — `edtui` is dropped *(resolved by spike; amends the Component Breakdown)*
 
-*Was: the handoff budgets for edtui's operator-pending grammar failing to host agent nouns, but
-the nearer problem is that edtui is a full editor widget whose `KeyEventHandler` mutates state it
-owns, rather than emitting Actions over a rope.*
+*Was: spike edtui before wiring agent nouns, and keep the custom-input-machine fallback budgeted.
+The predicted blocker was data-model impedance — a `KeyEventHandler` welded to its own
+`EditorState` rather than emitting Actions over a rope.*
 
-**Decided:** answer "can the handler emit Actions instead of mutating?" first, before any agent
-nouns are wired. A proven vim grammar is worth adapting to if it can be adapted at all, and the
-question is cheap to answer by reading. If the answer is no, the fallback is a custom input
-machine behind the same `Action` layer — already budgeted by the docs, and now triggered by the
-*right* test rather than by the noun test that would have come much later.
+**Resolved by the T009 spike** ([SPIKES.md](SPIKES.md)): **don't buy it. Build the input
+machine.** The fallback is now the plan.
 
-**Alternative considered:** making edtui the buffer core outright and dropping
-`ratatui-code-editor`, on the strength of 242k downloads against 3.4k. Rejected for now — it
-trades the riskier dependency for the loss of the bought diff view and per-viewport highlight
-caching, and the gutter contract still has to be built either way. The M-0 spike may reopen it.
+The separation the spike went looking for does exist — a public `enum Action` and a separate
+`pub trait Execute` (`actions.rs:49`, `129-130`) — and exposing it is a one-line fork, since only
+the resolver `get()` is private (`events/key.rs:115`). **The predicted blocker was real but
+surmountable. Two others, neither on the list, are not:**
+
+- **The register model cannot express numeric counts or named registers.** Lookup is exact
+  key-sequence prefix matching (`events/key.rs:115-136`), so `3dd` has nowhere to live, and
+  there is no named-register concept in the crate. `CP-3` tests both.
+- **Our keymaps live in Steel.** T033 puts every binding in `runtime/`, redefinable at runtime.
+  edtui's register is a compile-time `HashMap` of 185 entries — the main thing we would be
+  buying, and it is dead weight by our own design.
+
+What's left to buy is a **28-line prefix matcher**, delivered inside a 10,164-line crate carrying
+its own `edtui-jagged` buffer (not ropey), its own undo, renderer, `syntect` highlighting and
+line wrapper.
+
+**Consequences:** counts and named registers are designed into the input machine from the start
+rather than retrofitted. edtui's `Action` enum stays useful as a **completeness checklist** for
+the vim grammar — it is a good inventory of verbs and objects, and worth diffing our coverage
+against before `CP-3`.
+
+**Amendment recorded:** the Component Breakdown lists `edtui` as **"buy (input)"** with the
+reasoning that its handler is a customisable `KeyEventHandler`. That is accurate as far as it
+goes and still the wrong call for us.
+
+**Alternative considered and now closed:** making edtui the buffer core outright, on the strength
+of 242k downloads against 3.4k. The spike killed it from the other direction — `ratatui-code-editor`
+turned out to be 4,936 lines with a 281-line renderer, which is small enough to own with
+confidence, while edtui's data model is the thing furthest from what we need.
 
 <a id="q4"></a>
 ### Q4 · Vendor and patch `ratatui-markdown` to ratatui 0.30 — *amends the Component Breakdown*
@@ -861,8 +907,11 @@ appears there is exactly one place to look.
 
 | risk | trigger | mitigation | lands |
 |---|---|---|---|
-| `ratatui-code-editor` seams don't exist at 0.0.6 | M-0 spike | build `BufferView` on `ropey` + `tree-sitter`; `Action` / ViewModel boundary contains the blast radius | M-0 |
-| `edtui` handler can't emit Actions ([Q3](#q3)) | S3 spike | custom input machine behind the same `Action` layer — already budgeted by the docs | S3 |
+| ~~`ratatui-code-editor` seams don't exist~~ | — | **Retired by the T008 spike.** Three of five seams usable, virtual text is a clean enum-variant addition, fallback not triggered. | M-0 |
+| ~~`edtui` handler can't emit Actions~~ | — | **Retired by the T009 spike** — the crate is dropped ([Q3](#q3)), so the risk is gone with it. | S3 |
+| **Soft-wrap is unbudgeted work** ([SPIKES.md](SPIKES.md)) | S1 — the vendored crate has none | build it against `VisualRow` alongside folds and ghosts, not layered on after; it touches row↔line mapping, cursor position, click targeting and virtual text at once | S1 |
+| **The input machine is now ours to get right** ([Q3](#q3)) | S3 | counts and named registers designed in from the start; verb/object coverage diffed against edtui's `Action` enum before `CP-3` | S3 |
+| Grammar ABI mismatch across the first-class set | S4 | grammar crates span tree-sitter bindings 0.23–0.25 against a 0.26 runtime — load all of them and parse a fixture in M-0, before `define-language` depends on it | M-0 |
 | Steel embedding API churn ([Q5](#q5)) | `steel-core` upgrade | pin `=0.8.2`; door-parity test as the upgrade gate | S2 |
 | The three doors drift apart | any new capability | one registry, generated bindings, enumerating parity test | S2 |
 | Policy accretes in Rust | ongoing | the placement test in code review; `runtime/*.scm` is where keymaps/segments/sources live | S2+ |
@@ -879,18 +928,22 @@ appears there is exactly one place to look.
 
 ## 7. Immediate next steps
 
-**Nothing is blocked on a decision.** All eleven questions are answered (§5), so what remains is
-two spikes and the scaffolding — and the spikes are reads, not builds.
+**Both M-0 spikes have run** ([SPIKES.md](SPIKES.md)), so `CP-0` is passed and nothing is
+blocked on either a decision or an unknown. What remains in M-0 is construction.
 
-1. **M-0 scaffolding** — workspace, the `=0.8.2` and 0.30.2 pins, both vendored subtrees, the
-   two structural lints.
-2. **The `ratatui-code-editor` spike** — the one action that removes the most uncertainty. It
-   sizes S1 and settles the open half of [Q2](#q2): whether the bought undo history is
-   serialisable, or whether we own the undo stack outright.
-3. **The `edtui` spike** ([Q3](#q3)) — can the handler emit Actions rather than mutate state it
-   owns? Cheap to answer by reading, and it decides whether S3 adapts a bought grammar or builds
-   one. Worth doing alongside the first spike rather than waiting for S3, since a "no" from both
-   would reopen the buy-vs-build shape of the whole UI layer.
+1. **T001–T007 — the workspace.** Seven crates, the pins (`ratatui 0.30.2`,
+   `ratatui-core 0.1.2`, `steel-core =0.8.2`), both vendored subtrees, and the two structural
+   lints. `cargo-deny` lands here too, with a `[bans]` rule on duplicate `ratatui` majors — the
+   check that would have caught the `tui-textarea` / `ratatui-markdown` split mechanically.
+2. **The grammar ABI check.** Load all eleven bundled grammars against tree-sitter 0.26 and
+   parse a fixture. Cheap now, expensive at S4. This is the one unknown the spikes surfaced but
+   did not close.
+3. **Then S1** — sized larger than originally planned, because soft-wrap is ours to build.
 
-Two things are settled and need no further input: `tui-textarea` → `ratatui-textarea` (§1), and
-the `ratatui-markdown` bump, which is scoped in §2 and only has to land before S6.
+The two things worth carrying into S1 and S3 respectively: **soft-wrap is unbudgeted and
+touches four subsystems at once**, and **the input machine is now ours**, so counts and named
+registers are designed in rather than retrofitted.
+
+Settled and needing no further input: `tui-textarea` → `ratatui-textarea` (§1), the
+`ratatui-markdown` bump (§2, before S6), and the full dependency manifest and hygiene tooling
+([SPIKES.md](SPIKES.md)).

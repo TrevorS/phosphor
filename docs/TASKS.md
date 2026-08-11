@@ -4,10 +4,14 @@ Decomposed from [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md), which is itsel
 the four design docs in [design/](design/). The plan says *what each phase is for*; this file
 says *what to build, in what order, and where we stop and look at it*.
 
-**80 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
+**83 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
 Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids
 are stable and assigned in order of creation — reference them in commits. New tasks append
 rather than renumber, so `T078`+ sit inside earlier phases.
+
+**`CP-0` is passed.** Both M-0 spikes are done ([SPIKES.md](SPIKES.md)); `T008` and `T009` are
+checked off and their consequences are folded in below. `T081`–`T083` exist because of what they
+found.
 
 ---
 
@@ -124,11 +128,11 @@ can actually see each one is noted, since it isn't obvious:
 
 | Phase | Tasks | Checkpoint |
 |---|---|---|
-| M-0 · Scaffolding + spikes | T001–T009 | **CP-0** — go/no-go on both bought crates |
-| S1 · Theme + BufferView + StatusLine | T010–T018 | **CP-1** — does it look like the mockups |
+| M-0 · Scaffolding + spikes | T001–T009, T083 | **CP-0** — ✅ passed |
+| S1 · Theme + BufferView + StatusLine | T010–T018, T081 | **CP-1** — does it look like the mockups |
 | S2 · Steel + Action + REPL + view tree | T019–T025, T078–T080 | **CP-2** — is the editor live |
 | S3 · Input + undo + gutter | T026–T035 | **CP-3** — does it feel like an editor |
-| S4 · LSP | T036–T040 | **CP-4** — boring on purpose |
+| S4 · LSP | T036–T040, T082 | **CP-4** — boring on purpose |
 | S5 · Store + seen + Picker | T041–T049 | **CP-5** — the awareness loop |
 | S6 · ACP + MCP + Transcript + Prompt | T050–T062 | **CP-6** session · **CP-7** directing |
 | S7 · Diffs + review + dirty + VCS | T063–T073 | **CP-8a/b/c** — three workstreams |
@@ -246,36 +250,40 @@ everything after them — do them first, together.
   *Done when:* CI fails on a deliberately planted `store::` import in `phosphor-ui`.
   *Needs:* T005
 
-- [ ] **T008 · SPIKE — the five seams in `ratatui-code-editor`**
-  Read the 0.0.6 source and answer, in `VENDOR.md`, yes/no + how for each: marks API, gutter
-  column injection, virtual-text row interleaving, scroll authority, diff view separability.
-  Plus: **is the undo history reachable and serialisable?** (settles the open half of Q2).
-  *Done when:* `VENDOR.md` has six answers with file/line citations. *Needs:* T003
+- [x] **T008 · SPIKE — the five seams in `ratatui-code-editor`** ✅
+  Answered in [SPIKES.md](SPIKES.md) with `file:line` citations. Scroll authority clean; marks
+  partial (colour spans, no id, no style); gutter not injectable but compose-around works;
+  virtual text absent **but `VisualRow` is a clean hook**; diff view **not separable**. Undo
+  history opaque, but the edit primitives are public and replayable — Q2 resolved.
+  **Plus: no soft-wrap exists anywhere in the crate.** *Was:* T003
 
-- [ ] **T009 · SPIKE — can edtui's handler emit Actions?**
-  Read `edtui`'s `KeyEventHandler`. Can it drive an external `Action` sink, or is it welded to
-  its own `EditorState`? Write up the seam or the blocker (Q3).
-  *Done when:* a written verdict with a proof-of-concept diff or a clear "no". *Needs:* T002
+- [x] **T009 · SPIKE — can edtui's handler emit Actions?** ✅
+  Answered in [SPIKES.md](SPIKES.md). Structurally yes, practically pointless — the resolver is
+  28 lines, the 185-entry register is dead weight against Steel keymaps, and the model cannot
+  express counts or named registers. **edtui is dropped**; Q3 inverts. *Was:* T002
 
-### ✋ CP-0 — Go/no-go on both bought crates
+### ✋ CP-0 — Go/no-go on both bought crates · **PASSED**
 
-The most consequential checkpoint in the build, and the cheapest. Both spikes are reads.
+The most consequential checkpoint in the build, and the cheapest — both spikes were reads. The
+findings, with `file:line` citations, are in [SPIKES.md](SPIKES.md).
 
-**Claude verifies:** `cargo build` green · both structural lints fail on planted violations ·
-`VENDOR.md` answers all six seam questions with citations · both vendored subtrees build.
+**Outcome, against the decision table this checkpoint was written with:**
 
-**Teej verifies:** read both spike write-ups and make the buy-vs-build call. This is a judgement
-about how much of the editor we want to own, and it is yours.
-
-**Decision table:**
-
-| Spike outcome | Consequence |
+| Spike question | Result |
 |---|---|
-| Both seams present | Proceed as planned. Best case. |
-| `ratatui-code-editor` seams missing | `BufferView` is built on `ropey` + `tree-sitter`; S1 grows substantially. Budgeted in the plan §2. |
-| Undo not serialisable | We own the undo stack; the bought editor drops to renderer + edit primitives. Q2's open half resolves toward `phosphor-buffer` owning more. |
-| edtui welded to its own state | Custom input machine behind the same `Action` layer. S3 grows. |
-| **Both fail** | **Stop and re-plan.** The buy-first posture doesn't hold, and the shape of the whole UI layer is back on the table — including whether edtui becomes the buffer core instead (the alternative logged under Q3). |
+| `ratatui-code-editor` seams | **Mixed, and vendoring stands.** Scroll authority clean; marks partial; gutter compose-around; virtual text absent but `VisualRow` is a clean hook; diff view not separable. The `ropey` + `tree-sitter` fallback is **not** triggered. |
+| Undo serialisable? | **No — and it doesn't matter.** The bought `History` is opaque, but `Edit`/`EditBatch` are public and `apply_batch` replays them, so we keep our own log. [Q2](IMPLEMENTATION-PLAN.md#q2) stands as decided. |
+| edtui handler → Actions? | **Yes, but don't.** [Q3](IMPLEMENTATION-PLAN.md#q3) **inverts** — edtui is dropped and the input machine is ours. |
+
+**Two things the checkpoint did not think to ask, and should have:**
+
+1. **There is no soft-wrap in the vendored crate.** Unbudgeted, lands in S1 as T081, and it
+   touches row↔line mapping, cursor position, click targeting and virtual text at once.
+2. **`DiffBody` has no bought base.** `mod diff` is private and the diff is a mode of the
+   Editor, so T063 is rebuilt on `similar`.
+
+Both are recorded below. The lesson for later checkpoints: a decision table enumerates the
+outcomes you predicted, and the useful findings are often the ones outside it.
 
 ---
 
@@ -315,10 +323,18 @@ First phase with anything to look at. Sized by CP-0.
   *Done when:* a file renders with correct columns and the viewport provably never
   self-scrolls. *Needs:* T014, CP-0
 
-- [ ] **T016 · Soft-wrap and folds**
-  `↪` continuations carry no line number. Fold rows render `▸ ⋯ n lines`. Insert-only
-  trailing-whitespace marks.
-  *Done when:* screen `8e`'s text details reproduce. *Needs:* T015
+- [ ] **T016 · Folds and whitespace marks**
+  Fold rows render `▸ ⋯ n lines`. Insert-only trailing-whitespace marks. Folds come from the
+  vendored crate's existing `VisualRow::FoldSeparator`.
+  *Done when:* screen `8e`'s fold and whitespace details reproduce. *Needs:* T015
+
+- [ ] **T081 · Soft-wrap** ⚠️ *unbudgeted — surfaced by the T008 spike*
+  **The vendored crate has none.** `↪` continuations carry no line number. Build it as a
+  `VisualRow` variant alongside the existing fold and ghost variants, **not** as a layer above
+  them — row↔line mapping, cursor positioning, click targeting and virtual-text placement all
+  read the same row stream, and a soft-wrap that lives outside it desynchronises all four.
+  *Done when:* a long line wraps with continuations, and cursor motion, mouse clicks and
+  virtual-text rows all land correctly on a wrapped line. *Needs:* T015
 
 - [ ] **T017 · StatusLine**
   Mode chip (the only inverted text on screen) + file + dirty flag + spring + `SessionState`
@@ -341,6 +357,11 @@ after this trusts that colours and frames are right.
 **Claude verifies:** snapshot tests pass for `1a`-minus-agent, `9c`, `8c`, `8d` · statusline
 property test (widths 40–200, never two rows) · all four themes pass actor-hue validation · the
 planted bad theme is rejected · no `Color::Rgb` literal survives in `phosphor-ui`.
+
+**Also verify (new since the spike):** soft-wrap (`T081`) — long lines wrap with `↪`
+continuations carrying no line number, and cursor motion, mouse clicks and virtual-text rows all
+land correctly on a wrapped line. This is unbudgeted work we now own, so it gets explicit
+attention at the first checkpoint that can see it.
 
 **VHS produces:** stills for `1a`-minus-agent, `9c`, `8c`, `8d` · a **width sweep** contact sheet
 at 200/120/100/80/60/40 columns showing the shed order step by step · all four themes on the same
@@ -470,12 +491,17 @@ rewrite, not a refactor.
 
 ## S3 · Input, persistent undo, and the gutter layer
 
-Shape depends on CP-0's edtui verdict — T026 is the fork point.
+CP-0 settled the shape: **the input machine is ours.**
 
-- [ ] **T026 · Input adapter → Actions**
-  Either edtui's handler driving an Action sink, or a custom modal machine behind the same
-  layer. Modes, counts, registers, operator-pending.
-  *Done when:* a scripted keystroke sequence produces the expected Action stream. *Needs:* CP-0
+- [ ] **T026 · The input machine**
+  Modes, operator-pending, text objects, and — designed in from the start, not retrofitted —
+  **numeric counts (`3dd`) and named registers (`"ayy`)**, which are exactly what the dropped
+  crate could not express. Emits `Action`s; keymaps come from Steel (T033), so the resolver
+  works against a table that changes at runtime rather than a compile-time map.
+  Before CP-3, diff verb/object coverage against edtui's `Action` enum — a good completeness
+  checklist even though we no longer depend on it.
+  *Done when:* a scripted keystroke sequence produces the expected Action stream, including
+  counts and named registers. *Needs:* T019
 
 - [ ] **T027 · Kitty keyboard protocol**
   Real modifier chords, with graceful fallback where unsupported.
@@ -542,7 +568,9 @@ input is scripted, so the capture is exact.
   change anyway. Vim habits should carry without thinking about it.
 - Where does muscle memory break? Every miss is a finding; note them all, they won't recur to
   you later.
-- Counts, registers, operator-pending: `3dd`, `"ayy`, `ci(`. Do they compose?
+- Counts, registers, operator-pending: `3dd`, `"ayy`, `ci(`. Do they compose? **These are the
+  two the dropped crate couldn't express** ([Q3](IMPLEMENTATION-PLAN.md#q3)), so they're now
+  ours to get right rather than inherit — test them hardest.
 - `SPC` leader popup — is the namespace learnable, or does it need the docs?
 - Modifier chords on the primary terminal, then on the degradation terminal.
 - Quit, reopen, undo. Does history come back intact?
@@ -567,7 +595,22 @@ input is scripted, so the capture is exact.
   `define-language` call in `runtime/`, **not a Rust table**. Binds grammar + LSP command +
   locale hooks.
   *Done when:* a 13th language can be added from the REPL with no Rust change. *Needs:* T036,
-  T022
+  T022, T083
+
+- [ ] **T082 · CSV without tree-sitter** *(spike finding)*
+  `tree-sitter-csv` is 2.5 years stale with ~5k downloads, and CSV gets a hand-tuned surface
+  (virtual column alignment) rather than generic buffer treatment. A small parser is more
+  reliable than a stale grammar **and** yields exactly the column model that surface needs.
+  *Done when:* CSV column alignment works, with no `tree-sitter-csv` dependency. *Needs:* T037
+
+- [ ] **T083 · Grammar ABI check** *(spike finding — do this in M-0)*
+  The grammar crates were built against tree-sitter bindings spanning **0.23–0.25** while the
+  runtime is **0.26**. tree-sitter versions its language ABI and mixing generations is a known
+  breakage source. Load all eleven and parse a fixture.
+  Also settle here: does `tree-sitter-scheme` (0.24.7) actually parse real `runtime/*.scm`?
+  Steel is a Scheme dialect, not Scheme.
+  *Done when:* every bundled grammar parses a fixture under tree-sitter 0.26, with a written
+  answer on Steel. *Needs:* T002
 
 - [ ] **T038 · Completion via the passive Float**
   Border `#2a3c2e`, **no footer** — the one documented exception to the float contract.
@@ -842,8 +885,11 @@ Three independent workstreams; three checkpoints. Each is independently shippabl
 
 ### 7a — Review surfaces
 
-- [ ] **T063 · DiffBody** — vendored diff view restyled; unified and side-by-side; fold rows.
-  *Done when:* renders a real diff correctly. *Needs:* CP-0, T041
+- [ ] **T063 · DiffBody** — **built on `similar`, not on a bought widget.** The T008 spike found
+  `mod diff` private and the diff implemented as a *mode of the Editor*, so there is nothing to
+  restyle. Unified and side-by-side; fold rows for unchanged spans. `similar` already arrives
+  transitively via the vendored crate, so this adds no dependency.
+  *Done when:* renders a real diff correctly. *Needs:* T041
 - [ ] **T064 · Per-hunk seen state** — `s`/`S` compose over any group.
   *Done when:* marking one hunk seen leaves the rest unseen. *Needs:* T063, T041
 - [ ] **T065 · Directory grouping + annotations** — `tui-tree-widget`; Claude's group
@@ -876,6 +922,9 @@ without losing your place? The recurring sweep.
 ### 7b — Dirty state
 
 - [ ] **T069 · Changed-on-disk indicator** — `✱` + offer to refresh. **Buffer holds stable.**
+  Watching disk is `notify` + `notify-debouncer-full` (added by the spike — the design requires
+  this and no document listed a dependency). **Debouncing is load-bearing:** an agent writing a
+  file produces a burst of events, and one `✱` per burst is the honest signal.
   Screen `1d`. *Needs:* T015
 - [ ] **T070 · `:diff-disk`** — your unsaved buffer vs Claude's disk write. Three manual exits,
   **no auto-merge**. Screen `5b`. *Needs:* T063, T069

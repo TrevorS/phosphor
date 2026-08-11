@@ -345,23 +345,30 @@ Plus two things that are configuration rather than tools, and belong in the same
 
 ---
 
-## What this changes
+## What this changed — *all six folded in*
 
-Flagged, not applied — three of these move decisions that are already recorded.
+Applied to [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) and [TASKS.md](TASKS.md). Three of
+these moved decisions that were already recorded.
 
-1. **[Q3](IMPLEMENTATION-PLAN.md#q3) inverts.** The Component Breakdown's "buy (input)" verdict
-   does not survive contact with the source. T026 becomes "build the input machine" outright,
-   and T009's fallback becomes the plan. **Counts and named registers must be designed in from
-   the start**, since they're the two things the bought option couldn't express.
-2. **Soft-wrap is unbudgeted and lands in S1.** No task currently owns it; T016 assumes the
-   bought editor provides continuations. It does not.
-3. **`DiffBody` loses its bought base.** S7's T063 says "vendored diff view restyled" — the diff
-   isn't a separable widget, so T063 becomes `similar` + our own body.
-4. **[Q2](IMPLEMENTATION-PLAN.md#q2) is fully resolved** — no change to the decision, only to the
-   mechanism (bypass upstream `History`, don't extend it).
-5. **Two grammar decisions** — drop `tree-sitter-csv` in favour of a hand-written parser; verify
-   `tree-sitter-scheme` against real Steel before committing to it.
-6. **`notify` joins the manifest** — dirty-state detection has no dependency listed anywhere in
-   the design docs.
+1. **[Q3](IMPLEMENTATION-PLAN.md#q3) inverted** and is marked as amending the Component
+   Breakdown. `T026` is now "the input machine" outright, with **counts and named registers
+   designed in from the start** — the two things the bought option couldn't express. `CP-3`
+   calls them out as the ones to test hardest.
+2. **Soft-wrap became `T081`** in S1, flagged unbudgeted. It builds as a `VisualRow` variant
+   alongside folds and ghosts rather than as a layer above them, because row↔line mapping,
+   cursor position, click targeting and virtual text all read that one row stream. `CP-1` gained
+   an explicit check for it. `T016` narrowed to folds and whitespace marks.
+3. **`T063` rebuilt on `similar`** — no bought base to restyle. Costs no new dependency, since
+   `similar` already arrives transitively through the vendored crate.
+4. **[Q2](IMPLEMENTATION-PLAN.md#q2) closed** — decision unchanged, mechanism rewritten to
+   bypass upstream `History` rather than extend it.
+5. **`T082`** drops `tree-sitter-csv` for a small parser; **`T083`** checks grammar ABI
+   compatibility across the 0.23–0.25 bindings against the 0.26 runtime, and settles whether
+   `tree-sitter-scheme` parses real Steel. `T083` runs in M-0, before `define-language` depends
+   on it.
+6. **`notify` + `notify-debouncer-full` joined the manifest** and `T069`, with debouncing called
+   out as load-bearing — an agent writing a file produces a burst of events, and one `✱` per
+   burst is the honest signal.
 
-Say the word and I'll fold all six into the plan and tasks.
+Retired from the risk register: the two spike risks. Added: soft-wrap, owning the input machine,
+and grammar ABI mismatch.
