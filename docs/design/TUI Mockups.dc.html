@@ -1,0 +1,1391 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body{margin:0;background:#edf0ed;font-family:'IBM Plex Sans',sans-serif;color:#1a1d1a;}
+  a{color:#1a6b4a;text-decoration:none;}
+  a:hover{color:#0d4530;}
+  pre{margin:0;font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:20px;}
+</style>
+</helmet>
+<section style="display:flex;flex-wrap:wrap;gap:48px;padding:48px 48px 0;align-items:flex-start;">
+
+  <div style="width:900px;background:#fff;border:1px solid #d8ded8;border-radius:8px;padding:20px 24px;">
+    <div style="font-size:15px;font-weight:600;margin-bottom:8px;">Turn 9 — theme candidates</div>
+    <div style="font-size:13px;line-height:1.6;color:#3d423d;display:flex;flex-direction:column;gap:6px;">
+      <div>Same slice of UI, three theme families, dark + light each. The actor contract holds in all of them: claude-green, you-blue, attention-amber, trouble-red map onto each palette's own hues.</div>
+      <div><strong><a href="#9a">9a</a> Catppuccin</strong> (Mocha / Latte) — the community standard; soft, pastel, everywhere. Claude = green #a6e3a1.</div>
+      <div><strong><a href="#9b">9b</a> Ayu</strong> (Dark / Light) — sharper, higher chroma, that signature amber-orange. Note the tension: ayu's identity color is orange, which our language reserves for attention.</div>
+      <div><strong><a href="#9c">9c</a> Original</strong> — what the mockups have quietly been: near-black green-tinted ground, phosphor green for claude. Terminal-native, ours, and the actor semantics were designed into it rather than mapped onto it.</div>
+    </div>
+  </div>
+
+  <div id="9a" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">9a</span><span style="font-size:15px;font-weight:600;">Catppuccin — Mocha / Latte</span></div>
+    <div style="display:flex;gap:16px;">
+      <div style="flex:1;background:#1e1e2e;border:1px solid #313244;border-radius:6px;overflow:hidden;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:20px;">
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#a6e3a1;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#45475a;">16</span><span style="white-space:pre;color:#cdd6f4;">    <span style="color:#cba6f7;">let mut</span> delay = policy.base_delay;</span></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#a6e3a1;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#45475a;">17</span><span style="white-space:pre;color:#cdd6f4;">    <span style="color:#cba6f7;">let mut</span> last = <span style="color:#fab387;">None</span>;</span></div>
+        <div style="display:flex;background:#232336;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#45475a;">18</span><span style="white-space:pre;color:#cdd6f4;text-decoration:underline wavy #a6e3a1 1px;text-underline-offset:4px;">    <span style="color:#cba6f7;">for</span> attempt <span style="color:#cba6f7;">in</span> 0..policy.max_attempts {</span></div>
+        <div style="padding:2px 0 2px 52px;color:#6c7086;"><div style="white-space:pre;">┊ ⚓ you · 2m    cap check?</div><div style="white-space:pre;">┊ <span style="color:#a6e3a1;">✻ claude · 1m</span> max_attempts is the cap</div></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#45475a;">19</span><span style="white-space:pre;color:#cdd6f4;">        <span style="color:#cba6f7;">match</span> op() {</span></div>
+        <div style="display:flex;align-items:center;height:24px;background:#181825;font-size:11px;margin-top:8px;">
+          <span style="background:#a6e3a1;color:#1e1e2e;font-weight:600;padding:0 8px;line-height:24px;">NORMAL</span>
+          <span style="color:#cdd6f4;padding:0 10px;">src/retry.rs <span style="color:#f9e2af;">[+]</span></span>
+          <span style="flex:1;"></span>
+          <span style="color:#a6e3a1;padding-right:10px;">✻ claude idle</span>
+          <span style="color:#6c7086;padding-right:8px;">●6 │ jj ✓</span>
+        </div>
+      </div>
+      <div style="flex:1;background:#eff1f5;border:1px solid #ccd0da;border-radius:6px;overflow:hidden;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:20px;">
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#40a02b;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#bcc0cc;">16</span><span style="white-space:pre;color:#4c4f69;">    <span style="color:#8839ef;">let mut</span> delay = policy.base_delay;</span></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#40a02b;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#bcc0cc;">17</span><span style="white-space:pre;color:#4c4f69;">    <span style="color:#8839ef;">let mut</span> last = <span style="color:#fe640b;">None</span>;</span></div>
+        <div style="display:flex;background:#e2e6ec;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#bcc0cc;">18</span><span style="white-space:pre;color:#4c4f69;text-decoration:underline wavy #40a02b 1px;text-underline-offset:4px;">    <span style="color:#8839ef;">for</span> attempt <span style="color:#8839ef;">in</span> 0..policy.max_attempts {</span></div>
+        <div style="padding:2px 0 2px 52px;color:#8c8fa1;"><div style="white-space:pre;">┊ ⚓ you · 2m    cap check?</div><div style="white-space:pre;">┊ <span style="color:#40a02b;">✻ claude · 1m</span> max_attempts is the cap</div></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#bcc0cc;">19</span><span style="white-space:pre;color:#4c4f69;">        <span style="color:#8839ef;">match</span> op() {</span></div>
+        <div style="display:flex;align-items:center;height:24px;background:#e6e9ef;font-size:11px;margin-top:8px;">
+          <span style="background:#40a02b;color:#eff1f5;font-weight:600;padding:0 8px;line-height:24px;">NORMAL</span>
+          <span style="color:#4c4f69;padding:0 10px;">src/retry.rs <span style="color:#df8e1d;">[+]</span></span>
+          <span style="flex:1;"></span>
+          <span style="color:#40a02b;padding-right:10px;">✻ claude idle</span>
+          <span style="color:#8c8fa1;padding-right:8px;">●6 │ jj ✓</span>
+        </div>
+      </div>
+    </div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-top:8px;">familiar and gentle. cost: pastel green is the least assertive claude-marker of the three, and catppuccin's lavender/mauve syntax pulls attention from the actor colors.</div>
+  </div>
+
+  <div id="9b" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">9b</span><span style="font-size:15px;font-weight:600;">Ayu — Dark / Light</span></div>
+    <div style="display:flex;gap:16px;">
+      <div style="flex:1;background:#0b0e14;border:1px solid #1c212b;border-radius:6px;overflow:hidden;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:20px;">
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#7fd962;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#2d3640;">16</span><span style="white-space:pre;color:#bfbdb6;">    <span style="color:#ff8f40;">let mut</span> delay = policy.base_delay;</span></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#7fd962;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#2d3640;">17</span><span style="white-space:pre;color:#bfbdb6;">    <span style="color:#ff8f40;">let mut</span> last = <span style="color:#59c2ff;">None</span>;</span></div>
+        <div style="display:flex;background:#11161f;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#2d3640;">18</span><span style="white-space:pre;color:#bfbdb6;text-decoration:underline wavy #7fd962 1px;text-underline-offset:4px;">    <span style="color:#ff8f40;">for</span> attempt <span style="color:#ff8f40;">in</span> 0..policy.max_attempts {</span></div>
+        <div style="padding:2px 0 2px 52px;color:#565b66;"><div style="white-space:pre;">┊ ⚓ you · 2m    cap check?</div><div style="white-space:pre;">┊ <span style="color:#7fd962;">✻ claude · 1m</span> max_attempts is the cap</div></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#2d3640;">19</span><span style="white-space:pre;color:#bfbdb6;">        <span style="color:#ff8f40;">match</span> op() {</span></div>
+        <div style="display:flex;align-items:center;height:24px;background:#0f131a;font-size:11px;margin-top:8px;">
+          <span style="background:#7fd962;color:#0b0e14;font-weight:600;padding:0 8px;line-height:24px;">NORMAL</span>
+          <span style="color:#bfbdb6;padding:0 10px;">src/retry.rs <span style="color:#e6b450;">[+]</span></span>
+          <span style="flex:1;"></span>
+          <span style="color:#7fd962;padding-right:10px;">✻ claude idle</span>
+          <span style="color:#565b66;padding-right:8px;">●6 │ jj ✓</span>
+        </div>
+      </div>
+      <div style="flex:1;background:#fcfcfc;border:1px solid #e0e2e6;border-radius:6px;overflow:hidden;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:20px;">
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#6cbf43;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#d0d3d8;">16</span><span style="white-space:pre;color:#5c6166;">    <span style="color:#fa8d3e;">let mut</span> delay = policy.base_delay;</span></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#6cbf43;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#d0d3d8;">17</span><span style="white-space:pre;color:#5c6166;">    <span style="color:#fa8d3e;">let mut</span> last = <span style="color:#399ee6;">None</span>;</span></div>
+        <div style="display:flex;background:#f0f1f2;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#d0d3d8;">18</span><span style="white-space:pre;color:#5c6166;text-decoration:underline wavy #6cbf43 1px;text-underline-offset:4px;">    <span style="color:#fa8d3e;">for</span> attempt <span style="color:#fa8d3e;">in</span> 0..policy.max_attempts {</span></div>
+        <div style="padding:2px 0 2px 52px;color:#a0a6ac;"><div style="white-space:pre;">┊ ⚓ you · 2m    cap check?</div><div style="white-space:pre;">┊ <span style="color:#6cbf43;">✻ claude · 1m</span> max_attempts is the cap</div></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#d0d3d8;">19</span><span style="white-space:pre;color:#5c6166;">        <span style="color:#fa8d3e;">match</span> op() {</span></div>
+        <div style="display:flex;align-items:center;height:24px;background:#f3f4f5;font-size:11px;margin-top:8px;">
+          <span style="background:#6cbf43;color:#fcfcfc;font-weight:600;padding:0 8px;line-height:24px;">NORMAL</span>
+          <span style="color:#5c6166;padding:0 10px;">src/retry.rs <span style="color:#f2ae49;">[+]</span></span>
+          <span style="flex:1;"></span>
+          <span style="color:#6cbf43;padding-right:10px;">✻ claude idle</span>
+          <span style="color:#a0a6ac;padding-right:8px;">●6 │ jj ✓</span>
+        </div>
+      </div>
+    </div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-top:8px;">crisp, high-chroma, great contrast. cost: ayu's orange keywords sit one hue away from attention-amber — the "needs you" signal loses its monopoly on warmth.</div>
+  </div>
+
+  <div id="9c" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">9c</span><span style="font-size:15px;font-weight:600;">Original — phosphor (working name)</span></div>
+    <div style="display:flex;gap:16px;">
+      <div style="flex:1;background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:20px;">
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">16</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">let mut</span> delay = policy.base_delay;</span></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">17</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">let mut</span> last = <span style="color:#cfa86a;">None</span>;</span></div>
+        <div style="display:flex;background:#141d16;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">18</span><span style="white-space:pre;color:#c6cec6;text-decoration:underline wavy #2a5c44 1px;text-underline-offset:4px;">    <span style="color:#82aecd;">for</span> attempt <span style="color:#82aecd;">in</span> 0..policy.max_attempts {</span></div>
+        <div style="padding:2px 0 2px 52px;color:#59635a;"><div style="white-space:pre;">┊ ⚓ you · 2m    cap check?</div><div style="white-space:pre;">┊ <span style="color:#3ddc97;">✻ claude · 1m</span> max_attempts is the cap</div></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">19</span><span style="white-space:pre;color:#c6cec6;">        <span style="color:#82aecd;">match</span> op() {</span></div>
+        <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11px;margin-top:8px;">
+          <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 8px;line-height:24px;">NORMAL</span>
+          <span style="color:#c6cec6;padding:0 10px;">src/retry.rs <span style="color:#e0a94e;">[+]</span></span>
+          <span style="flex:1;"></span>
+          <span style="color:#3ddc97;padding-right:10px;">✻ claude idle</span>
+          <span style="color:#59635a;padding-right:8px;">●6 │ jj ✓</span>
+        </div>
+      </div>
+      <div style="flex:1;background:#f4f2ec;border:1px solid #d8d4c8;border-radius:6px;overflow:hidden;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:20px;">
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#1a9a62;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#b0aa98;">16</span><span style="white-space:pre;color:#3a3830;">    <span style="color:#3568a8;">let mut</span> delay = policy.base_delay;</span></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#1a9a62;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#b0aa98;">17</span><span style="white-space:pre;color:#3a3830;">    <span style="color:#3568a8;">let mut</span> last = <span style="color:#8f6a2e;">None</span>;</span></div>
+        <div style="display:flex;background:#e6efe6;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#b0aa98;">18</span><span style="white-space:pre;color:#3a3830;text-decoration:underline wavy #1a9a62 1px;text-underline-offset:4px;">    <span style="color:#3568a8;">for</span> attempt <span style="color:#3568a8;">in</span> 0..policy.max_attempts {</span></div>
+        <div style="padding:2px 0 2px 52px;color:#8a8474;"><div style="white-space:pre;">┊ ⚓ you · 2m    cap check?</div><div style="white-space:pre;">┊ <span style="color:#1a9a62;">✻ claude · 1m</span> max_attempts is the cap</div></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#b0aa98;">19</span><span style="white-space:pre;color:#3a3830;">        <span style="color:#3568a8;">match</span> op() {</span></div>
+        <div style="display:flex;align-items:center;height:24px;background:#e8e4d8;font-size:11px;margin-top:8px;">
+          <span style="background:#1a9a62;color:#f4f2ec;font-weight:600;padding:0 8px;line-height:24px;">NORMAL</span>
+          <span style="color:#3a3830;padding:0 10px;">src/retry.rs <span style="color:#a06a10;">[+]</span></span>
+          <span style="flex:1;"></span>
+          <span style="color:#1a9a62;padding-right:10px;">✻ claude idle</span>
+          <span style="color:#8a8474;padding-right:8px;">●6 │ jj ✓</span>
+        </div>
+      </div>
+    </div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-top:8px;">dark: green-tinted near-black + phosphor green — claude owns the brightest thing on screen. light: warm paper + deepened hues. no legacy semantics to fight; it is the identity.</div>
+  </div>
+
+</section>
+
+<section style="display:flex;flex-wrap:wrap;gap:48px;padding:48px 48px 0;align-items:flex-start;">
+
+  <div style="width:900px;background:#fff;border:1px solid #d8ded8;border-radius:8px;padding:20px 24px;">
+    <div style="font-size:15px;font-weight:600;margin-bottom:8px;">Turn 8 — the last mile</div>
+    <div style="font-size:13px;line-height:1.6;color:#3d423d;display:flex;flex-direction:column;gap:6px;">
+      <div><strong>Search is the same picker:</strong> grep, files, symbols — one float, one grammar. Results carry agent context (unseen dots, who touched the line) because the store already knows.</div>
+      <div><strong>Scale is grouping, not scrolling:</strong> a 40-file block collapses to directories; "mark seen" composes over any group. The transcript folds turns the same way.</div>
+      <div><strong>Light theme proves the palette:</strong> actor identity survives restyling — green is still claude on white. Ships as base16; hue is the contract, lightness is the theme's.</div>
+      <div><strong>80 cols degrades by dropping, not squeezing:</strong> statusline sheds counters → session prose → dirty flag, in that order. Pickers lose the preview split. Floats go full-width. Nothing ever wraps.</div>
+      <div><strong>First keystroke teaches:</strong> unknown key in NORMAL → a one-line hint naming the leader, once per session. Text details: soft-wrap off by default, ↪ continuation when on; folds render as ⋯ with counts; trailing whitespace shown only in INSERT.</div>
+    </div>
+  </div>
+
+  <div id="8a" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">8a</span><span style="font-size:15px;font-weight:600;">Search — grep with agent context</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">same picker anatomy as unseen/files/inbox · results know who touched them</div>
+    <div style="position:relative;background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;height:420px;">
+      <pre style="color:#232823;padding:8px 0 0 14px;">pub fn retry_with_backoff&lt;T, E&gt;(
+    mut op: impl FnMut() -&gt; Result&lt;T, E&gt;,
+    policy: &amp;RetryPolicy,</pre>
+      <div style="position:absolute;top:40px;left:60px;right:60px;background:#101410;border:1px solid #2a5c44;border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:22px;">
+        <div style="padding:6px 12px;border-bottom:1px solid #242a24;color:#c6cec6;">❯ grep: max_delay<span style="background:#c6cec6;color:#0c0f0c;">&nbsp;</span></div>
+        <div style="display:flex;">
+          <div style="flex:1.1;padding:8px 0;border-right:1px solid #242a24;">
+            <div style="padding:0 12px;background:#26332a;white-space:pre;overflow:hidden;"><span style="color:#e8f0e8;">▸ src/retry.rs:9      </span><span style="color:#3ddc97;">●</span><span style="color:#e8f0e8;"> pub max_delay: Duration,</span></div>
+            <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#c6cec6;">  src/retry.rs:24     </span><span style="color:#3ddc97;">●</span><span style="color:#c6cec6;"> .min(policy.max_delay)</span></div>
+            <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#c6cec6;">  src/retry.rs:64       jitter(exp.min(self.max_delay))</span></div>
+            <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#c6cec6;">  src/ws/reconnect.rs:41  delay cap via max_delay</span></div>
+            <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#c6cec6;">  tests/retry_test.rs:18  policy.max_delay = 1s</span></div>
+            <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#59635a;">  5 matches · 4 files</div>
+          </div>
+          <div style="flex:1;padding:8px 0;">
+            <div style="padding:0 12px;white-space:pre;color:#59635a;">src/retry.rs:9 <span style="color:#3ddc97;">· ✻ claude · unseen</span></div>
+            <div style="padding:0 12px;white-space:pre;color:#c6cec6;">pub struct RetryPolicy {</div>
+            <div style="padding:0 12px;white-space:pre;color:#c6cec6;">    pub max_attempts: u32,</div>
+            <div style="padding:0 12px;white-space:pre;color:#c6cec6;">    pub base_delay: Duration,</div>
+            <div style="padding:0 12px;white-space:pre;background:#26332a;color:#e8f0e8;">    pub <span style="color:#3ddc97;">max_delay</span>: Duration,</div>
+            <div style="padding:0 12px;white-space:pre;color:#c6cec6;">}</div>
+          </div>
+        </div>
+        <div style="padding:5px 12px;border-top:1px solid #242a24;color:#59635a;">↵ open · C-q all to quickfix · tab cycle grep/files/symbols · esc</div>
+      </div>
+      <div style="position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#3ddc97;padding-right:12px;">✻ claude idle</span>
+        <span style="color:#59635a;padding-right:10px;">6 unseen</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="8b" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">8b</span><span style="font-size:15px;font-weight:600;">Scale — the 40-file block</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">grouping, not scrolling · directories fold · seen composes over any group</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:22px;">
+      <div style="padding:7px 12px;border-bottom:1px solid #242a24;color:#c6cec6;">review — <span style="color:#3ddc97;">✻ migrate error handling</span> · 41 files · 96 regions · 12 seen ✓</div>
+      <div style="padding:8px 0;">
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#c6cec6;">▾ src/api/        <span style="color:#3ddc97;">●31 unseen</span> <span style="color:#59635a;">· 14 files · the meat: handler signatures</span></div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;background:#26332a;"><span style="color:#e8f0e8;">▸   handlers/users.rs   </span><span style="color:#3ddc97;">●4</span><span style="color:#e8f0e8;">  Result&lt;_, ApiError&gt; throughout</span></div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#c6cec6;">▸   handlers/orders.rs  <span style="color:#3ddc97;">●3</span>  same shape</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#59635a;">    ⋯ 12 more files, same pattern · S here marks all 12</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#c6cec6;">▸ src/db/         <span style="color:#3ddc97;">●22 unseen</span> <span style="color:#59635a;">· 9 files · mechanical: ? → map_err</span></div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#c6cec6;">▸ src/errors.rs   <span style="color:#3ddc97;">●1 unseen</span>  <span style="color:#59635a;">· the new ApiError enum — read this one</span></div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#59635a;">▸ tests/          seen ✓ · 17 files</div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">REVIEW</span>
+        <span style="color:#c6cec6;padding:0 12px;">migrate error handling</span>
+        <span style="flex:1;"></span>
+        <span style="color:#59635a;padding-right:10px;">za fold · s seen · S group seen · q</span>
+      </div>
+    </div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-top:8px;">claude annotates the groups — "mechanical" vs "the meat" — so attention goes where it matters. the block summary is his, the seen state is yours.</div>
+  </div>
+
+  <div id="8c" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">8c</span><span style="font-size:15px;font-weight:600;">Light theme — the palette holds</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">base16 restyle · hue is the contract: green is still claude on white</div>
+    <div style="background:#f4f2ec;border:1px solid #d8d4c8;border-radius:6px;overflow:hidden;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:20px;position:relative;">
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#b0aa98;">15</span><span style="white-space:pre;color:#3a3830;">) -&gt; <span style="color:#8f6a2e;">Result</span>&lt;<span style="color:#8f6a2e;">T</span>, <span style="color:#8f6a2e;">E</span>&gt; {</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;background:#1a9a62;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#b0aa98;">16</span><span style="white-space:pre;color:#3a3830;">    <span style="color:#3568a8;">let mut</span> delay = policy.base_delay;</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;background:#1a9a62;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#b0aa98;">17</span><span style="white-space:pre;color:#3a3830;">    <span style="color:#3568a8;">let mut</span> last = <span style="color:#8f6a2e;">None</span>;</span></div>
+      <div style="display:flex;background:#e6efe6;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#b0aa98;">18</span><span style="white-space:pre;color:#3a3830;text-decoration:underline wavy #1a9a62 1px;text-underline-offset:4px;">    <span style="color:#3568a8;">for</span> attempt <span style="color:#3568a8;">in</span> 0..policy.max_attempts {</span></div>
+      <div style="padding:2px 0 2px 58px;color:#8a8474;"><div style="white-space:pre;">┊ ⚓ you · 2m     shouldn't this be a loop with a cap check?</div><div style="white-space:pre;">┊ <span style="color:#1a9a62;">✻ claude · 1m</span>  max_attempts is the cap — loop would need the same bound</div></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#b0aa98;">19</span><span style="white-space:pre;color:#3a3830;">        <span style="color:#3568a8;">match</span> op() {</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#b0aa98;">20</span><span style="white-space:pre;color:#3a3830;">            <span style="color:#8f6a2e;">Ok</span>(v) =&gt; <span style="color:#3568a8;">return</span> <span style="color:#8f6a2e;">Ok</span>(v),</span></div>
+      <div style="display:flex;align-items:center;height:24px;background:#e8e4d8;font-size:11.5px;margin-top:8px;">
+        <span style="background:#1a9a62;color:#f4f2ec;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#3a3830;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#1a9a62;padding-right:12px;">✻ claude idle</span>
+        <span style="color:#8a8474;padding-right:10px;">2 unseen │ jj ✓</span>
+      </div>
+    </div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-top:8px;">claude-green deepens to #1a9a62 for contrast on paper-white; attention amber → #a06a10, trouble → #b5473a, you-blue → #3568a8. same hues, theme owns lightness.</div>
+  </div>
+
+  <div id="8d" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">8d</span><span style="font-size:15px;font-weight:600;">80 columns — drop, don't squeeze</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">narrow terminal · statusline sheds right-to-left · full-width floats · nothing wraps</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;width:640px;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:20px;">
+      <div style="padding-top:8px;">
+        <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">17</span><span style="white-space:pre;color:#c6cec6;overflow:hidden;">    <span style="color:#82aecd;">let mut</span> last = <span style="color:#cfa86a;">None</span>;</span></div>
+        <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">18</span><span style="white-space:pre;color:#c6cec6;overflow:hidden;">    <span style="color:#82aecd;">for</span> attempt <span style="color:#82aecd;">in</span> 0..policy.max_attempts {</span></div>
+      </div>
+      <div style="border-top:1px solid #2a5c44;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:20px;">
+        <div style="padding:5px 10px;border-bottom:1px solid #242a24;color:#c6cec6;">❯ unseen<span style="background:#c6cec6;color:#0c0f0c;">&nbsp;</span></div>
+        <div style="padding:6px 0;">
+          <div style="padding:0 10px;background:#26332a;white-space:pre;overflow:hidden;color:#e8f0e8;">▸ src/retry.rs:6–10   +RetryPolicy struct</div>
+          <div style="padding:0 10px;white-space:pre;overflow:hidden;color:#9aa39a;">  src/retry.rs:12–24  +retry_with_backoff</div>
+          <div style="padding:0 10px;white-space:pre;overflow:hidden;color:#59635a;">  no preview under 100 cols · ↵ opens</div>
+        </div>
+        <div style="padding:4px 10px;border-top:1px solid #242a24;color:#59635a;">↵ open · s mark seen · esc</div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 8px;line-height:24px;">N</span>
+        <span style="color:#c6cec6;padding:0 10px;">retry.rs <span style="color:#e0a94e;">[+]</span></span>
+        <span style="flex:1;"></span>
+        <span style="color:#3ddc97;padding-right:10px;">✻</span>
+        <span style="color:#59635a;padding-right:8px;">●6</span>
+      </div>
+    </div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-top:8px;">shed order: counters → jj → cursor pos → session prose (glyph stays) → mode word (initial stays). the ✻/●6 pair is the last thing standing.</div>
+  </div>
+
+  <div id="8e" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">8e</span><span style="font-size:15px;font-weight:600;">First keystroke + text details</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">unknown key teaches once · folds, soft-wrap continuation, insert-only whitespace</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:20px;">
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">12</span><span style="white-space:pre;color:#c6cec6;"><span style="color:#82aecd;">pub fn</span> <span style="color:#9ec98c;">retry_with_backoff</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt;( <span style="color:#59635a;">▸⋯ 13 lines</span></span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">26</span><span style="white-space:pre;color:#c6cec6;"> </span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">27</span><span style="white-space:pre;color:#c6cec6;"><span style="color:#59635a;">// long doc comment wraps softly and the continuation row</span></span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;"> </span><span style="white-space:pre;color:#c6cec6;"><span style="color:#414b42;">↪ </span><span style="color:#59635a;">// carries no line number — the gutter stays honest</span></span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">28</span><span style="white-space:pre;color:#c6cec6;">    resp.json().<span style="color:#82aecd;">await</span>.map_err(<span style="color:#cfa86a;">FetchError</span>::Decode)<span style="background:#211114;color:#d97b6c;">··</span> <span style="color:#59635a;">← INSERT only</span></span></div>
+      <div style="padding:6px 0 6px 58px;color:#59635a;white-space:pre;">┊ unknown key <span style="color:#e0a94e;">gq</span> — SPC opens the keymap · :help agent-objects · shown once</div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11.5px;margin-top:8px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/fetch.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#3ddc97;padding-right:12px;">✻ claude idle</span>
+        <span style="color:#59635a;padding-right:10px;">27:1</span>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<section style="display:flex;flex-wrap:wrap;gap:48px;padding:48px 48px 0;align-items:flex-start;">
+
+  <div style="width:900px;background:#fff;border:1px solid #d8ded8;border-radius:8px;padding:20px 24px;">
+    <div style="font-size:15px;font-weight:600;margin-bottom:8px;">Turn 7 — the unglamorous surfaces</div>
+    <div style="font-size:13px;line-height:1.6;color:#3d423d;display:flex;flex-direction:column;gap:6px;">
+      <div><strong>Permission asks reuse the question float:</strong> same amber vocabulary as needs-input, plus the exact command and a diff-preview when it touches files. Digits answer; "always allow" writes a rule to init.scm you can read.</div>
+      <div><strong>Session trouble is a statusline state, not a modal:</strong> the editor is fully functional without the agent, so a dropped session never blocks editing. Reattach reuses the adopt flow; the transcript shows the seam honestly.</div>
+      <div><strong>Plain editing must be boring:</strong> LSP completion, signature help, snippets — table stakes rendered in the same float language. No agent chrome anywhere near it.</div>
+      <div><strong>Cold start invites, never nags:</strong> an empty dashboard states what it found (no session, no history) and lists three verbs. One dismissable line, then it's just an editor.</div>
+      <div><strong>Interrupt is a conversation, not a kill:</strong> esc pauses the turn at the next tool boundary; you steer, resume, or abort. The transcript records the seam.</div>
+    </div>
+  </div>
+
+  <div id="7a" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">7a</span><span style="font-size:15px;font-weight:600;">Permission ask</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">consequential command · exact invocation shown · always-allow writes a legible rule</div>
+    <div style="position:relative;background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;height:360px;">
+      <pre style="color:#232823;padding:8px 0 0 14px;">pub async fn fetch_json(url: &amp;str) -&gt; Result&lt;Value, FetchError&gt; {
+    let policy = RetryPolicy::default();
+    let resp = retry_with_backoff(|| client.get(url).send(), &amp;policy)?;</pre>
+      <div style="position:absolute;top:56px;left:100px;right:100px;background:#171207;border:1px solid #6b5426;border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:20px;">
+        <div style="padding:6px 12px;border-bottom:1px solid #3d3418;color:#e0a94e;">✻ claude · wants to run</div>
+        <div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;">
+          <div style="white-space:pre;color:#e8f0e8;">$ git push origin retry-backoff</div>
+          <div style="color:#9aa39a;line-height:18px;">branch is new · 3 commits · remote: github.com/you/fetchd</div>
+          <div style="white-space:pre;color:#c6cec6;"><span style="color:#e0a94e;">[1]</span> allow once   <span style="color:#e0a94e;">[2]</span> always allow git push   <span style="color:#e0a94e;">[3]</span> deny</div>
+        </div>
+        <div style="padding:5px 12px;border-top:1px solid #3d3418;color:#59635a;">2 writes (allow "git push") to init.scm · :c to ask why</div>
+      </div>
+      <div style="position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/fetch.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#e0a94e;padding-right:12px;">! claude waiting</span>
+        <span style="color:#59635a;padding-right:10px;">2 unseen</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="7b" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">7b</span><span style="font-size:15px;font-weight:600;">Session dropped</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">acp gone mid-turn · editing never blocks · the transcript shows the seam honestly</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;">
+      <div style="display:flex;">
+        <div style="flex:1;min-width:0;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:20px;">
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">16</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">let mut</span> delay = policy.base_delay;</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">17</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">let mut</span> last = <span style="color:#cfa86a;">None</span>;</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">18</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">for</span> attempt <span style="color:#82aecd;">in</span> 0..policy.max_attempts {</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">19</span><span style="white-space:pre;color:#c6cec6;">        <span style="color:#82aecd;">match</span> op() {</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">20</span><span style="white-space:pre;color:#c6cec6;">            <span style="color:#cfa86a;">Ok</span>(v) =&gt; <span style="color:#82aecd;">return</span> <span style="color:#cfa86a;">Ok</span>(v),</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">21</span><span style="white-space:pre;color:#c6cec6;">            <span style="color:#cfa86a;">Err</span>(e) =&gt; last = <span style="color:#cfa86a;">Some</span>(e),</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">22</span><span style="white-space:pre;color:#c6cec6;">        }</span></div>
+        </div>
+        <div style="flex:0 0 360px;border-left:1px solid #242a24;display:flex;flex-direction:column;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:19px;">
+          <div style="padding:8px 12px;border-bottom:1px solid #242a24;color:#59635a;">claude code · acp · <span style="color:#d97b6c;">disconnected</span></div>
+          <div style="padding:10px 12px;display:flex;flex-direction:column;gap:10px;flex:1;">
+            <div style="color:#9aa39a;">Replacing the reconnect loop's hand-rolled sleep with retry_with_backoff.</div>
+            <div style="display:flex;flex-direction:column;gap:3px;color:#c6cec6;">
+              <div>▸ edit  src/ws/reconnect.rs <span style="color:#3ddc97;">+11</span> <span style="color:#d97b6c;">−18</span></div>
+            </div>
+            <div style="color:#d97b6c;">✕ connection lost mid-turn · 14:47</div>
+            <div style="color:#59635a;">disk state preserved · 2 regions arrived before the drop, marked unseen · turn may be incomplete</div>
+          </div>
+          <div style="padding:7px 12px;border-top:1px solid #242a24;color:#59635a;">:ca reattach · :cn new session · q close</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#d97b6c;padding-right:12px;">✕ session lost · :ca</span>
+        <span style="color:#59635a;padding-right:10px;">2 unseen</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="7c" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">7c</span><span style="font-size:15px;font-weight:600;">Just editing</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">lsp completion + signature help · no agent anywhere · boring on purpose</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:20px;position:relative;">
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">30</span><span style="white-space:pre;color:#c6cec6;"><span style="color:#82aecd;">pub async fn</span> <span style="color:#9ec98c;">fetch_all</span>(urls: &amp;[<span style="color:#cfa86a;">String</span>]) -&gt; <span style="color:#cfa86a;">Vec</span>&lt;<span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">Value</span>, <span style="color:#cfa86a;">FetchError</span>&gt;&gt; {</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">31</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">let</span> policy = <span style="color:#cfa86a;">RetryPolicy</span>::de<span style="background:#c6cec6;color:#0c0f0c;">&nbsp;</span></span></div>
+      <div style="margin-left:290px;width:400px;background:#101410;border:1px solid #2a3c2e;border-radius:4px;font-size:11.5px;line-height:20px;">
+        <div style="padding:2px 10px;background:#26332a;white-space:pre;color:#e8f0e8;">default()      <span style="color:#59635a;">fn() -&gt; RetryPolicy</span></div>
+        <div style="padding:2px 10px;white-space:pre;color:#c6cec6;">default_delay  <span style="color:#59635a;">Duration</span></div>
+        <div style="padding:2px 10px;white-space:pre;color:#c6cec6;">deserialize    <span style="color:#59635a;">fn(D) -&gt; Result&lt;Self&gt;</span></div>
+        <div style="padding:4px 10px;border-top:1px solid #1d241d;color:#59635a;line-height:17px;">Returns the policy with 3 attempts, 200ms base, 1s cap.</div>
+      </div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">32</span><span style="white-space:pre;color:#c6cec6;">    join_all(urls.iter().map(|u| fetch_json(u))).<span style="color:#82aecd;">await</span></span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">33</span><span style="white-space:pre;color:#c6cec6;">}</span></div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11.5px;margin-top:8px;">
+        <span style="background:#82aecd;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">INSERT</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/fetch.rs [+]</span>
+        <span style="flex:1;"></span>
+        <span style="color:#59635a;padding-right:12px;">rust-analyzer ✓</span>
+        <span style="color:#59635a;padding-right:10px;">31:34</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="7d" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">7d</span><span style="font-size:15px;font-weight:600;">Cold start</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">fresh repo, no session, no history · states what it found · three verbs, then out of the way</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;align-items:center;padding:56px 0 0;height:340px;box-sizing:border-box;position:relative;">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;color:#e8f0e8;letter-spacing:0.04em;">phosphor</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#59635a;margin:4px 0 28px;">v0.1 · ghostty</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:24px;display:grid;grid-template-columns:88px auto;column-gap:20px;">
+        <span style="color:#59635a;text-align:right;">repo</span><span style="color:#c6cec6;">~/src/fetchd · 214 files · no vcs detected</span>
+        <span style="color:#59635a;text-align:right;">session</span><span style="color:#c6cec6;">none running</span>
+        <span style="color:#59635a;text-align:right;">history</span><span style="color:#c6cec6;">—</span>
+      </div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#59635a;margin-top:28px;">:e edit · :cn start claude · :f find file</div>
+      <div style="position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="flex:1;"></span>
+        <span style="color:#59635a;padding-right:10px;">no session</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="7e" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">7e</span><span style="font-size:15px;font-weight:600;">Interrupt &amp; steer</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">esc pauses at the next tool boundary · steer, resume, or abort · the seam is recorded</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;">
+      <div style="display:flex;">
+        <div style="flex:1;min-width:0;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:20px;">
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">40</span><span style="white-space:pre;color:#c6cec6;">        <span style="color:#82aecd;">match</span> connect(url).<span style="color:#82aecd;">await</span> {</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">41</span><span style="white-space:pre;color:#c6cec6;">            <span style="color:#cfa86a;">Err</span>(_) =&gt; delay = policy.next_delay(n),</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">42</span><span style="white-space:pre;color:#c6cec6;">            <span style="color:#cfa86a;">Ok</span>(ws) =&gt; <span style="color:#82aecd;">return</span> <span style="color:#cfa86a;">Ok</span>(ws),</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">43</span><span style="white-space:pre;color:#c6cec6;">        }</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">44</span><span style="white-space:pre;color:#c6cec6;">        sleep(delay).<span style="color:#82aecd;">await</span>;</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">45</span><span style="white-space:pre;color:#c6cec6;">    }</span></div>
+        </div>
+        <div style="flex:0 0 360px;border-left:1px solid #242a24;display:flex;flex-direction:column;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:19px;">
+          <div style="padding:8px 12px;border-bottom:1px solid #242a24;color:#59635a;">claude code · acp · <span style="color:#e0a94e;">paused</span></div>
+          <div style="padding:10px 12px;display:flex;flex-direction:column;gap:10px;flex:1;">
+            <div style="display:flex;flex-direction:column;gap:3px;color:#c6cec6;">
+              <div>▸ edit  src/ws/reconnect.rs <span style="color:#3ddc97;">+11</span> <span style="color:#d97b6c;">−18</span></div>
+              <div style="color:#59635a;">▸ next: edit tests/ws_test.rs</div>
+            </div>
+            <div style="color:#e0a94e;">⏸ paused at tool boundary · esc · 14:52</div>
+            <div style="color:#3ddc97;">❯ don't touch the tests — I'm rewriting them by hand right now<span style="background:#3ddc97;color:#0c0f0c;">&nbsp;</span></div>
+          </div>
+          <div style="padding:7px 12px;border-top:1px solid #242a24;color:#59635a;">↵ steer &amp; resume · :cr resume as-was · :cx abort turn</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#e0a94e;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">PAUSED</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/ws/reconnect.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#e0a94e;padding-right:12px;">⏸ claude paused</span>
+        <span style="color:#59635a;padding-right:10px;">2 unseen</span>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<section style="display:flex;flex-wrap:wrap;gap:48px;padding:48px 48px 0;align-items:flex-start;">
+
+  <div style="width:900px;background:#fff;border:1px solid #d8ded8;border-radius:8px;padding:20px 24px;">
+    <div style="font-size:15px;font-weight:600;margin-bottom:8px;">Turn 6 — one substrate, every feature a view of it</div>
+    <div style="font-size:13px;line-height:1.6;color:#3d423d;display:flex;flex-direction:column;gap:6px;">
+      <div><strong>The elegant move:</strong> tree-sitter, LSP, ACP and MCP aren't four features — they're one semantic substrate. Tree-sitter gives every region a syntactic identity, LSP gives it meaning, ACP streams who's touching it, MCP exposes all of it as tools. Unseen markers, anchors, watches, and the inbox are all queries over the same store.</div>
+      <div><strong>Anchors are nodes, not lines:</strong> comments, seen-state, and watches bind to tree-sitter nodes, so they survive claude rewriting the file around them. Line numbers are a rendering detail.</div>
+      <div><strong>Steel is the REPL and the config:</strong> one scheme dialect scripts everything — your keymaps, claude's panes (v1.5), and the live editor REPL. The API claude uses is the API you use.</div>
+      <div><strong>Vim pedigree, honored precisely:</strong> real ex commands, ranges, registers, and text objects. Agent objects join the grammar — <code>viu</code> selects an unseen region; <code>:'&lt;,'&gt;c</code> is an anchored message.</div>
+    </div>
+  </div>
+
+  <div id="6a" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">6a</span><span style="font-size:15px;font-weight:600;">The substrate — :arch</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">the editor can draw its own architecture · every feature is a query over one store</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:20px;">
+      <div style="padding:7px 12px;border-bottom:1px solid #242a24;color:#c6cec6;">:arch</div>
+      <div style="padding:12px 0;">
+        <div style="padding:0 16px;white-space:pre;color:#59635a;">            <span style="color:#82aecd;">tree-sitter</span>          <span style="color:#82aecd;">LSP</span>              <span style="color:#3ddc97;">ACP</span>              <span style="color:#cfa86a;">MCP</span></div>
+        <div style="padding:0 16px;white-space:pre;color:#59635a;">            syntax nodes         meaning          agent stream     tool surface</div>
+        <div style="padding:0 16px;white-space:pre;color:#59635a;">                 │                  │                  │                │</div>
+        <div style="padding:0 16px;white-space:pre;color:#59635a;">                 └──────────┬───────┴──────────┬───────┴────────────────┘</div>
+        <div style="padding:0 16px;white-space:pre;color:#59635a;">                            ▼                  ▼</div>
+        <div style="padding:0 16px;white-space:pre;color:#c6cec6;">                    ┌────────────────────────────────┐</div>
+        <div style="padding:0 16px;white-space:pre;color:#c6cec6;">                    │  <span style="color:#e8f0e8;">semantic store</span>                │  regions · anchors · seen</div>
+        <div style="padding:0 16px;white-space:pre;color:#c6cec6;">                    │  <span style="color:#59635a;">who touched what, and why</span>     │  watches · threads · inbox</div>
+        <div style="padding:0 16px;white-space:pre;color:#c6cec6;">                    └────────────────────────────────┘</div>
+        <div style="padding:0 16px;white-space:pre;color:#59635a;">                            ▲                  ▲</div>
+        <div style="padding:0 16px;white-space:pre;color:#59635a;">                 ┌──────────┴───────┐          │</div>
+        <div style="padding:0 16px;white-space:pre;color:#59635a;">            <span style="color:#9ec98c;">steel repl + config</span>    <span style="color:#9ec98c;">vim grammar</span> — motions · text objects · ex</div>
+        <div style="padding:0 16px;white-space:pre;color:#59635a;">            one API, two callers: you and claude</div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">:arch</span>
+        <span style="flex:1;"></span>
+        <span style="color:#59635a;padding-right:10px;">q close</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="6b" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">6b</span><span style="font-size:15px;font-weight:600;">Steel REPL</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">the editor's internals, queryable live · the same API claude scripts against in v1.5</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:21px;">
+      <div style="padding:7px 12px;border-bottom:1px solid #242a24;color:#c6cec6;">◆ steel <span style="color:#59635a;">· :repl</span></div>
+      <div style="padding:10px 0 12px;">
+        <div style="padding:0 14px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">λ</span> (unseen-regions <span style="color:#cfa86a;">"src/retry.rs"</span>)</div>
+        <div style="padding:0 14px;white-space:pre;color:#9aa39a;">⇒ (#region 4 fn:use  #region 6-10 struct:RetryPolicy  #region 12-24 fn:retry_with_backoff)</div>
+        <div style="padding:0 14px;white-space:pre;color:#c6cec6;"> </div>
+        <div style="padding:0 14px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">λ</span> (map region-author (block-regions <span style="color:#cfa86a;">"retry logic"</span>))</div>
+        <div style="padding:0 14px;white-space:pre;color:#9aa39a;">⇒ (claude claude claude claude claude claude)</div>
+        <div style="padding:0 14px;white-space:pre;color:#c6cec6;"> </div>
+        <div style="padding:0 14px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">λ</span> (keymap-set! <span style="color:#cfa86a;">"]r"</span> (lambda () (goto (next-region-by claude))))</div>
+        <div style="padding:0 14px;white-space:pre;color:#9aa39a;">⇒ #ok <span style="color:#59635a;">· persisted to init.scm</span></div>
+        <div style="padding:0 14px;white-space:pre;color:#c6cec6;"> </div>
+        <div style="padding:0 14px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">λ</span> (watch-place <span style="color:#cfa86a;">"src/retry.rs:24"</span> <span style="color:#cfa86a;">'delay</span>)</div>
+        <div style="padding:0 14px;white-space:pre;color:#9aa39a;">⇒ #watch-3 <span style="color:#59635a;">· streaming from next run</span></div>
+        <div style="padding:0 14px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">λ</span> <span style="background:#c6cec6;color:#0c0f0c;">&nbsp;</span></div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11.5px;">
+        <span style="background:#9ec98c;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">REPL</span>
+        <span style="color:#c6cec6;padding:0 12px;">steel</span>
+        <span style="flex:1;"></span>
+        <span style="color:#59635a;padding-right:10px;">C-c buffer · tab complete · q close</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="6c" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">6c</span><span style="font-size:15px;font-weight:600;">Anchors survive the rewrite</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">claude restructured the file · the thread followed its tree-sitter node, lines be damned · LSP hover and diagnostics in the same gutter language</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:20px;">
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">61</span><span style="white-space:pre;color:#c6cec6;"><span style="color:#82aecd;">impl</span> <span style="color:#cfa86a;">RetryPolicy</span> {</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">62</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">pub fn</span> <span style="color:#9ec98c;">next_delay</span>(&amp;<span style="color:#82aecd;">self</span>, attempt: <span style="color:#cfa86a;">u32</span>) -&gt; <span style="color:#cfa86a;">Duration</span> {</span></div>
+      <div style="padding:2px 0 2px 58px;color:#59635a;"><div style="white-space:pre;">┊ ⚓ thread · was retry_with_backoff:19–21 · followed node <span style="color:#82aecd;">fn:next_delay</span></div><div style="white-space:pre;">┊ you: collapse these arms — use the shared backoff helper</div><div style="white-space:pre;">┊ <span style="color:#3ddc97;">✻ claude: collapsed — and hoisted into next_delay during the split</span></div></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">63</span><span style="white-space:pre;color:#c6cec6;">        <span style="color:#82aecd;">let</span> exp = <span style="color:#82aecd;">self</span>.base_delay * 2u32.pow(attempt);</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">64</span><span style="white-space:pre;color:#c6cec6;">        jitter(exp.min(<span style="color:#82aecd;">self</span>.max_delay))<span style="text-decoration:underline wavy #d97b6c 1px;text-underline-offset:4px;"></span> <span style="color:#d97b6c;">■ E0308: expected Duration, found u128</span></span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">65</span><span style="white-space:pre;color:#c6cec6;">    }</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">66</span><span style="white-space:pre;color:#c6cec6;">}</span></div>
+      <div style="padding:2px 0 2px 58px;color:#59635a;white-space:pre;">┊ <span style="color:#d97b6c;">1 diagnostic</span> · claude sees what LSP sees — :c fix routes it with the anchor attached</div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11.5px;margin-top:8px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#d97b6c;padding-right:12px;">■ 1</span>
+        <span style="color:#59635a;padding-right:10px;">1 thread · 2 unseen</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="6d" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">6d</span><span style="font-size:15px;font-weight:600;">The grammar, extended</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">:help agent-objects · vim's composability with agent-native nouns</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:22px;">
+      <div style="padding:7px 12px;border-bottom:1px solid #242a24;color:#c6cec6;">:help agent-objects</div>
+      <div style="padding:10px 0 12px;">
+        <div style="padding:0 16px;white-space:pre;color:#59635a;">nouns    <span style="color:#82aecd;">u</span> unseen region   <span style="color:#82aecd;">h</span> hunk   <span style="color:#82aecd;">t</span> thread   <span style="color:#82aecd;">b</span> review block</div>
+        <div style="padding:0 16px;white-space:pre;color:#59635a;"> </div>
+        <div style="padding:0 16px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">viu</span>        <span style="color:#59635a;">select inner unseen region</span></div>
+        <div style="padding:0 16px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">]u  [u</span>     <span style="color:#59635a;">next / previous unseen · ]b block-wise</span></div>
+        <div style="padding:0 16px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">sib</span>        <span style="color:#59635a;">mark inner block seen — s composes like an operator</span></div>
+        <div style="padding:0 16px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">dih</span>        <span style="color:#59635a;">delete inner hunk — revert claude's edit, plain vim delete</span></div>
+        <div style="padding:0 16px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">:'&lt;,'&gt;c</span> <span style="color:#cfa86a;">msg</span> <span style="color:#59635a;">anchored message over a range — ranges, like ex intended</span></div>
+        <div style="padding:0 16px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">:g/TODO/c</span>  <span style="color:#59635a;">global over a pattern → one message, many anchors</span></div>
+        <div style="padding:0 16px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">"ay ib</span>     <span style="color:#59635a;">yank a review block into register a — paste it into :c</span></div>
+        <div style="padding:0 16px;white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">q: </span>        <span style="color:#59635a;">command history — your prompts to claude are ex history too</span></div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">help</span>
+        <span style="flex:1;"></span>
+        <span style="color:#59635a;padding-right:10px;">q close</span>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<section style="display:flex;flex-wrap:wrap;gap:48px;padding:48px 48px 0;align-items:flex-start;">
+
+  <div style="width:900px;background:#fff;border:1px solid #d8ded8;border-radius:8px;padding:20px 24px;">
+    <div style="font-size:15px;font-weight:600;margin-bottom:8px;">Turn 5 — closing the Light Table loop</div>
+    <div style="font-size:13px;line-height:1.6;color:#3d423d;display:flex;flex-direction:column;gap:6px;">
+      <div><strong>Watches return:</strong> the "some of the former" from the original pitch. Place a watch on an expression; values come from real executions — your test runs, claude's runs — streamed through the session, rendered as virtual text. Not static analysis, actual behavior.</div>
+      <div><strong>Dirty state, resolved honestly:</strong> <code>:dv</code> is a side-by-side of buffer vs disk. Three exits, all manual: take disk, keep yours, or ask claude. No auto-merge.</div>
+      <div><strong>The inbox is just a list:</strong> everything claude has said to you, severity as one flag set over MCP. Unread is the same concept as unseen.</div>
+      <div><strong>Session lifecycle:</strong> attach, adopt, or start. Adoption discovers running sessions (tmux control mode, ACP sockets) and connects without restarting the agent.</div>
+    </div>
+  </div>
+
+  <div id="5a" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">5a</span><span style="font-size:15px;font-weight:600;">Watches</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">live values from real runs as virtual text · the light table inheritance, agent-powered</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:20px;">
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">15</span><span style="white-space:pre;color:#c6cec6;">) -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt; {</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">16</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">let mut</span> delay = policy.base_delay; <span style="color:#82aecd;">  ◉ ⇒ 200ms</span></span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">17</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">let mut</span> last = <span style="color:#cfa86a;">None</span>;</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">18</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">for</span> attempt <span style="color:#82aecd;">in</span> 0..policy.max_attempts { <span style="color:#82aecd;">  ◉ ⇒ 0 · 1 · 2 · 3</span></span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">19</span><span style="white-space:pre;color:#c6cec6;">        <span style="color:#82aecd;">match</span> op() {</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">20</span><span style="white-space:pre;color:#c6cec6;">            <span style="color:#cfa86a;">Ok</span>(v) =&gt; <span style="color:#82aecd;">return</span> <span style="color:#cfa86a;">Ok</span>(v),</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">21</span><span style="white-space:pre;color:#c6cec6;">            <span style="color:#cfa86a;">Err</span>(e) =&gt; last = <span style="color:#cfa86a;">Some</span>(e),</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">22</span><span style="white-space:pre;color:#c6cec6;">        }</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">23</span><span style="white-space:pre;color:#c6cec6;">        thread::sleep(jitter(delay));</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">24</span><span style="white-space:pre;color:#c6cec6;">        delay = (delay * 2).min(policy.max_delay); <span style="color:#82aecd;">  ◉ ⇒ 400ms · 800ms · 1s · 1s ⌁capped</span></span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">25</span><span style="white-space:pre;color:#c6cec6;">    }</span></div>
+      <div style="padding:2px 0 2px 58px;color:#59635a;white-space:pre;">┊ values from cargo test · retry::tests::backoff_caps · 40s ago · gw place watch</div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11.5px;margin-top:8px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#82aecd;padding-right:12px;">◉ 3 watches</span>
+        <span style="color:#3ddc97;padding-right:10px;">✻ claude idle</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="5b" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">5b</span><span style="font-size:15px;font-weight:600;">Disk diff — :dv</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">your unsaved buffer vs claude's disk write · three manual exits, no auto-merge</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:20px;">
+      <div style="padding:7px 12px;border-bottom:1px solid #242a24;color:#c6cec6;">disk ⟷ buffer · src/fetch.rs</div>
+      <div style="display:flex;">
+        <div style="flex:1;min-width:0;padding:8px 0;">
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#82aecd;">buffer · yours · unsaved [+]</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#c6cec6;">pub async fn fetch_json(url: &amp;str)</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#c6cec6;">  -&gt; Result&lt;Value, FetchError&gt; {</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;background:#1a2333;color:#e8f0e8;">    let policy = RetryPolicy {</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;background:#1a2333;color:#e8f0e8;">        max_attempts: 5,</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;background:#1a2333;color:#e8f0e8;">        ..Default::default()</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;background:#1a2333;color:#e8f0e8;">    };</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#c6cec6;">    let resp = retry_with_backoff(</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#c6cec6;">        || client.get(url).send(), &amp;policy)?;</div>
+        </div>
+        <div style="flex:1;min-width:0;padding:8px 0;border-left:1px solid #242a24;">
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#3ddc97;">disk · claude · 1m ago</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#c6cec6;">pub async fn fetch_json(url: &amp;str)</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#c6cec6;">  -&gt; Result&lt;Value, FetchError&gt; {</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;background:#14241b;color:#e8f0e8;">    let policy = RetryPolicy::default();</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#59635a;">    ⋯</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#59635a;"> </div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#59635a;"> </div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#c6cec6;">    let resp = retry_with_backoff(</div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;color:#c6cec6;">        || client.get(url).send(), &amp;policy)?;</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11.5px;">
+        <span style="background:#e0a94e;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">DISKDIFF</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/fetch.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#59635a;padding-right:10px;">:rr take disk · :w keep mine · :c ask claude</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="5c" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">5c</span><span style="font-size:15px;font-weight:600;">The inbox</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">everything claude said, one list · severity is a single MCP flag · unread = unseen</div>
+    <div style="position:relative;background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;height:380px;">
+      <pre style="color:#232823;padding:8px 0 0 14px;">pub fn retry_with_backoff&lt;T, E&gt;(
+    mut op: impl FnMut() -&gt; Result&lt;T, E&gt;,
+    policy: &amp;RetryPolicy,</pre>
+      <div style="position:absolute;top:46px;left:80px;right:80px;background:#101410;border:1px solid #2a5c44;border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:22px;">
+        <div style="padding:6px 12px;border-bottom:1px solid #242a24;color:#c6cec6;">:inbox</div>
+        <div style="padding:8px 0;">
+          <div style="padding:0 12px;background:#26332a;white-space:pre;overflow:hidden;"><span style="color:#e0a94e;">! needs input </span><span style="color:#e8f0e8;">bisect trunk, or stay scoped?          </span><span style="color:#59635a;">2m</span></div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#3ddc97;">✻ review ready</span><span style="color:#c6cec6;"> ws reconnect — 1 file · 2 regions     </span><span style="color:#59635a;">14:41</span></div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#3ddc97;">✻ review ready</span><span style="color:#c6cec6;"> retry logic — 2 files · 6 regions     </span><span style="color:#59635a;">14:32</span></div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#59635a;">· note        </span><span style="color:#59635a;">bumped tokio to 1.41 for sleep jitter  14:28  seen ✓</span></div>
+        </div>
+        <div style="padding:5px 12px;border-top:1px solid #242a24;color:#59635a;">↵ open · s seen · esc</div>
+      </div>
+      <div style="position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#e0a94e;padding-right:12px;">! 1</span>
+        <span style="color:#59635a;padding-right:10px;">inbox 3 unread</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="5d" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">5d</span><span style="font-size:15px;font-weight:600;">Attach, adopt, or start</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">opening with no session · discovery finds running agents · adopt without restarting them</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;align-items:center;padding:48px 0 0;height:360px;box-sizing:border-box;position:relative;">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;color:#e8f0e8;letter-spacing:0.04em;">phosphor</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#59635a;margin:4px 0 24px;">v0.1 · ghostty · tmux [main]</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:24px;">
+        <div style="white-space:pre;"><span style="color:#59635a;">session  </span><span style="color:#e0a94e;">none</span><span style="color:#59635a;"> — running agents found:</span></div>
+        <div style="white-space:pre;background:#26332a;"><span style="color:#3ddc97;">  ⠿ claude</span><span style="color:#e8f0e8;"> · tmux pane %3 · this repo · 12 turns   </span><span style="color:#59635a;">↵ adopt</span></div>
+        <div style="white-space:pre;"><span style="color:#3ddc97;">  ⠿ claude</span><span style="color:#c6cec6;"> · headless · ~/.claude/sock/4f2a        </span><span style="color:#59635a;">↵ adopt</span></div>
+        <div style="white-space:pre;"><span style="color:#59635a;">  + start new session · :cn</span></div>
+      </div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#59635a;margin-top:24px;">esc skip — the editor works fine without one</div>
+      <div style="position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="flex:1;"></span>
+        <span style="color:#59635a;padding-right:10px;">no session</span>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<section style="display:flex;flex-wrap:wrap;gap:48px;padding:48px 48px 0;align-items:flex-start;">
+
+  <div style="width:900px;background:#fff;border:1px solid #d8ded8;border-radius:8px;padding:20px 24px;">
+    <div style="font-size:15px;font-weight:600;margin-bottom:8px;">Turn 4 — questions, wholes, and the v1.5 horizon</div>
+    <div style="font-size:13px;line-height:1.6;color:#3d423d;display:flex;flex-direction:column;gap:6px;">
+      <div><strong>Agent questions are first-class:</strong> when claude needs input mid-turn it surfaces as a float + a waiting flag in the statusline. Digits quick-answer; <code>:c</code> for prose. You answer when you get a chance — same philosophy as unseen.</div>
+      <div><strong>Review the whole, not just regions:</strong> the block diff is the picker's sibling — one unified diff spanning the block's files, folds for the bulky parts, <code>s</code> advances seen state piecewise.</div>
+      <div><strong>v1.5 — the workspace claude builds:</strong> the editor's scripting surface is agent-legible (MCP pointed at itself). Say a sentence, get a pane. The test-watcher is the canonical demo.</div>
+      <div><strong>v1.5 — tmux-native:</strong> v1 coexists politely; control-mode integration lets the editor spawn and adopt sibling panes.</div>
+    </div>
+  </div>
+
+  <div id="4a" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">4a</span><span style="font-size:15px;font-weight:600;">Claude needs input</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">mid-turn question · quick-answer with digits, prose with :c, or ignore until later</div>
+    <div style="position:relative;background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;height:360px;">
+      <pre style="color:#232823;padding:8px 0 0 14px;">pub fn retry_with_backoff&lt;T, E&gt;(
+    mut op: impl FnMut() -&gt; Result&lt;T, E&gt;,
+    policy: &amp;RetryPolicy,
+) -&gt; Result&lt;T, E&gt; {</pre>
+      <div style="position:absolute;top:64px;left:110px;right:110px;background:#171207;border:1px solid #6b5426;border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:20px;">
+        <div style="padding:6px 12px;border-bottom:1px solid #3d3418;color:#e0a94e;">✻ claude · needs input</div>
+        <div style="padding:10px 12px;color:#c6cec6;display:flex;flex-direction:column;gap:8px;">
+          <div style="line-height:18px;">cargo test fails on trunk before my change (ws::reconnect_backoff). Bisect it first, or stay scoped to the retry work?</div>
+          <div style="white-space:pre;"><span style="color:#e0a94e;">[1]</span> bisect trunk   <span style="color:#e0a94e;">[2]</span> stay scoped   <span style="color:#e0a94e;">[3]</span> show me the failure</div>
+        </div>
+        <div style="padding:5px 12px;border-top:1px solid #3d3418;color:#59635a;">1–3 answer · :c reply · esc later</div>
+      </div>
+      <div style="position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#e0a94e;padding-right:12px;">! claude waiting</span>
+        <span style="color:#59635a;padding-right:10px;">6 unseen</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="4b" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">4b</span><span style="font-size:15px;font-weight:600;">Block diff</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">one review block as one unified diff · folds for the bulk · s marks seen piecewise</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:20px;">
+      <div style="padding:7px 12px;border-bottom:1px solid #242a24;color:#c6cec6;">review — <span style="color:#3ddc97;">✻ retry logic</span> · 2 files · 6 regions · 2 seen ✓</div>
+      <div style="padding:8px 0;">
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#c6cec6;">▾ src/retry.rs <span style="color:#59635a;">· 3 regions</span></div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#59635a;">  @@ 4</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#3ddc97;">+ use crate::util::jitter;</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#59635a;">  @@ 6–10 <span style="color:#3ddc97;">seen ✓</span></div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#3ddc97;">+ pub struct RetryPolicy {</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#3ddc97;">+     pub max_attempts: u32,</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#3ddc97;">+     pub base_delay: Duration,</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#3ddc97;">+     pub max_delay: Duration,</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#3ddc97;">+ }</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#59635a;">  @@ 12–24 · retry_with_backoff ⋯ folded · 13 lines</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#c6cec6;">▾ src/fetch.rs <span style="color:#59635a;">· 3 regions</span></div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#59635a;">  @@ 3–7</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#d97b6c;">−     let resp = client.get(url).send()?;</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#3ddc97;">+     let policy = RetryPolicy::default();</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#3ddc97;">+     let resp = retry_with_backoff(|| client.get(url).send(), &amp;policy)?;</div>
+        <div style="padding:0 14px;white-space:pre;overflow:hidden;color:#59635a;">  @@ 9–14 · tests ⋯ folded · 6 lines <span style="color:#3ddc97;">seen ✓</span></div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">REVIEW</span>
+        <span style="color:#c6cec6;padding:0 12px;">retry logic</span>
+        <span style="flex:1;"></span>
+        <span style="color:#59635a;padding-right:10px;">]] next file · za fold · s seen · S all · q</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="4c" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">4c</span><span style="font-size:15px;font-weight:600;">The pane claude built <span style="font-weight:400;color:#6b6f6b;">(v1.5)</span></span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">":c give me a pane that watches cargo test and jumps to failing asserts" — written into existence via the editor's own scripting surface</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;">
+      <div style="display:flex;">
+        <div style="flex:1;min-width:0;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:20px;">
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">38</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">let mut</span> delay = policy.base_delay;</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">39</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">loop</span> {</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">40</span><span style="white-space:pre;color:#c6cec6;">        <span style="color:#82aecd;">match</span> connect(url).<span style="color:#82aecd;">await</span> {</span></div>
+          <div style="display:flex;background:#211114;"><span style="flex:0 0 3px;background:#d97b6c;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">41</span><span style="white-space:pre;color:#c6cec6;text-decoration:underline wavy #d97b6c 1px;text-underline-offset:4px;">            <span style="color:#cfa86a;">Err</span>(_) =&gt; delay = delay * 2,</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">42</span><span style="white-space:pre;color:#c6cec6;">            <span style="color:#cfa86a;">Ok</span>(ws) =&gt; <span style="color:#82aecd;">return</span> <span style="color:#cfa86a;">Ok</span>(ws),</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">43</span><span style="white-space:pre;color:#c6cec6;">        }</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">44</span><span style="white-space:pre;color:#c6cec6;">        sleep(delay).<span style="color:#82aecd;">await</span>;</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">45</span><span style="white-space:pre;color:#c6cec6;">    }</span></div>
+          <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">46</span><span style="white-space:pre;color:#c6cec6;">}</span></div>
+        </div>
+        <div style="flex:0 0 340px;border-left:1px solid #242a24;display:flex;flex-direction:column;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:19px;">
+          <div style="padding:8px 12px;border-bottom:1px solid #242a24;color:#59635a;">◇ test-watch <span style="color:#3ddc97;">· built by claude</span> · 2m ago</div>
+          <div style="padding:10px 12px;flex:1;">
+            <div style="white-space:pre;color:#59635a;">$ cargo watch -x test</div>
+            <div style="white-space:pre;color:#c6cec6;">running 34 tests</div>
+            <div style="white-space:pre;color:#c6cec6;"><span style="color:#3ddc97;">33 passed</span> · <span style="color:#d97b6c;">1 failed</span></div>
+            <div style="white-space:pre;color:#c6cec6;"> </div>
+            <div style="white-space:pre;color:#d97b6c;">FAILED ws::tests::reconnect_backoff</div>
+            <div style="white-space:pre;color:#c6cec6;">  assertion: delay &lt;= policy.max_delay</div>
+            <div style="white-space:pre;color:#c6cec6;">  src/ws/reconnect.rs:41 <span style="color:#59635a;">← you are here</span></div>
+          </div>
+          <div style="padding:7px 12px;border-top:1px solid #242a24;color:#59635a;">↵ jump · r rerun · X remove pane</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/ws/reconnect.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#d97b6c;padding-right:12px;">✗ 1 failing</span>
+        <span style="color:#3ddc97;padding-right:10px;">✻ claude idle</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="4d" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">4d</span><span style="font-size:15px;font-weight:600;">In the multiplexer</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">v1 coexists politely with your panes · v1.5 spawns and adopts them via control mode</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;">
+      <div style="display:flex;">
+        <div style="flex:1.6;min-width:0;display:flex;flex-direction:column;">
+          <div style="padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:20px;flex:1;">
+            <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">16</span><span style="white-space:pre;color:#c6cec6;overflow:hidden;">    <span style="color:#82aecd;">let mut</span> delay = policy.base_delay;</span></div>
+            <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">17</span><span style="white-space:pre;color:#c6cec6;overflow:hidden;">    <span style="color:#82aecd;">for</span> attempt <span style="color:#82aecd;">in</span> 0..policy.max_attempts {</span></div>
+            <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">18</span><span style="white-space:pre;color:#c6cec6;overflow:hidden;">        <span style="color:#82aecd;">match</span> op() {</span></div>
+            <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">19</span><span style="white-space:pre;color:#c6cec6;overflow:hidden;">            <span style="color:#cfa86a;">Ok</span>(v) =&gt; <span style="color:#82aecd;">return</span> <span style="color:#cfa86a;">Ok</span>(v),</span></div>
+            <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">20</span><span style="white-space:pre;color:#c6cec6;overflow:hidden;">            <span style="color:#cfa86a;">Err</span>(e) =&gt; last = <span style="color:#cfa86a;">Some</span>(e),</span></div>
+            <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">21</span><span style="white-space:pre;color:#c6cec6;overflow:hidden;">        }</span></div>
+            <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">22</span><span style="white-space:pre;color:#c6cec6;overflow:hidden;">        thread::sleep(jitter(delay));</span></div>
+            <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 37px;text-align:right;padding-right:12px;color:#414b42;">23</span><span style="white-space:pre;color:#c6cec6;overflow:hidden;">    }</span></div>
+          </div>
+          <div style="display:flex;align-items:center;height:22px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11px;">
+            <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 8px;line-height:22px;">NORMAL</span>
+            <span style="color:#c6cec6;padding:0 10px;">src/retry.rs</span>
+            <span style="flex:1;"></span>
+            <span style="color:#3ddc97;padding-right:10px;">✻ idle · 6 unseen</span>
+          </div>
+        </div>
+        <div style="flex:1;border-left:1px solid #242a24;padding:8px 0 0;font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:20px;">
+          <div style="padding:0 12px;white-space:pre;color:#59635a;">$ cargo run --example backoff</div>
+          <div style="padding:0 12px;white-space:pre;color:#c6cec6;">retrying in 200ms</div>
+          <div style="padding:0 12px;white-space:pre;color:#c6cec6;">retrying in 400ms</div>
+          <div style="padding:0 12px;white-space:pre;color:#c6cec6;">retrying in 800ms</div>
+          <div style="padding:0 12px;white-space:pre;color:#3ddc97;">ok: connected after 3 attempts</div>
+          <div style="padding:0 12px;white-space:pre;color:#c6cec6;">$ <span style="background:#c6cec6;color:#0c0f0c;">&nbsp;</span></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;height:22px;background:#060806;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#3a8f68;padding:0 10px;">
+        <span>[main] 0:te*  1:shell  2:logs</span>
+        <span style="flex:1;"></span>
+        <span>host · 15:04</span>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<section style="display:flex;flex-wrap:wrap;gap:48px;padding:48px 48px 0;align-items:flex-start;">
+
+  <div style="width:900px;background:#fff;border:1px solid #d8ded8;border-radius:8px;padding:20px 24px;">
+    <div style="font-size:15px;font-weight:600;margin-bottom:8px;">Turn 3 — the interaction language</div>
+    <div style="font-size:13px;line-height:1.6;color:#3d423d;display:flex;flex-direction:column;gap:6px;">
+      <div><strong>Motions over modes:</strong> unseen regions are a text object — <code>]u</code>/<code>[u</code> jump, <code>s</code> marks seen, <code>S</code> marks the whole review block. Seen state persists on disk alongside persistent undo.</div>
+      <div><strong>One prompt, everywhere:</strong> <code>:c</code> talks to claude; a visual selection makes it anchored. Anchored exchanges render as virtual text under the code they're about (undercurl marks the region — a ghostty-class nicety).</div>
+      <div><strong>jj is a view, not a dependency:</strong> the timeline float exists only when jj is present. Undo is time travel; everything else works without it.</div>
+      <div><strong>Discoverability:</strong> every float footers its keymap; leader popup (which-key style) teaches the agent-native namespace.</div>
+    </div>
+  </div>
+
+  <div id="3a" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">3a</span><span style="font-size:15px;font-weight:600;">Anchored exchange</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">your comment + claude's reply as virtual text under the region · undercurl marks the anchor · revised lines go unseen again</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;padding-top:8px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:20px;">
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">12</span><span style="white-space:pre;color:#c6cec6;"><span style="color:#82aecd;">pub fn</span> <span style="color:#9ec98c;">retry_with_backoff</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt;(</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">13</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">mut</span> op: <span style="color:#82aecd;">impl</span> <span style="color:#cfa86a;">FnMut</span>() -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt;,</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">14</span><span style="white-space:pre;color:#c6cec6;">    policy: &amp;<span style="color:#cfa86a;">RetryPolicy</span>,</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">15</span><span style="white-space:pre;color:#c6cec6;">) -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt; {</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">16</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">let mut</span> delay = policy.base_delay;</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">17</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">let mut</span> last = <span style="color:#cfa86a;">None</span>;</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">18</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#82aecd;">for</span> attempt <span style="color:#82aecd;">in</span> 0..policy.max_attempts {</span></div>
+      <div style="display:flex;background:#141d16;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">19</span><span style="white-space:pre;color:#c6cec6;text-decoration:underline wavy #2a5c44 1px;text-underline-offset:4px;">        <span style="color:#82aecd;">match</span> op() {</span></div>
+      <div style="display:flex;background:#141d16;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">20</span><span style="white-space:pre;color:#c6cec6;text-decoration:underline wavy #2a5c44 1px;text-underline-offset:4px;">            <span style="color:#cfa86a;">Ok</span>(v) =&gt; <span style="color:#82aecd;">return</span> <span style="color:#cfa86a;">Ok</span>(v),</span></div>
+      <div style="display:flex;background:#141d16;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">21</span><span style="white-space:pre;color:#c6cec6;text-decoration:underline wavy #2a5c44 1px;text-underline-offset:4px;">            <span style="color:#cfa86a;">Err</span>(e) =&gt; last = <span style="color:#cfa86a;">Some</span>(e),</span></div>
+      <div style="display:flex;background:#141d16;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">22</span><span style="white-space:pre;color:#c6cec6;text-decoration:underline wavy #2a5c44 1px;text-underline-offset:4px;">        }</span></div>
+      <div style="padding:2px 0 2px 58px;color:#59635a;"><div style="white-space:pre;">┊ ⚓ you · 2m     collapse these arms — use the shared backoff helper</div><div style="white-space:pre;">┊ <span style="color:#3ddc97;">✻ claude · 1m</span>  collapsed — error carried in `last`, returned after the loop</div></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">23</span><span style="white-space:pre;color:#c6cec6;">        thread::sleep(jitter(delay));</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">24</span><span style="white-space:pre;color:#c6cec6;">        delay = (delay * 2).min(policy.max_delay);</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">25</span><span style="white-space:pre;color:#c6cec6;">    }</span></div>
+      <div style="display:flex;"><span style="flex:0 0 3px;background:#3ddc97;"></span><span style="flex:0 0 41px;text-align:right;padding-right:14px;color:#414b42;">26</span><span style="white-space:pre;color:#c6cec6;">    <span style="color:#cfa86a;">Err</span>(last.unwrap())</span></div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-size:11.5px;margin-top:8px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#3ddc97;padding-right:12px;">✻ claude idle</span>
+        <span style="color:#59635a;padding-right:10px;">1 thread · 4 unseen</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="3b" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">3b</span><span style="font-size:15px;font-weight:600;">jj timeline</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">enhancement view, only when jj is present · agent turns are changes · undo is time travel</div>
+    <div style="position:relative;background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;height:400px;">
+      <pre style="color:#232823;padding:8px 0 0 14px;">pub async fn fetch_json(url: &amp;str) -&gt; Result&lt;Value, FetchError&gt; {
+    let policy = RetryPolicy::default();
+    let resp = retry_with_backoff(|| client.get(url).send(), &amp;policy)?;</pre>
+      <div style="position:absolute;top:48px;left:90px;right:90px;background:#101410;border:1px solid #2a5c44;border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:22px;">
+        <div style="padding:5px 12px;border-bottom:1px solid #242a24;color:#c6cec6;">:jj timeline</div>
+        <div style="padding:8px 0;">
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#3ddc97;">@ a4f2</span><span style="color:#82aecd;"> · you    </span><span style="color:#c6cec6;">working copy — editing src/fetch.rs</span></div>
+          <div style="padding:0 12px;background:#26332a;white-space:pre;overflow:hidden;"><span style="color:#59635a;">○ 9e81</span><span style="color:#3ddc97;"> · claude </span><span style="color:#e8f0e8;">wire ws reconnect          </span><span style="color:#3ddc97;">+11</span> <span style="color:#d97b6c;">−18</span></div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#59635a;">○ 7c3d</span><span style="color:#3ddc97;"> · claude </span><span style="color:#c6cec6;">retry logic                </span><span style="color:#3ddc97;">+51</span> <span style="color:#d97b6c;">−3</span><span style="color:#59635a;">   seen ✓</span></div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#59635a;">○ 2b90</span><span style="color:#82aecd;"> · you    </span><span style="color:#c6cec6;">manual edit src/retry.rs</span></div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#59635a;">○ f001</span><span style="color:#3ddc97;"> · claude </span><span style="color:#c6cec6;">scaffold fetch module      </span><span style="color:#3ddc97;">+88</span> <span style="color:#d97b6c;">−0</span><span style="color:#59635a;">   seen ✓</span></div>
+        </div>
+        <div style="padding:5px 12px;border-top:1px solid #242a24;color:#59635a;">↵ edit here · d diff · o full op log · esc</div>
+      </div>
+      <div style="position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/fetch.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#59635a;padding-right:10px;">jj · trunk@a4f2</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="3c" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">3c</span><span style="font-size:15px;font-weight:600;">Leader popup</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">which-key style · the agent-native namespace is learnable, not memorized</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;height:380px;">
+      <pre style="color:#232823;padding:8px 0 0 14px;flex:1;">pub fn retry_with_backoff&lt;T, E&gt;(
+    mut op: impl FnMut() -&gt; Result&lt;T, E&gt;,
+    policy: &amp;RetryPolicy,
+) -&gt; Result&lt;T, E&gt; {
+    let mut delay = policy.base_delay;</pre>
+      <div style="background:#101410;border-top:1px solid #2a5c44;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:24px;padding:8px 16px 10px;">
+        <div style="color:#59635a;margin-bottom:4px;">SPC ·</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);column-gap:24px;">
+          <div><span style="color:#3ddc97;">c</span><span style="color:#c6cec6;">  +claude</span><span style="color:#59635a;">  prompt · steer · interrupt</span></div>
+          <div><span style="color:#3ddc97;">u</span><span style="color:#c6cec6;">  +unseen</span><span style="color:#59635a;">  next · list · mark seen</span></div>
+          <div><span style="color:#3ddc97;">t</span><span style="color:#c6cec6;">  transcript</span></div>
+          <div><span style="color:#3ddc97;">r</span><span style="color:#c6cec6;">  +disk</span><span style="color:#59635a;">    refresh · diff</span></div>
+          <div><span style="color:#3ddc97;">j</span><span style="color:#c6cec6;">  jj timeline</span></div>
+          <div><span style="color:#3ddc97;">f</span><span style="color:#c6cec6;">  files</span></div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#cfa86a;padding-right:12px;">SPC pending</span>
+        <span style="color:#59635a;padding-right:10px;">4 unseen</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="3d" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">3d</span><span style="font-size:15px;font-weight:600;">Files — where has claude been</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">the file picker carries agent state: unseen counts + activity, not just names</div>
+    <div style="position:relative;background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;height:400px;">
+      <pre style="color:#232823;padding:8px 0 0 14px;">use crate::retry::{retry_with_backoff, RetryPolicy};
+
+pub async fn fetch_json(url: &amp;str) -&gt; Result&lt;Value, FetchError&gt; {</pre>
+      <div style="position:absolute;top:44px;left:90px;right:90px;background:#101410;border:1px solid #2a5c44;border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:22px;">
+        <div style="padding:6px 12px;border-bottom:1px solid #242a24;color:#c6cec6;">❯ files<span style="background:#c6cec6;color:#0c0f0c;">&nbsp;</span></div>
+        <div style="padding:8px 0;">
+          <div style="padding:0 12px;background:#26332a;white-space:pre;overflow:hidden;"><span style="color:#e8f0e8;">▸ src/retry.rs           </span><span style="color:#3ddc97;">●3 unseen</span><span style="color:#59635a;">   ✻ edited 14:31</span></div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#c6cec6;">  src/fetch.rs           </span><span style="color:#3ddc97;">●3 unseen</span><span style="color:#59635a;">   ✻ edited 14:32</span></div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#c6cec6;">  src/ws/reconnect.rs    </span><span style="color:#cfa86a;">⠸ editing now</span></div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#c6cec6;">  src/main.rs</span></div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#c6cec6;">  tests/retry_test.rs    </span><span style="color:#59635a;">            ✻ read 14:30</span></div>
+          <div style="padding:0 12px;white-space:pre;overflow:hidden;"><span style="color:#c6cec6;">  Cargo.toml</span></div>
+        </div>
+        <div style="padding:5px 12px;border-top:1px solid #242a24;color:#59635a;">↵ open · u jump to first unseen · esc</div>
+      </div>
+      <div style="position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/fetch.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#cfa86a;padding-right:12px;">⠸ claude working</span>
+        <span style="color:#59635a;padding-right:10px;">6 unseen</span>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<section style="display:flex;flex-wrap:wrap;gap:48px;padding:48px 48px 0;align-items:flex-start;">
+
+  <div style="width:900px;background:#fff;border:1px solid #d8ded8;border-radius:8px;padding:20px 24px;">
+    <div style="font-size:15px;font-weight:600;margin-bottom:8px;">Turn 2 — platform bets</div>
+    <div style="font-size:13px;line-height:1.6;color:#3d423d;display:flex;flex-direction:column;gap:6px;">
+      <div><strong>Ghostty-class terminals:</strong> synchronized output (live updates without tearing), kitty keyboard protocol (real modifier chords), undercurl + true color, OSC 8 hyperlinks — transcript entries are clickable jumps to files.</div>
+      <div><strong>ratatui core:</strong> immediate-mode rendering; floats, pickers, and split panes as first-class widgets, not hacks.</div>
+      <div><strong>Neovim idioms, our spin:</strong> modal everything, telescope-style pickers, keymap hints in footers, virtual-text diffs — but the objects they operate on are agent-native: unseen regions, review blocks, the session.</div>
+    </div>
+  </div>
+
+  <div id="2a" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">2a</span><span style="font-size:15px;font-weight:600;">Review-block picker</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">telescope-style float over unseen regions · diff preview · glance, mark seen, move on</div>
+    <div style="position:relative;background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;height:470px;">
+      <pre style="color:#232823;padding:8px 0 0 14px;">pub fn retry_with_backoff&lt;T, E&gt;(
+    mut op: impl FnMut() -&gt; Result&lt;T, E&gt;,
+    policy: &amp;RetryPolicy,
+) -&gt; Result&lt;T, E&gt; {
+    let mut delay = policy.base_delay;
+    for attempt in 0..policy.max_attempts {</pre>
+      <div style="position:absolute;top:40px;left:50px;right:50px;background:#101410;border:1px solid #2a5c44;border-radius:4px;display:flex;flex-direction:column;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:20px;">
+        <div style="padding:6px 12px;border-bottom:1px solid #242a24;color:#c6cec6;">❯ unseen<span style="background:#c6cec6;color:#0c0f0c;">&nbsp;</span></div>
+        <div style="display:flex;min-height:280px;">
+          <div style="flex:1;padding:8px 0;border-right:1px solid #242a24;">
+            <div style="padding:0 12px;color:#3ddc97;white-space:pre;overflow:hidden;">✻ retry logic — 2 files · 6 regions</div>
+            <div style="padding:0 12px;color:#9aa39a;white-space:pre;overflow:hidden;">  retry.rs:4      +use util::jitter</div>
+            <div style="padding:0 12px;background:#26332a;color:#e8f0e8;white-space:pre;overflow:hidden;">▸ retry.rs:6–10   +RetryPolicy struct</div>
+            <div style="padding:0 12px;color:#9aa39a;white-space:pre;overflow:hidden;">  retry.rs:12–24  +retry_with_backoff</div>
+            <div style="padding:0 12px;color:#9aa39a;white-space:pre;overflow:hidden;">  fetch.rs:1      use → retry imports</div>
+            <div style="padding:0 12px;color:#9aa39a;white-space:pre;overflow:hidden;">  fetch.rs:3–7    fetch_json wired</div>
+            <div style="padding:0 12px;color:#9aa39a;white-space:pre;overflow:hidden;">  fetch.rs:9–14   +tests</div>
+          </div>
+          <div style="flex:1.2;padding:8px 0;">
+            <div style="padding:0 12px;color:#59635a;">src/retry.rs · 6–10</div>
+            <div style="padding:4px 12px 0;color:#3ddc97;font-size:11.5px;line-height:20px;"><div style="white-space:pre;">+ pub struct RetryPolicy {</div><div style="white-space:pre;">+     pub max_attempts: u32,</div><div style="white-space:pre;">+     pub base_delay: Duration,</div><div style="white-space:pre;">+     pub max_delay: Duration,</div><div style="white-space:pre;">+ }</div></div>
+          </div>
+        </div>
+        <div style="padding:6px 12px;border-top:1px solid #242a24;color:#59635a;">↵ open · s mark seen · S mark block seen · esc</div>
+      </div>
+      <div style="position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#3ddc97;padding-right:12px;">✻ claude idle</span>
+        <span style="color:#59635a;padding-right:10px;">6 unseen</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="2b" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">2b</span><span style="font-size:15px;font-weight:600;">Hunk peek</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">float anchored to a marker — what claude changed here, virtual-text style</div>
+    <div style="position:relative;background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;padding-top:8px;height:400px;">
+      <div style="display:flex;">
+        <pre style="color:#414b42;padding-left:10px;text-align:right;"><span> </span> 1
+<span> </span> 2
+<span> </span> 3
+<span style="background:#3ddc97;"> </span> 4
+<span style="background:#3ddc97;"> </span> 5
+<span> </span> 6
+<span> </span> 7</pre>
+        <pre style="color:#c6cec6;padding-left:14px;overflow:hidden;"><span style="color:#82aecd;">use</span> crate::retry::{retry_with_backoff, <span style="color:#cfa86a;">RetryPolicy</span>};
+
+<span style="color:#82aecd;">pub async fn</span> <span style="color:#9ec98c;">fetch_json</span>(url: &amp;<span style="color:#cfa86a;">str</span>) -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">Value</span>, <span style="color:#cfa86a;">FetchError</span>&gt; {
+    <span style="color:#82aecd;">let</span> policy = <span style="color:#cfa86a;">RetryPolicy</span>::default();
+    <span style="color:#82aecd;">let</span> resp = retry_with_backoff(|| client.get(url).send(), &amp;policy)?;
+    resp.json().await.map_err(<span style="color:#cfa86a;">FetchError</span>::Decode)
+}</pre>
+      </div>
+      <div style="position:absolute;top:128px;left:80px;background:#101410;border:1px solid #2a5c44;border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:20px;min-width:560px;">
+        <div style="padding:5px 12px;border-bottom:1px solid #242a24;color:#3ddc97;">✻ claude · edit · 4m ago · "wire fetch through the retry helper"</div>
+        <div style="padding:6px 12px;"><div style="color:#d97b6c;white-space:pre;">−     let resp = client.get(url).send()?;</div><div style="color:#3ddc97;white-space:pre;">+     let policy = RetryPolicy::default();</div><div style="color:#3ddc97;white-space:pre;">+     let resp = retry_with_backoff(|| client.get(url).send(), &amp;policy)?;</div></div>
+        <div style="padding:5px 12px;border-top:1px solid #242a24;color:#59635a;">s mark seen · c comment · u undo (jj) · q close</div>
+      </div>
+      <div style="position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/fetch.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#59635a;padding-right:10px;">unseen 1 of 3 in file</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="2c" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">2c</span><span style="font-size:15px;font-weight:600;">Mid-turn, live</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">claude working while you read · synchronized output, zero tearing · buffer untouched</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;">
+      <div style="display:flex;">
+        <div style="flex:1;min-width:0;padding-top:8px;">
+          <div style="display:flex;">
+            <pre style="color:#414b42;padding-left:10px;text-align:right;"><span> </span> 12
+<span> </span> 13
+<span> </span> 14
+<span> </span> 15
+<span> </span> 16
+<span> </span> 17
+<span> </span> 18
+<span> </span> 19
+<span> </span> 20
+<span> </span> 21
+<span> </span> 22</pre>
+            <pre style="color:#c6cec6;padding-left:14px;overflow:hidden;"><span style="color:#82aecd;">pub fn</span> <span style="color:#9ec98c;">retry_with_backoff</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt;(
+    <span style="color:#82aecd;">mut</span> op: <span style="color:#82aecd;">impl</span> <span style="color:#cfa86a;">FnMut</span>() -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt;,
+    policy: &amp;<span style="color:#cfa86a;">RetryPolicy</span>,
+) -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt; {
+    <span style="color:#82aecd;">let mut</span> delay = policy.base_delay;
+    <span style="color:#82aecd;">for</span> attempt <span style="color:#82aecd;">in</span> 0..policy.max_attempts {
+        <span style="color:#82aecd;">match</span> op() {
+            <span style="color:#cfa86a;">Ok</span>(v) =&gt; <span style="color:#82aecd;">return</span> <span style="color:#cfa86a;">Ok</span>(v),
+            <span style="color:#cfa86a;">Err</span>(e) <span style="color:#82aecd;">if</span> attempt + 1 == policy.max_a
+            <span style="color:#cfa86a;">Err</span>(_) =&gt; thread::sleep(jitter(delay))
+        }</pre>
+          </div>
+        </div>
+        <div style="flex:0 0 360px;border-left:1px solid #242a24;display:flex;flex-direction:column;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:19px;">
+          <div style="padding:8px 12px;border-bottom:1px solid #242a24;color:#59635a;">claude code · acp · 4f2a</div>
+          <div style="padding:10px 12px;display:flex;flex-direction:column;gap:10px;flex:1;">
+            <div style="color:#3ddc97;">❯ wire the retry helper into the ws reconnect path</div>
+            <div style="color:#9aa39a;">The reconnect loop hand-rolls its own sleep — replacing it with retry_with_backoff.</div>
+            <div style="display:flex;flex-direction:column;gap:3px;color:#c6cec6;">
+              <div>▸ read  src/ws/reconnect.rs</div>
+              <div>▸ edit  src/ws/reconnect.rs <span style="color:#3ddc97;">+11</span> <span style="color:#d97b6c;">−18</span></div>
+              <div><span style="color:#cfa86a;">⠸</span> bash  cargo test <span style="color:#59635a;">running… 0:12</span></div>
+            </div>
+          </div>
+          <div style="padding:7px 12px;border-top:1px solid #242a24;color:#59635a;">esc interrupt · :c steer · q close</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#cfa86a;padding-right:12px;">⠸ claude working · 0:42</span>
+        <span style="color:#59635a;padding-right:10px;">6 unseen</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="2d" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">2d</span><span style="font-size:15px;font-weight:600;">Opening mid-task — the dashboard</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">what you see attaching to a repo where claude's been busy · state, not splash</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;display:flex;flex-direction:column;align-items:center;padding:56px 0 0;height:380px;box-sizing:border-box;position:relative;">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:600;color:#e8f0e8;letter-spacing:0.04em;">phosphor</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#59635a;margin:4px 0 28px;">v0.1 · ghostty · tmux [main]</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:24px;display:grid;grid-template-columns:88px auto;column-gap:20px;">
+        <span style="color:#59635a;text-align:right;">session</span><span style="color:#c6cec6;">claude code · acp · idle</span>
+        <span style="color:#59635a;text-align:right;">unseen</span><span style="color:#3ddc97;">6 regions in 2 files — ✻ retry logic, review ready</span>
+        <span style="color:#59635a;text-align:right;">vcs</span><span style="color:#c6cec6;">jj · trunk@a4f2 · clean</span>
+        <span style="color:#59635a;text-align:right;">last</span><span style="color:#c6cec6;">cargo test ✓ 34 passed · 14:32</span>
+      </div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#59635a;margin-top:28px;">]u next unseen · :tr transcript · :c claude · :e edit</div>
+      <div style="position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="flex:1;"></span>
+        <span style="color:#3ddc97;padding-right:12px;">✻ claude idle</span>
+        <span style="color:#59635a;padding-right:10px;">6 unseen</span>
+      </div>
+    </div>
+  </div>
+
+</section>
+
+<section style="display:flex;flex-wrap:wrap;gap:48px;padding:48px;align-items:flex-start;">
+
+  <div id="1a" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">1a</span><span style="font-size:15px;font-weight:600;">Default view — code-first</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">unseen-change gutter markers · claude-signaled review block · tmux underneath</div>
+    <div style="position:relative;background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;padding-top:8px;">
+      <div style="display:flex;">
+        <pre style="color:#414b42;padding-left:10px;text-align:right;"><span> </span>  1
+<span> </span>  2
+<span> </span>  3
+<span style="background:#3ddc97;"> </span>  4
+<span> </span>  5
+<span style="background:#3ddc97;"> </span>  6
+<span style="background:#3ddc97;"> </span>  7
+<span style="background:#3ddc97;"> </span>  8
+<span style="background:#3ddc97;"> </span>  9
+<span style="background:#3ddc97;"> </span> 10
+<span> </span> 11
+<span style="background:#3ddc97;"> </span> 12
+<span style="background:#3ddc97;"> </span> 13
+<span style="background:#3ddc97;"> </span> 14
+<span style="background:#3ddc97;"> </span> 15
+<span style="background:#3ddc97;"> </span> 16
+<span style="background:#3ddc97;"> </span> 17
+<span style="background:#3ddc97;"> </span> 18
+<span style="background:#3ddc97;"> </span> 19
+<span style="background:#3ddc97;"> </span> 20
+<span style="background:#3ddc97;"> </span> 21
+<span style="background:#3ddc97;"> </span> 22
+<span style="background:#3ddc97;"> </span> 23
+<span style="background:#3ddc97;"> </span> 24</pre>
+        <pre style="color:#c6cec6;padding-left:14px;overflow:hidden;"><span style="color:#82aecd;">use</span> std::thread;
+<span style="color:#82aecd;">use</span> std::time::<span style="color:#cfa86a;">Duration</span>;
+
+<span style="color:#82aecd;">use</span> crate::util::jitter;
+
+<span style="color:#82aecd;">pub struct</span> <span style="color:#cfa86a;">RetryPolicy</span> {
+    <span style="color:#82aecd;">pub</span> max_attempts: <span style="color:#cfa86a;">u32</span>,
+    <span style="color:#82aecd;">pub</span> base_delay: <span style="color:#cfa86a;">Duration</span>,
+    <span style="color:#82aecd;">pub</span> max_delay: <span style="color:#cfa86a;">Duration</span>,
+}
+
+<span style="color:#82aecd;">pub fn</span> <span style="color:#9ec98c;">retry_with_backoff</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt;(
+    <span style="color:#82aecd;">mut</span> op: <span style="color:#82aecd;">impl</span> <span style="color:#cfa86a;">FnMut</span>() -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt;,
+    policy: &amp;<span style="color:#cfa86a;">RetryPolicy</span>,
+) -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt; {
+    <span style="color:#82aecd;">let mut</span> delay = policy.base_delay;
+    <span style="color:#82aecd;">for</span> attempt <span style="color:#82aecd;">in</span> 0..policy.max_attempts {
+        <span style="color:#82aecd;">match</span> op() {
+            <span style="color:#cfa86a;">Ok</span>(v) =&gt; <span style="color:#82aecd;">return</span> <span style="color:#cfa86a;">Ok</span>(v),
+            <span style="color:#cfa86a;">Err</span>(e) <span style="color:#82aecd;">if</span> attempt + 1 == policy.max_attempts =&gt; <span style="color:#82aecd;">return</span> <span style="color:#cfa86a;">Err</span>(e),
+            <span style="color:#cfa86a;">Err</span>(_) =&gt; thread::sleep(jitter(delay)),
+        }
+        delay = (delay * 2).min(policy.max_delay);
+    }</pre>
+      </div>
+      <sc-if value="{{ showNotif }}" hint-placeholder-val="{{ true }}">
+        <div style="position:absolute;top:14px;right:14px;background:#0f1710;border:1px solid #2a5c44;border-radius:4px;padding:9px 12px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:18px;">
+          <div style="color:#3ddc97;">✻ claude · review ready</div>
+          <div style="color:#c6cec6;">retry logic — 2 files · 6 regions</div>
+          <div style="color:#59635a;">]u next unseen · :tr transcript</div>
+        </div>
+      </sc-if>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;margin-top:8px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#3ddc97;padding-right:12px;">✻ claude idle</span>
+        <span style="color:#59635a;padding-right:12px;">6 unseen</span>
+        <span style="color:#59635a;padding-right:12px;">jj ✓</span>
+        <span style="color:#59635a;padding-right:10px;">12:1</span>
+      </div>
+      <sc-if value="{{ showTmuxBar }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;align-items:center;height:22px;background:#060806;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#3a8f68;padding:0 10px;">
+          <span>[main] 0:te*  1:shell  2:logs</span>
+          <span style="flex:1;"></span>
+          <span>host · 14:32</span>
+        </div>
+      </sc-if>
+    </div>
+  </div>
+
+  <div id="1b" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">1b</span><span style="font-size:15px;font-weight:600;">Transcript summoned</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">session stream as a pane · tool-call folds jump to files · closes back to full buffer</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;">
+      <div style="display:flex;">
+        <div style="flex:1;min-width:0;padding-top:8px;">
+          <div style="display:flex;">
+            <pre style="color:#414b42;padding-left:10px;text-align:right;"><span style="background:#3ddc97;"> </span> 12
+<span style="background:#3ddc97;"> </span> 13
+<span style="background:#3ddc97;"> </span> 14
+<span style="background:#3ddc97;"> </span> 15
+<span style="background:#3ddc97;"> </span> 16
+<span style="background:#3ddc97;"> </span> 17
+<span style="background:#3ddc97;"> </span> 18
+<span style="background:#3ddc97;"> </span> 19
+<span style="background:#3ddc97;"> </span> 20
+<span style="background:#3ddc97;"> </span> 21
+<span style="background:#3ddc97;"> </span> 22
+<span style="background:#3ddc97;"> </span> 23
+<span style="background:#3ddc97;"> </span> 24</pre>
+            <pre style="color:#c6cec6;padding-left:14px;overflow:hidden;"><span style="color:#82aecd;">pub fn</span> <span style="color:#9ec98c;">retry_with_backoff</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt;(
+    <span style="color:#82aecd;">mut</span> op: <span style="color:#82aecd;">impl</span> <span style="color:#cfa86a;">FnMut</span>() -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt;,
+    policy: &amp;<span style="color:#cfa86a;">RetryPolicy</span>,
+) -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt; {
+    <span style="color:#82aecd;">let mut</span> delay = policy.base_delay;
+    <span style="color:#82aecd;">for</span> attempt <span style="color:#82aecd;">in</span> 0..policy.max_attempts {
+        <span style="color:#82aecd;">match</span> op() {
+            <span style="color:#cfa86a;">Ok</span>(v) =&gt; <span style="color:#82aecd;">return</span> <span style="color:#cfa86a;">Ok</span>(v),
+            <span style="color:#cfa86a;">Err</span>(e) <span style="color:#82aecd;">if</span> attempt + 1 == policy.max_a
+            <span style="color:#cfa86a;">Err</span>(_) =&gt; thread::sleep(jitter(delay))
+        }
+        delay = (delay * 2).min(policy.max_delay);
+    }</pre>
+          </div>
+        </div>
+        <div style="flex:0 0 360px;border-left:1px solid #242a24;display:flex;flex-direction:column;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:19px;">
+          <div style="padding:8px 12px;border-bottom:1px solid #242a24;color:#59635a;">claude code · acp · 4f2a</div>
+          <div style="padding:10px 12px;display:flex;flex-direction:column;gap:10px;flex:1;">
+            <div style="color:#3ddc97;">❯ add retry with exponential backoff to the fetch layer</div>
+            <div style="color:#9aa39a;">Adding a RetryPolicy struct and a generic retry_with_backoff helper, then wiring fetch through it.</div>
+            <div style="display:flex;flex-direction:column;gap:3px;color:#c6cec6;">
+              <div>▸ edit  src/retry.rs   <span style="color:#3ddc97;">+42</span> <span style="color:#d97b6c;">−0</span></div>
+              <div>▸ edit  src/fetch.rs   <span style="color:#3ddc97;">+9</span> <span style="color:#d97b6c;">−3</span></div>
+              <div>▸ bash  cargo test     <span style="color:#3ddc97;">✓ 34 passed</span></div>
+            </div>
+            <div style="color:#3ddc97;">✻ review ready · retry logic — 2 files, 6 regions</div>
+          </div>
+          <div style="padding:7px 12px;border-top:1px solid #242a24;color:#59635a;">↵ jump to file · q close</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#3ddc97;padding-right:12px;">✻ claude idle</span>
+        <span style="color:#59635a;padding-right:10px;">transcript</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="1c" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">1c</span><span style="font-size:15px;font-weight:600;">The :-prompt with a selection anchor</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">visual-select, hit the prompt — file &amp; range ride along automatically</div>
+    <div style="background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;padding-top:8px;">
+      <div style="display:flex;">
+        <pre style="color:#414b42;padding-left:10px;text-align:right;"><span> </span> 12
+<span> </span> 13
+<span> </span> 14
+<span> </span> 15
+<span> </span> 16
+<span> </span> 17
+<span> </span> 18
+<span> </span> 19
+<span> </span> 20
+<span> </span> 21
+<span> </span> 22
+<span> </span> 23
+<span> </span> 24</pre>
+        <pre style="color:#c6cec6;padding-left:14px;overflow:hidden;"><span style="color:#82aecd;">pub fn</span> <span style="color:#9ec98c;">retry_with_backoff</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt;(
+    <span style="color:#82aecd;">mut</span> op: <span style="color:#82aecd;">impl</span> <span style="color:#cfa86a;">FnMut</span>() -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt;,
+    policy: &amp;<span style="color:#cfa86a;">RetryPolicy</span>,
+) -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">T</span>, <span style="color:#cfa86a;">E</span>&gt; {
+    <span style="color:#82aecd;">let mut</span> delay = policy.base_delay;
+    <span style="color:#82aecd;">for</span> attempt <span style="color:#82aecd;">in</span> 0..policy.max_attempts {
+        <span style="color:#82aecd;">match</span> op() {
+<span style="display:inline-block;min-width:100%;background:#26332a;">            <span style="color:#cfa86a;">Ok</span>(v) =&gt; <span style="color:#82aecd;">return</span> <span style="color:#cfa86a;">Ok</span>(v),</span>
+<span style="display:inline-block;min-width:100%;background:#26332a;">            <span style="color:#cfa86a;">Err</span>(e) <span style="color:#82aecd;">if</span> attempt + 1 == policy.max_attempts =&gt; <span style="color:#82aecd;">return</span> <span style="color:#cfa86a;">Err</span>(e),</span>
+<span style="display:inline-block;min-width:100%;background:#26332a;">            <span style="color:#cfa86a;">Err</span>(_) =&gt; thread::sleep(jitter(delay)),</span>
+        }
+        delay = (delay * 2).min(policy.max_delay);
+    }</pre>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;margin-top:8px;">
+        <span style="background:#cfa86a;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">V-LINE</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/retry.rs</span>
+        <span style="flex:1;"></span>
+        <span style="color:#59635a;padding-right:10px;">3 lines</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;height:26px;background:#0c0f0c;font-family:'IBM Plex Mono',monospace;font-size:11.5px;padding:0 10px;border-top:1px solid #242a24;">
+        <span style="color:#3ddc97;border:1px solid #2a5c44;border-radius:3px;padding:0 6px;line-height:17px;">⚓ src/retry.rs:19–21</span>
+        <span style="color:#c6cec6;">:c collapse these arms — use the shared backoff helper from util::backoff<span style="background:#c6cec6;color:#0c0f0c;">&nbsp;</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="1d" style="width:900px;">
+    <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px;"><span style="background:#1a6b4a;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:2px 7px;border-radius:4px;">1d</span><span style="font-size:15px;font-weight:600;">Dirty state — changed on disk</span></div>
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#5a635a;margin-bottom:10px;">buffer holds stable; nothing moves unless you asked — indicate, offer to refresh</div>
+    <div style="position:relative;background:#0c0f0c;border:1px solid #242a24;border-radius:6px;overflow:hidden;padding-top:8px;">
+      <div style="display:flex;">
+        <pre style="color:#414b42;padding-left:10px;text-align:right;"><span> </span>  1
+<span> </span>  2
+<span> </span>  3
+<span> </span>  4
+<span> </span>  5
+<span> </span>  6
+<span> </span>  7
+<span> </span>  8
+<span> </span>  9
+<span> </span> 10
+<span> </span> 11
+<span> </span> ~
+<span> </span> ~</pre>
+        <pre style="color:#c6cec6;padding-left:14px;overflow:hidden;"><span style="color:#82aecd;">use</span> crate::retry::{retry_with_backoff, <span style="color:#cfa86a;">RetryPolicy</span>};
+
+<span style="color:#82aecd;">pub async fn</span> <span style="color:#9ec98c;">fetch_json</span>(url: &amp;<span style="color:#cfa86a;">str</span>) -&gt; <span style="color:#cfa86a;">Result</span>&lt;<span style="color:#cfa86a;">Value</span>, <span style="color:#cfa86a;">FetchError</span>&gt; {
+    <span style="color:#82aecd;">let</span> policy = <span style="color:#cfa86a;">RetryPolicy</span>::default();
+    <span style="color:#82aecd;">let</span> resp = retry_with_backoff(|| client.get(url).send(), &amp;policy)?;
+    resp.json().await.map_err(<span style="color:#cfa86a;">FetchError</span>::Decode)
+}
+
+#[cfg(test)]
+<span style="color:#82aecd;">mod</span> tests {
+    <span style="color:#82aecd;">use super</span>::*;
+
+</pre>
+      </div>
+      <div style="position:absolute;top:14px;right:14px;background:#171207;border:1px solid #6b5426;border-radius:4px;padding:9px 12px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;line-height:18px;">
+        <div style="color:#e0a94e;">✱ changed on disk by claude</div>
+        <div style="color:#59635a;">:rr refresh · :dv diff</div>
+      </div>
+      <div style="display:flex;align-items:center;height:24px;background:#1a201a;font-family:'IBM Plex Mono',monospace;font-size:11.5px;margin-top:8px;">
+        <span style="background:#3ddc97;color:#0c0f0c;font-weight:600;padding:0 10px;line-height:24px;">NORMAL</span>
+        <span style="color:#c6cec6;padding:0 12px;">src/fetch.rs <span style="color:#e0a94e;">[+]</span></span>
+        <span style="flex:1;"></span>
+        <span style="color:#e0a94e;padding-right:12px;">✱ disk changed</span>
+        <span style="color:#3ddc97;padding-right:12px;">✻ claude working</span>
+        <span style="color:#59635a;padding-right:10px;">5:9</span>
+      </div>
+    </div>
+  </div>
+
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;showReviewNotification&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Screen 1a&quot;},&quot;showTmuxBar&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Screen 1a&quot;}}">
+class Component extends DCLogic {
+  componentDidMount() {
+    const fit = () => {
+      const design = 996; // 900px card + 48px side padding
+      document.body.style.zoom = window.innerWidth < design ? (window.innerWidth / design) : '';
+    };
+    fit();
+    window.addEventListener('resize', fit);
+  }
+  renderVals() {
+    return {
+      showNotif: this.props.showReviewNotification ?? true,
+      showTmuxBar: this.props.showTmuxBar ?? true,
+    };
+  }
+}
+</script>
+</body>
+</html>
