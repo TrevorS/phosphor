@@ -4,9 +4,9 @@ Decomposed from [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md), which is itsel
 the four design docs in [design/](design/). The plan says *what each phase is for*; this file
 says *what to build, in what order, and where we stop and look at it*.
 
-**77 tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds. Phase ids (`M-0`,
-`S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids are stable —
-reference them in commits.
+**77 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
+Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids
+are stable — reference them in commits.
 
 ---
 
@@ -22,12 +22,62 @@ wraps every frame; only a human watching a stream can say whether a frame tore. 
 whose design language is almost entirely about what things look like, so the verification has to
 be split.
 
-Every checkpoint therefore has two halves:
+### Three verification tiers
 
-| | |
+Verification is split across three tiers. Each catches a class of failure the others structurally
+cannot.
+
+| Tier | What it is | What it proves | Gates CI? |
+|---|---|---|---|
+| **1 · In-process snapshot** (`T018`) | ratatui `TestBackend` → cell grid → committed text snapshot | *What we told the terminal to draw.* Exact, diffable, fast. | **Yes** |
+| **2 · VHS capture** (`V001`–`V009`) | real PTY → real terminal emulator → PNG frames + GIF | *What actually appeared.* Escape sequences, terminal setup, truecolor, the synchronized-output wrapper, the whole pipeline. | No — artifacts + change detection |
+| **3 · Teej, real hardware** | you, at your own terminals | Whether it tears, whether chords reach the app, whether it's any *good*. | n/a |
+
+Tier 1 can pass while the real output is broken — wrong escape codes, a mis-wired sync wrapper,
+truecolor silently downsampled. Tier 2 catches exactly that gap. Neither can tell you whether
+the thing is worth using; that stays Tier 3.
+
+**Tier 2 converts a lot of Tier 3 into asynchronous review.** Instead of driving the editor by
+hand to see the ask queue behave, you watch a ten-second clip. Instead of resizing a window to
+watch statusline shedding, you flip through a width sweep. That's the main win — not automation,
+but making the perceptual review reproducible, diffable, and reviewable whenever you like.
+
+### What VHS can and cannot reach
+
+Checked against VHS **0.11.0**. Two properties of the tool shape the whole design:
+
+- **There is no text output format.** VHS emits `gif`, `mp4`, `webm`, or a `frames/` PNG
+  sequence — nothing assertable as text. So Tier 2 assertions are *pixel* comparisons against
+  committed reference PNGs, which are fragile across font rendering, OS, and VHS version.
+  **Pin the VHS version, the font, and the machine that regenerates references** (`V001`,
+  `V007`), and treat a pixel diff as a change detector that asks for a human look — not a
+  build-breaking gate. The exact, stable, diffable assertions stay in Tier 1.
+- **`Set Width` / `Set Height` are pixels, not columns.** There is no direct column control, so
+  hitting exactly 80 columns takes a calibration pass (`V002`) mapping `(FontSize, Width)` to a
+  known column count. This is unavoidable and worth doing once, properly — the 80-column shed
+  order is a real acceptance criterion at nearly every checkpoint.
+
+What stays irreducibly Tier 3, and why:
+
+| Cannot be reached by VHS | Why |
 |---|---|
-| **Claude verifies** | Anything mechanically checkable — builds, tests, lints, snapshots, file-format round-trips, registry enumeration, crash/restart persistence. Runs unattended and reports pass/fail. |
-| **Teej verifies** | Anything that needs eyes on a real terminal, or a judgement call about whether the thing is *good*. Cannot be delegated and should not be skipped. |
+| **Torn frames** | Capture is post-composite from the emulator's own renderer, which does not implement synchronized output (DECSET 2026). A tear would be either invisible or always-present — the observation is meaningless either way. **This is the most important limitation**, because a torn frame is P0. |
+| **Kitty keyboard protocol** | The browser-based terminal VHS drives does not implement it, so modifier chords can't be distinguished. `T027` is verified on your hardware only. |
+| **OSC 8 activation** | Links may *render*, but nothing can click one. |
+| **Latency and feel** | "Fast enough to be useful or fast enough to be annoying" is not a measurable a recording exposes. |
+| **Real multiplexer passthrough** | tmux can run *inside* a tape, but its passthrough behaviour against a real terminal is what actually breaks. |
+
+Verify empirically during `V002` rather than assuming either way: **undercurl** (the emulator has
+curly-underline support, but whether it survives capture is untested) and **truecolor fidelity**
+(that captured pixels match the theme's hex values exactly).
+
+What VHS *does* recover from Tier 3: **degradation paths**, via `Env TERM xterm-256color` and
+`Env NO_COLOR 1` (`V009`). Those are otherwise tedious to check by hand every time.
+
+> **A payoff from the S2 architecture.** Tapes seed exact editor state through
+> `phosphor --eval` — the CLI door from `T023`. Because Steel, MCP, and the CLI share one
+> vocabulary (invariant 2), the test harness can drive the editor into any state the agent could,
+> with no test-only backdoor. The one-API rule pays for itself here first.
 
 A checkpoint also names **what a failure reopens** — which task, decision, or design assumption
 comes back into play. That matters most at `CP-0`, where a failure changes the shape of the
@@ -44,22 +94,28 @@ are unevenly supported. Fill in what you actually use:
 | **Secondary** | truecolor, partial kitty support — catches assumptions baked into the primary | *(iTerm2)* |
 | **Degradation target** | no kitty protocol, no undercurl, possibly 256-colour | *(Terminal.app)* |
 | **Multiplexed** | primary inside tmux — passthrough is where sync output and OSC 8 break | tmux |
+| **VHS** | none of the above — a captured environment, not a terminal you trust | pinned in `V001` |
 
-`CP-1` establishes the baseline on all four. After that, most checkpoints only need the primary,
-and the full sweep repeats at `CP-5`, `CP-7`, and `CP-9`.
+`CP-1` establishes the baseline on all four real terminals and calibrates VHS. After that, VHS
+carries most of the repeat coverage, the primary terminal handles the Tier-3 residue, and the
+full four-terminal sweep repeats only at `CP-5`, `CP-7`, and `CP-9`.
 
 ### The recurring sweep
 
-These are re-checked at **every** checkpoint from `CP-1` onward, because each new async event
-source is a fresh chance to break them. They are listed once here rather than repeated 13 times:
+Re-checked at **every** checkpoint from `CP-1` onward, because each new async event source is a
+fresh chance to break them. Listed once here rather than repeated twelve times. The tier that
+can actually see each one is noted, since it isn't obvious:
 
-- **No torn frames.** Synchronized output wraps every frame. A tear is P0 — stop and fix.
-- **80 columns.** Statusline sheds counters → jj → cursor → session prose → mode word, with
-  `✻`/`●n`/`!` last. Nothing wraps, ever. A second statusline row is a bug.
-- **Degradation.** On the degradation terminal: markers become `▎`, undercurl becomes underline,
-  the spinner becomes a static `✻`. Nothing renders as garbage.
-- **tmux.** Everything above still holds inside tmux.
-- **Nothing moves unless you asked.** The viewport never scrolls on its own.
+- **No torn frames** — **Tier 3 only.** Synchronized output wraps every frame; a tear is P0.
+  No recording can show you this.
+- **80 columns** — Tier 2 (calibrated width sweep) + Tier 1 (the truncation property test).
+  Shed order counters → jj → cursor → session prose → mode word, `✻`/`●n`/`!` last. Nothing
+  wraps. A second statusline row is a bug.
+- **Degradation** — Tier 2 via `Env` (`V009`), confirmed on real hardware at the full sweeps.
+  Markers become `▎`, undercurl becomes underline, the spinner becomes a static `✻`.
+- **tmux** — Tier 3. Passthrough is the thing being tested, so a captured tmux proves little.
+- **Nothing moves unless you asked** — Tier 2 is *ideal* here: a GIF showing the cursor and
+  viewport dead still while the file changes underneath is the clearest possible evidence.
 
 ---
 
@@ -76,6 +132,75 @@ source is a fresh chance to break them. They are listed once here rather than re
 | S6 · ACP + MCP + Transcript + Prompt | T050–T062 | **CP-6** session · **CP-7** directing |
 | S7 · Diffs + review + dirty + VCS | T063–T073 | **CP-8a/b/c** — three workstreams |
 | S8 · Watches | T074–T077 | **CP-9** — ship check |
+| **V · Verification harness** | **V001–V009** | *cross-cutting — lands with S1, used from CP-1 on* |
+
+---
+
+## V · Verification harness
+
+The Tier-2 layer. Not product code — it is how every later checkpoint gets cheap. `V001`–`V005`
+land alongside S1 so `CP-1` can use them; the rest follow as the surfaces they capture appear.
+
+Separately numbered from the `T` tasks because it is a distinct workstream with a different
+lifetime: the harness outlives any single phase and gets extended at every checkpoint.
+
+- [ ] **V001 · Pin VHS and its dependencies**
+  VHS 0.11.0 + `ttyd` + `ffmpeg`, pinned by exact version. `Require` at the top of every tape so
+  a missing dep fails loudly rather than silently producing a wrong recording. Record the
+  reference-regeneration machine and font — pixel comparison is only meaningful against a fixed
+  renderer.
+  *Done when:* `just tapes` fails with a clear message on a machine with the wrong VHS version.
+  *Needs:* —
+
+- [ ] **V002 · Column calibration**
+  Map `(FontSize, Width)` → exact column count, since VHS sizes in pixels. Build a probe tape,
+  binary-search the width for 80 / 100 / 120 / 200 columns, and commit the table as
+  `tapes/_dimensions.tape`. **Also settle the two open empirical questions here:** does undercurl
+  survive capture, and do captured pixels match theme hex values exactly?
+  *Done when:* a tape asserting "exactly 80 columns" is reproducible, and both questions have
+  written answers. *Needs:* V001
+
+- [ ] **V003 · Shared tape config**
+  `tapes/_config.tape`, `Source`d by every tape: pinned font and size, `Set CursorBlink false`,
+  fixed `TypingSpeed`, fixed `Framerate`, `Set Padding 0`, neutral background. **Every source of
+  nondeterminism removed** — anything that varies between runs makes pixel comparison useless.
+  *Done when:* the same tape run twice produces byte-identical PNGs. *Needs:* V002
+
+- [ ] **V004 · Deterministic waits — no `Sleep`**
+  Use `Wait+Screen /regex/` against a known sentinel instead of sleeping. Phosphor needs a
+  stable, greppable ready-state for this; the statusline is the natural sentinel.
+  *Done when:* no tape in the library contains a bare `Sleep` as a synchronisation primitive.
+  *Needs:* V003
+
+- [ ] **V005 · Tape library convention**
+  One tape per screen id: `tapes/<id>.tape` → `Screenshot artifacts/<id>.png`, plus a GIF where
+  motion is the point. `Hide`/`Show` around setup so only the interesting frames are captured.
+  *Done when:* `just tape 1a` regenerates one screen; `just tapes` regenerates all. *Needs:*
+  V004
+
+- [ ] **V006 · Deterministic fixture repo**
+  A committed sample tree plus **seeded store state** — regions, seen-state, threads, a canned
+  transcript. Without this, every agent-surface tape is flaky, because the content varies run to
+  run. Seed it through `phosphor --eval` (`T023`), not a test-only backdoor.
+  *Done when:* `CP-5`'s tapes produce identical output on two machines. *Needs:* V005, T023
+
+- [ ] **V007 · Pixel-diff runner**
+  Compare fresh captures against committed references; on mismatch, emit a side-by-side diff
+  image and **fail soft with a request to look**, not a build break. Reference updates are an
+  explicit, reviewed commit — never automatic.
+  *Done when:* a deliberate one-cell colour change is caught and produces a legible diff image.
+  *Needs:* V005
+
+- [ ] **V008 · CI wiring**
+  Tier 1 snapshots **gate**. Tier 2 runs, uploads artifacts, and posts the diff summary without
+  blocking. Keep them in separate CI jobs so a flaky renderer can never redden a correct build.
+  *Done when:* a Tier-1 failure blocks merge and a Tier-2 diff does not. *Needs:* V007, T005
+
+- [ ] **V009 · Degradation tapes**
+  `Env TERM xterm-256color` and `Env NO_COLOR 1` variants of the core screens, exercising the
+  fallback paths (`▎` markers, underline instead of undercurl, static `✻`).
+  *Done when:* the degradation path is captured for `1a` and `2a` without touching a real
+  terminal. *Needs:* V005
 
 ---
 
@@ -215,6 +340,12 @@ after this trusts that colours and frames are right.
 property test (widths 40–200, never two rows) · all four themes pass actor-hue validation · the
 planted bad theme is rejected · no `Color::Rgb` literal survives in `phosphor-ui`.
 
+**VHS produces:** stills for `1a`-minus-agent, `9c`, `8c`, `8d` · a **width sweep** contact sheet
+at 200/120/100/80/60/40 columns showing the shed order step by step · all four themes on the same
+buffer, side by side · the `V009` degradation variants. This is also where VHS itself gets
+calibrated (`V002`), so budget for the harness costing more than the review at this one
+checkpoint and less at every one after.
+
 **Teej verifies — on all four terminals in the matrix:**
 - Open `1a`'s file side by side with the mockup. **Does it look right?** Not "are the colours
   the right hex" — a snapshot proves that — but does the density, the gutter, the line-number
@@ -283,6 +414,10 @@ care here rather than at S5.
 **Claude verifies:** door-parity test enumerates the registry and passes · a planted
 one-door-only Action fails CI · broken `init.scm` still boots · `--eval` and REPL agree on a
 fixture expression · `6b` snapshot.
+
+**VHS produces:** a clip of a REPL rebind taking effect on the very next frame — the liveness
+claim is about *motion between two states*, so a still can't carry it · the broken-`init.scm`
+boot with its error float · `6b`.
 
 **Teej verifies:**
 - Rebind a key from the REPL. Does it take effect on the very next keystroke, no restart?
@@ -364,6 +499,11 @@ instrument.
 survives restart and `kill -9` · gutter priority resolution across all overlaps · `3c` and `8e`
 snapshots · every binding lives in `runtime/`.
 
+**VHS produces:** the leader popup opening (`3c`) · folds collapsing and expanding · soft-wrap
+continuations · insert-only whitespace marks · the once-per-session unknown-key hint firing and
+then *not* firing again (`8e`). Keystroke-driven surfaces are where tapes are strongest — the
+input is scripted, so the capture is exact.
+
 **Teej verifies:**
 - **Actually edit something real for a while.** Not a test file — something you were going to
   change anyway. Vim habits should carry without thinking about it.
@@ -416,6 +556,11 @@ snapshots · every binding lives in `runtime/`.
 **Claude verifies:** completion + signature help against rust-analyzer, tsserver, pyright ·
 diagnostic gutter priority vs other region states · `7c` snapshot · a 13th language added from
 the REPL with no Rust change.
+
+**VHS produces:** the completion float opening over real code in all three languages (`7c`) ·
+signature help · a file with real diagnostics showing gutter priority against other region
+states. Undercurl only if `V002` established that it survives capture — otherwise it stays
+Tier 3.
 
 **Teej verifies:**
 - Type in all three languages. Is completion fast enough to be useful, or fast enough to be
@@ -493,6 +638,12 @@ survives restart and `kill -9`, in a jj repo *and* a bare directory · picker re
 files · a REPL-added picker source appears without restart · `1a`, `2a`, `3d`, `8a`, `6a`
 snapshots.
 
+**VHS produces:** `1a` in full against the `V006` fixture · the unseen picker with diff preview
+(`2a`) · files picker with activity columns (`3d`) · grep (`8a`) · `:arch` (`6a`) · a clip of
+`s` clearing a marker and the gutter updating · the no-grammar file showing line-fallback
+markers. **This checkpoint is why `V006` exists** — without seeded store state none of these are
+reproducible.
+
 **Teej verifies — full terminal matrix:**
 - Open a file with unseen regions. **Does the gutter pull your eye to the right places?** That
   is the entire thesis; if it doesn't, nothing downstream saves it.
@@ -566,6 +717,13 @@ from it.
 under sustained streaming load · every `SessionState` variant renders · `1b`, `7d`, `5d`, `7b`,
 `2d` snapshots.
 
+**VHS produces:** the transcript streaming a full turn · the session dropping mid-turn and the
+seam appearing (`7b`) · cold start (`7d`), attach/adopt (`5d`), mid-task dashboard (`2d`) · a
+clip of the buffer sitting perfectly still while Claude works (`2c`).
+**Explicitly not the tearing check** — a capture cannot show a tear, so `CP-6`'s highest-risk
+item stays entirely on your hardware. Don't let a clean-looking clip talk you out of watching it
+live.
+
 **Teej verifies:**
 - Watch a real turn stream in. **Zero tearing** — this is the highest-risk moment in the build
   for it, since streaming is the first sustained async render pressure.
@@ -619,6 +777,11 @@ describes.
 at 40 cols · permission rules round-trip to `init.scm` and take effect · `1c`, `4a`, `7a`, `7e`
 snapshots · queue state is a store query (assert no widget-local ask state exists).
 
+**VHS produces:** **the ask-queue clip** — picker open, question arrives, `!` lights up, picker
+survives untouched, `]!` answers it. Q9's whole argument is a sequence of states over time, so
+this is the one artifact that settles whether the decision was right. Plus `1c` (anchor chip on
+the prompt), `4a`, `7a`, `7e`, and a 40-column capture proving `!` survives shedding.
+
 **Teej verifies — full terminal matrix:**
 - **Use it for real work.** Visual-select, `:`, talk to Claude. Does the anchor riding along
   feel automatic, or do you check whether it worked every time?
@@ -665,6 +828,10 @@ Three independent workstreams; three checkpoints. Each is independently shippabl
 **Claude verifies:** per-hunk seen composes correctly over groups · `4b`, `2b`, `5c`, `8b`,
 `3a` snapshots · inbox unread state derives from seen-state rather than duplicating it.
 
+**VHS produces:** a navigation clip through the 40-file block — directories folding, `s`
+clearing hunks piecewise, position surviving a stop and restart (`8b`, `4b`) · hunk peek
+(`2b`) · inbox (`5c`) · anchored exchange (`3a`).
+
 **Teej verifies:** Read a large review block end to end. Does grouping-by-directory actually
 make 40 files tractable, or do you still feel lost? Are Claude's group annotations useful
 enough to be worth the screen space? Does per-hunk seen let you stop halfway and come back
@@ -687,6 +854,11 @@ without losing your place? The recurring sweep.
 disk write · `1d`, `5b` snapshots · no code path can refresh a buffer without an explicit
 Action.
 
+**VHS produces:** the single best artifact in the whole harness — a GIF of the cursor and
+viewport **dead still** while the file changes underneath and `✱` appears. Invariant 3 is a
+claim about absence of motion, and a recording is the only way to demonstrate absence. Plus each
+of `:diff-disk`'s three exits taken in turn (`5b`).
+
 **Teej verifies:** **Nothing moved, right?** Not "it recovered gracefully" — nothing moved.
 Then `:dv`, read both versions, take each of the three exits in turn. Is the choice obvious at
 the moment you have to make it? This is the invariant most likely to be violated by accident,
@@ -706,6 +878,11 @@ and the most damaging when it is.
 
 **Claude verifies:** **the entire S7 acceptance set runs twice — once in a jj repo, once in a
 bare directory.** Plus once in a git repo. `3b` snapshot.
+
+**VHS produces:** the same tape run against all three fixtures — jj, git, bare — as a
+three-column contact sheet. Any surface that differs between them is either a deliberate
+enhancement or a bug, and putting them side by side is what makes the difference obvious.
+Plus the jj timeline (`3b`).
 
 **Teej verifies:** Work in a plain directory with no repo for a while. Does anything feel
 degraded or apologetic? The brief's stance is that VCS is an enhancement and its absence is a
@@ -737,6 +914,11 @@ Last phase, and the final full sweep before calling v1 done.
 watches correctly unavailable on second-tier languages · `5a` snapshot · **full regression: all
 34 v1 screen snapshots** · the recurring sweep automated where possible.
 
+**VHS produces:** watch values streaming into a buffer from a real test run (`5a`) · and the
+**full contact sheet — all 34 v1 screens regenerated in one pass**, ready to hold against the
+mockups side by side. This is what the harness was built for: the final visual regression is one
+command and a scroll, not a day of driving the editor by hand.
+
 **Teej verifies — full terminal matrix, one last time:**
 - Watch a value stream from a real run. Is this the Light Table moment, or just virtual text?
 - On a second-tier language: is the absence honest and clearly explained, or does it look
@@ -759,7 +941,12 @@ likely to feel inconvenient.
 right" prompts exist to surface things a test would never catch — write them down when they
 occur, because they will not recur to you later.
 
-**Snapshots accumulate.** By CP-9 the golden-frame harness (T018) covers all 34 v1 screens, so
-each checkpoint gets progressively cheaper on my side and the manual half stays roughly
-constant. That's deliberate: the perceptual checks never automate away, so the mechanical ones
-should carry as much as they can.
+**Coverage accumulates; the Tier-3 residue does not.** By CP-9, Tier 1 covers all 34 v1 screens
+as text snapshots and Tier 2 regenerates them all as images in one pass. Both get cheaper every
+checkpoint. What never shrinks is the Tier-3 list — tearing, kitty chords, OSC 8 activation,
+latency, tmux passthrough, and every "is this actually good" judgement. Roughly a dozen items,
+constant from CP-1 to CP-9. Plan for them rather than hoping the harness absorbs them.
+
+**Don't let a clean recording substitute for the residue.** The failure mode of a good harness
+is trusting it past its edges — most sharply at CP-6, where a smooth-looking streaming clip says
+nothing at all about whether frames tore on real hardware.
