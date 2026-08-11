@@ -4,7 +4,7 @@ Derived from `docs/design/` (Design Brief, Design Language v0.2, TUI Mockups, Co
 Breakdown) per `docs/design/CLAUDE-CODE-HANDOFF.md`. The design docs are the contract; this
 document is the route through them.
 
-The eleven questions this plan raised were **answered on 2026-08-11** and are recorded in
+The twelve questions this plan raised were **answered on 2026-08-11** and are recorded in
 [§5 Decisions](#5-decisions). Two of them amend the design docs rather than merely filling a
 gap, and are marked as amendments there. Nothing below is an open question any more; where a
 decision has consequences for a phase, those are folded into the phase.
@@ -39,6 +39,9 @@ Two structural consequences worth building *tests* for, not just intentions:
 - The three doors must share one registry. If MCP tools are registered by hand alongside a
   separate Steel binding table, invariant 2 rots within a month. Build it so adding a
   capability to one door adds it to all *by construction* (S2).
+- **The UI is composed in Steel over a declarative view tree** ([Q12](#q12)). Rust owns the
+  primitives and the frame; Steel decides what is on screen. Refined placement test: *does it
+  produce pixels? Rust. Does it decide which pixels? Steel.*
 
 ---
 
@@ -194,9 +197,9 @@ Screen ids (`1a`, `2a`, …) refer to `docs/design/TUI Mockups.dc.html`.
   - **no literal colours in `phosphor-ui`** — every widget takes `&Theme` (Design Language
     §12). A grep-level lint over `Color::Rgb` / `Color::Indexed` in that crate is enough.
   - **no store mutation from `phosphor-ui`** — enforced by dependency direction: `phosphor-ui`
-    sees ViewModel types only, never the store's `&mut` API. Model it as separate modules
-    (`phosphor_core::vm` vs `phosphor_core::store`) with the widget crate importing only the
-    former.
+    sees ViewModel and view-tree types only, never the store's `&mut` API. Model it as separate
+    modules (`phosphor_core::vm` and `phosphor_core::view` vs `phosphor_core::store`), with the
+    widget crate importing only the first two ([Q12](#q12)).
 
 **Scope**
 - Files: 7 `Cargo.toml` + 7 `lib.rs`/`main.rs` stubs, 1 `justfile`, 1 CI workflow, 1 `VENDOR.md`
@@ -269,6 +272,11 @@ themselves up.
 - **`Action` enum** — the single mutation API. Buffer edits, seen marks, session messages,
   float open/close. Everything that changes state is one of these.
 - **Query vocabulary** — the read side, over the store's ViewModels.
+- **The view-tree protocol** ([Q12](#q12)) — the second half of the spine, and as load-bearing
+  as the `Action` enum. `phosphor_core::view` defines the tree as plain data (no Steel dep, no
+  ratatui dep); `phosphor-steel` produces it; `phosphor-ui` interprets it into ratatui calls.
+  Rust caches the last tree and redraws every frame without re-entering the VM, so Steel runs at
+  the rate of state change rather than the rate of frames.
 - **One registry, three doors.** Register each Action/query *once*, with its Steel binding,
   MCP tool schema, and CLI verb derived from that single registration. This is the mechanical
   guarantee for invariant 2; the MCP door has no consumer until S6, but it is generated from
@@ -602,7 +610,8 @@ your panes," which S1 already covers.
 
 ## 5. Decisions
 
-The eleven questions this plan raised were answered on **2026-08-11**. They keep their `Q`
+The twelve questions this plan raised were answered on **2026-08-11**. Q12 arrived later than
+the rest, from a design conversation rather than from reading the docs. They keep their `Q`
 numbers as stable ids, since the phases cross-reference them. Each records what was decided,
 why, and what cost the decision accepts.
 
@@ -792,6 +801,60 @@ cheap once the store exists, and it turns "every surface is a query over one sto
 into something you can look at — which is worth having when explaining the project to anyone,
 including a future contributor.
 
+<a id="q12"></a>
+### Q12 · The UI is composed in Steel, over a declarative view tree
+
+*Was: the Component Breakdown puts float layouts, picker sources and columns, statusline
+segments, the inbox and which-key in Steel, and reserves "the renderer" for Rust — but never
+says where the renderer ends and the editor begins. The proposal on the table was to wrap
+ratatui in Steel directly, so the UI could be redefined.*
+
+**Decided:** the high-level UI lives in Steel, but Steel **never calls ratatui**. It returns a
+**declarative view tree** — plain data describing which primitives, laid out how, with what
+props — and Rust interprets that tree into ratatui calls.
+
+Handing a GC'd scheme a `&mut Buffer` is the one thing that can both corrupt a frame and drop
+one, which is precisely what the placement test assigns to Rust, and torn frames are P0. The
+view tree gets the redefinability without the hazard.
+
+**Three layers:**
+
+| Layer | Owns | Crate |
+|---|---|---|
+| **Primitives** | `BufferView`, `Float`, `Picker`, `DiffBody`, `TranscriptPane`, `GutterBar`, `VirtualText`. Parameterised in Rust, *composed* elsewhere. | `phosphor-ui` |
+| **The view tree** | The contract: plain data, **no Steel dependency and no ratatui dependency**, so neither side owns it. | `phosphor-core::view` |
+| **Composition** | What is on screen, where, containing what. Float layouts, statusline composition, picker columns, pane contents. | `runtime/*.scm` |
+
+`phosphor-steel` produces the tree; `phosphor-ui` consumes it. The M-0 structural lint extends
+to match: `phosphor-ui` may import `phosphor_core::vm` and `phosphor_core::view`, never
+`::store`.
+
+**Evaluation runs at the rate of state change, not the rate of frames.** Rust caches the last
+view tree and redraws it every frame without re-entering the VM; Steel re-runs only when a
+ViewModel actually changes. A transcript streaming at 60fps costs one VM invocation per chunk,
+not sixty per second. This is what keeps `steel-core` — pre-1.0, with unmeasured per-frame
+characteristics — permanently out of the frame budget, and it falls out of the store →
+ViewModel → re-derive loop the design already specifies.
+
+**Steel composes primitives; it does not define them.** A new primitive is a Rust change.
+Without that line, custom widgets get written in scheme and the frame budget comes back.
+
+**One escape hatch:** a `spans` primitive taking styled rows from Steel, for surfaces the
+primitive set doesn't cover. `:arch` ([Q11](#q11)) is exactly this — a store query rendered as
+text — and it needs no Rust primitive of its own as a result.
+
+**The refined placement test**, sharper than the general one for this question:
+*does it produce pixels? Rust. Does it decide which pixels? Steel.*
+
+**Why now rather than at v1.5:** agent-built panes ([Design Brief, v1.5](design/Design%20Brief.dc.html))
+become "Claude emits a view tree" — same door, no new machinery. The Component Breakdown is
+blunt that excavating baked-in Rust into Steel is a rewrite rather than a refactor, so the cost
+of deciding this late is the thing the whole architecture was chosen to avoid.
+
+**Accepted cost:** the `spans` hatch is a slope toward writing renderers in scheme. It is
+signposted rather than fenced — one grep-able primitive name, so when a frame-budget regression
+appears there is exactly one place to look.
+
 ---
 
 ## 6. Risk register
@@ -803,6 +866,8 @@ including a future contributor.
 | Steel embedding API churn ([Q5](#q5)) | `steel-core` upgrade | pin `=0.8.2`; door-parity test as the upgrade gate | S2 |
 | The three doors drift apart | any new capability | one registry, generated bindings, enumerating parity test | S2 |
 | Policy accretes in Rust | ongoing | the placement test in code review; `runtime/*.scm` is where keymaps/segments/sources live | S2+ |
+| The Steel VM lands in the frame path ([Q12](#q12)) | a view tree rebuilt per frame instead of per state change | cache the tree in Rust and re-derive only on ViewModel change; assert VM invocations per second stays flat under streaming load | S2 |
+| Renderers get written in the `spans` hatch ([Q12](#q12)) | custom surfaces growing past `:arch` | one grep-able primitive name; a new primitive is a Rust change by rule | S5+ |
 | Torn frames | new async event source | synchronized output from S1; re-check at each phase boundary | S1 |
 | Anchors don't survive real rewrites | S5 | `6c` as an executable acceptance test, not a demo | S5 |
 | Second-tier languages feel broken rather than honest | S5 | line-fallback markers tested on an extensionless file as an S5 gate | S5 |

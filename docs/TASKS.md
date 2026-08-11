@@ -4,9 +4,10 @@ Decomposed from [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md), which is itsel
 the four design docs in [design/](design/). The plan says *what each phase is for*; this file
 says *what to build, in what order, and where we stop and look at it*.
 
-**77 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
+**80 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
 Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids
-are stable — reference them in commits.
+are stable and assigned in order of creation — reference them in commits. New tasks append
+rather than renumber, so `T078`+ sit inside earlier phases.
 
 ---
 
@@ -125,7 +126,7 @@ can actually see each one is noted, since it isn't obvious:
 |---|---|---|
 | M-0 · Scaffolding + spikes | T001–T009 | **CP-0** — go/no-go on both bought crates |
 | S1 · Theme + BufferView + StatusLine | T010–T018 | **CP-1** — does it look like the mockups |
-| S2 · Steel + Action + REPL | T019–T025 | **CP-2** — is the editor live |
+| S2 · Steel + Action + REPL + view tree | T019–T025, T078–T080 | **CP-2** — is the editor live |
 | S3 · Input + undo + gutter | T026–T035 | **CP-3** — does it feel like an editor |
 | S4 · LSP | T036–T040 | **CP-4** — boring on purpose |
 | S5 · Store + seen + Picker | T041–T049 | **CP-5** — the awareness loop |
@@ -239,8 +240,9 @@ everything after them — do them first, together.
   *Done when:* CI fails on a deliberately planted literal. *Needs:* T005
 
 - [ ] **T007 · Structural lint — no store mutation from `phosphor-ui`**
-  Split `phosphor_core::vm` (ViewModels, public to UI) from `phosphor_core::store` (mutation,
-  not). Enforced by dependency direction, not convention.
+  Split `phosphor_core::vm` (ViewModels) and `phosphor_core::view` (the view tree, Q12) — both
+  public to the UI — from `phosphor_core::store` (mutation, not). Enforced by dependency
+  direction, not convention.
   *Done when:* CI fails on a deliberately planted `store::` import in `phosphor-ui`.
   *Needs:* T005
 
@@ -402,10 +404,36 @@ care here rather than at S5.
   three doors. Enumeration is the point — a hand-written list rots.
   *Done when:* adding an Action reachable from only one door fails CI. *Needs:* T020, T023
 
-- [ ] **T025 · StatusLine segments move to Steel**
-  Segment list, order, and shed priority come from `runtime/`, not Rust. Proves the barrier
-  works on a real surface.
-  *Done when:* redefining a segment in the REPL changes the next frame. *Needs:* T017, T022
+- [ ] **T025 · StatusLine composition moves to Steel**
+  Not just segment *order* — the statusline is **composed as a view tree returned from Steel**
+  (Q12): which segments, in what order, with what shed priority. The first real surface to prove
+  the tree protocol on, and small enough to get wrong cheaply.
+  *Done when:* redefining the whole statusline composition in the REPL changes the next frame.
+  *Needs:* T017, T022, T079
+
+> **Appended after the initial breakdown** (Q12). Ids are assigned in order of creation, not
+> position, so `T001`–`T077` keep the meanings they were committed with.
+
+- [ ] **T078 · The view-tree protocol**
+  `phosphor_core::view` — the tree as plain data: **no Steel dependency, no ratatui
+  dependency**, so neither side owns the contract. Node kinds for every `phosphor-ui` primitive
+  plus layout and the `spans` escape hatch.
+  *Done when:* the crate compiles with neither `steel-core` nor `ratatui` in its dependency
+  tree. *Needs:* T019
+
+- [ ] **T079 · Tree interpreter + frame cache**
+  `phosphor-ui` walks a view tree into ratatui calls. **Rust caches the last tree and redraws
+  every frame without re-entering the VM** — Steel re-runs only when a ViewModel changes. This
+  is the whole reason a pre-1.0 scheme VM can sit under the UI safely.
+  *Done when:* a benchmark shows VM invocations per second **flat** while frames per second
+  climbs under streaming load. *Needs:* T078, T021
+
+- [ ] **T080 · The `spans` escape hatch**
+  One primitive taking styled rows from Steel, for surfaces the primitive set doesn't cover.
+  Deliberately the *only* way to draw something custom without a Rust change — one grep-able
+  name to check when a frame-budget regression shows up.
+  *Done when:* `:arch` (T048) is built entirely from it, with no primitive of its own.
+  *Needs:* T079
 
 ### ✋ CP-2 — Is the editor live?
 
@@ -413,7 +441,9 @@ care here rather than at S5.
 
 **Claude verifies:** door-parity test enumerates the registry and passes · a planted
 one-door-only Action fails CI · broken `init.scm` still boots · `--eval` and REPL agree on a
-fixture expression · `6b` snapshot.
+fixture expression · `6b` snapshot · **`phosphor_core::view` has neither `steel-core` nor
+`ratatui` in its dependency tree** · **the frame-cache benchmark shows VM invocations per second
+flat while FPS climbs** (T079).
 
 **VHS produces:** a clip of a REPL rebind taking effect on the very next frame — the liveness
 claim is about *motion between two states*, so a still can't carry it · the broken-`init.scm`
@@ -424,10 +454,13 @@ boot with its error float · `6b`.
 - Redefine a statusline segment from the REPL. Does the next frame have it?
 - Break `init.scm` on purpose. Does the editor still boot, and is the error float actually
   readable?
+- Redefine the **whole statusline composition** — not just segment order — from the REPL. The
+  view tree is the thing being tested; if composition still feels like filling in a Rust-shaped
+  form, the protocol is drawn at the wrong level.
 - **The judgement call:** read `runtime/*.scm` as it stands. Is this the editor layer, or is it
-  a config file with a Rust editor hiding behind it? Apply the placement test — *would two
-  reasonable users want this to differ?* If policy is accreting in Rust, this is the cheapest
-  moment in the entire build to correct it.
+  a config file with a Rust editor hiding behind it? Apply both placement tests — *would two
+  reasonable users want this to differ?* and *does it produce pixels, or decide which pixels?*
+  If policy is accreting in Rust, this is the cheapest moment in the entire build to correct it.
 
 **Fails if:** anything needs a restart, or the Steel layer reads as configuration rather than
 implementation. The plan is explicit that excavating baked-in Rust into Steel later is a
@@ -615,10 +648,11 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   *Done when:* screen `8a` reproduces. *Needs:* T046
 
 - [ ] **T048 · `:arch` / ArchDiagram**
-  A float body over a store query (Q11). Turns invariant 4 from a claim into something you can
-  look at.
-  *Done when:* screen `6a` reproduces and reflects the *actual* store, not a static drawing.
-  *Needs:* T041
+  A float body over a store query (Q11), **built entirely from the `spans` hatch** (T080) — no
+  Rust primitive of its own. It is the proof that the escape hatch is sufficient for a real
+  custom surface. Turns invariant 4 from a claim into something you can look at.
+  *Done when:* screen `6a` reproduces, reflects the *actual* store rather than a static drawing,
+  and adds zero lines to `phosphor-ui`. *Needs:* T041, T080
 
 - [ ] **T049 · Agent nouns resolve**
   `viu` / `sib` / `dih` now bind to real regions (completes T028, per Q8).
