@@ -681,7 +681,16 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // out of the live VM. This is the whole of `T022`'s liveness
             // claim, and `T026` inherits the rule along with the loop.
             Event::Key(key) => match press(&mut runtime, key) {
-                Press::Handled | Press::Pending => {}
+                // A binding is arbitrary scheme and may have moved anything the
+                // composer reads — `(status-set! …)`, `(status-order-set! …)`,
+                // `(set-option! …)`. None of that shows up in the ViewModel, so
+                // the revision cannot see it and the cached line would stand.
+                // Found by running it: a key bound to `(status-order-set! 'right
+                // '())` fired, and the frame that followed wrote no cells.
+                Press::Handled => status_cache.invalidate(),
+                // Nothing ran but the resolver: `phosphor/press` sets its own
+                // pending sequence and the statusline does not read it.
+                Press::Pending => {}
                 Press::Unbound => match key_step(key, &mut surface) {
                     Step::Quit => break,
                     Step::Handled => {}

@@ -90,6 +90,11 @@ const NO_CAPABILITY: &[(&str, &str)] = &[
          has",
     ),
     ("T089", "TabBar — a widget over the `panes` query"),
+    (
+        "T091",
+        "real VM invocations measured in the binary — a measurement of the loop, not a verb \
+         anyone names. Nothing about it is reachable from a door",
+    ),
 ];
 
 /// The phases `T019`'s acceptance criterion covers.

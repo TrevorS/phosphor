@@ -709,6 +709,15 @@ CP-0 settled the shape: **the input machine is ours.**
   > `Action::Scroll` is the single writer. And `T022` wired temporary per-keystroke dispatch
   > into the host to make the keymap live; that goes too. When both are gone, so do the three
   > lines in `crates/phosphor/Cargo.toml` that turn the fork's `crossterm` feature on.
+  >
+  > **One rule the loop obeys and no test can see.** Anything that runs arbitrary scheme —
+  > a REPL evaluation, a keybinding's thunk — may move state the statusline composer reads
+  > without moving the ViewModel, so the frame cache has to be invalidated by hand at each
+  > such site. The `CP-2` review found the keybinding half missing by running it: a key bound
+  > to `(status-order-set! 'right '())` fired and the frame that followed wrote no cells. It
+  > is correct now, and it is correct by *remembering*, which is the weakest kind. `T026`
+  > owns the loop; make the rule structural — one place where "arbitrary scheme ran" is
+  > recorded — and it becomes testable at the same time.
 
 - [ ] **T091 · Real VM invocations, measured in the binary** 📌
   `T079`'s benchmark proves the frame cache with a *Rust* composer, because `phosphor-ui` may
