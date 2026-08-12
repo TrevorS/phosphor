@@ -1,0 +1,16 @@
+{
+  "name": "phosphor",
+  "version": "0.1.0",
+  "unicode": "✻ ● ! ✓",
+  "escapes": "quote:\" backslash:\\ tab:\t newline:\n slash:\/",
+  "nested": {
+    "empty_object": {},
+    "empty_array": [],
+    "numbers": [0, -1, 3.5, 1e3, -2.5e-4, 1E2, 1E-2],
+    "literals": [true, false, null]
+  },
+  "grammars": [
+    { "language": "rust", "crate": "tree-sitter-rust", "abi": 15 },
+    { "language": "steel", "crate": "tree-sitter-scheme", "abi": 14 }
+  ]
+}

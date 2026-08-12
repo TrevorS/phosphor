@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>T083 fixture — HTML</title>
+    <style>
+      :root { --identity: #7aa2f7; }
+      body > main .row[data-seen="false"]::before { content: "●"; }
+    </style>
+  </head>
+  <body class="phosphor" data-mode="normal">
+    <!-- a comment -->
+    <main>
+      <h1>Gutter contract</h1>
+      <ul class="rows">
+        <li data-seen="false">unseen &amp; unread &#9679;</li>
+        <li data-seen="true">seen</li>
+      </ul>
+      <table>
+        <thead>
+          <tr><th scope="col">Language</th><th scope="col">ABI</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Rust</td><td>15</td></tr>
+        </tbody>
+      </table>
+      <form action="/eval" method="post">
+        <label for="expr">Expression</label>
+        <input id="expr" name="expr" type="text" value="(+ 1 2)" required />
+        <textarea rows="3" cols="40">raw &lt;text&gt;</textarea>
+        <select name="lang">
+          <option value="steel" selected>Steel</option>
+          <option value="rust">Rust</option>
+        </select>
+        <button type="submit" disabled>Run</button>
+      </form>
+      <img src="glyph.png" alt="glyph" width="16" height="16" />
+      <br />
+      <svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>
+    </main>
+    <script type="module">
+      const glyph = "✻";
+      document.querySelectorAll(".rows > li").forEach((el) => {
+        el.dataset.glyph = el.dataset.seen === "false" ? glyph : "";
+      });
+    </script>
+  </body>
+</html>

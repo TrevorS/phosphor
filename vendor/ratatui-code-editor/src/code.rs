@@ -124,24 +124,45 @@ impl Code {
         Ok(code)
     }
 
+    // PHOSPHOR PATCH 2 — see VENDOR.md. One `#[cfg]` per arm so a grammar that is
+    // not compiled in resolves to `None`, which is the same answer this function
+    // already gives for any unknown language: `Code::new` skips parser setup and
+    // the buffer renders unhighlighted. No caller learns a new failure mode.
     fn get_language(lang: &str) -> Option<Language> {
         match lang {
+            #[cfg(feature = "grammar-rust")]
             "rust" => Some(tree_sitter_rust::LANGUAGE.into()),
+            #[cfg(feature = "grammar-javascript")]
             "javascript" => Some(tree_sitter_javascript::LANGUAGE.into()),
+            #[cfg(feature = "grammar-typescript")]
             "typescript" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            #[cfg(feature = "grammar-python")]
             "python" => Some(tree_sitter_python::LANGUAGE.into()),
+            #[cfg(feature = "grammar-go")]
             "go" => Some(tree_sitter_go::LANGUAGE.into()),
+            #[cfg(feature = "grammar-java")]
             "java" => Some(tree_sitter_java::LANGUAGE.into()),
+            #[cfg(feature = "grammar-c-sharp")]
             "c_sharp" => Some(tree_sitter_c_sharp::LANGUAGE.into()),
+            #[cfg(feature = "grammar-c")]
             "c" => Some(tree_sitter_c::LANGUAGE.into()),
+            #[cfg(feature = "grammar-cpp")]
             "cpp" => Some(tree_sitter_cpp::LANGUAGE.into()),
+            #[cfg(feature = "grammar-html")]
             "html" => Some(tree_sitter_html::LANGUAGE.into()),
+            #[cfg(feature = "grammar-css")]
             "css" => Some(tree_sitter_css::LANGUAGE.into()),
+            #[cfg(feature = "grammar-yaml")]
             "yaml" => Some(tree_sitter_yaml::LANGUAGE.into()),
+            #[cfg(feature = "grammar-json")]
             "json" => Some(tree_sitter_json::LANGUAGE.into()),
+            #[cfg(feature = "grammar-toml")]
             "toml" => Some(tree_sitter_toml_ng::LANGUAGE.into()),
+            #[cfg(feature = "grammar-bash")]
             "shell" => Some(tree_sitter_bash::LANGUAGE.into()),
+            #[cfg(feature = "grammar-markdown")]
             "markdown" => Some(tree_sitter_md::LANGUAGE.into()),
+            #[cfg(feature = "grammar-markdown")]
             "markdown-inline" => Some(tree_sitter_md::INLINE_LANGUAGE.into()),
             _ => None,
         }

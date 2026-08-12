@@ -238,9 +238,16 @@ everything after them — do them first, together.
   java and more that we never load, and bundles neither Scheme nor CSV that we do), and confirm
   its non-optional **`arboard` + `rust-embed`** don't break a headless CI or VHS run — `arboard`
   pulls system clipboard libraries that a bare Linux runner won't have.
-  *Done when:* `just vendor-diff` prints an empty diff against the merged tag, only the grammars
-  we load are compiled in, and the workspace builds in a container with no X11/Wayland.
+  *Done when:* every hunk `just vendor-diff` prints against the merged SHA has a matching
+  `VENDOR.md` entry, only the grammars we load are compiled in, and the workspace builds in a
+  container with no X11/Wayland.
   *Needs:* T001
+
+  > **Why not "an empty diff".** The first wording asked for one, which this task cannot satisfy:
+  > gating 16 grammars and gating `arboard` *are* patches, so a clean fork and an empty diff are
+  > mutually exclusive. The contract that means something is that no hunk is undocumented — that
+  > is what keeps the fork from silently becoming a rewrite. Against the **SHA**, not a tag:
+  > upstream published `0.0.6` to crates.io without ever tagging it.
 
 - [ ] **T004 · Vendor `ratatui-markdown` and bump it to 0.30**
   Version bump only — no phosphor behaviour inside it (Q4). Feature-gated; per-language

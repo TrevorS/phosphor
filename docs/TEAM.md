@@ -72,7 +72,7 @@ owning crates gives near-zero merge contention for free.
 
 | Teammate | Model | Owns (exclusive write) |
 |---|---|---|
-| **spine** | `claude-opus-5` | `phosphor-core/{action,view}.rs` · `phosphor-steel/**` · `phosphor/{main,input,panes}.rs` · `runtime/{init,keymaps,leader}.scm` · the workspace manifests |
+| **spine** | `claude-opus-5` | `phosphor-core/{action,view}.rs` · `phosphor-steel/**` · `phosphor/{main,input,panes}.rs` · `runtime/{init,keymaps,leader}.scm` · **the root manifest** |
 | **surface** | `claude-opus-5` | `vendor/**` · `phosphor-buffer/**` · `phosphor-ui/{theme,buffer_view,status_line,gutter,virtual_text,float,help_grid,keymap_footer,tab_bar,soft_wrap}.rs` |
 | **store** | `claude-opus-5` | `phosphor-core/{store,region,anchor,seen}.rs` · `phosphor-ui/picker.rs` · `phosphor-vcs/**` · `runtime/pickers/**` |
 | **agent** | `claude-sonnet-5` | `phosphor-agent/**` · `phosphor-core/{review,inbox,watch}.rs` · `phosphor-ui/{transcript,prompt_line,question,diff_body,watch_overlay}.rs` · `runtime/{permissions,inbox,watch}.scm` |
@@ -104,6 +104,18 @@ These override ownership and are the reason invariant 2 survives contact with a 
   (`T089`) is `surface`. This is the same split as input: `spine` decides, `surface` draws.
 - `runtime/*.scm` is split by directory. Adding a *new* Steel surface is a `spine` decision,
   because it implies a registry entry.
+- **Manifests split root-vs-member** (settled at `CP-0`, where the original "the workspace
+  manifests" wording first bit). The **root** `Cargo.toml` is `spine`'s alone: it holds the pins,
+  `[workspace.dependencies]` and `[workspace.lints]`, and it is the one place a second writer
+  would reproduce the drift the pin exists to prevent. A **member** `Cargo.toml` belongs to
+  whoever owns the crate — `surface` adding a vendored path dep to `phosphor-buffer` is not a
+  contract change, it is that crate's own business. Vendored subtrees are deliberately kept out
+  of `[workspace] members`, so a path dep from a member auto-enrols them and needs no root edit
+  at all.
+  - The one unavoidable crossing is `T001` itself: the workspace cannot compile until every
+    member has a `lib.rs`, so `spine` creates the stubs in crates it does not own. They are
+    empty by construction and the owner overwrites them on first contact. Expect it once, at
+    the very start, and nowhere else.
 
 ---
 

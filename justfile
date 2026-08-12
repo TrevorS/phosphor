@@ -14,8 +14,22 @@ build:
     cargo build --workspace
 
 # Format check — matches CI exactly. Drop --check to fix in place locally.
+#
+# NO `--all`, deliberately. `[workspace] exclude` keeps the two vendored forks
+# out of the member list (see Cargo.toml), and `cargo clippy --workspace`
+# honours that — but `cargo fmt --all` does NOT: cargo-fmt resolves `--all`
+# over every *local* package under the workspace root, which re-includes
+# `vendor/ratatui-code-editor` and `vendor/ratatui-markdown` through their path
+# deps. With `--all` this recipe fails on 6 upstream files we did not write
+# (rustfmt 1.8.0), and the only way to green it would be to reformat the forks
+# — which is precisely the divergence `just vendor-diff` exists to prevent.
+#
+# Without `--all`, cargo-fmt at a virtual manifest root formats exactly the
+# workspace members. Verified by planting a formatting violation in all seven
+# crates: all seven were flagged, and no vendored file was touched. Coverage of
+# our own code is identical; only the fork seam changes.
 fmt:
-    cargo fmt --all --check
+    cargo fmt --check
 
 # Clippy, warnings denied — matches CI exactly.
 clippy:

@@ -10,6 +10,24 @@ version.workspace = true
 [dependencies]
 phosphor-core.workspace = true
 ratatui-core.workspace = true
+# The vendored markdown renderer (T004), for the transcript's prose body at S6.
+# OPTIONAL AND OFF BY DEFAULT, for two reasons:
+#   * Q4's guardrail — the transcript must render with the gate on and off, so the
+#     plain-text path stays the fallback and a broken bump degrades one surface
+#     instead of breaking the build.
+#   * The rule above. This crate is `ratatui-core`-only in every default build;
+#     `ratatui-markdown` depends on full `ratatui`, so enabling `markdown` puts
+#     `ratatui` 0.30 in this crate's tree. Same major as the pin — `cargo tree`
+#     still shows one ratatui — but it is a real relaxation of the ratatui-core
+#     rule and is flagged to `spine` rather than assumed.
+ratatui-markdown = { workspace = true, optional = true, features = ["markdown"] }
+
+[features]
+default = []
+# Rich markdown in the transcript. Per-language highlight features stay off:
+# `ratatui-markdown`'s `highlight-lang-*` set is 37 grammars wide and every one
+# enabled is more surface to keep compiling across the 0.29 -> 0.30 bump.
+markdown = ["dep:ratatui-markdown"]
 
 [lints]
 workspace = true

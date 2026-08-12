@@ -37,6 +37,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # `just` is not preinstalled on GitHub's runners (same reason the `lint`
+      # job installs it). Every job that shells out to a recipe needs this.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - run: just fmt
         env:
           RUST_BACKTRACE: "1"
@@ -46,6 +51,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - run: just clippy
         env:
           RUST_BACKTRACE: "1"
@@ -58,13 +66,15 @@ jobs:
       # cargo-nextest: per-test process isolation (SPIKES.md's hygiene table) —
       # tests that touch the XDG state dir and terminal state get flaky under a
       # shared-process runner otherwise.
-      # Pinned to 0.9.135: what's actually installed and verified locally for
-      # this task (`cargo nextest --version`). SPIKES.md's hygiene table names
-      # 0.9.143, which is not what's on this machine — flagged under this
-      # phase's report rather than silently trusting either number.
+      # Pinned to 0.9.143, matching SPIKES.md's hygiene table. The local install
+      # was 0.9.135 and was upgraded to agree with the doc at the CP-0 gate,
+      # rather than pinning CI to whatever happened to be on one machine.
       - uses: taiki-e/install-action@v2
         with:
-          tool: nextest@0.9.135
+          tool: nextest@0.9.143
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - run: just test
         env:
           RUST_BACKTRACE: "1"

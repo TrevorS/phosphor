@@ -1,7 +1,15 @@
 [workspace]
 members = ["crates/*"]
-# `vendor/*` is not listed on purpose: the two vendored subtrees (T003, T004) become
-# workspace members automatically once a member declares a path dependency on them.
+# The two vendored subtrees (T003, T004) are path dependencies but deliberately
+# NOT members. A path dep inside the workspace dir is auto-promoted to a member
+# unless excluded, and membership would put upstream code inside
+# `cargo fmt --all --check` and `clippy --workspace -D warnings` — CI would then
+# go red on code we did not write, and the fix would be to reformat the fork,
+# which is exactly the divergence `just vendor-diff` exists to prevent.
+# Excluded, they still build (as dependencies of `phosphor-buffer` / `phosphor-ui`)
+# but our lints stop at the seam. `ratatui-code-editor` also carries its own
+# `[workspace]` table for its examples, which would be a second workspace root.
+exclude = ["vendor/ratatui-code-editor", "vendor/ratatui-markdown"]
 resolver = "3"
 
 [workspace.package]
@@ -23,7 +31,11 @@ phosphor-steel = { path = "crates/phosphor-steel" }
 phosphor-ui = { path = "crates/phosphor-ui" }
 phosphor-vcs = { path = "crates/phosphor-vcs" }
 ratatui = "0.30.2"
+# The two vendored forks (T003 / T004), consumed as path deps — not submodules and
+# not `[patch.crates-io]` (plan §2). Provenance for each is in its own VENDOR.md.
+ratatui-code-editor = { path = "vendor/ratatui-code-editor", default-features = false }
 ratatui-core = "0.1.2"
+ratatui-markdown = { path = "vendor/ratatui-markdown", default-features = false }
 ropey = "1.6.1"
 steel-core = "=0.8.2"
 steel-derive = "=0.8.2"

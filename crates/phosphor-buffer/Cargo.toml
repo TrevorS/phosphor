@@ -6,8 +6,47 @@ rust-version.workspace = true
 version.workspace = true
 
 [dependencies]
+# The vendored editor core (T003). `default-features = false` is what keeps the
+# fork's dependency set ours rather than upstream's: no `arboard`, and only the ten
+# grammars phosphor's first-class twelve intersects with. `clipboard` is a feature
+# of this crate, not a default, so a headless CI never links X11/Wayland.
+ratatui-code-editor = { workspace = true, features = ["grammars-phosphor"] }
 ropey.workspace = true
 tree-sitter.workspace = true
+
+# `T083` — the grammar ABI check, and nothing else, needs the grammar crates by
+# name. They are dev-dependencies **here only**, deliberately not in the root
+# `[workspace.dependencies]`: the root manifest is `spine`'s, and keeping eleven
+# C compilations out of the default build keeps them off every developer's inner
+# loop. Versions are `SPIKES.md`'s manifest verbatim. Ten of the eleven already
+# arrive transitively through `ratatui-code-editor`'s `grammars-phosphor`, so
+# cargo unifies them to the same object code the editor links; `tree-sitter-scheme`
+# is the one the fork does not bundle.
+[dev-dependencies]
+tree-sitter-css = "0.25.0"
+tree-sitter-html = "0.23.2"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-json = "0.24.8"
+tree-sitter-md = "0.5.3"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.2"
+tree-sitter-scheme = "0.24.7"
+tree-sitter-toml-ng = "0.7.0"
+tree-sitter-typescript = "0.23.2"
+tree-sitter-yaml = "0.7.2"
+
+[features]
+default = []
+# System clipboard, via the fork's `arboard`, which links X11/Wayland on Linux.
+# OFF BY DEFAULT — so the headless path is the one CI, containers and VHS get for
+# free, and nothing has to remember to turn clipboard support off. Turning it on
+# is a decision for whoever wires the paste Action; there is no clipboard Action in
+# the vocabulary yet (T019), so today nothing would call it. `just
+# vendor-build-headless` proves both directions.
+clipboard = ["ratatui-code-editor/clipboard"]
+# The six grammars the fork bundles that phosphor does not load (bash, c, c-sharp,
+# cpp, go, java). Present so `define-language` has a switch, off so they cost nothing.
+grammars-extra = ["ratatui-code-editor/grammars-extra"]
 
 [lints]
 workspace = true

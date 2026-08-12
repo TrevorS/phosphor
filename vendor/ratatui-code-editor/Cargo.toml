@@ -42,26 +42,26 @@ ropey = "^1.6"
 rust-embed = { version = "^8.7", features = ["include-exclude"] }
 streaming-iterator = "~0.1"
 tree-sitter = "~0.26"
-tree-sitter-javascript = "~0.25"
-tree-sitter-rust = "~0.24"
-tree-sitter-typescript = "~0.23"
+tree-sitter-javascript = { version = "~0.25", optional = true }
+tree-sitter-rust = { version = "~0.24", optional = true }
+tree-sitter-typescript = { version = "~0.23", optional = true }
 unicode-width = "~0.2"
 unicode-segmentation = "^1.12"
-arboard = { version = "^3.5", default-features = false }
+arboard = { version = "^3.5", default-features = false, optional = true }
 similar = "^2.7"
-tree-sitter-python = "~0.25"
-tree-sitter-go = "~0.25"
-tree-sitter-java = "~0.23.5"
-tree-sitter-c = "~0.24.1"
-tree-sitter-cpp = "~0.23.4"
-tree-sitter-html = "~0.23.2"
-tree-sitter-css = "~0.25"
-tree-sitter-c-sharp = "~0.23.1"
-tree-sitter-yaml = "~0.7"
-tree-sitter-json = "~0.24.8"
-tree-sitter-toml-ng = "~0.7.0"
-tree-sitter-bash = "~0.25.0"
-tree-sitter-md = "~0.5.1"
+tree-sitter-python = { version = "~0.25", optional = true }
+tree-sitter-go = { version = "~0.25", optional = true }
+tree-sitter-java = { version = "~0.23.5", optional = true }
+tree-sitter-c = { version = "~0.24.1", optional = true }
+tree-sitter-cpp = { version = "~0.23.4", optional = true }
+tree-sitter-html = { version = "~0.23.2", optional = true }
+tree-sitter-css = { version = "~0.25", optional = true }
+tree-sitter-c-sharp = { version = "~0.23.1", optional = true }
+tree-sitter-yaml = { version = "~0.7", optional = true }
+tree-sitter-json = { version = "~0.24.8", optional = true }
+tree-sitter-toml-ng = { version = "~0.7.0", optional = true }
+tree-sitter-bash = { version = "~0.25.0", optional = true }
+tree-sitter-md = { version = "~0.5.1", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -73,8 +73,68 @@ harness = false
 required-features = ["bench-internals"]
 
 [features]
-default = ["crossterm"]
+# PHOSPHOR PATCH 2 + 3 — see VENDOR.md. Upstream has no feature gates here:
+# all 16 grammars and `arboard` are hard dependencies. `default` below reproduces
+# upstream's dependency set exactly, so a standalone `cargo build` in this
+# directory behaves as it did before the fork; phosphor consumes the crate with
+# `default-features = false` and picks `grammars-phosphor` (+ `clipboard` where a
+# clipboard exists). Upstreamable as-is.
+default = ["crossterm", "clipboard", "grammars-all"]
 bench-internals = []
 crossterm = [
     "dep:crossterm"
 ]
+
+# System clipboard via `arboard`, which links X11/Wayland on Linux. With the
+# feature off, `Editor::{get,set}_clipboard` fall back to the in-editor
+# `clipboard` field that already backs them when `arboard` fails at runtime —
+# same behaviour a headless machine gets today, minus the link-time dependency.
+clipboard = ["dep:arboard"]
+
+# One feature per bundled grammar.
+grammar-bash = ["dep:tree-sitter-bash"]
+grammar-c = ["dep:tree-sitter-c"]
+grammar-c-sharp = ["dep:tree-sitter-c-sharp"]
+grammar-cpp = ["dep:tree-sitter-cpp"]
+grammar-css = ["dep:tree-sitter-css"]
+grammar-go = ["dep:tree-sitter-go"]
+grammar-html = ["dep:tree-sitter-html"]
+grammar-java = ["dep:tree-sitter-java"]
+grammar-javascript = ["dep:tree-sitter-javascript"]
+grammar-json = ["dep:tree-sitter-json"]
+grammar-markdown = ["dep:tree-sitter-md"]
+grammar-python = ["dep:tree-sitter-python"]
+grammar-rust = ["dep:tree-sitter-rust"]
+grammar-toml = ["dep:tree-sitter-toml-ng"]
+grammar-typescript = ["dep:tree-sitter-typescript"]
+grammar-yaml = ["dep:tree-sitter-yaml"]
+
+# The intersection of what this crate bundles with phosphor's first-class twelve
+# (SPIKES.md, "Grammars — the first-class twelve"). The two in that twelve the
+# crate does not bundle are Steel (rides `tree-sitter-scheme`) and CSV
+# (hand-written, T082); adding them here is S4's job, not this fork's.
+grammars-phosphor = [
+    "grammar-css",
+    "grammar-html",
+    "grammar-javascript",
+    "grammar-json",
+    "grammar-markdown",
+    "grammar-python",
+    "grammar-rust",
+    "grammar-toml",
+    "grammar-typescript",
+    "grammar-yaml",
+]
+
+# The six phosphor never loads. Opt-in, and named so a future `define-language`
+# entry has an obvious switch to flip.
+grammars-extra = [
+    "grammar-bash",
+    "grammar-c",
+    "grammar-c-sharp",
+    "grammar-cpp",
+    "grammar-go",
+    "grammar-java",
+]
+
+grammars-all = ["grammars-phosphor", "grammars-extra"]

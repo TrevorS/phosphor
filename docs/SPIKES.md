@@ -325,7 +325,7 @@ produce. Nothing on the list is a default.
 
 | Tool | Version | The specific risk it catches |
 |---|---|---|
-| **`cargo-deny`** | 0.20.2 | **The one that matters most.** A `[bans]` rule denying multiple versions of `ratatui` / `ratatui-core` would have caught the `tui-textarea` and `ratatui-markdown` 0.29-vs-0.30 split *mechanically*, before either reached the plan. Also covers licences (two vendored forks, both MIT) and the advisory DB — which subsumes `cargo-audit`, so we don't need both. |
+| **`cargo-deny`** | 0.20.2 | **The one that matters most.** A `[bans]` rule denying multiple versions of `ratatui` / `ratatui-core` would have caught the `tui-textarea` and `ratatui-markdown` 0.29-vs-0.30 split *mechanically*, before either reached the plan. Also covers licences (`ratatui-code-editor` is MIT, `ratatui-markdown` is `MIT OR Apache-2.0`) and the advisory DB — which subsumes `cargo-audit`, so we don't need both. |
 | **`insta`** | 1.48.0 | Tier 1 golden-frame snapshots (T018). Purpose-built for exactly this, with review tooling for intentional changes. |
 | **`proptest`** | 1.11.0 | T017's statusline invariant — never two rows, at every width from 40 to 200. This is a property, not a set of examples. |
 | **`divan`** | 0.1.21 | T079's benchmark: VM invocations flat while FPS climbs. Lighter and clearer output than `criterion` for a single tracked number. |

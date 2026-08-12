@@ -52,6 +52,11 @@ allow = [
     "Zlib",
     "CC0-1.0",
     "MPL-2.0",
+    # BSL-1.0 (Boost) — OSI-approved and FSF-free. Reaches us only through
+    # clipboard-win <- arboard, i.e. phosphor-buffer's off-by-default `clipboard`
+    # feature. Allowed deliberately at CP-0 so enabling clipboard later is a
+    # feature decision, not a surprise licence failure.
+    "BSL-1.0",
 ]
 confidence-threshold = 0.8
 

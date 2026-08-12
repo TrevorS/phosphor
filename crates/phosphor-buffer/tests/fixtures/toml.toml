@@ -1,0 +1,50 @@
+# T083 fixture — TOML.
+title = "phosphor"
+enabled = true
+threshold = 0.75
+count = 1_000
+hex = 0xDEADBEEF
+octal = 0o755
+binary = 0b1010
+infinite = inf
+not-a-number = nan
+released = 2026-08-11T09:30:00-07:00
+local-date = 2026-08-11
+local-time = 09:30:00
+
+literal = 'C:\path\to\file'
+escaped = "quote:\" backslash:\\ tab:\t unicode:\u2713"
+
+multiline = """
+first line
+second line \
+joined
+"""
+
+multiline-literal = '''
+raw \n stays raw
+'''
+
+array = [1, 2, 3]
+nested-array = [["a", "b"], ["c"]]
+inline-table = { x = 1, y = 2 }
+
+[gutter]
+width = 3
+states = ["unseen", "diagnostic", "anchor"]
+
+[theme.tokyo-night]
+identity = "#7aa2f7"
+attention = "#ff9e64"
+
+[[language]]
+name = "rust"
+grammar = "tree-sitter-rust"
+
+[[language]]
+name = "steel"
+grammar = "tree-sitter-scheme"
+lsp = ["steel-language-server"]
+
+["dotted.key.quoted"]
+value = 1

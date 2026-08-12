@@ -1,0 +1,47 @@
+# T083 fixture — YAML.
+---
+name: phosphor
+version: 0.1.0
+enabled: true
+threshold: 0.75
+nothing: null
+tilde: ~
+unicode: "✻ ● !"
+
+defaults: &defaults
+  width: 80
+  gutter: 3
+
+buffer:
+  <<: *defaults
+  wrap: false
+
+glyphs:
+  - "●"
+  - '✻'
+  - !!str "!"
+
+languages:
+  - name: rust
+    grammar: tree-sitter-rust
+    abi: 15
+  - name: steel
+    grammar: tree-sitter-scheme
+    lsp: [steel-language-server]
+
+block: |
+  literal block
+    with indentation
+  preserved
+
+folded: >
+  folded scalar
+  joined onto one line
+
+quoted-escapes: "quote:\" backslash:\\ tab:\t"
+flow-map: { a: 1, b: [2, 3] }
+date: 2026-08-11
+---
+# second document
+second: true
+...

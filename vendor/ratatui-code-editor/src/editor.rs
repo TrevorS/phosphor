@@ -642,19 +642,35 @@ impl Editor {
         self.cursor
     }
 
+    // PHOSPHOR PATCH 3 — see VENDOR.md. `arboard` is now behind the `clipboard`
+    // feature. Both functions already had an in-editor fallback for the case where
+    // `arboard` fails at runtime; with the feature off that fallback is simply the
+    // only path, so behaviour on a headless machine is unchanged and nothing links
+    // X11/Wayland.
     pub fn set_clipboard(&mut self, text: &str) -> Result<()> {
+        #[cfg(feature = "clipboard")]
         arboard::Clipboard::new()
             .and_then(|mut c| c.set_text(text.to_string()))
             .unwrap_or_else(|_| self.clipboard = Some(text.to_string()));
+        #[cfg(not(feature = "clipboard"))]
+        {
+            self.clipboard = Some(text.to_string());
+        }
         Ok(())
     }
 
     pub fn get_clipboard(&self) -> Result<String> {
-        arboard::Clipboard::new()
+        #[cfg(feature = "clipboard")]
+        return arboard::Clipboard::new()
             .and_then(|mut c| c.get_text())
             .ok()
             .or_else(|| self.clipboard.clone())
-            .ok_or_else(|| anyhow!("cant get clipboard"))
+            .ok_or_else(|| anyhow!("cant get clipboard"));
+        #[cfg(not(feature = "clipboard"))]
+        return self
+            .clipboard
+            .clone()
+            .ok_or_else(|| anyhow!("cant get clipboard"));
     }
 
     pub fn set_marks(&mut self, marks: Vec<(usize, usize, &str)>) {

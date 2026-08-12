@@ -120,7 +120,9 @@ image = { version = "^0.25", optional = true, default-features = false, features
 ] }
 pest = { version = "^2", optional = true }
 pest_derive = { version = "^2", optional = true }
-ratatui = "^0.29"
+# PHOSPHOR PATCH 1 — the entire reason this crate is vendored (Q4). Was "^0.29",
+# which is unbuildable against the 0.30 workspace pin. See VENDOR.md.
+ratatui = "^0.30"
 serde_json = { version = "^1", optional = true }
 toml = { version = "^0.8", optional = true }
 tree-sitter = { version = "0.26", optional = true }
