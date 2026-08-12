@@ -115,5 +115,27 @@ vendor-check:
             echo "FAIL ${fork} — history merged ${sha}, VENDOR.md does not mention it"
             status=1
         fi
+
+        # The licence this fork actually declares, against the one VENDOR.md
+        # says it declares. This check exists because an earlier revision of
+        # `ratatui-markdown/VENDOR.md` invented a licence crisis wholesale: it
+        # described a 16-line "Synthetic Source License" granting no rights to
+        # the software and a `SySL-1.0` declaration, where the tree carries the
+        # full Apache-2.0 text and `license = "MIT OR Apache-2.0"`. Three false
+        # claims, in the one file whose entire job is to be trustworthy about
+        # provenance, and every gate passed them — because nothing here checked
+        # prose against the tree it describes.
+        declared="$(sed -n 's/^license[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' "${prefix}/Cargo.toml" | head -1)"
+        if [ -z "$declared" ]; then
+            echo "FAIL ${fork} — no license field in ${prefix}/Cargo.toml to check against"
+            status=1
+        elif grep -q "^| Licence" "${prefix}/VENDOR.md" &&
+            grep "^| Licence" "${prefix}/VENDOR.md" | grep -qF "$declared"; then
+            echo "ok   ${fork} — VENDOR.md's licence row matches Cargo.toml (${declared})"
+        else
+            echo "FAIL ${fork} — Cargo.toml declares '${declared}', VENDOR.md's Licence row does not say so:"
+            grep "^| Licence" "${prefix}/VENDOR.md" | sed 's/^/       /' || echo "       (no Licence row at all)"
+            status=1
+        fi
     done
     exit "$status"
