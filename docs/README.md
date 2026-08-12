@@ -26,13 +26,16 @@ Then:
 - **[IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md)** — the route through the above: phased
   plan mapped to the build order, per-step acceptance criteria tied to mockup ids, the
   vendored-fork strategy, a dependency table verified against crates.io, and a **decision log**
-  recording the 11 questions the plan raised, all answered 2026-08-11.
+  recording the 12 questions the plan raised, all answered 2026-08-11.
 - **[SPIKES.md](SPIKES.md)** — the M-0 findings: both dependency spikes read against the exact
   published sources with `file:line` citations, the full dependency manifest with verified
   versions, and the hygiene tooling. **Read this before T001** — it inverts one recorded
   decision and uncovers unbudgeted work.
-- **[TASKS.md](TASKS.md)** — the plan decomposed into 83 tasks across the 9 phases, plus 9
+- **[TASKS.md](TASKS.md)** — the plan decomposed into 89 tasks across the 9 phases, plus 9
   verification-harness tasks, with **12 checkpoints** where work stops for manual verification.
+  `T084`–`T089` were added by a review of these docs: six widget and primitive tasks the design
+  requires — the `Float` chrome primitive, undercurl, the `HelpGrid`, region tints, the pane
+  manager, `TabBar` — that the first breakdown had no home for.
 - **[TEAM.md](TEAM.md)** — five teammates owning crates rather than features, gated by those
   checkpoints. Includes the wave-width analysis showing why the early phases are deliberately
   under-staffed, and the kickoff prompt. Each checkpoint splits what can be
@@ -57,13 +60,23 @@ project round-trips; edit them there, not here.
 ## Amendments to the design docs
 
 The design docs are the contract, and they are imported unmodified — so where a decision has
-since changed one, the change lives in the plan's decision log, not in the doc. Two so far:
+since changed one, the change lives in the plan's decision log, not in the doc. **Four so far:**
 
-- **Ayu is no longer the second theme mapping** (Design Brief, "Decided since"). Its identity
-  colour is orange, which the language reserves for attention. Tokyo Night replaces it, and
-  mockup `9b` is superseded. → [Q7](IMPLEMENTATION-PLAN.md#q7)
+- **`edtui` is dropped; the input machine is ours** (Component Breakdown, *"buy (input)"*; and
+  the handoff's settled-decisions list). Its register model cannot express numeric counts or
+  named registers, and our keymaps live in Steel, which makes the 185-entry table we would be
+  buying dead weight. → [Q3](IMPLEMENTATION-PLAN.md#q3), [SPIKES.md](SPIKES.md)
 - **`ratatui-markdown` is a vendored fork, not a plain buy** (Component Breakdown). It pins
   ratatui 0.29 and the workspace is 0.30. → [Q4](IMPLEMENTATION-PLAN.md#q4)
+- **Ayu is no longer the second theme mapping** — named in *three* docs: Design Brief "Decided
+  since", Design Language §10, and the Component Breakdown's `Theme` spec. Its identity colour is
+  orange, which the language reserves for attention. Tokyo Night replaces it, and mockup `9b` is
+  superseded. → [Q7](IMPLEMENTATION-PLAN.md#q7)
+- **Needs-you asks queue rather than appear-and-wait** (Design Language §9, and the Component
+  Breakdown's `QuestionBody`). Both say the ask *renders* while something else holds focus;
+  queueing means it does not render until no float has focus. Consequence in §5/§11: the
+  statusline shed order's last-standing set becomes `✻` / `●n` / **`!`**, not the documented
+  `✻`/`●n` pair. → [Q9](IMPLEMENTATION-PLAN.md#q9)
 
 If you are reading the design docs cold, read this list first — everything else in them stands.
 

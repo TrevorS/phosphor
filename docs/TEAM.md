@@ -3,7 +3,7 @@
 Derived from [TASKS.md](TASKS.md) and [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).
 Five teammates, owning crates rather than features, gated by the twelve checkpoints.
 
-**90 of 92 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
+**96 of 98 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
 `T009` — the dependency spikes, already complete ([SPIKES.md](SPIKES.md)). `T005` is the single
 deliberate co-ownership and is called out where it appears.
 
@@ -17,10 +17,10 @@ Computed from `TASKS.md`, the longest-path wave widths are:
 
 ```
 wave    0   1   2   3    4    5    6    7   8   9
-tasks   2   5   8   5   13   18   18   11   8   2
+tasks   2   5   8   6   14   20   19   11   8   3
 ```
 
-By the graph, wave 4 is 13-wide and includes `T050` (ACP session client, S6) and `T069`
+By the graph, wave 4 is 14-wide and includes `T050` (ACP session client, S6) and `T069`
 (dirty-state indicator, S7). **A team that schedules off the graph would be building the agent
 transport and disk-watching before anyone has confirmed the theme renders correctly** — past
 `CP-1`, `CP-2`, `CP-3` and `CP-4`, none of which a graph edge represents, because they are human
@@ -33,25 +33,33 @@ Three other numbers worth carrying:
 
 | | |
 |---|---|
-| `T001` gates **82 of 92** tasks | The workspace skeleton is the whole build's front door. |
-| `T019` gates **56** | The `Action` enum. The plan calls it "reversible: no in practice." |
-| `T041` has **12 direct dependents** | Store core — the second serialisation point. |
+| `T001` gates **88 of 98** tasks | The workspace skeleton is the whole build's front door. |
+| `T019` gates **60** | The `Action` enum. The plan calls it "reversible: no in practice." |
+| `T041` has **14 direct dependents** | Store core — the second serialisation point. |
 
-And the shape that matters most for staffing: **waves 0–3 are 2, 5, 8 and 5 tasks wide.** The
+And the shape that matters most for staffing: **waves 0–3 are 2, 5, 8 and 6 tasks wide.** The
 early build is close to single-file. Adding people there buys contention, not speed. The team
 goes wide at wave 4 and stays wide through wave 6, which is where five teammates earn their
 keep.
 
-> **Staffing follows that curve.** Windows A–C run with **two** teammates (`spine` +
-> `harness`). Everyone else joins at `CP-2`. This is deliberate under-staffing of the phase that
-> cannot absorb parallelism.
+> **Staffing follows that curve.** Windows A and B run with **three** teammates (`spine`,
+> `surface`, `harness`); Window C drops back to **two** as the contract is defined. `store` and
+> `agent` join at `CP-2`. This is deliberate under-staffing of the phases that cannot absorb
+> parallelism.
+
+> **Why `surface` is live in Window A** (corrected by the docs review): `T003` and `T004` are the
+> two vendoring tasks, and the second single-writer rule below is *only `surface` touches
+> `vendor/`*. `T083` is `surface` too. Staffing Window A with `spine` + `harness` alone left
+> three of its nine tasks with no legal owner.
 
 ### Note on the task count per teammate
 
 The skill this plan came from suggests 5–6 tasks per teammate. This plan gives each teammate
-~18, because it staffs **all of v1** rather than one wave — teammates are persistent role
-owners, not task batches. If you'd rather run a wave at a time, take Window D alone: it is
-13 tasks across four teammates, which is the intended shape.
+~19, because it staffs **all of v1** rather than one wave — teammates are persistent role
+owners, not task batches. If you'd rather run a wave at a time, take **wave 4** alone: 14 tasks,
+and the first wave wide enough to need everyone — that is the shape the skill has in mind.
+(Windows are not waves. Window D spans two checkpoints and carries 21 tasks; wave 4 is a
+longest-path layer inside it.)
 
 ---
 
@@ -64,8 +72,8 @@ owning crates gives near-zero merge contention for free.
 
 | Teammate | Model | Owns (exclusive write) |
 |---|---|---|
-| **spine** | `claude-opus-5` | `phosphor-core/{action,view}.rs` · `phosphor-steel/**` · `phosphor/{main,input}.rs` · `runtime/{init,keymaps,leader}.scm` · the workspace manifests |
-| **surface** | `claude-opus-5` | `vendor/**` · `phosphor-buffer/**` · `phosphor-ui/{theme,buffer_view,status_line,gutter,virtual_text,float,keymap_footer,soft_wrap}.rs` |
+| **spine** | `claude-opus-5` | `phosphor-core/{action,view}.rs` · `phosphor-steel/**` · `phosphor/{main,input,panes}.rs` · `runtime/{init,keymaps,leader}.scm` · the workspace manifests |
+| **surface** | `claude-opus-5` | `vendor/**` · `phosphor-buffer/**` · `phosphor-ui/{theme,buffer_view,status_line,gutter,virtual_text,float,help_grid,keymap_footer,tab_bar,soft_wrap}.rs` |
 | **store** | `claude-opus-5` | `phosphor-core/{store,region,anchor,seen}.rs` · `phosphor-ui/picker.rs` · `phosphor-vcs/**` · `runtime/pickers/**` |
 | **agent** | `claude-sonnet-5` | `phosphor-agent/**` · `phosphor-core/{review,inbox,watch}.rs` · `phosphor-ui/{transcript,prompt_line,question,diff_body,watch_overlay}.rs` · `runtime/{permissions,inbox,watch}.scm` |
 | **harness** | `claude-sonnet-5` | `tapes/**` · `.github/**` · `justfile` · `deny.toml` · `rust-toolchain.toml` · snapshot + benchmark infra |
@@ -86,7 +94,14 @@ These override ownership and are the reason invariant 2 survives contact with a 
   `store` module split from `T007` is what keeps that safe; if a change needs to cross those
   modules, it belongs to `spine`.
 - `phosphor-ui` is split per widget file. A new widget file needs `spine` to add its view-tree
-  node kind first ([Q12](IMPLEMENTATION-PLAN.md#q12)).
+  node kind first ([Q12](IMPLEMENTATION-PLAN.md#q12)). **This rule decides `T034`/`T035`:** both
+  were originally `spine` tasks writing into `phosphor-ui/keymap_footer.rs` and
+  `virtual_text.rs`, which are `surface` files. They moved to `surface`; `spine` keeps `T033`,
+  the keymaps themselves, which live in `runtime/`. The live keymap reaches the widget as a
+  ViewModel like everything else.
+- **The pane manager (`T088`) is `spine`, not `surface`.** Panes are focus and event routing in
+  the binary's loop, not a widget — `phosphor/panes.rs`. The `TabBar` that renders *over* them
+  (`T089`) is `surface`. This is the same split as input: `spine` decides, `surface` draws.
 - `runtime/*.scm` is split by directory. Adding a *new* Steel surface is a `spine` decision,
   because it implies a registry entry.
 
@@ -98,9 +113,10 @@ These override ownership and are the reason invariant 2 survives contact with a 
 
 Owns the two things the whole build is hardest to reverse: the `Action` enum and the view tree.
 Also owns the input machine, because it emits Actions and reads Steel-defined keymaps — both
-spine surfaces.
+spine surfaces. And the pane manager, which is the same kind of thing one layer out: focus and
+event routing in the binary's loop.
 
-**Tasks:** T001, T002, T007, T019–T026, T033–T035, T078–T080 · **17**
+**Tasks:** T001, T002, T007, T019–T026, T033, T078–T080, T088 · **16**
 
 **Opus, without hesitation:** `T019` gates 56 tasks; `T079`'s frame cache is what keeps a pre-1.0
 scheme VM out of the frame budget; `T026` is a from-scratch vim grammar including the counts and
@@ -116,7 +132,14 @@ second shape later.
 
 Both vendored forks, the buffer engine, and every primitive widget that draws.
 
-**Tasks:** T003, T004, T005*, T010–T018, T027, T029, T031, T032, T036–T040, T081–T083 · **24**
+**Tasks:** T003, T004, T005*, T010–T018, T027, T029, T031, T032, T034–T040, T081–T087, T089 ·
+**31**
+
+The largest list, and it grew by seven in the docs review — five new widget tasks that the design
+docs require and the first breakdown had no home for (`T084` Float, `T085` undercurl, `T086`
+HelpGrid, `T087` region tints, `T089` TabBar), plus `T034`/`T035` moving here from `spine` because
+they write `surface` files. Two of the five are fork work inside `vendor/`, which only this role
+may touch.
 
 *(`T005` CI scaffolding is co-owned with `harness` — `surface` needs it in wave 1, `harness`
 takes it over at `CP-1`.)*
@@ -138,7 +161,7 @@ The semantic store, both anchoring tiers, persistence, the Picker, and VCS.
 
 **Tasks:** T028, T030, T041–T049, T071–T073 · **14**
 
-**Opus:** `T041` has 12 direct dependents, and `T042`/`T043` are the anchoring promise —
+**Opus:** `T041` has 14 direct dependents, and `T042`/`T043` are the anchoring promise —
 *"threads, seen-state and watches survive rewrites"* is the claim `6c` exists to test, and
 getting it subtly wrong erodes trust in every marker on screen.
 
@@ -191,19 +214,29 @@ built on an unverified foundation.
 
 | Window | Ends at | Live teammates | Tasks |
 |---|---|---|---|
-| **A** | `CP-0` (build half) | spine, harness | T001–T007, T083, V001 |
-| **B** | `CP-1` | spine, surface, harness | T010–T018, **T081**, V002–V005 |
+| **A** | `CP-0` (build half) | spine, **surface**, harness | T001–T007, T083, V001 |
+| **B** | `CP-1` | spine, surface, harness | T010–T018, **T081**, **T084**, **T085**, V002–V005 |
 | **C** | `CP-2` | spine, harness | T019–T025, T078–T080 |
-| **D** | `CP-3`/`CP-4` | **all five** | T026–T040, T082, V006–V009 |
-| **E** | `CP-5` | store, surface, harness | T041–T049 |
-| **F** | `CP-6`/`CP-7` | agent, store, harness | T050–T062 |
+| **D** | `CP-3`/`CP-4` | **all five** | T026–T040, T082, **T086**, V006–V009 |
+| **E** | `CP-5` | store, surface, harness | T041–T049, **T087** |
+| **F** | `CP-6`/`CP-7` | agent, store, surface, spine, harness | T050–T062, **T088**, **T089** |
 | **G** | `CP-8a/b/c` | agent, store, surface | T063–T073 |
 | **H** | `CP-9` | agent, harness | T074–T077 |
+
+> **Window F reopens `spine` and `surface` briefly.** `T088` (pane manager) and `T089` (`TabBar`)
+> both gate `T054`, so they run at the front of F and then those two roles go quiet again. It is
+> the one place the "windows narrow as the build goes on" shape doesn't hold, and the reason is
+> structural: the transcript is the first surface that forces a second pane into existence.
+
+> **`harness` has no `T`/`V` tasks after Window D**, yet is live in E, F and H. That is
+> deliberate — from `CP-5` on, its work is producing each checkpoint's tapes under `V005`'s
+> one-tape-per-screen convention, which is standing work rather than a numbered task. The
+> standing instruction below is what governs it.
 
 > **`CP-0` is half-passed.** Its go/no-go verdict is settled — both spikes are done and
 > [SPIKES.md](SPIKES.md) records them. Its *build* verification (`cargo build` green, both lints
 > failing on planted violations, both subtrees building) is Window A's exit gate and is still
-> open. Don't read the ✅ in `TASKS.md` as "M-0 is finished."
+> open. `TASKS.md` now says this at the source, so the ✅ there means *the verdict passed*.
 
 **Window C runs with two teammates on purpose.** The contract is being defined; three more
 agents would be writing against an interface that changes under them. This is the plan's
@@ -238,8 +271,10 @@ NEXT      T0xx
 ```
 
 **Escalate to Teej, don't decide:** anything that would amend a design doc or reverse a numbered
-decision. Twelve are recorded in [§5](IMPLEMENTATION-PLAN.md#5-decisions); two already amend the
-design docs. The handoff's rule holds for teammates too — **flag it, don't fold it in.**
+decision. Twelve are recorded in [§5](IMPLEMENTATION-PLAN.md#5-decisions); **four** already amend
+the design docs ([Q3](IMPLEMENTATION-PLAN.md#q3), [Q4](IMPLEMENTATION-PLAN.md#q4),
+[Q7](IMPLEMENTATION-PLAN.md#q7), [Q9](IMPLEMENTATION-PLAN.md#q9)). The handoff's rule holds for
+teammates too — **flag it, don't fold it in.**
 
 ---
 

@@ -69,7 +69,7 @@ never named have been added. One carries far more risk than the doc implies.
 | `nucleo` | 0.5.0 | none (pure matcher) | OK — no ratatui coupling; helix's engine |
 | `tui-tree-widget` | 0.24.1 | `ratatui-core ^0.1.0` | OK |
 | `throbber-widgets-tui` | 0.11.1 | `ratatui ^0.30` | OK |
-| `ratatui-comfy-tabs` | 0.5.12 | `ratatui-core ^0.1.2` | 600 downloads — **build TabBar instead**, the doc already allows it |
+| `ratatui-comfy-tabs` | 0.5.12 | `ratatui-core ^0.1.2` | 600 downloads — **build TabBar instead** (`T089`, S6), the doc already allows it |
 | `ratatui-explorer` | 0.3.0 | `ratatui ^0.30` | study only; nucleo + Picker likely covers it |
 | `tui-logger` | 0.18.3 | `ratatui ^0.30` | OK — dev-only |
 | `steel-core` | 0.8.2 (2026-02-22) | — | **PIN `=0.8.2`** — pre-1.0, small, load-bearing; see [Q5](#q5) |
@@ -198,8 +198,9 @@ Screen ids (`1a`, `2a`, …) refer to `docs/design/TUI Mockups.dc.html`.
   `ratatui-core` only.
 - **Both vendored subtrees** — `vendor/ratatui-code-editor` and `vendor/ratatui-markdown` — each
   with its own `VENDOR.md`, plus the shared `just vendor-*` recipes (§2).
-- **The grammar ABI check.** Load all eleven bundled grammars against tree-sitter 0.26 and parse
-  a fixture; settle whether `tree-sitter-scheme` handles real Steel. The grammar crates were
+- **The grammar ABI check** (`T083`). Load all eleven grammars we ship — the first-class twelve
+  minus CSV, which `T082` implements by hand — against tree-sitter 0.26 and parse a fixture;
+  settle whether `tree-sitter-scheme` handles real Steel. The grammar crates were
   built against bindings spanning 0.23–0.25, and tree-sitter versions its language ABI. Cheap
   here, expensive at S4 — **this is the one unknown the spikes surfaced but did not close.**
 - CI: `fmt`, `clippy -D warnings`, `test`, and two structural lints that encode the invariants:
@@ -246,8 +247,22 @@ mockups."*
 - `StatusLine` shell: mode chip, file + dirty flag, spring, `SessionState` (rendering `None`
   for now), counters. **Truncation enforced in the widget** — never wraps, a second line is a
   bug.
+- **`Float` — the one chrome primitive** (`T084`, added by the docs review). Header / body /
+  footer, mood borders, the one-float rule, dim-behind, full-width under 100 cols. It lands here
+  rather than at S4 because `T021` needs a float to show a broken `init.scm` in at **S2**, two
+  phases before the only float task the first breakdown had (`T038`, the passive variant). Every
+  later body — Picker, DiffBody, QuestionBody, HelpGrid, ArchDiagram — plugs into it.
+- **Undercurl, with underline fallback** (`T085`, added by the docs review). The marks API is
+  colour-only, so the undercurl half of Design Language §3's anchored-region treatment is fork
+  work we own. Landing it here lets `V002` settle "does undercurl survive VHS capture" against a
+  real implementation rather than a guess.
 - Synchronized output wrapping every frame from the first draw call. A torn frame is P0;
   retrofitting this later means auditing every render path.
+
+> **What drives editing at S1.** The goal is *"renders and edits a file on day one,"* but the
+> input machine is S3. S1 rides the vendored crate's own `editor_crossterm` handler as a
+> temporary path — which is what makes `T081`'s cursor and click checks possible at `CP-1`.
+> `T026` replaces it outright; nothing may grow to depend on it.
 
 **Acceptance:** `1a` reproducible in a real terminal *minus the agent layer* (no gutter
 markers, no review-ready float, statusline session segment reads idle-empty) · `9c` (phosphor
@@ -263,13 +278,17 @@ original) and `8c` (light) render the same slice with the actor contract intact 
 > second palette, actor contract intact — with a different palette substituted.
 
 **Scope**
-- Files: `phosphor-ui/{theme,buffer_view,status_line,soft_wrap}.rs`,
-  `phosphor-buffer/{rope,ts}.rs`, 3 theme files, plus the vendored fork's `VisualRow` patch
-- Named units: 3 widgets, 2 built-in themes + 2 mappings (each dark + light), 1 theme
+- Files: `phosphor-ui/{theme,buffer_view,status_line,float,soft_wrap}.rs`,
+  `phosphor-buffer/{rope,ts}.rs`, 3 theme files, plus the vendored fork's `VisualRow` and
+  undercurl patches
+- Named units: 4 widgets, 2 built-in themes + 2 mappings (each dark + light), 1 theme
   validator, 1 synchronized-output wrapper, **1 soft-wrap implementation** (unbudgeted — the
-  vendored crate has none)
+  vendored crate has none), **1 float primitive + 1 undercurl patch** (added by the docs review —
+  neither had a task)
 - Verification: golden-frame snapshot tests per screen id + a manual terminal pass at 80 and
-  120 columns + wrapped-line correctness for cursor motion, click targeting and virtual text
+  120 columns + wrapped-line correctness for cursor motion and click targeting (virtual text on
+  a wrapped line is checked at `CP-3`, where `VirtualText` exists) + undercurl on the primary
+  terminal and underline on the degradation terminal
 - Risk: public API no · data migration no · cross-module **yes — soft-wrap reaches cursor,
   click targeting and virtual text** · reversible yes · external blocker no
 
@@ -317,8 +336,11 @@ with the error in a float.
 - Files: `phosphor-steel/{runtime,registry,repl,bindings}.rs`, `phosphor-core/action.rs`,
   `runtime/init.scm`
 - Named units: 1 `Action` enum, 1 tri-door registry, 1 REPL, 1 CLI eval path, ~2 seed `.scm`
-- Verification: door-parity test (every registered Action reachable from all three doors — a
-  test that *enumerates the registry*, so it cannot be forgotten), REPL liveness test
+- Verification: door-parity test (every registered Action present in all three doors — a test
+  that *enumerates the registry*, so it cannot be forgotten). **What "present" means before S6:**
+  the Steel binding and CLI verb are invoked end to end, the MCP tool schema is generated and
+  well-formed. The MCP server itself is S6; `T052` upgrades that third to a live round-trip
+  without changing the test's shape. Plus the REPL liveness test
 - Risk: public API **yes — this is the public API** · data migration no · cross-module **yes
   (every crate above `phosphor-core`)** · reversible **no in practice** · external blocker no
 
@@ -341,7 +363,9 @@ with the error in a float.
 - The gutter/virtual-text layer: `GutterBar` (1-cell state column, priority trouble >
   attention > claude-unseen > none, `▎` degradation) and `VirtualText` (`┊`-prefixed rows
   owned by a region id).
-- Keymaps and the leader tree in Steel; `KeymapFooter` / WhichKey reads the *live* keymap.
+- Keymaps and the leader tree in Steel; `KeymapFooter` / WhichKey reads the *live* keymap, and
+  **`HelpGrid`** — the `:help` float body, same data at a third density (`T086`, added by the
+  docs review; `6d` was an acceptance target here with no task behind it).
 - The once-per-session unknown-key hint.
 
 **Acceptance:** `3c` (leader popup) · `6d` (`:help agent-objects`) renders from the live
@@ -356,9 +380,9 @@ soft-wrap continuations are S1's, and are already passing by the time this step 
 > the nouns become functional at S5. See [Q8](#q8).
 
 **Scope**
-- Files: `phosphor-ui/{gutter,virtual_text,keymap_footer}.rs`, `phosphor-buffer/undo.rs`,
-  `phosphor/input.rs`, `runtime/{keymaps,leader}.scm`
-- Named units: 3 widgets, 4 agent text objects, 1 persistent-undo store, **1 input machine**
+- Files: `phosphor-ui/{gutter,virtual_text,keymap_footer,help_grid}.rs`,
+  `phosphor-buffer/undo.rs`, `phosphor/input.rs`, `runtime/{keymaps,leader}.scm`
+- Named units: 4 widgets, 4 agent text objects, 1 persistent-undo store, **1 input machine**
   (ours — modes, counts, named registers, operator-pending)
 - Verification: text-object unit tests against real source files; undo round-trip across a
   simulated restart
@@ -431,6 +455,12 @@ bought at S1, so this step is diagnostics, completion, signature help, and hover
   - *Accepted cost:* seen-state does not travel with the checkout — a fresh clone or a moved
     directory starts with everything unseen. That is the honest failure mode (nothing is lost,
     only re-shown), and it is the right one to accept for a per-user, per-machine reading log.
+- **Region tints, through the marks API** (`T087`, added by the docs review). The one seam the
+  T008 spike found the bought marks API genuinely good for, and nothing was tasked to build it.
+  Three constraints come straight from the spike: marks carry **no id**, so region ↔ mark mapping
+  needs our own side table keyed by offset range; `set_marks` **replaces wholesale**, so every
+  seen-state change re-uploads the full set and wants diffing before upload; and the state column
+  and undercurl are **not** marks — they resolve separately and compose per row.
 - `Picker` on the `nucleo` engine: filter line (`ratatui-textarea`) + off-thread matcher +
   list + preview split (dropped under 100 cols). **Sources are Steel** —
   `(define-picker-source …)`, so adding one is userspace.
@@ -452,10 +482,10 @@ source added live from the REPL appears without restart · seen-state survives a
 > rather than a feature. `6a` is in v1 by decision ([Q11](#q11)).
 
 **Scope**
-- Files: `phosphor-core/{store,region,anchor,seen}.rs`, `phosphor-ui/picker.rs`,
+- Files: `phosphor-core/{store,region,anchor,seen}.rs`, `phosphor-ui/{picker,buffer_view}.rs`,
   `runtime/pickers/*.scm`
 - Named units: 1 store, 1 region state machine, 2 anchor strategies, 1 Picker widget, 3 Steel
-  picker sources, 1 `ArchDiagram` body
+  picker sources, 1 `ArchDiagram` body, **1 marks side table** (added by the docs review)
 - Verification: anchor-survival tests (apply a real refactor, assert threads/seen/watches
   follow); line-fallback tests on an extensionless file; restart- and crash-persistence tests
 - Risk: public API no · data migration **yes — seen-state on disk** · cross-module **yes** ·
@@ -474,6 +504,12 @@ source added live from the REPL appears without restart · seen-state survives a
   ([Q6](#q6)) — `phosphor/declare-review-block`, carrying a file+range list and per-group
   annotations. It is an editor-facing capability, which is exactly what the docs reserve MCP
   for, and routing it through the registry means Steel and the CLI can declare one too.
+- **The pane manager and `TabBar`** (`T088`, `T089`, added by the docs review). The transcript is
+  described everywhere as *"a pane, not a float — it splits, holds focus like a window, and
+  survives float churn,"* and nothing provided panes; the tab bar is one of Design Language §5's
+  three chrome strips and appears the moment a second pane does. Both gate `TranscriptPane`, so
+  they run at the front of this step. The split — **panes are focus and event routing in the
+  binary's loop, `TabBar` is a widget over them** — is the same one input already uses.
 - `TranscriptPane` — **a pane, not a float**: turn list, prompt lines (`❯`), prose, tool rows
   (`▸ verb file ±counts`, OSC 8 jump links), seam markers (`⏸` paused, `✕` lost). Folds by
   turn at scale. Streams during Working. Prose renders through the **vendored `ratatui-markdown`**
@@ -518,8 +554,10 @@ untouched while Claude works, zero tearing) · `7b` (session dropped — editing
 
 **Scope**
 - Files: `phosphor-agent/{acp,mcp,transcript,session}.rs`,
-  `phosphor-ui/{transcript,prompt_line,question}.rs`, `runtime/permissions.scm`
-- Named units: 1 ACP client, 1 MCP server, 3 widgets, 1 `SessionState` enum, 10 screens
+  `phosphor-ui/{transcript,prompt_line,question,tab_bar}.rs`, `phosphor/panes.rs`,
+  `runtime/permissions.scm`
+- Named units: 1 ACP client, 1 MCP server, 4 widgets, **1 pane manager** (added by the docs
+  review), 1 `SessionState` enum, 10 screens
 - Verification: session-lifecycle tests (drop mid-turn, reattach, adopt); a torn-frame check
   under streaming load; permission rules round-trip to `init.scm`
 - Risk: public API no · data migration no · cross-module **yes** · reversible yes · external
@@ -652,10 +690,17 @@ the rest, from a design conversation rather than from reading the docs. They kee
 numbers as stable ids, since the phases cross-reference them. Each records what was decided,
 why, and what cost the decision accepts.
 
-**Two amend the design docs** rather than filling a gap in them — [Q4](#q4) and [Q7](#q7) — and
-each says so where it sits. The handoff asks that nothing in the Design Brief be relitigated without
-flagging it explicitly; both were flagged before being decided, and the amendment is recorded
-here rather than absorbed silently into the build.
+**Four amend the design docs** rather than filling a gap in them — [Q3](#q3), [Q4](#q4),
+[Q7](#q7) and [Q9](#q9) — and each says so where it sits. The handoff asks that nothing in the
+design docs be relitigated without flagging it explicitly; each was flagged before being decided,
+and the amendment is recorded here rather than absorbed silently into the build.
+
+| | amends | what changes |
+|---|---|---|
+| [Q3](#q3) | Component Breakdown | `edtui` was **"buy (input)"**; the input machine is ours |
+| [Q4](#q4) | Component Breakdown | `ratatui-markdown` was a plain feature-gated buy; it is a vendored fork |
+| [Q7](#q7) | Design Brief · Design Language §10 · Component Breakdown | Ayu → Tokyo Night as the second mapping |
+| [Q9](#q9) | Design Language §9 · §11 | needs-you asks **queue** rather than appear-and-wait; `!` joins the last-standing statusline set |
 
 <a id="q1"></a>
 ### Q1 · Seen-state lives out-of-tree, keyed on the workspace root path
@@ -794,10 +839,12 @@ reserves for attention, and theme validation rejects a theme that reassigns acto
 Tokyo Night takes its place: blue-violet collides with no actor hue, and Tokyo Night Day is a
 real light variant rather than an afterthought, so the dark/light pair is honest.
 
-**Amendment recorded:** the Design Brief's "Decided since" list names *"Catppuccin and Ayu as the
-first two mappings."* Catppuccin is unchanged; Ayu is out. Screen `9b` is superseded — there is
-no Tokyo Night mockup, so `9b` stands as the *shape* of the S1 acceptance test (same slice of UI,
-a second palette, actor contract intact) with a different palette substituted.
+**Amendment recorded, in three places.** Ayu is named in the Design Brief's "Decided since"
+(*"Catppuccin and Ayu as the first two mappings"*), in **Design Language §10** (*"Catppuccin and
+Ayu ship first"*), and in the **Component Breakdown's `Theme` spec** (*"Catppuccin and Ayu ship as
+mappings"*). All three are superseded; Catppuccin is unchanged in each. Screen `9b` is superseded
+too — there is no Tokyo Night mockup, so `9b` stands as the *shape* of the S1 acceptance test
+(same slice of UI, a second palette, actor contract intact) with a different palette substituted.
 
 **Alternatives considered:** demoting Ayu's orange to a syntax role and shipping it anyway
 (rejected — it would not look like Ayu, so the recognition that justified choosing it is gone);
@@ -821,16 +868,33 @@ dependency); and merging S3 and S4 into one "plain editor" milestone (rejected �
 step, and it breaks the 8-step numbering the design docs cross-reference).
 
 <a id="q9"></a>
-### Q9 · Asks are queued; the one-float rule is never broken
+### Q9 · Asks are queued; the one-float rule is never broken — *amends the Design Language*
 
 *Was: the design language states both "opening a second float replaces the first, there is no
 float-over-float, ever" and "needs-you never steals focus." These conflict when Claude asks a
 question while a picker is open.*
 
 **Decided:** queue the ask. It sets the statusline `!` flag immediately and waits; the float
-surfaces once no other float holds focus, and `]!` jumps to a pending ask. Both written rules stay
-literally true, nothing is destroyed under the user, and it matches the brief's "the user reads
-when they get a chance."
+surfaces once no other float holds focus, and `]!` jumps to a pending ask. Nothing is destroyed
+under the user, and it matches the brief's "the user reads when they get a chance."
+
+**Amendment recorded — this changes a written rule rather than reconciling two.** Design Language
+§9 says needs-you asks *"appear, set the statusline flag, and wait,"* and the Component
+Breakdown's `QuestionBody` says *"renders alongside a waiting statusline flag."* Both describe an
+ask that **is on screen** while something else holds focus. Queueing means it is **not** on
+screen until the coast is clear. That is the better call — the alternative it displaces is
+float-over-float in everything but name, which §9 forbids outright — but it is a change to §9,
+not a literal reading of it, and the handoff's rule says to say so.
+
+**Second amendment, same decision:** Design Language §5 and §11 both say *"the `✻`/`●n` pair is
+the last thing standing"* in the statusline shed order. Because the queued ask's only notification
+is the flag, `!` **joins that set** — `✻` / `●n` / `!` are now the last three standing, at every
+width down to 40 columns. This plan asserts the three-glyph version throughout; §5 and §11 are
+superseded on that point.
+
+**The alternative that keeps §9 literal** — render the ask unfocused beneath the focused float,
+keystrokes still going where they went before — is rejected because it is float-over-float in
+layout, and §9's "no float-over-float, ever" is the stricter rule of the two.
 
 Two consequences the build has to honour:
 
@@ -945,17 +1009,21 @@ appears there is exactly one place to look.
 
 ## 7. Immediate next steps
 
-**Both M-0 spikes have run** ([SPIKES.md](SPIKES.md)), so `CP-0` is passed and nothing is
-blocked on either a decision or an unknown. What remains in M-0 is construction.
+**Both M-0 spikes have run** ([SPIKES.md](SPIKES.md)), so `CP-0`'s **go/no-go verdict** is
+settled and nothing is blocked on either a decision or an unknown. Its **build** half — the
+workspace, both subtrees, the two structural lints, the grammar ABI check — is Window A's exit
+gate and is still open. What remains in M-0 is construction, and it has not been done.
 
 1. **T001–T007 — the workspace.** Seven crates, the pins (`ratatui 0.30.2`,
    `ratatui-core 0.1.2`, `steel-core =0.8.2`), both vendored subtrees, and the two structural
    lints. `cargo-deny` lands here too, with a `[bans]` rule on duplicate `ratatui` majors — the
    check that would have caught the `tui-textarea` / `ratatui-markdown` split mechanically.
-2. **The grammar ABI check.** Load all eleven bundled grammars against tree-sitter 0.26 and
-   parse a fixture. Cheap now, expensive at S4. This is the one unknown the spikes surfaced but
-   did not close.
-3. **Then S1** — sized larger than originally planned, because soft-wrap is ours to build.
+2. **The grammar ABI check** (`T083`). Load all eleven grammars we ship — the first-class twelve
+   minus CSV, which `T082` implements by hand — against tree-sitter 0.26 and parse a fixture.
+   Cheap now, expensive at S4. This is the one unknown the spikes surfaced but did not close.
+3. **Then S1** — sized larger than originally planned twice over: soft-wrap is ours to build
+   (`T081`), and the docs review added the `Float` primitive (`T084`) and undercurl (`T085`) to
+   the same phase, neither of which had a task anywhere.
 
 The two things worth carrying into S1 and S3 respectively: **soft-wrap is unbudgeted and
 touches four subsystems at once**, and **the input machine is now ours**, so counts and named

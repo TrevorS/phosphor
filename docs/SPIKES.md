@@ -160,9 +160,11 @@ Worth knowing before T003:
   go, html, java, javascript, json, md, python, rust, toml-ng, typescript, yaml. It does **not**
   bundle Scheme (for Steel) or CSV, both of which our first-class set requires. Grammar
   selection belongs in `runtime/` via `define-language`, so this list wants pruning to features
-  in the fork.
+  in the fork. → **now owned by `T003`**, which had no line about it.
 - **`arboard`** (clipboard) and **`rust-embed`** — both non-optional, both pulling system
-  dependencies we may not want in a headless test or VHS run.
+  dependencies we may not want in a headless test or VHS run. `arboard` wants X11/Wayland, which
+  a bare CI container will not have. → **also `T003`**; its *done when* now includes building in
+  a container with neither.
 - **`similar`** — already there for diffing, so it costs nothing to use directly.
 - Its own `Action` **trait** with ~20 concrete action structs (`actions.rs`), which collides by
   name with our `Action` **enum**. Cosmetic, but worth a rename in the fork to avoid confusion.
@@ -257,7 +259,7 @@ Verified 2026-08-11. Everything below resolved — no missing crates.
 | HTML | `tree-sitter-html` | 0.23.2 | last updated 2024-11 |
 | CSS | `tree-sitter-css` | 0.25.0 | |
 | **Steel** | `tree-sitter-scheme` | 0.24.7 | closest available; Steel is a Scheme dialect, so verify it parses `runtime/*.scm` before committing |
-| **CSV** | `tree-sitter-csv` | 1.2.0 | **5.4k downloads, last updated 2024-01-24.** See below. |
+| **CSV** | ~~`tree-sitter-csv`~~ | — | **DROPPED** per the finding below — hand-written parser in `T082`. Was 1.2.0: 5.4k downloads, last updated 2024-01-24. |
 
 > **Two grammar findings.**
 >

@@ -4,14 +4,20 @@ Decomposed from [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md), which is itsel
 the four design docs in [design/](design/). The plan says *what each phase is for*; this file
 says *what to build, in what order, and where we stop and look at it*.
 
-**83 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
+**89 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
 Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids
 are stable and assigned in order of creation — reference them in commits. New tasks append
 rather than renumber, so `T078`+ sit inside earlier phases.
 
-**`CP-0` is passed.** Both M-0 spikes are done ([SPIKES.md](SPIKES.md)); `T008` and `T009` are
-checked off and their consequences are folded in below. `T081`–`T083` exist because of what they
-found.
+**`CP-0`'s go/no-go is settled. Its build half is not.** Both M-0 spikes are done
+([SPIKES.md](SPIKES.md)); `T008` and `T009` are checked off and their consequences are folded in
+below. `T081`–`T083` exist because of what they found. But the rest of M-0 — the workspace, both
+subtrees, the two structural lints, the grammar ABI check — has not been built, so the ✅ below
+means *the verdict passed*, not *M-0 is finished*.
+
+**`T084`–`T089` were added by the docs review.** Six widget/primitive tasks the design docs
+require and the first breakdown had no home for: the `Float` chrome primitive, undercurl, the
+`HelpGrid`, region tints, the pane manager, and `TabBar`. They are marked 📌 where they appear.
 
 ---
 
@@ -128,13 +134,13 @@ can actually see each one is noted, since it isn't obvious:
 
 | Phase | Tasks | Checkpoint |
 |---|---|---|
-| M-0 · Scaffolding + spikes | T001–T009, T083 | **CP-0** — ✅ passed |
-| S1 · Theme + BufferView + StatusLine | T010–T018, T081 | **CP-1** — does it look like the mockups |
+| M-0 · Scaffolding + spikes | T001–T009, T083 | **CP-0** — ✅ verdict passed · build half open |
+| S1 · Theme + BufferView + StatusLine | T010–T018, T081, T084, T085 | **CP-1** — does it look like the mockups |
 | S2 · Steel + Action + REPL + view tree | T019–T025, T078–T080 | **CP-2** — is the editor live |
-| S3 · Input + undo + gutter | T026–T035 | **CP-3** — does it feel like an editor |
+| S3 · Input + undo + gutter | T026–T035, T086 | **CP-3** — does it feel like an editor |
 | S4 · LSP | T036–T040, T082 | **CP-4** — boring on purpose |
-| S5 · Store + seen + Picker | T041–T049 | **CP-5** — the awareness loop |
-| S6 · ACP + MCP + Transcript + Prompt | T050–T062 | **CP-6** session · **CP-7** directing |
+| S5 · Store + seen + Picker | T041–T049, T087 | **CP-5** — the awareness loop |
+| S6 · ACP + MCP + Transcript + Prompt | T050–T062, T088, T089 | **CP-6** session · **CP-7** directing |
 | S7 · Diffs + review + dirty + VCS | T063–T073 | **CP-8a/b/c** — one per `S7.1`/`S7.2`/`S7.3` |
 | S8 · Watches | T074–T077 | **CP-9** — ship check |
 | **V · Verification harness** | **V001–V009** | *cross-cutting — lands with S1, used from CP-1 on* |
@@ -227,7 +233,14 @@ everything after them — do them first, together.
 - [ ] **T003 · Vendor `ratatui-code-editor`**
   `git subtree` into `vendor/`, workspace path dep, `VENDOR.md` with upstream SHA + patch log,
   `just vendor-diff` and `just vendor-pull`.
-  *Done when:* `just vendor-diff` prints an empty diff against the merged tag. *Needs:* T001
+  **Two inherited-baggage items the spike flagged and nothing else owns:** feature-gate the
+  fork's **16 hard grammar dependencies** down to our set (it bundles bash, c, c-sharp, cpp, go,
+  java and more that we never load, and bundles neither Scheme nor CSV that we do), and confirm
+  its non-optional **`arboard` + `rust-embed`** don't break a headless CI or VHS run — `arboard`
+  pulls system clipboard libraries that a bare Linux runner won't have.
+  *Done when:* `just vendor-diff` prints an empty diff against the merged tag, only the grammars
+  we load are compiled in, and the workspace builds in a container with no X11/Wayland.
+  *Needs:* T001
 
 - [ ] **T004 · Vendor `ratatui-markdown` and bump it to 0.30**
   Version bump only — no phosphor behaviour inside it (Q4). Feature-gated; per-language
@@ -249,6 +262,18 @@ everything after them — do them first, together.
   direction, not convention.
   *Done when:* CI fails on a deliberately planted `store::` import in `phosphor-ui`.
   *Needs:* T005
+
+- [ ] **T083 · Grammar ABI check** *(spike finding)*
+  The grammar crates were built against tree-sitter bindings spanning **0.23–0.25** while the
+  runtime is **0.26**. tree-sitter versions its language ABI and mixing generations is a known
+  breakage source. Load all **eleven** grammars we ship (the first-class twelve minus CSV, which
+  `T082` implements by hand) and parse a fixture.
+  Also settle here: does `tree-sitter-scheme` (0.24.7) actually parse real `runtime/*.scm`?
+  Steel is a Scheme dialect, not Scheme.
+  **This is the one unknown the spikes surfaced and did not close** — cheap in M-0, expensive at
+  S4, where `T037` assumes it already passed.
+  *Done when:* every bundled grammar parses a fixture under tree-sitter 0.26, with a written
+  answer on Steel. *Needs:* T002
 
 - [x] **T008 · SPIKE — the five seams in `ratatui-code-editor`** ✅
   Answered in [SPIKES.md](SPIKES.md) with `file:line` citations. Scroll authority clean; marks
@@ -290,6 +315,12 @@ outcomes you predicted, and the useful findings are often the ones outside it.
 ## S1 · Theme + BufferView + StatusLine shell
 
 First phase with anything to look at. Sized by CP-0.
+
+> **What drives editing at S1.** The goal inherited from the build order is *"renders and edits a
+> file with highlighting on day one"* — but the input machine is `T026`, at S3. Until then, S1
+> rides the vendored crate's own `editor_crossterm` handler as a **temporary** input path, which
+> is what makes `T081`'s cursor-motion and click checks possible at `CP-1`. It is scaffolding, not
+> a keeper: `T026` replaces it outright, and nothing above it may grow to depend on it.
 
 - [ ] **T010 · `Theme` struct**
   Actor/state palette (`claude, you, attention, trouble, transient, steel`) + neutral ramp +
@@ -333,8 +364,21 @@ First phase with anything to look at. Sized by CP-0.
   `VisualRow` variant alongside the existing fold and ghost variants, **not** as a layer above
   them — row↔line mapping, cursor positioning, click targeting and virtual-text placement all
   read the same row stream, and a soft-wrap that lives outside it desynchronises all four.
-  *Done when:* a long line wraps with continuations, and cursor motion, mouse clicks and
-  virtual-text rows all land correctly on a wrapped line. *Needs:* T015
+  The fourth subsystem soft-wrap touches — **virtual-text placement on a wrapped line** — cannot
+  be verified here: `VirtualText` is `T032`, three windows later. Build the row-stream contract
+  that serves it now; the check itself moved to `T032`'s *done when* and to `CP-3`.
+  *Done when:* a long line wraps with continuations, and **cursor motion and mouse clicks** land
+  correctly on a wrapped line. *Needs:* T015
+
+- [ ] **T085 · Undercurl in the vendored renderer, with underline fallback** 📌
+  The marks API is **colour only** — no style, no priority (`editor.rs:660-682`) — so the
+  undercurl half of Design Language §3's anchored-region treatment (*"tint + undercurl"*) is
+  ours to add to the fork. A cell-style capability with a degradation path, so it belongs beside
+  the renderer patches rather than with its first consumer.
+  Consumers: `T040` (diagnostics), `T068` (anchored regions). Landing it at S1 also means `V002`
+  can settle *"does undercurl survive VHS capture"* against a real implementation.
+  *Done when:* a styled span renders undercurled on the primary terminal and underlined on the
+  degradation terminal, from one call site. *Needs:* T015
 
 - [ ] **T017 · StatusLine**
   Mode chip (the only inverted text on screen) + file + dirty flag + spring + `SessionState`
@@ -342,10 +386,25 @@ First phase with anything to look at. Sized by CP-0.
   emitting a second row must be impossible, not merely avoided.
   *Done when:* a property test at widths 40–200 never produces two rows. *Needs:* T010
 
+- [ ] **T084 · `Float` — the chrome primitive** 📌
+  **The one chrome primitive**, and the first breakdown had no task for it — only the passive
+  variant at `T038`, three phases after `T021` already needs a float to show a broken `init.scm`
+  in. Block wrapper enforcing **header / body / footer**; mood border (`#2a5c44` informational,
+  `#6b5426` needs-you with `#171207` body); the **one-float rule** — opening a second replaces
+  the first, `esc` closes top-down, no float-over-float ever; background under it dims to
+  `#232823`; full-width under 100 cols; padding 1 row / 2 cols; spans 60–80% of width, centered,
+  never within 4 cols of an edge.
+  Bodies plug into it and ship with their own tasks: `Picker` (`T045`), `DiffBody` (`T063`),
+  `QuestionBody` (`T059`), `HelpGrid` (`T086`), `ArchDiagram` (`T048`).
+  *Done when:* both moods render with the full header/body/footer contract, a fixture body plugs
+  in, and opening a second float provably replaces the first rather than stacking.
+  *Needs:* T010, T014
+
 - [ ] **T018 · Golden-frame snapshot harness**
   Render a fixed buffer + state to a cell grid, compare against a committed snapshot. This is
   how every later phase gets cheap regression cover on layout.
-  *Done when:* snapshots exist for `1a`-minus-agent, `9c`, `8c`, `8d`. *Needs:* T015, T017
+  *Done when:* snapshots exist for `1a`-minus-agent, `9c`, `8c`, `8d`. *Needs:* T012, T013, T015,
+  T017
 
 ### ✋ CP-1 — Does it look like the mockups?
 
@@ -359,9 +418,14 @@ property test (widths 40–200, never two rows) · all four themes pass actor-hu
 planted bad theme is rejected · no `Color::Rgb` literal survives in `phosphor-ui`.
 
 **Also verify (new since the spike):** soft-wrap (`T081`) — long lines wrap with `↪`
-continuations carrying no line number, and cursor motion, mouse clicks and virtual-text rows all
-land correctly on a wrapped line. This is unbudgeted work we now own, so it gets explicit
-attention at the first checkpoint that can see it.
+continuations carrying no line number, and **cursor motion and mouse clicks** land correctly on a
+wrapped line. This is unbudgeted work we now own, so it gets explicit attention at the first
+checkpoint that can see it. **Virtual text on a wrapped line is checked at `CP-3`, not here** —
+`VirtualText` is `T032`. What `CP-1` can confirm is that the row stream has a place for it.
+
+**Also verify (added by the docs review):** the `Float` contract (`T084`) — both moods, header /
+body / footer, and a second float **replacing** the first rather than stacking · undercurl
+(`T085`) renders on the primary terminal and degrades to underline on the degradation terminal.
 
 **VHS produces:** stills for `1a`-minus-agent, `9c`, `8c`, `8d` · a **width sweep** contact sheet
 at 200/120/100/80/60/40 columns showing the shed order step by step · all four themes on the same
@@ -408,7 +472,7 @@ care here rather than at S5.
   A **broken `init.scm` boots the editor anyway**, with the error in a float. Steel can emit
   Actions and read ViewModels — nothing else.
   *Done when:* a syntax error in `init.scm` yields a working editor with a legible error float.
-  *Needs:* T020
+  *Needs:* T020, T084
 
 - [ ] **T022 · Steel REPL**
   The primary extension workflow, not a debug tool. `(keymap-set! …)` is live; the next frame
@@ -421,9 +485,14 @@ care here rather than at S5.
   *Needs:* T020
 
 - [ ] **T024 · Door-parity test**
-  A test that **enumerates the registry** and asserts every capability is reachable from all
-  three doors. Enumeration is the point — a hand-written list rots.
-  *Done when:* adding an Action reachable from only one door fails CI. *Needs:* T020, T023
+  A test that **enumerates the registry** and asserts every capability is present in all three
+  doors. Enumeration is the point — a hand-written list rots.
+  **Careful about what "reachable" means before S6.** The MCP *server* is `T052`; at S2 there is
+  no consumer. So the test asserts what exists at each phase: the Steel binding and the CLI verb
+  are invoked end to end, and the **MCP tool schema is generated and well-formed** for every
+  capability. `T052` upgrades the MCP third to a live round-trip without changing the test's
+  shape — the point is that a capability can never be *registered* in fewer than three doors.
+  *Done when:* adding an Action wired to only one door fails CI. *Needs:* T020, T023
 
 - [ ] **T025 · StatusLine composition moves to Steel**
   Not just segment *order* — the statusline is **composed as a view tree returned from Steel**
@@ -531,8 +600,10 @@ CP-0 settled the shape: **the input machine is ours.**
 - [ ] **T032 · VirtualText**
   `┊`-prefixed rows owned by a region id, indented to the code column. Shared by threads,
   watches, diagnostics, hints.
-  *Done when:* rows interleave correctly and never shift the buffer's own line numbering.
-  *Needs:* T015
+  *Done when:* rows interleave correctly, never shift the buffer's own line numbering, **and land
+  in the right place on a soft-wrapped line** — the fourth subsystem `T081` touches, deferred to
+  here because this is the first phase where there is a virtual-text row to place.
+  *Needs:* T015, T081
 
 - [ ] **T033 · Keymaps + leader tree in Steel**
   `SPC` leader, full ex commands, vim-style unique-prefix abbreviation.
@@ -547,6 +618,17 @@ CP-0 settled the shape: **the input machine is ours.**
   One virtual-text line naming `SPC` and `:help`, once per session, never again.
   *Done when:* screen `8e` reproduces. *Needs:* T032, T034
 
+- [ ] **T086 · `HelpGrid` — the `:help` float body** 📌
+  Screen `6d` (`:help agent-objects`) is an S3 acceptance target in the plan with no task behind
+  it, and `HelpGrid` is named as a `Float` body in the Component Breakdown. Same data as
+  `KeymapFooter`, third density: a full grid, read from the **live** keymap so Steel rebinds and
+  `define-language` additions appear with no extra wiring.
+  Per the voice rule, entries spell whole commands — `:reattach`, never `:ca`.
+  **The agent nouns render here but do not resolve until `T049`** (Q8) — `6d` displays `viu` /
+  `sib` / `dih` and their grammar at S3; they bind to real regions at S5.
+  *Done when:* screen `6d` reproduces from the live keymap, and a REPL rebind shows up in it.
+  *Needs:* T084, T034
+
 ### ✋ CP-3 — Does it feel like an editor?
 
 The first checkpoint that is mostly about feel, and the only one where muscle memory is the
@@ -555,8 +637,10 @@ instrument.
 **Run:** `cargo run -- <a real file you'd actually edit>`
 
 **Claude verifies:** scripted keystroke → Action stream tests · undo/redo exactness · undo
-survives restart and `kill -9` · gutter priority resolution across all overlaps · `3c` and `8e`
-snapshots · every binding lives in `runtime/`.
+survives restart and `kill -9` · gutter priority resolution across all overlaps · `3c`, `6d` and
+`8e` snapshots · every binding lives in `runtime/` · **virtual-text rows land correctly on a
+soft-wrapped line** (`T032`, deferred here from `CP-1` — the fourth subsystem `T081` touches, and
+the first checkpoint that can actually see it).
 
 **VHS produces:** the leader popup opening (`3c`) · folds collapsing and expanding ·
 insert-only whitespace marks · the once-per-session unknown-key hint firing and then *not*
@@ -604,18 +688,10 @@ is exact.
   reliable than a stale grammar **and** yields exactly the column model that surface needs.
   *Done when:* CSV column alignment works, with no `tree-sitter-csv` dependency. *Needs:* T037
 
-- [ ] **T083 · Grammar ABI check** *(spike finding — do this in M-0)*
-  The grammar crates were built against tree-sitter bindings spanning **0.23–0.25** while the
-  runtime is **0.26**. tree-sitter versions its language ABI and mixing generations is a known
-  breakage source. Load all eleven and parse a fixture.
-  Also settle here: does `tree-sitter-scheme` (0.24.7) actually parse real `runtime/*.scm`?
-  Steel is a Scheme dialect, not Scheme.
-  *Done when:* every bundled grammar parses a fixture under tree-sitter 0.26, with a written
-  answer on Steel. *Needs:* T002
-
 - [ ] **T038 · Completion via the passive Float**
-  Border `#2a3c2e`, **no footer** — the one documented exception to the float contract.
-  *Done when:* screen `7c`'s completion reproduces. *Needs:* T036
+  Border `#2a3c2e`, **no footer** — the one documented exception to the float contract. The
+  primitive itself is `T084`; this adds the third mood and the footer exception to it.
+  *Done when:* screen `7c`'s completion reproduces. *Needs:* T036, T084
 
 - [ ] **T039 · Signature help + hover**
   *Done when:* screen `7c` reproduces in full. *Needs:* T038
@@ -624,7 +700,7 @@ is exact.
   Trouble priority in `GutterBar`; `■` rows via `VirtualText`; undercurl with underline
   fallback.
   *Done when:* a file with real errors shows correct gutter priority against other states.
-  *Needs:* T031, T032, T036
+  *Needs:* T031, T032, T036, T085
 
 ### ✋ CP-4 — Boring on purpose
 
@@ -680,7 +756,7 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
 - [ ] **T045 · Picker widget**
   `ratatui-textarea` filter line + nucleo matcher **off-thread** + list + preview split (dropped
   under 100 cols). Rows are `Vec<Span>` so agent context renders in actor colours.
-  *Done when:* it stays responsive filtering a 100k-file list. *Needs:* T041
+  *Done when:* it stays responsive filtering a 100k-file list. *Needs:* T041, T084
 
 - [ ] **T046 · Steel picker sources — unseen, files**
   `(define-picker-source …)`. Files carries unseen counts and activity columns.
@@ -696,12 +772,26 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   Rust primitive of its own. It is the proof that the escape hatch is sufficient for a real
   custom surface. Turns invariant 4 from a claim into something you can look at.
   *Done when:* screen `6a` reproduces, reflects the *actual* store rather than a static drawing,
-  and adds zero lines to `phosphor-ui`. *Needs:* T041, T080
+  and adds zero lines to `phosphor-ui`. *Needs:* T041, T080, T084
 
 - [ ] **T049 · Agent nouns resolve**
   `viu` / `sib` / `dih` now bind to real regions (completes T028, per Q8).
   *Done when:* screen `6d`'s nouns are functional, and `viu` selects an unseen region.
   *Needs:* T028, T041
+
+- [ ] **T087 · Region tints via a marks side table** 📌
+  The seam the T008 spike said the bought marks API *is* good for, and the one nothing was
+  tasked to build. Design Language §3 tints the whole row per region state — `#141d16` anchor,
+  `#26332a` selection-in-float, `#211114` failure — and the marks API carries exactly that
+  (colour spans) and nothing else.
+  Three consequences from the spike, all landing here: **marks carry no id**, so region ↔ mark
+  mapping needs our own side table keyed by offset range; **`set_marks` replaces wholesale**
+  (`editor.rs:660-682`), so every seen-state change re-uploads the full set — keep the upload off
+  the hot path and diff before uploading; and **the state column and undercurl are not marks** —
+  those are `T031` and `T085`, resolved separately and composed per row.
+  *Done when:* marking a region seen retints it with no full re-render stall on a file with 500+
+  regions, and the side table survives an edit that shifts every offset. *Needs:* T041, T015,
+  T085
 
 ### ✋ CP-5 — The awareness loop
 
@@ -765,10 +855,30 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   *Done when:* a declared block becomes a grouped set of unseen markers + a notification.
   *Needs:* T052, T041
 
+- [ ] **T088 · Pane manager — splits and focus** 📌
+  `T054` calls the transcript *"a pane, not a float — splits, holds focus like a window, survives
+  float churn"*, and nothing was tasked to provide panes. This is that: the split/focus model in
+  the binary's event loop, pane kinds (buffer, transcript, and in v1.5 claude-built), focus
+  routing that survives a float opening and closing over the top, and the rule from Design
+  Language §9 that **panes never dim each other** — only floats dim what's behind them.
+  Placed at S6 because the transcript is the first surface that forces a second pane. If the
+  files picker (`T046`) ever opens results into a *new* pane rather than replacing the current
+  buffer, this moves to S5 — decide that when `T046` lands, and note the answer here.
+  *Done when:* two panes split, focus moves between them, and opening then closing a float
+  returns focus exactly where it was. *Needs:* T019, T015
+
+- [ ] **T089 · `TabBar`** 📌
+  Chrome strip one of three (Design Language §5), untasked until now, and the plan already
+  decided to **build rather than buy** it (`ratatui-comfy-tabs`, 600 downloads). Appears only at
+  2+ panes. Flat vim-style: active tab = 2px actor-coloured top rule + bright text, inactive =
+  meta-gray, **per-tab unseen counts (`●n`)**. Input is `Vec<TabVM { title, kind, unseen }>`.
+  *Done when:* it appears on the second pane and never on the first, and per-tab unseen counts
+  track the store. *Needs:* T088, T010, T041
+
 - [ ] **T054 · TranscriptPane**
   **A pane, not a float** — splits, holds focus, survives float churn. Turn list, prompt lines
   `❯`, prose, tool rows, seam markers. Folds by turn. Streams during Working.
-  *Done when:* screen `1b` reproduces. *Needs:* T050
+  *Done when:* screen `1b` reproduces. *Needs:* T050, T088
 
 - [ ] **T055 · Markdown prose behind the gate**
   Via the vendored fork (T004). **Plain-text path must stay readable with the gate off.**
@@ -793,7 +903,8 @@ from it.
 
 **Claude verifies:** session drop mid-turn → reattach → adopt, all recovering · torn-frame check
 under sustained streaming load · every `SessionState` variant renders · `1b`, `7d`, `5d`, `7b`,
-`2d` snapshots.
+`2d` snapshots · **the tab bar appears on the second pane and never on the first** (`T089`), and
+opening then closing a float returns focus to the pane that had it (`T088`).
 
 **VHS produces:** the transcript streaming a full turn · the session dropping mid-turn and the
 seam appearing (`7b`) · cold start (`7d`), attach/adopt (`5d`), mid-task dashboard (`2d`) · a
@@ -825,7 +936,7 @@ live.
 - [ ] **T059 · QuestionBody**
   Prose + amber digit options `[1]`–`[n]` + full-command footer. Digits answer only while
   focused.
-  *Done when:* screen `4a` reproduces. *Needs:* T057
+  *Done when:* screen `4a` reproduces. *Needs:* T057, T084
 
 - [ ] **T060 · The ask queue**
   Per Q9: a question arriving while another float holds focus **sets the statusline `!` and
@@ -892,7 +1003,7 @@ mockup screen ids of the same name, which mean entirely different things.
   `mod diff` private and the diff implemented as a *mode of the Editor*, so there is nothing to
   restyle. Unified and side-by-side; fold rows for unchanged spans. `similar` already arrives
   transitively via the vendored crate, so this adds no dependency.
-  *Done when:* renders a real diff correctly. *Needs:* T041
+  *Done when:* renders a real diff correctly. *Needs:* T041, T084
 - [ ] **T064 · Per-hunk seen state** — `s`/`S` compose over any group.
   *Done when:* marking one hunk seen leaves the rest unseen. *Needs:* T063, T041
 - [ ] **T065 · Directory grouping + annotations** — `tui-tree-widget`; Claude's group
@@ -902,7 +1013,9 @@ mockup screen ids of the same name, which mean entirely different things.
 - [ ] **T067 · Inbox** — one list of everything Claude said; severity is a single MCP flag;
   unread = unseen. Screen `5c`. *Needs:* T053, T041
 - [ ] **T068 · Anchored exchange / threads** — your comment and Claude's reply as virtual text
-  under the region. Screen `3a`. *Needs:* T032, T042
+  under the region. Screen `3a`. The region itself carries Design Language §3's full anchored
+  treatment — **tint + undercurl** — which is `T087` and `T085` composed, not the marks API alone.
+  *Needs:* T032, T042, T085, T087
 
 ### ✋ CP-8a — Can you actually review a big change?
 
@@ -946,7 +1059,7 @@ claim about absence of motion, and a recording is the only way to demonstrate ab
 of `:diff-disk`'s three exits taken in turn (`5b`).
 
 **Teej verifies:** **Nothing moved, right?** Not "it recovered gracefully" — nothing moved.
-Then `:dv`, read both versions, take each of the three exits in turn. Is the choice obvious at
+Then `:diff-disk`, read both versions, take each of the three exits in turn. Is the choice obvious at
 the moment you have to make it? This is the invariant most likely to be violated by accident,
 and the most damaging when it is.
 
