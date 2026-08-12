@@ -209,14 +209,21 @@ renders are byte-identical apart from the symbol.
 
 **Capability detection** is `UnderlineCapability::resolve`, a pure function of four environment
 variables, with `UnderlineCapability::detect` (a `OnceLock`) the only part that reads the world.
-`PHOSPHOR_UNDERCURL` overrides; `NO_COLOR` degrades; then **`TERM` is the authority** — an
-`Smulx` name (kitty, ghostty, wezterm, foot, contour, alacritty, rio) gets the curl, a
-multiplexer or a plain family (`xterm*`, `vt*`, `linux`, …) does not, and `TERM_PROGRAM` is
-consulted only when `TERM` matched nothing at all. That ordering is what makes `V009`'s
-`TERM=xterm-256color` tape capture the degraded path even when it is recorded from a terminal
-that could have drawn the curl. **The allowlist points one way on purpose:** missing undercurl
-costs a flat underline; sending `4:3` to a terminal that mis-parses sub-parameters costs visible
-garbage in the buffer.
+`PHOSPHOR_UNDERCURL` overrides; `NO_COLOR` degrades; then an `Smulx` `TERM` (kitty, ghostty,
+wezterm, foot, contour, alacritty, rio) gets the curl and a multiplexer (`screen*`, `tmux*`) does
+not; then **`TERM_PROGRAM`**; then a plain family (`xterm*`, `vt*`, `linux`, …) degrades.
+**The allowlist points one way on purpose:** missing undercurl costs a flat underline; sending
+`4:3` to a terminal that mis-parses sub-parameters costs visible garbage in the buffer.
+
+**Amended at `CP-1` — `TERM_PROGRAM` moved ahead of the plain-family rule.** The original order
+made `TERM` the authority throughout, which read well and was wrong in a specific way: iTerm2 and
+VS Code both ship `TERM=xterm-256color` *and* both support `4:3`, so `SMULX_PROGRAMS`' own
+`iterm.app` and `vscode` entries were unreachable and two capable terminals degraded for nothing.
+Multiplexers are still decided first — tmux inside iTerm2 reports both, and it is the multiplexer
+that has to carry the escape. The cost of the change is that `TERM` alone no longer forces
+degradation, so a degradation capture must set `PHOSPHOR_UNDERCURL=0` explicitly; that is what
+`tapes/_undercurl-check-forced-underline.tape` already does, and what `V009` should do when it
+lands.
 
 **`CellDiffOption::ForcedWidth` is load-bearing, and the reason the dependency floor moved.**
 `Buffer::diff` measures a cell by the display width of its symbol; ~30 bytes of escape measures

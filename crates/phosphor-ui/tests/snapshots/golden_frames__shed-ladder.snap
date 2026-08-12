@@ -2,104 +2,104 @@
 source: crates/phosphor-ui/tests/golden_frames.rs
 expression: ladder
 ---
-120 │ NORMAL  src/retry.rs [+]                                                        ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-119 │ NORMAL  src/retry.rs [+]                                                       ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-118 │ NORMAL  src/retry.rs [+]                                                      ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-117 │ NORMAL  src/retry.rs [+]                                                     ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-116 │ NORMAL  src/retry.rs [+]                                                    ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-115 │ NORMAL  src/retry.rs [+]                                                   ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-114 │ NORMAL  src/retry.rs [+]                                                  ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-113 │ NORMAL  src/retry.rs [+]                                                 ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-112 │ NORMAL  src/retry.rs [+]                                                ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-111 │ NORMAL  src/retry.rs [+]                                               ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-110 │ NORMAL  src/retry.rs [+]                                              ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-109 │ NORMAL  src/retry.rs [+]                                             ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-108 │ NORMAL  src/retry.rs [+]                                            ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-107 │ NORMAL  src/retry.rs [+]                                           ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-106 │ NORMAL  src/retry.rs [+]                                          ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-105 │ NORMAL  src/retry.rs [+]                                         ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-104 │ NORMAL  src/retry.rs [+]                                        ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-103 │ NORMAL  src/retry.rs [+]                                       ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-102 │ NORMAL  src/retry.rs [+]                                      ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-101 │ NORMAL  src/retry.rs [+]                                     ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
-100 │ NORMAL  src/retry.rs [+]                                    ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 99 │ NORMAL  src/retry.rs [+]                                   ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 98 │ NORMAL  src/retry.rs [+]                                  ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 97 │ NORMAL  src/retry.rs [+]                                 ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 96 │ NORMAL  src/retry.rs [+]                                ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 95 │ NORMAL  src/retry.rs [+]                               ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 94 │ NORMAL  src/retry.rs [+]                              ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 93 │ NORMAL  src/retry.rs [+]                             ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 92 │ NORMAL  src/retry.rs [+]                            ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 91 │ NORMAL  src/retry.rs [+]                           ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 90 │ NORMAL  src/retry.rs [+]                          ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 89 │ NORMAL  src/retry.rs [+]                         ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 88 │ NORMAL  src/retry.rs [+]                        ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 87 │ NORMAL  src/retry.rs [+]                       ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 86 │ NORMAL  src/retry.rs [+]                      ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 85 │ NORMAL  src/retry.rs [+]                     ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 84 │ NORMAL  src/retry.rs [+]                    ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 83 │ NORMAL  src/retry.rs [+]                   ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 82 │ NORMAL  src/retry.rs [+]                  ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 81 │ NORMAL  src/retry.rs [+]                 ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 80 │ NORMAL  src/retry.rs [+]                ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 79 │ NORMAL  src/retry.rs [+]               ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 78 │ NORMAL  src/retry.rs [+]              ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 77 │ NORMAL  src/retry.rs [+]             ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 76 │ NORMAL  src/retry.rs [+]            ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 75 │ NORMAL  src/retry.rs [+]           ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 74 │ NORMAL  src/retry.rs [+]          ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 73 │ NORMAL  src/retry.rs [+]         ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 72 │ NORMAL  src/retry.rs [+]        ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 71 │ NORMAL  src/retry.rs [+]       ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 70 │ NORMAL  src/retry.rs [+]      ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 69 │ NORMAL  src/retry.rs [+]     ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 68 │ NORMAL  src/retry.rs [+]    ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 67 │ NORMAL  src/retry.rs [+]   ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 66 │ NORMAL  src/retry.rs [+]  ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 65 │ NORMAL  src/retry.rs [+] ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1│
- 64 │ NORMAL  src/retry.rs [+]      ✻ claude idle │ ●6 │ jj ✓ │ 18:1│
- 63 │ NORMAL  src/retry.rs [+]     ✻ claude idle │ ●6 │ jj ✓ │ 18:1│
- 62 │ NORMAL  src/retry.rs [+]    ✻ claude idle │ ●6 │ jj ✓ │ 18:1│
- 61 │ NORMAL  src/retry.rs [+]   ✻ claude idle │ ●6 │ jj ✓ │ 18:1│
- 60 │ NORMAL  src/retry.rs [+]  ✻ claude idle │ ●6 │ jj ✓ │ 18:1│
- 59 │ NORMAL  src/retry.rs [+] ✻ claude idle │ ●6 │ jj ✓ │ 18:1│
- 58 │ NORMAL  src/retry.rs [+]       ✻ claude idle │ ●6 │ 18:1│
- 57 │ NORMAL  src/retry.rs [+]      ✻ claude idle │ ●6 │ 18:1│
- 56 │ NORMAL  src/retry.rs [+]     ✻ claude idle │ ●6 │ 18:1│
- 55 │ NORMAL  src/retry.rs [+]    ✻ claude idle │ ●6 │ 18:1│
- 54 │ NORMAL  src/retry.rs [+]   ✻ claude idle │ ●6 │ 18:1│
- 53 │ NORMAL  src/retry.rs [+]  ✻ claude idle │ ●6 │ 18:1│
- 52 │ NORMAL  src/retry.rs [+] ✻ claude idle │ ●6 │ 18:1│
- 51 │ NORMAL  src/retry.rs [+]       ✻ claude idle │ ●6│
- 50 │ NORMAL  src/retry.rs [+]      ✻ claude idle │ ●6│
- 49 │ NORMAL  src/retry.rs [+]     ✻ claude idle │ ●6│
- 48 │ NORMAL  src/retry.rs [+]    ✻ claude idle │ ●6│
- 47 │ NORMAL  src/retry.rs [+]   ✻ claude idle │ ●6│
- 46 │ NORMAL  src/retry.rs [+]  ✻ claude idle │ ●6│
- 45 │ NORMAL  src/retry.rs [+] ✻ claude idle │ ●6│
- 44 │ NORMAL  src/retry.rs [+]            ✻ │ ●6│
- 43 │ NORMAL  src/retry.rs [+]           ✻ │ ●6│
- 42 │ NORMAL  src/retry.rs [+]          ✻ │ ●6│
- 41 │ NORMAL  src/retry.rs [+]         ✻ │ ●6│
- 40 │ NORMAL  src/retry.rs [+]        ✻ │ ●6│
- 39 │ NORMAL  src/retry.rs [+]       ✻ │ ●6│
- 38 │ NORMAL  src/retry.rs [+]      ✻ │ ●6│
- 37 │ NORMAL  src/retry.rs [+]     ✻ │ ●6│
- 36 │ NORMAL  src/retry.rs [+]    ✻ │ ●6│
- 35 │ NORMAL  src/retry.rs [+]   ✻ │ ●6│
- 34 │ NORMAL  src/retry.rs [+]  ✻ │ ●6│
- 33 │ NORMAL  src/retry.rs [+] ✻ │ ●6│
- 32 │ N  src/retry.rs [+]     ✻ │ ●6│
- 31 │ N  src/retry.rs [+]    ✻ │ ●6│
- 30 │ N  src/retry.rs [+]   ✻ │ ●6│
- 29 │ N  src/retry.rs [+]  ✻ │ ●6│
- 28 │ N  src/retry.rs [+] ✻ │ ●6│
- 27 │ N  retry.rs [+]    ✻ │ ●6│
- 26 │ N  retry.rs [+]   ✻ │ ●6│
- 25 │ N  retry.rs [+]  ✻ │ ●6│
- 24 │ N  retry.rs [+] ✻ │ ●6│
- 23 │ N  retry.rs    ✻ │ ●6│
- 22 │ N  retry.rs   ✻ │ ●6│
- 21 │ N  retry.rs  ✻ │ ●6│
- 20 │ N  retry.rs ✻ │ ●6│
+120 │ NORMAL  src/retry.rs [+]                                                          ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+119 │ NORMAL  src/retry.rs [+]                                                         ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+118 │ NORMAL  src/retry.rs [+]                                                        ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+117 │ NORMAL  src/retry.rs [+]                                                       ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+116 │ NORMAL  src/retry.rs [+]                                                      ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+115 │ NORMAL  src/retry.rs [+]                                                     ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+114 │ NORMAL  src/retry.rs [+]                                                    ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+113 │ NORMAL  src/retry.rs [+]                                                   ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+112 │ NORMAL  src/retry.rs [+]                                                  ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+111 │ NORMAL  src/retry.rs [+]                                                 ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+110 │ NORMAL  src/retry.rs [+]                                                ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+109 │ NORMAL  src/retry.rs [+]                                               ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+108 │ NORMAL  src/retry.rs [+]                                              ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+107 │ NORMAL  src/retry.rs [+]                                             ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+106 │ NORMAL  src/retry.rs [+]                                            ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+105 │ NORMAL  src/retry.rs [+]                                           ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+104 │ NORMAL  src/retry.rs [+]                                          ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+103 │ NORMAL  src/retry.rs [+]                                         ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+102 │ NORMAL  src/retry.rs [+]                                        ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+101 │ NORMAL  src/retry.rs [+]                                       ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+100 │ NORMAL  src/retry.rs [+]                                      ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 99 │ NORMAL  src/retry.rs [+]                                     ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 98 │ NORMAL  src/retry.rs [+]                                    ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 97 │ NORMAL  src/retry.rs [+]                                   ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 96 │ NORMAL  src/retry.rs [+]                                  ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 95 │ NORMAL  src/retry.rs [+]                                 ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 94 │ NORMAL  src/retry.rs [+]                                ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 93 │ NORMAL  src/retry.rs [+]                               ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 92 │ NORMAL  src/retry.rs [+]                              ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 91 │ NORMAL  src/retry.rs [+]                             ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 90 │ NORMAL  src/retry.rs [+]                            ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 89 │ NORMAL  src/retry.rs [+]                           ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 88 │ NORMAL  src/retry.rs [+]                          ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 87 │ NORMAL  src/retry.rs [+]                         ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 86 │ NORMAL  src/retry.rs [+]                        ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 85 │ NORMAL  src/retry.rs [+]                       ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 84 │ NORMAL  src/retry.rs [+]                      ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 83 │ NORMAL  src/retry.rs [+]                     ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 82 │ NORMAL  src/retry.rs [+]                    ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 81 │ NORMAL  src/retry.rs [+]                   ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 80 │ NORMAL  src/retry.rs [+]                  ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 79 │ NORMAL  src/retry.rs [+]                 ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 78 │ NORMAL  src/retry.rs [+]                ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 77 │ NORMAL  src/retry.rs [+]               ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 76 │ NORMAL  src/retry.rs [+]              ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 75 │ NORMAL  src/retry.rs [+]             ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 74 │ NORMAL  src/retry.rs [+]            ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 73 │ NORMAL  src/retry.rs [+]           ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 72 │ NORMAL  src/retry.rs [+]          ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 71 │ NORMAL  src/retry.rs [+]         ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 70 │ NORMAL  src/retry.rs [+]        ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 69 │ NORMAL  src/retry.rs [+]       ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 68 │ NORMAL  src/retry.rs [+]      ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 67 │ NORMAL  src/retry.rs [+]     ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 66 │ NORMAL  src/retry.rs [+]    ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 65 │ NORMAL  src/retry.rs [+]   ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 64 │ NORMAL  src/retry.rs [+]  ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 63 │ NORMAL  src/retry.rs [+] ✻ claude idle 6 unseen │ jj ✓ │ 18:1│
+ 62 │ NORMAL  src/retry.rs [+]      ✻ claude idle ●6 │ jj ✓ │ 18:1│
+ 61 │ NORMAL  src/retry.rs [+]     ✻ claude idle ●6 │ jj ✓ │ 18:1│
+ 60 │ NORMAL  src/retry.rs [+]    ✻ claude idle ●6 │ jj ✓ │ 18:1│
+ 59 │ NORMAL  src/retry.rs [+]   ✻ claude idle ●6 │ jj ✓ │ 18:1│
+ 58 │ NORMAL  src/retry.rs [+]  ✻ claude idle ●6 │ jj ✓ │ 18:1│
+ 57 │ NORMAL  src/retry.rs [+] ✻ claude idle ●6 │ jj ✓ │ 18:1│
+ 56 │ NORMAL  src/retry.rs [+]       ✻ claude idle ●6 │ 18:1│
+ 55 │ NORMAL  src/retry.rs [+]      ✻ claude idle ●6 │ 18:1│
+ 54 │ NORMAL  src/retry.rs [+]     ✻ claude idle ●6 │ 18:1│
+ 53 │ NORMAL  src/retry.rs [+]    ✻ claude idle ●6 │ 18:1│
+ 52 │ NORMAL  src/retry.rs [+]   ✻ claude idle ●6 │ 18:1│
+ 51 │ NORMAL  src/retry.rs [+]  ✻ claude idle ●6 │ 18:1│
+ 50 │ NORMAL  src/retry.rs [+] ✻ claude idle ●6 │ 18:1│
+ 49 │ NORMAL  src/retry.rs [+]       ✻ claude idle ●6│
+ 48 │ NORMAL  src/retry.rs [+]      ✻ claude idle ●6│
+ 47 │ NORMAL  src/retry.rs [+]     ✻ claude idle ●6│
+ 46 │ NORMAL  src/retry.rs [+]    ✻ claude idle ●6│
+ 45 │ NORMAL  src/retry.rs [+]   ✻ claude idle ●6│
+ 44 │ NORMAL  src/retry.rs [+]  ✻ claude idle ●6│
+ 43 │ NORMAL  src/retry.rs [+] ✻ claude idle ●6│
+ 42 │ NORMAL  src/retry.rs [+]            ✻ ●6│
+ 41 │ NORMAL  src/retry.rs [+]           ✻ ●6│
+ 40 │ NORMAL  src/retry.rs [+]          ✻ ●6│
+ 39 │ NORMAL  src/retry.rs [+]         ✻ ●6│
+ 38 │ NORMAL  src/retry.rs [+]        ✻ ●6│
+ 37 │ NORMAL  src/retry.rs [+]       ✻ ●6│
+ 36 │ NORMAL  src/retry.rs [+]      ✻ ●6│
+ 35 │ NORMAL  src/retry.rs [+]     ✻ ●6│
+ 34 │ NORMAL  src/retry.rs [+]    ✻ ●6│
+ 33 │ NORMAL  src/retry.rs [+]   ✻ ●6│
+ 32 │ NORMAL  src/retry.rs [+]  ✻ ●6│
+ 31 │ NORMAL  src/retry.rs [+] ✻ ●6│
+ 30 │ N  src/retry.rs [+]     ✻ ●6│
+ 29 │ N  src/retry.rs [+]    ✻ ●6│
+ 28 │ N  src/retry.rs [+]   ✻ ●6│
+ 27 │ N  src/retry.rs [+]  ✻ ●6│
+ 26 │ N  src/retry.rs [+] ✻ ●6│
+ 25 │ N  retry.rs [+]    ✻ ●6│
+ 24 │ N  retry.rs [+]   ✻ ●6│
+ 23 │ N  retry.rs [+]  ✻ ●6│
+ 22 │ N  retry.rs [+] ✻ ●6│
+ 21 │ N  retry.rs    ✻ ●6│
+ 20 │ N  retry.rs   ✻ ●6│

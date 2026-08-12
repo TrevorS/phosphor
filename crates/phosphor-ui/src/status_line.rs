@@ -34,8 +34,14 @@
 //! fit, which is §11's "narrow terminals drop, never squeeze" read literally —
 //! nothing is dropped while there is room for it. Mockup `8d` draws the *end*
 //! of the ladder (`N`, `retry.rs [+]`, `✻`, `●6`) under an 80-column heading;
-//! at a real 80 columns this widget keeps more, because more fits. Flagged for
-//! `CP-1`'s width sweep rather than resolved here.
+//! at a real 80 columns this widget keeps more, because more fits.
+//!
+//! **`CP-1` settled it in favour of this widget:** shedding stays fit-driven
+//! and `8d` is relabelled as illustrating the end of the ladder rather than an
+//! 80-column threshold. The *order* was never in question — it is §11's,
+//! exactly — only the trigger, and a width-labelled trigger would drop content
+//! that fits. Recorded in the plan's amendment table; the mockup itself is
+//! edited in the Design project, not here.
 //!
 //! # What is Steel's, later
 //!
@@ -68,15 +74,28 @@ const GAP: &str = " ";
 
 /// §5: *"Segments join with a thin bar │ in meta-gray."*
 ///
-/// Applied to the right-hand group, which is where every mockup that draws a
-/// separator at all draws one (`9c`, `8c`: `●6 │ jj ✓`). The mode chip needs
-/// none — its inverted field *is* its boundary, and no mockup puts a bar after
-/// it.
+/// Applied **within the counter group only** — `●6 │ jj ✓ │ 12:1`, exactly as
+/// `9c` and `8c` draw it. The mode chip needs no bar (its inverted field *is*
+/// its boundary), and neither does the seam between session state and the
+/// counters: §5's own reference render draws `✻ claude idle` then a plain gap,
+/// and `1a`, `9c`, `8c` and `8d` all agree.
+///
+/// **Teej's `CP-1` ruling**, against §5's prose, which reads as though every
+/// segment joins with a bar. The build drew `✻ claude idle │ 6 unseen` and no
+/// drawing anywhere does. See [`GAP_AFTER_SESSION`].
 const SEP: &str = " │ ";
 
 /// [`SEP`] in cells. `│` is one column wide but three bytes long, and the
 /// difference is a right-aligned group that starts two columns too far left.
 const SEP_WIDTH: u16 = 3;
+
+/// The session-state seam, in cells: a plain [`GAP`], not a [`SEP`].
+///
+/// `✻ claude idle` then a space then `6 unseen │ jj ✓ │ 12:1`. Every mockup
+/// draws it this way and §5's prose implies otherwise; `CP-1` settled it for
+/// the drawings. Two columns narrower than a bar, which the right group's
+/// width arithmetic has to know about or it starts two columns too far left.
+const GAP_AFTER_SESSION: u16 = 1;
 
 /// The editing mode, as the chip spells it.
 ///
@@ -388,6 +407,10 @@ impl Shed {
 struct Piece<'a> {
     text: Cow<'a, str>,
     style: Style,
+    /// Join this piece to the one before it with a plain [`GAP`] instead of
+    /// [`SEP`]. Set on the first counter, so the session-state seam reads the
+    /// way every mockup draws it. See [`GAP_AFTER_SESSION`].
+    gap_before: bool,
 }
 
 impl<'a> Piece<'a> {
@@ -395,6 +418,7 @@ impl<'a> Piece<'a> {
         Self {
             text: text.into(),
             style,
+            gap_before: false,
         }
     }
 
@@ -481,7 +505,7 @@ impl<'a> StatusLine<'a> {
         let sep_style = Style::new().fg(self.theme.neutrals.meta);
         for (i, piece) in right.iter().enumerate() {
             if i > 0 {
-                row.write(SEP, sep_style);
+                row.write(if piece.gap_before { GAP } else { SEP }, sep_style);
             }
             row.write(&piece.text, piece.style);
         }
@@ -540,6 +564,12 @@ impl<'a> StatusLine<'a> {
             right.push(Piece::new("!", Style::new().fg(theme.actors.attention)));
         }
 
+        // The counters are their own group: bars inside it, a plain gap where it
+        // meets session state. `right` so far holds only session pieces, so the
+        // first counter is the seam — whichever counter that turns out to be
+        // once shedding has had its say.
+        let session_pieces = right.len();
+
         if vm.unseen > 0 {
             let n = vm.unseen;
             let counter = if shed.counter_words {
@@ -565,6 +595,14 @@ impl<'a> StatusLine<'a> {
             ));
         }
 
+        // Only when session state is actually present: with nothing before it,
+        // the first counter has no seam to soften.
+        if session_pieces > 0
+            && let Some(first_counter) = right.get_mut(session_pieces)
+        {
+            first_counter.gap_before = true;
+        }
+
         (left, right)
     }
 }
@@ -574,10 +612,21 @@ fn basename(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
-/// Width of the right group including the `│` separators between its pieces.
+/// Width of the right group including the joins between its pieces — a `│` for
+/// most, a plain gap at the session seam ([`GAP_AFTER_SESSION`]).
 fn joined_width(right: &[Piece<'_>]) -> u16 {
-    let seps = u16::try_from(right.len().saturating_sub(1)).unwrap_or(u16::MAX);
-    sum_width(right).saturating_add(seps.saturating_mul(SEP_WIDTH))
+    right
+        .iter()
+        .enumerate()
+        .fold(sum_width(right), |acc, (i, piece)| {
+            if i == 0 {
+                acc
+            } else if piece.gap_before {
+                acc.saturating_add(GAP_AFTER_SESSION)
+            } else {
+                acc.saturating_add(SEP_WIDTH)
+            }
+        })
 }
 
 /// What the two groups need, with one column of spring between them.
@@ -733,12 +782,21 @@ mod tests {
     #[test]
     fn screen_9c_reproduces_at_width() {
         // 9c: NORMAL chip · src/retry.rs [+] · spring · ✻ claude idle · ●6 · jj ✓
+        //
+        // Note the seam: a plain gap after `claude idle`, bars only inside the
+        // counter group. That is `9c`'s own markup — session state is one span
+        // with padding, `●6 │ jj ✓` is the next — and `1a`, `8c` and `8d` agree.
+        // Teej's CP-1 ruling, against §5's prose. See `GAP_AFTER_SESSION`.
         let buf = render(&full_vm(), 120, 1);
         let line = row_text(&buf, 2, 2, 120);
         assert!(line.starts_with(" NORMAL  src/retry.rs [+]"), "{line:?}");
         assert!(
-            line.ends_with("✻ claude idle │ 6 unseen │ jj ✓ │ 12:1 "),
+            line.ends_with("✻ claude idle 6 unseen │ jj ✓ │ 12:1 "),
             "{line:?}"
+        );
+        assert!(
+            !line.contains("claude idle │"),
+            "no mockup draws a bar at the session seam: {line:?}"
         );
     }
 

@@ -41,7 +41,7 @@ text
  21 │  22          }                                                                                     │
  22 │  23          delay = (delay * 2).min(policy.max_delay);                                            │
  23 │  24      }                                                                                         │
- 24 │ NORMAL  src/retry.rs                                        ✻ claude idle │ 6 unseen │ jj ✓ │ 12:1 │
+ 24 │ NORMAL  src/retry.rs                                          ✻ claude idle 6 unseen │ jj ✓ │ 12:1 │
 
 fg
      0         1         2         3         4         5         6         7         8         9
@@ -70,7 +70,7 @@ fg
  21 │..kk..hhhhhhhhh.....................................................................................│
  22 │..kk..hhhhhhhhhhhhhhhhhhhhhhhhhehhfffhhhhhhhhhhhhhhhhhhh............................................│
  23 │..kk..hhhhh.........................................................................................│
- 24 │gggggggghhhhhhhhhhhhh........................................aaaaaaaaaaaaajjjjjjjjjjjjjjjjjjjjjjjjj.│
+ 24 │gggggggghhhhhhhhhhhhh..........................................aaaaaaaaaaaaajjjjjjjjjjjjjjjjjjjjjjj.│
 
 bg
      0         1         2         3         4         5         6         7         8         9

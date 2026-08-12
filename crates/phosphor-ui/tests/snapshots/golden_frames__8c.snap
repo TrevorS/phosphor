@@ -16,7 +16,7 @@ text
   3 │  18      for attempt in 0..policy.max_attempts {                                                   │
   4 │  19          match op() {                                                                          │
   5 │  20              Ok(v) => return Ok(v),                                                            │
-  6 │ NORMAL  src/retry.rs                                               ✻ claude idle │ 2 unseen │ jj ✓ │
+  6 │ NORMAL  src/retry.rs                                                 ✻ claude idle 2 unseen │ jj ✓ │
 
 fg
      0         1         2         3         4         5         6         7         8         9
@@ -27,7 +27,7 @@ fg
   3 │..kk..hhhhbbbhhhhhhhhhbbhehhhhhhhhhhhhhhhhhhhhhhh...................................................│
   4 │..kk..hhhhhhhhbbbbbhffhhhh..........................................................................│
   5 │..kk..hhhhhhhhhhhheehhhhhhhbbbbbbhffhhhh............................................................│
-  6 │gggggggghhhhhhhhhhhhh...............................................aaaaaaaaaaaaajjjjjjjjjjjjjjjjjj.│
+  6 │gggggggghhhhhhhhhhhhh.................................................aaaaaaaaaaaaajjjjjjjjjjjjjjjj.│
 
 bg
      0         1         2         3         4         5         6         7         8         9

@@ -20,7 +20,7 @@ text
   1 │  17      let mut last = None;                               │
   2 │  18      for attempt in 0..policy.max_attempts {            │
   3 │  19          match op() {                                   │
-  4 │ NORMAL  src/retry.rs [+]    ✻ claude idle │ 6 unseen │ jj ✓ │
+  4 │ NORMAL  src/retry.rs [+]      ✻ claude idle 6 unseen │ jj ✓ │
 
 fg
      0         1         2         3         4         5         6
@@ -29,7 +29,7 @@ fg
   1 │..kk..hhhhbbbhbbbhhhhhhhheeeeh...............................│
   2 │..kk..hhhhbbbhhhhhhhhhbbhehhhhhhhhhhhhhhhhhhhhhhh............│
   3 │..kk..hhhhhhhhbbbbbhffhhhh...................................│
-  4 │gggggggghhhhhhhhhhhhhhccc....aaaaaaaaaaaaajjjjjjjjjjjjjjjjjj.│
+  4 │gggggggghhhhhhhhhhhhhhccc......aaaaaaaaaaaaajjjjjjjjjjjjjjjj.│
 
 bg
      0         1         2         3         4         5         6
@@ -85,7 +85,7 @@ text
   1 │  17      let mut last = None;                               │
   2 │  18      for attempt in 0..policy.max_attempts {            │
   3 │  19          match op() {                                   │
-  4 │ NORMAL  src/retry.rs [+]    ✻ claude idle │ 6 unseen │ jj ✓ │
+  4 │ NORMAL  src/retry.rs [+]      ✻ claude idle 6 unseen │ jj ✓ │
 
 fg
      0         1         2         3         4         5         6
@@ -94,7 +94,7 @@ fg
   1 │..kk..hhhhbbbhbbbhhhhhhhheeeeh...............................│
   2 │..kk..hhhhbbbhhhhhhhhhbbhehhhhhhhhhhhhhhhhhhhhhhh............│
   3 │..kk..hhhhhhhhbbbbbhffhhhh...................................│
-  4 │gggggggghhhhhhhhhhhhhhccc....aaaaaaaaaaaaajjjjjjjjjjjjjjjjjj.│
+  4 │gggggggghhhhhhhhhhhhhhccc......aaaaaaaaaaaaajjjjjjjjjjjjjjjj.│
 
 bg
      0         1         2         3         4         5         6

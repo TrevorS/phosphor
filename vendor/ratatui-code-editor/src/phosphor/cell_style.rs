@@ -184,15 +184,21 @@ impl UnderlineCapability {
     /// 5. **`TERM` starts with `screen`/`tmux`** → fallback. Passthrough of
     ///    `4:3` needs tmux ≥ 3.4 *and* a `terminal-features` entry; assuming it
     ///    paints garbage inside every multiplexer that has not been configured.
-    /// 6. **`TERM` names a plain family** (`xterm*`, `vt*`, `linux`, `ansi`,
-    ///    `rxvt*`, `Eterm*`, `cons*`, `dtterm*`, `nsterm*`, `wsvt*`) →
-    ///    fallback. **This rule is why `V009`'s `TERM=xterm-256color` tape
-    ///    captures the degraded path even when it is recorded from a terminal
-    ///    that could have drawn the curl.** `TERM` is the authority.
-    /// 7. **`TERM_PROGRAM`** (`ghostty`, `WezTerm`, `iTerm.app`, `vscode`,
-    ///    `Rio`) → undercurl, consulted **only** when `TERM` matched nothing at
-    ///    all. It rescues a GUI launch with no useful `TERM`; it can never
-    ///    override an explicit one.
+    ///    Decided **before** `TERM_PROGRAM`, because tmux inside iTerm2 reports
+    ///    both and it is the multiplexer that has to carry the escape.
+    /// 6. **`TERM_PROGRAM`** (`ghostty`, `WezTerm`, `iTerm.app`, `vscode`,
+    ///    `Rio`) → undercurl. **Teej's `CP-1` ruling moved this ahead of the
+    ///    plain-family rule below.** iTerm2 and VS Code both ship
+    ///    `TERM=xterm-256color` and both support `4:3`, so the old order —
+    ///    `TERM` is always the authority — made `SMULX_PROGRAMS`' `iterm.app`
+    ///    and `vscode` entries unreachable and degraded two capable terminals
+    ///    for nothing.
+    /// 7. **`TERM` names a plain family** (`xterm*`, `vt*`, `linux`, `ansi`,
+    ///    `rxvt*`, `Eterm*`, `cons*`, `dtterm*`, `nsterm*`) → fallback.
+    ///    A degradation capture must now force the path explicitly with
+    ///    `PHOSPHOR_UNDERCURL=0` rather than leaning on `TERM`, which is what
+    ///    `tapes/_undercurl-check-forced-underline.tape` already does and what
+    ///    `V009` should do when it lands.
     /// 8. Anything else → fallback. **The allowlist points one way on
     ///    purpose:** the cost of missing undercurl on a capable terminal is a
     ///    flat underline, and the cost of sending `4:3` to a terminal that
@@ -217,10 +223,11 @@ impl UnderlineCapability {
             return Self::Undercurl;
         }
 
+        // Multiplexers are decided before `TERM_PROGRAM` on purpose: tmux inside
+        // iTerm2 reports `TERM=screen-256color` *and* `TERM_PROGRAM=iTerm.app`,
+        // and it is the multiplexer that has to pass `4:3` through.
         const MULTIPLEXERS: [&str; 2] = ["screen", "tmux"];
-        const PLAIN_FAMILIES: [&str; 9] =
-            ["xterm", "vt", "linux", "ansi", "rxvt", "eterm", "cons", "dtterm", "nsterm"];
-        if MULTIPLEXERS.iter().chain(PLAIN_FAMILIES.iter()).any(|name| term.starts_with(name)) {
+        if MULTIPLEXERS.iter().any(|name| term.starts_with(name)) {
             return Self::Underline;
         }
 
@@ -228,6 +235,12 @@ impl UnderlineCapability {
         let program = env.term_program.unwrap_or_default().to_ascii_lowercase();
         if SMULX_PROGRAMS.contains(&program.as_str()) {
             return Self::Undercurl;
+        }
+
+        const PLAIN_FAMILIES: [&str; 9] =
+            ["xterm", "vt", "linux", "ansi", "rxvt", "eterm", "cons", "dtterm", "nsterm"];
+        if PLAIN_FAMILIES.iter().any(|name| term.starts_with(name)) {
+            return Self::Underline;
         }
 
         Self::Underline
@@ -380,20 +393,40 @@ mod tests {
     }
 
     #[test]
-    fn an_explicit_term_beats_term_program() {
-        // V009's degradation tape, recorded from a terminal that could have
-        // drawn the curl: TERM is the authority, so the capture degrades.
-        let degraded = TerminalEnv {
-            term: Some("xterm-256color"),
-            term_program: Some("ghostty"),
+    fn term_program_rescues_a_plain_term_but_never_a_multiplexer() {
+        // Teej's CP-1 ruling. iTerm2 and VS Code both ship
+        // `TERM=xterm-256color` and both support `4:3`, so consulting the
+        // program only after the plain-family rule made those two entries
+        // unreachable and degraded them for nothing. Cased as the real
+        // variable is, to cover the lowercasing too.
+        for program in ["iTerm.app", "vscode", "ghostty"] {
+            let capable = TerminalEnv {
+                term: Some("xterm-256color"),
+                term_program: Some(program),
+                ..TerminalEnv::default()
+            };
+            assert_eq!(UnderlineCapability::resolve(&capable), UnderlineCapability::Undercurl);
+        }
+
+        // tmux inside iTerm2 reports both, and the multiplexer still wins:
+        // passthrough needs tmux >= 3.4 plus a `terminal-features` entry, and
+        // assuming it paints garbage in every unconfigured session.
+        let multiplexed = TerminalEnv {
+            term: Some("screen-256color"),
+            term_program: Some("iTerm.app"),
             ..TerminalEnv::default()
         };
-        assert_eq!(UnderlineCapability::resolve(&degraded), UnderlineCapability::Underline);
+        assert_eq!(UnderlineCapability::resolve(&multiplexed), UnderlineCapability::Underline);
 
-        // ... but a TERM that names nothing lets the program answer.
-        let rescued =
-            TerminalEnv { term: Some("unknown-emu"), ..degraded };
-        assert_eq!(UnderlineCapability::resolve(&rescued), UnderlineCapability::Undercurl);
+        // A degradation capture now forces the path explicitly instead of
+        // leaning on TERM — what the forced-underline tape already does.
+        let forced = TerminalEnv {
+            phosphor_undercurl: Some("0"),
+            term: Some("xterm-256color"),
+            term_program: Some("iTerm.app"),
+            ..TerminalEnv::default()
+        };
+        assert_eq!(UnderlineCapability::resolve(&forced), UnderlineCapability::Underline);
     }
 
     #[test]

@@ -62,7 +62,8 @@ project round-trips; edit them there, not here.
 ## Amendments to the design docs
 
 The design docs are the contract, and they are imported unmodified — so where a decision has
-since changed one, the change lives in the plan's decision log, not in the doc. **Four so far:**
+since changed one, the change lives in the plan's decision log, not in the doc. **Seven so far** —
+four from the decision log, three from `CP-1`:
 
 - **`edtui` is dropped; the input machine is ours** (Component Breakdown, *"buy (input)"*; and
   the handoff's settled-decisions list). Its register model cannot express numeric counts or
@@ -79,6 +80,21 @@ since changed one, the change lives in the plan's decision log, not in the doc. 
   queueing means it does not render until no float has focus. Consequence in §5/§11: the
   statusline shed order's last-standing set becomes `✻` / `●n` / **`!`**, not the documented
   `✻`/`●n` pair. → [Q9](IMPLEMENTATION-PLAN.md#q9)
+
+**Three more came out of `CP-1`**, the first checkpoint with a running program to disagree with:
+
+- **"Claude owns the brightest colour on screen" is dark-mode only** (Design Language §10).
+  Measured against each theme's own ground, claude is top of the actors on dark and **5th of 6 on
+  paper** — below meta-grey, and 0.04 from steel-green. The light values are what mockup `8c`
+  draws, so it is the contract that did not survive, not the palette. On light, actor identity
+  rests on hue, which load-time validation already enforces.
+- **Statusline bars join the counter group only** (Design Language §5). The prose reads as though
+  every segment joins with a thin bar; §5's own reference render and `1a`, `9c`, `8c` and `8d`
+  all draw a plain gap between session state and the counters. The drawings won.
+- **The shed ladder is fit-driven, not width-labelled** (TUI Mockups `8d`). `8d` is captioned
+  *"80 columns"* and draws the ladder's floor, but at a real 80 columns nothing has dropped yet
+  because it all fits. §11's order is exactly what the build does; only the trigger differed.
+  `8d` is relabelled as illustrating the end of the ladder.
 
 If you are reading the design docs cold, read this list first — everything else in them stands.
 

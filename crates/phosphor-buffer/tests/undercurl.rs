@@ -197,10 +197,36 @@ fn the_capability_is_detected_from_the_environment() {
         UnderlineCapability::Underline,
     );
 
-    // An explicit TERM outranks an inherited TERM_PROGRAM — without this, a
-    // V009 degradation tape recorded from Ghostty would capture the curl.
+    // TERM_PROGRAM now outranks a plain TERM family — Teej's CP-1 ruling.
+    // iTerm2 and VS Code both ship TERM=xterm-256color and both support 4:3,
+    // so the old "TERM is always the authority" order degraded two capable
+    // terminals for nothing.
+    for program in ["ghostty", "iTerm.app", "vscode"] {
+        assert_eq!(
+            resolve(&TerminalEnv {
+                term_program: Some(program),
+                ..env("xterm-256color")
+            }),
+            UnderlineCapability::Undercurl,
+        );
+    }
+
+    // A multiplexer still wins over the program: tmux inside iTerm2 reports
+    // both, and passthrough of 4:3 has to be configured to work.
     assert_eq!(
         resolve(&TerminalEnv {
+            term_program: Some("iTerm.app"),
+            ..env("tmux-256color")
+        }),
+        UnderlineCapability::Underline,
+    );
+
+    // A degradation capture therefore forces the path rather than leaning on
+    // TERM — which is what tapes/_undercurl-check-forced-underline.tape does,
+    // and what V009 should do when it lands.
+    assert_eq!(
+        resolve(&TerminalEnv {
+            phosphor_undercurl: Some("0"),
             term_program: Some("ghostty"),
             ..env("xterm-256color")
         }),

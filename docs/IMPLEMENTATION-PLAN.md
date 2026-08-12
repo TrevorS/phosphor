@@ -5,8 +5,9 @@ Breakdown) per `docs/design/CLAUDE-CODE-HANDOFF.md`. The design docs are the con
 document is the route through them.
 
 The twelve questions this plan raised were **answered on 2026-08-11** and are recorded in
-[§5 Decisions](#5-decisions). Two of them amend the design docs rather than merely filling a
-gap, and are marked as amendments there. Nothing below is an open question any more; where a
+[§5 Decisions](#5-decisions). Four of them amend the design docs rather than merely filling a
+gap, and are marked as amendments there; **three further amendments came out of `CP-1`**, where
+a running program disagreed with a drawing. Nothing below is an open question any more; where a
 decision has consequences for a phase, those are folded into the phase.
 
 ---
@@ -700,7 +701,8 @@ why, and what cost the decision accepts.
 **Four amend the design docs** rather than filling a gap in them — [Q3](#q3), [Q4](#q4),
 [Q7](#q7) and [Q9](#q9) — and each says so where it sits. The handoff asks that nothing in the
 design docs be relitigated without flagging it explicitly; each was flagged before being decided,
-and the amendment is recorded here rather than absorbed silently into the build.
+and the amendment is recorded here rather than absorbed silently into the build. **Three more
+came out of `CP-1`** and are tabled directly below the twelve.
 
 | | amends | what changes |
 |---|---|---|
@@ -708,6 +710,17 @@ and the amendment is recorded here rather than absorbed silently into the build.
 | [Q4](#q4) | Component Breakdown | `ratatui-markdown` was a plain feature-gated buy; it is a vendored fork |
 | [Q7](#q7) | Design Brief · Design Language §10 · Component Breakdown | Ayu → Tokyo Night as the second mapping |
 | [Q9](#q9) | Design Language §9 · §11 | needs-you asks **queue** rather than appear-and-wait; `!` joins the last-standing statusline set |
+
+**Three more were settled at `CP-1`**, against the build rather than on paper — they are the
+first amendments that came from looking at a running program, which is what the checkpoint is
+for. Same rule applies: recorded here, and the `.dc.html` files are edited in the Design project,
+not in this repo.
+
+| | amends | what changes |
+|---|---|---|
+| `CP-1` | Design Language §10 | *"Claude owns the brightest colour on screen"* is **dark-mode only**. Measured against each theme's own ground, claude is top of the actors on dark (10.91:1) and **5th of 6 on paper** (3.21:1, below `neutrals.meta` at 3.33:1 and 0.04 clear of steel-green). The light palettes are as mockup `8c` draws them, so the contract was the thing that did not survive, not the values. On light, actor identity rests on hue — which validation already enforces — rather than on brightness. |
+| `CP-1` | Design Language §5 | Segments join with a thin bar **within the counter group only**. §5's prose reads as though every segment does, but §5's own reference render and all four of `1a`, `9c`, `8c`, `8d` draw a plain gap between session state and the counters. The drawings won; the build drew the bar and now does not. |
+| `CP-1` | TUI Mockups `8d` | The shed ladder is **fit-driven**, not width-labelled. `8d` is titled *"80 columns"* and draws the ladder's floor; at a real 80 columns with `src/retry.rs` nothing has dropped yet, because it all fits. §11's *order* is exactly what the build does — only the trigger differed, and a width-labelled trigger would drop content that fits. `8d` is relabelled as illustrating the end of the ladder. |
 
 <a id="q1"></a>
 ### Q1 · Seen-state lives out-of-tree, keyed on the workspace root path
