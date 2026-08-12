@@ -76,6 +76,18 @@ proptest = "1.11.0"
 # `phosphor-buffer`'s `grammars-phosphor`, so it costs nothing there.
 ratatui-code-editor = { workspace = true, features = ["grammar-rust"] }
 
+# `T079`'s acceptance criterion is a benchmark, so it is a real target rather
+# than a one-off script: `just bench` runs it and `just clippy` (which passes
+# `--all-targets`) keeps it compiling.
+#
+# `harness = false` — no libtest. This is not a statistical microbenchmark and
+# criterion would be a dependency for nothing: the measurement is two counters
+# (composer invocations, frames) over a simulated clock, and the interesting
+# number is their ratio, not a confidence interval.
+[[bench]]
+name = "frame_cache"
+harness = false
+
 [features]
 default = []
 # Rich markdown in the transcript. Per-language highlight features stay off:

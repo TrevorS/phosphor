@@ -15,6 +15,8 @@
 
 pub mod buffer_view;
 pub mod float;
+pub mod frame;
+pub mod interpret;
 pub mod soft_wrap;
 pub mod status_line;
 pub mod theme;

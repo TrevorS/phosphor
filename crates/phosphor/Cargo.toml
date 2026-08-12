@@ -42,5 +42,19 @@ ratatui.workspace = true
 # lines too.
 ratatui-code-editor = { workspace = true, features = ["crossterm"] }
 
+# `tests/screen_6b.rs` — the Tier-1 golden frame for `6b`, which needs
+# `phosphor-steel` (composes the tree) and `phosphor-ui` (draws it) at once.
+# This is the only crate that has both: `scripts/lint-no-store-mutation.sh`
+# check 2 allows `phosphor-ui` exactly one `phosphor-*` dependency, so the
+# frame cannot live beside the `CP-1` ones in `phosphor-ui/tests/`.
+#
+# `insta` matches the version `phosphor-ui` pins, so `cargo insta review`
+# behaves the same in both. `ratatui-core` is what `T018`'s serialiser is
+# written against; it is already in the tree through `phosphor-ui`, so this
+# adds an edge and not a crate.
+[dev-dependencies]
+insta = { version = "1.48.0", default-features = false }
+ratatui-core.workspace = true
+
 [lints]
 workspace = true

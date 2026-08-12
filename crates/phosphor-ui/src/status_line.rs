@@ -43,13 +43,24 @@
 //! that fits. Recorded in the plan's amendment table; the mockup itself is
 //! edited in the Design project, not here.
 //!
-//! # What is Steel's, later
+//! # What is Steel's — and it is Steel's now
 //!
 //! The Component Breakdown puts the segment list, order and shed priority in
-//! Steel — *"redefine a segment in the REPL and the next frame has it."* The
-//! ladder is therefore **data** ([`SHED_ORDER`], overridable via
-//! [`StatusLine::with_shed_order`]), so `T027`'s Steel layer supplies a slice
-//! instead of this file growing a policy branch.
+//! Steel — *"redefine a segment in the REPL and the next frame has it."* `T025`
+//! did that: the composed statusline is `runtime/statusline.scm`, it returns a
+//! view tree, and `crate::interpret` draws it. **That is the statusline the
+//! product has**; this widget is the S1 host's own path until `T026` composes
+//! the buffer surface's frame too, and it is what `T018`'s golden frames are
+//! captured through.
+//!
+//! The ladder here is therefore still **data** ([`SHED_ORDER`], overridable via
+//! [`StatusLine::with_shed_order`]) rather than a policy branch — the same
+//! shape the editor layer's `phosphor/status-ladder` has, one side of the seam
+//! each.
+//!
+//! An earlier version of this paragraph named `T027` as the Steel task. `T027`
+//! is the kitty keyboard protocol (`docs/TASKS.md`); the statusline task is
+//! `T025`.
 //!
 //! [Q9]: ../../../docs/IMPLEMENTATION-PLAN.md
 //! [`Rect`]: ratatui_core::layout::Rect
@@ -224,7 +235,14 @@ impl SessionState {
     }
 
     /// The words after the glyph, telegraphic and lowercase (§6).
-    fn prose(self) -> Option<Cow<'static, str>> {
+    ///
+    /// Public because `T079`'s tree interpreter renders a
+    /// `phosphor_core::view::Node::Session` through this same enum rather than
+    /// spelling the wording a second time — §5's *"one enum rendered
+    /// identically everywhere it appears"* only holds if there is one place the
+    /// words live.
+    #[must_use]
+    pub fn prose(self) -> Option<Cow<'static, str>> {
         match self {
             Self::None => None,
             Self::Idle => Some(Cow::Borrowed("claude idle")),
@@ -252,7 +270,12 @@ impl SessionState {
 }
 
 /// `0:42`, and `1:02:03` once a turn passes the hour (mockup `2c`).
-fn format_elapsed(d: Duration) -> String {
+///
+/// Public for the same reason [`SessionState::prose`] is: `T079` renders
+/// `Node::Elapsed` from the frame clock, and a second implementation of this
+/// would be a second thing to get wrong at the hour boundary.
+#[must_use]
+pub fn format_elapsed(d: Duration) -> String {
     let secs = d.as_secs();
     let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
     if h > 0 {
@@ -457,7 +480,8 @@ impl<'a> StatusLine<'a> {
         }
     }
 
-    /// Override the ladder — the seam for Steel's segment policy (`T027`).
+    /// Override the ladder — this widget's half of `T025`'s seam, for a host
+    /// that has a shed order and is not composing through the view tree.
     #[must_use]
     pub const fn with_shed_order(mut self, order: &'a [ShedStep]) -> Self {
         self.shed_order = order;

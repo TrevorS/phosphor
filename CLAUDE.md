@@ -26,7 +26,10 @@ there for you.
 ## Version control
 
 **Git only. Do not use or re-initialise jj** — the colocated jj repo was deleted deliberately, and
-this overrides the global jj-for-local-work rule. There is no remote; never push.
+this overrides the global jj-for-local-work rule.
+
+`origin` is `git@github.com:TrevorS/phosphor.git` and `master` tracks `origin/main`. Push only
+when Teej asks, and never force-push or rewrite pushed history without asking first.
 
 Commits: conventional subject (`build:`, `fix:`, `docs:`) plus a body explaining what changed and
 why, including findings, deviations, and anything left open.

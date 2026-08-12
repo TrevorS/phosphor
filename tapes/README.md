@@ -379,6 +379,95 @@ regen of this exact library may need a manual `just tape <id>` rerun for
 whichever one or two tapes land short — check `ls tapes/artifacts/*.png`
 against the tape count after a fresh run.
 
+## CP-2 — the spine's tapes
+
+Three tapes, matching `docs/TASKS.md`'s `CP-2` line for what VHS produces: a
+clip of a REPL rebind live on the very next frame, the broken-`init.scm` boot
+with its error float, and `6b`. All three landed clean on the first real run
+against Window C's `T019`–`T025`/`T078`–`T080` build (`crates/phosphor/src/main.rs`
+gained `--repl`/`--eval`, `AppHost`, and the Steel-composed REPL surface during
+this window).
+
+**New finding, load-bearing for all three: run against a scratch
+`$PHOSPHOR_RUNTIME`, never the tracked `runtime/`.** `Runtime::root()`
+(`crates/phosphor-steel/src/runtime.rs`) falls back to `./runtime` when the env
+var is unset, which is exactly the checked-in tree — and every one of these
+three tapes either plants a mistake into `init.scm` or types a
+`keymap-set!` (one of `repl.scm`'s `phosphor/persistent-heads`, which
+`persist-form!` really does append to a file on disk). harness does not own
+`runtime/**` (`TEAM.md`), so each tape's `Hide`den setup line copies
+`../runtime` into a fresh `/tmp` directory first and points
+`PHOSPHOR_RUNTIME` at the copy. Confirmed empirically that this is necessary,
+not defensive: the first investigation run (since deleted, its findings are
+what's below) used the real tree with no override and left a `persisted.scm`
+diff behind.
+
+- **`broken-init.tape`** — plants the same mistake
+  `crates/phosphor-steel/tests/broken_init.rs`'s
+  `the_error_float_carries_the_file_the_line_and_the_message` test does
+  (`(define broken (+ 1 nonesuch))`) and screenshots the boot float:
+  `◆ steel · boot`, `1 fault`, `init.scm:<line>:<col> · free identifier`, the
+  offending line, `45 of 46 forms ran · the editor is up`, and a footer
+  offering `:repl` / `:reload-runtime` / `esc close` — over the dimmed buffer
+  (§9), not a blank screen. Sentinel: `init.scm`, a string that appears only
+  once the float has actually painted (the buffer behind it is
+  `phosphor-core/src/lib.rs`, which never contains it).
+
+- **`6b.tape`** — types the same four lines, in order, as
+  `crates/phosphor-steel/tests/screen_6b.rs`'s `TYPED` (itself transcribed
+  from the mockup). **What it captures is `S2` truth, not the mockup's
+  prose**: three of the four lines hit a free identifier or a not-yet-built
+  store (`region-author`, `claude`, `T041`) and the fourth hits a shape gap
+  (`place-watch`'s `anchor` wants a `Target`, the mockup passes a string) —
+  see that test's own module doc for the per-line table. The tape reproduces
+  exactly that, on real pixels, rather than a value nobody asked for. All
+  four lines fit at 120 columns with no wrap. Per-line sentinels wait on a
+  word unique to each answer, so a tape racing ahead of the VM times out
+  rather than screenshotting a partial session.
+
+- **`repl-liveness.tape`** — the hard one, and the one that matters (per this
+  window's brief). `T022`'s claim is that a binding created at the REPL is
+  live on the *editor's* very next keystroke, with no restart, because
+  `main.rs` caches no keymap and asks the live VM
+  (`runtime/keymaps.scm`) every time. The tape: plain buffer (NORMAL) →
+  `:` opens the REPL → `(keymap-set! "gz" (lambda () (open-repl!)))`,
+  submitted → `esc` closes back to the plain buffer (the real "before" frame:
+  nothing on screen suggests a REPL exists, and `gz` has never been pressed)
+  → `gz`, typed as two ordinary keystrokes into the *buffer* → the REPL
+  reopens, still holding the `keymap-set!` line in its history. Nothing
+  between the first and last screenshot is `Hide`d, so the GIF is one
+  unbroken recording — the only way a *clip* (not a pair of stills) proves
+  "no restart happened in between." The GIF is the reviewed artifact here,
+  not V005's usual free byproduct.
+
+  Two things this tape found empirically, and got backwards on the first
+  attempt by trusting the mockup's own footer text instead of the render:
+
+  - **`esc` closes the REPL, not `q`.** `6b`'s footer draws "q close", but
+    the REPL's body is a plain text input today (no REPL-local modes until
+    `T026`) — `q` while it has focus is a character being typed, matching
+    `repl_key`'s own doc comment in `main.rs`. This tape is what confirmed
+    that on a real capture rather than assuming the footer is executable.
+  - **The live keymap only runs on the buffer surface.** A first version of
+    this tape typed `gz` *inside* the still-open REPL, expecting the rebind
+    to fire immediately — it didn't; `gz` landed as two literal characters on
+    the input line (`main.rs`'s loop only calls `press(&mut runtime, key)`,
+    the keymap dispatcher, when `surface` is `Buffer`; while `Repl` has the
+    frame every key is text for its own prompt). The rebind is live for the
+    *editor*, which is `T022`'s actual claim — reopening the REPL from
+    *inside* the REPL was never the right demonstration of it.
+
+  `repl-liveness-2-bound.png` (REPL open, rebind just submitted) and
+  `repl-liveness-4-live-on-next-key.png` (REPL reopened via the new binding)
+  are byte-identical — documented in `tapes/artifacts/DUPLICATES.md` as
+  identical *by construction*: the same session, nothing typed into it
+  between the two screenshots, so a pixel difference would be the actual bug.
+
+Naming note for whoever adds the next non-mockup-id capture: none of these
+three is a `TUI Mockups.dc.html` id except `6b` itself, so they follow the
+library's existing precedent for descriptive real-tape names (`sweep-*`,
+`theme-*`) rather than inventing a fourth naming scheme.
+
 ## Convention: every tape gets a `Require`
 
 Every `.tape` file must open with a `Require <program>` line for each external
@@ -414,8 +503,11 @@ tapes/
                                           the CP-1 SIX-theme sweep — all of
                                           BUILTIN_SLUGS, not the four this
                                           library originally scoped
+  broken-init.tape, 6b.tape,             the CP-2 tapes — see "CP-2 — the
+  repl-liveness.tape                     spine's tapes" above
   artifacts/                             V005 — committed Screenshot/gif output
     .gitkeep
+    DUPLICATES.md                        why each byte-identical pair is allowed
 ```
 
 `_`-prefixed files (`_config.tape`, `_dimensions.tape`, …) are `V002`/`V003`

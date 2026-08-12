@@ -33,11 +33,20 @@ version = "0.1.0"
 # about to take over, and `strsim`'s "did you mean" is not worth a dependency
 # for a two-flag CLI. What stays is the parser, the derive macro, and legible
 # errors.
+#
+# `string` is `T023`'s, and it is not optional there: the CLI door's 208 verbs
+# are *built at runtime* by walking the registry, so every command name, flag
+# name and value placeholder is an owned `String` rather than a literal. That
+# feature is exactly the `impl From<String> for clap::{Str, Id}` pair, adds no
+# dependency, and is what a derived door costs. Without it the alternative is
+# leaking the registry's names to `&'static str`, which trades a feature flag
+# for a memory leak.
 clap = { version = "4.6.6", default-features = false, features = [
     "derive",
     "error-context",
     "help",
     "std",
+    "string",
     "usage",
 ] }
 crossterm = "0.29.0"

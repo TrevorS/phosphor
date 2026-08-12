@@ -51,3 +51,39 @@ resolves to the fallback, so the auto path *is* the underline path here.
 Not a defect — but it does mean **the recording machine cannot prove the curl renders**, which is
 why `CP-1`'s undercurl check is a four-terminal human task and why
 `_undercurl-check-forced-curl.png` (which differs from both) is the one that shows the wave.
+
+## `repl-liveness-2-bound.png` ≡ `repl-liveness-4-live-on-next-key.png`
+
+**Identical by construction, and the identity is the proof, not a mistake.** `repl-liveness.tape`
+is `CP-2`'s liveness clip: it defines `(keymap-set! "gz" (lambda () (open-repl!)))` at the REPL
+(`-2-bound.png`, the REPL open with that line and its `#ok · persisted …` answer in its history),
+then `esc`-closes back to the plain buffer, then presses the two keys `g` `z` from the *buffer* —
+newly bound, no restart in between — and the REPL reopens (`-4-live-on-next-key.png`).
+
+Nothing was typed into the REPL between those two screenshots — no new form, no history entry —
+so `Repl::frame()` renders the exact same session both times. A pixel difference here would be the
+actual bug: it would mean either the rebind lost the REPL's prior history (i.e. something *did*
+restart) or the "no restart" framing is inaccurate. Byte-identical is the tape working.
+
+**If a future change to `repl-liveness.tape` or the REPL's frame composition makes these two
+differ, that is not automatically a fix** — check first whether the difference is because
+something in the session *should* have changed between the two frames (in which case update this
+entry) or because a restart crept in (in which case the liveness claim itself just broke).
+
+## `repl-liveness-1-before.png` ≡ `repl-liveness-3-back-to-buffer.png`
+
+The other half of the same tape, and identical for the same reason. `-1-before.png` is the plain
+buffer before `:` is ever pressed; `-3-back-to-buffer.png` is the plain buffer again, after
+opening the REPL, defining the rebind, and `esc`-closing it. No key in between ever reached the
+editor (`:` and `esc` are consumed by the keymap and `repl_key` respectively; every other key in
+that span was typed into the REPL's own input line), so the buffer's cursor, viewport and content
+are exactly what they were before any of it happened — invariant 3 (*"nothing moves unless you
+asked"*) holding for the surface underneath the whole demonstration, not just the REPL session on
+top of it.
+
+Not observed on the very first capture of this tape (`-1-before.png` and `-3-back-to-buffer.png`
+differed by a few bytes that run) — consistent with `1a.tape`'s already-documented
+Screenshot-vs-paint race in this sandboxed worktree, not a real state difference. A clean rerun of
+`just tape repl-liveness` produced the byte-identical pair recorded here; if a future rerun
+produces a *third* distinct hash for either file, that is the race recurring, not a product
+regression — rerun before concluding otherwise.

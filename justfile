@@ -57,6 +57,15 @@ test:
 deny:
     cargo deny check
 
+# T079's acceptance criterion is a measurement, so it is a target rather than a
+# script: `benches/frame_cache.rs` prints VM invocations per second against
+# frames per second, cached and uncached, and asserts the claim CP-2 reads.
+# `harness = false` — no libtest, no criterion; see the bench's own header.
+
+# Run the benchmarks (T079's frame cache).
+bench:
+    cargo bench --workspace
+
 # The structural-lint seam (T005 + T006/T007). Every structural lint is one
 # executable script matching scripts/lint-*.sh — that glob is the entire
 # contract. This recipe runs all of them in sorted order and is the ONLY
