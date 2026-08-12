@@ -9,14 +9,38 @@ version.workspace = true
 # The only crate that may depend on `ratatui` itself: the app layer owns the
 # terminal, the frame and the event loop. Widgets stay on `ratatui-core`.
 [dependencies]
+clap.workspace = true
 crossterm.workspace = true
 phosphor-agent.workspace = true
 phosphor-buffer.workspace = true
 phosphor-core.workspace = true
 phosphor-steel.workspace = true
+phosphor-term.workspace = true
 phosphor-ui.workspace = true
 phosphor-vcs.workspace = true
 ratatui.workspace = true
+# T090, and the whole reason this line exists: `editor_crossterm` — the
+# vendored core's own key/mouse handler, which S1 rides as its temporary input
+# path (TASKS.md's S1 preamble) — is behind the fork's `crossterm` feature, and
+# every other consumer takes the crate with `default-features = false`. So the
+# handler was never compiled, which is also why `toggle_fold_at_mouse` warned
+# dead in every build.
+#
+# The feature is turned on HERE rather than in `phosphor-ui`'s manifest for two
+# reasons: that manifest is `surface`'s, and a widget crate has no business
+# reading events. Cargo unions features per build, so this edge is what puts
+# `Editor::input` / `Editor::mouse` on the type the whole workspace shares —
+# the binary is the only crate that calls them.
+#
+# It costs one already-present dependency and nothing else: the `crossterm`
+# feature is `dep:crossterm` alone (vendor/ratatui-code-editor/Cargo.toml), so
+# `arboard` stays out and `T003`'s headless-build guarantee is untouched.
+# `just vendor-build-headless` proves it.
+#
+# **This dependency is scaffolding.** `T026` replaces the handler with the real
+# input machine; deleting that task's predecessor means deleting these three
+# lines too.
+ratatui-code-editor = { workspace = true, features = ["crossterm"] }
 
 [lints]
 workspace = true

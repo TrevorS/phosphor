@@ -12,14 +12,14 @@ shared config fragment, the no-`Sleep` / sentinel convention, and the first
 real per-screen tapes and recipes — see the three sections below, in that
 order (each is `Needs:` the one before it in `docs/TASKS.md`).
 
-**The tapes in the library today cannot pass yet, on purpose.** They're
-staged for CP-1's gate phase, not for this moment: `crates/phosphor/src/
-main.rs` is still `fn main() {}` (Window C's event loop), so there is
-nothing yet that opens a file and draws a frame. Every tape below is
-structurally complete — `Require`, config, sentinel, `Screenshot` — and
-`just tape 1a` proves the *mechanism* end to end (version gate → cd → vhs →
-clear failure), just not a passing capture. See "Screen library convention"
-for the exact status of each and what's blocking it.
+**Every real tape in the library records clean.** This paragraph used to say
+the opposite — that nothing could pass because `crates/phosphor/src/main.rs`
+was still `fn main() {}` — and that was true right up until `T090` landed the
+S1 host. It is no longer, and the stale wording was corrected during the
+`CP-1` gate pass (it contradicted "Screen library convention" below, which is
+the current and correct account). Building the binary and putting it on
+`$PATH` is still yours to do; nothing in this repo does it for you.
+See "Screen library convention" for what each tape captures.
 
 ## Pinned versions
 
@@ -313,32 +313,69 @@ way as they do under `just tapes` → `run-tapes.sh` (which also `cd`s into
 is a real, committed directory (`.gitkeep`) — vhs does not create missing
 parent directories for `Screenshot`/`Output`, confirmed by testing it.
 
-**Library status today** — every tape below validates
-(`vhs validate tapes/*.tape`) and exercises the full recipe mechanism
-(`just tape 1a` was **re-run for real this phase**, binary built and put on
-`$PATH` by hand: version gate passes, `cd`, `vhs` starts, `Require phosphor`
-succeeds against the real built binary, then a real 10s timeout on the V004
-sentinel — `phosphor some_file.rs` exits `0` immediately without drawing
-anything, so the sentinel never appears; clean nonzero `vhs` exit). Still
-true this phase, reconfirmed rather than assumed stale. None can *pass* yet:
+**Library status today — every real tape passes.** `T090` (Window B, S1 host)
+landed `crates/phosphor/src/main.rs` and `--theme <slug>`, so the two blockers
+this section used to describe are both closed. `just tapes` (binary built via
+`cargo build --release --bin phosphor`, put on `$PATH` by hand — nothing in
+this repo does that for you yet) records all sixteen real tapes clean:
+`1a`, `9c`, `8c`, `8d`, `sweep-{200,120,100,80,60,40}`,
+`theme-{phosphor-dark,phosphor-light,catppuccin,catppuccin-latte,tokyo-night,
+tokyo-night-day}`. The four-theme sweep is now the **six-theme** sweep — all
+six `BUILTIN_SLUGS`, not the four this section originally scoped, closing the
+gap CP-1's own task brief flagged. `theme-catppuccin`/`theme-catppuccin-latte`
+and `theme-tokyo-night`/`theme-tokyo-night-day` are the only captures of
+mockup ids `9a`/`9b`'s acceptance *shape* (IMPLEMENTATION-PLAN.md's S1
+amendment) — no separate `9a.tape`/`9b.tape` exists, this family is their
+home.
 
-| tape(s) | blocked on |
-|---|---|
-| `1a`, `9c`, `8d`, `sweep-*` (6), `theme-phosphor-dark` | `crates/phosphor/src/main.rs` still `fn main() {}` (Window C) — nothing opens a file or draws a frame yet. Also needs the `phosphor` binary on `$PATH`, which nothing in this repo does for you yet (`cargo build --release && export PATH="$PWD/target/release:$PATH"` until there's a real install step). |
-| `8c`, `theme-phosphor-light`, `theme-catppuccin`, `theme-tokyo-night` | Both of the above, **plus** a second, independent blocker: no confirmed way to select a non-default theme from outside the process. Each assumes a `--theme <slug>` flag that does not exist — flagged, not guessed at silently. Slugs (`phosphor-light`, `catppuccin-mocha`, `tokyo-night`) are real — `crates/phosphor-ui/src/theme/builtin.rs`'s `BUILTIN_SLUGS` — only the CLI surface to reach them is missing. |
+**Two harness bugs found running this for real, both fixed in the tapes
+themselves (not the product):**
 
-The four-theme sweep is now **written** (`theme-{phosphor-dark,phosphor-light,
-catppuccin,tokyo-night}.tape`, this phase) — structurally complete and
-`vhs validate`-clean, same convention as `1a`: same buffer
-(`crates/phosphor-core/src/lib.rs`), same `Width 1228`/`Height 700`, theme
-argument swapped in. `theme-catppuccin`/`theme-tokyo-night` are the only
-captures of mockup ids `9a`/`9b`'s acceptance *shape* (see
-IMPLEMENTATION-PLAN.md's S1 amendment) — no separate `9a.tape`/`9b.tape`
-exists, this family is their home.
+1. **A capture-pipeline race, not a product tear.** `Hide` … `Enter` … `Show`
+   → `Wait+Screen` → `Screenshot`, run against `phosphor` specifically
+   (a raw-mode, alt-screen, synchronized-output TUI — not the plain-shell
+   `Type`/`Enter` `_config-check.tape` exercises), intermittently either
+   failed outright (`vhs`: `no frames` / `recording failed`) or produced a
+   *structurally short* PNG (~4KB vs ~220KB for the same matched state,
+   missing the state bar entirely, cursor stuck top-left) — i.e. the text
+   buffer `Wait+Screen` matches against and the pixels headless-Chromium has
+   actually painted are not the same clock. Isolated by bisecting the
+   sequence (`Hide`/`Show` placement, `Sleep` before/after `Enter`/`Wait`);
+   reproduced deterministically on demand, fixed by a `Sleep 500ms` **between
+   `Wait+Screen` and `Screenshot`** in every real tape — 3 back-to-back runs,
+   byte-identical sha256 each time. This is a deviation from V004's "no bare
+   `Sleep`" convention, done deliberately and flagged rather than silently:
+   `Wait+Screen`'s regex is still the correctness gate, this is a settle
+   guard for the *screenshot* only, same category as this file's own
+   already-documented Screenshot flakiness in this sandboxed worktree
+   (below) — a second, distinct manifestation of "the capture pipeline has
+   more moving parts than the regex accounts for," not a second copy of the
+   same bug. Each real tape's `Wait+Screen` line carries a comment pointing
+   back to `1a.tape`'s full writeup.
+2. **The V004 sentinel regex didn't account for `T017`'s own shed order.**
+   `sweep-40.tape` timed out for real: at 40 columns the mode chip has
+   already shed `NORMAL` → `N` (§11's ladder, confirmed live — see the CP-1
+   findings below), so `^ (NORMAL|INSERT|VISUAL|PAUSED)\b` never matches at
+   the narrowest sweep width. Fixed by widening every real tape's sentinel to
+   `^ (NORMAL|INSERT|VISUAL|PAUSED|N|I|V|P)\b` — the shed-to-initial forms
+   from `status_line.rs` itself, not guessed.
 
-Once `main.rs` renders a frame (and, separately, theme selection exists),
-regenerating the real CP-1 artifact set is `just tapes` — no further recipe
-work needed. That's the point of building this now.
+Both fixes are mechanical, in `tapes/**` only, and were necessary to produce
+any capture at all above ~60 columns worth of content — they are not tuning
+toward the mockup (see the shed-order finding below, which is exactly the
+opposite: the capture is left showing the build's real, un-tuned behaviour).
+
+**Still true, and now more interesting than a placeholder note:**
+`_dimensions.tape`'s Screenshot flakiness in this sandboxed worktree (gotcha
+#4) is real and reproduces on `phosphor` too — `sweep-40.png`,
+`sweep-60.png`, and `theme-tokyo-night-day.png` each needed one extra
+`vhs <tape>.tape` re-run this pass before the PNG landed (GIF and the
+`Wait+Screen` match were clean on the first try every time; only the bonus
+`Screenshot` file intermittently didn't appear, exactly as documented). Not
+a product concern; `just tapes`/`run-tapes.sh` don't retry, so a from-scratch
+regen of this exact library may need a manual `just tape <id>` rerun for
+whichever one or two tapes land short — check `ls tapes/artifacts/*.png`
+against the tape count after a fresh run.
 
 ## Convention: every tape gets a `Require`
 
@@ -365,10 +402,16 @@ tapes/
   _undercurl-check-{auto,forced-curl,forced-underline}.tape
                               V002 — the second open question's investigation,
                               run manually, not part of the V005 screen library
+  _soft-wrap-check.tape       CP-1 investigation — does the `↪` continuation
+                               marker read on a real captured frame, not just
+                               a Tier-1 grid dump. Run manually.
   1a.tape, 9c.tape, 8c.tape, 8d.tape   V005 — the four CP-1 stills
   sweep-{200,120,100,80,60,40}.tape     V005 — the CP-1 width sweep
-  theme-{phosphor-dark,phosphor-light,catppuccin,tokyo-night}.tape
-                                          the CP-1 four-theme sweep
+  theme-{phosphor-dark,phosphor-light,catppuccin,catppuccin-latte,
+         tokyo-night,tokyo-night-day}.tape
+                                          the CP-1 SIX-theme sweep — all of
+                                          BUILTIN_SLUGS, not the four this
+                                          library originally scoped
   artifacts/                             V005 — committed Screenshot/gif output
     .gitkeep
 ```
@@ -397,6 +440,18 @@ legibly if any is missing or the wrong version (see
 `tapes/check-versions.sh` — the message names what's expected and what was
 found). Once versions check out, `just tapes` records every real
 `tapes/*.tape` (`_`-prefixed skipped) and `just tape <id>` records just
-`tapes/<id>.tape`. **Today, every real tape fails** — not silently, and not
-a harness bug: see "Screen library convention" above for exactly what each
-one is blocked on and why that's expected at this point in the build.
+`tapes/<id>.tape`. **Every real tape passes** since `T090` landed the S1
+host — see "Screen library convention" above for what each one captures, and
+for the one caveat that survives: `Screenshot` is intermittently flaky in
+this sandboxed worktree, so check `ls artifacts/*.png` against the tape count
+after a from-scratch run and re-run `just tape <id>` for anything short.
+
+`phosphor` has to be on `$PATH` before any of this — `Require phosphor` is
+the first line of every real tape:
+
+```
+cargo build --release --bin phosphor && \
+  mkdir -p /tmp/phosphor-bin && \
+  ln -sf "$PWD/target/release/phosphor" /tmp/phosphor-bin/phosphor && \
+  PATH="/tmp/phosphor-bin:$PATH" just tapes
+```

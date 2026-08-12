@@ -18,5 +18,8 @@ Hide
 Type "phosphor ../crates/phosphor-core/src/lib.rs"
 Enter
 Show
-Wait+Screen@10s /(?m)^ (NORMAL|INSERT|VISUAL|PAUSED)\b/
+Wait+Screen@10s /(?m)^ (NORMAL|INSERT|VISUAL|PAUSED|N|I|V|P)\b/
+# Settle guard for the screenshot pipeline, not a sync primitive — see
+# 1a.tape's header for the full finding and why this isn't V004's Sleep.
+Sleep 500ms
 Screenshot "artifacts/sweep-200.png"

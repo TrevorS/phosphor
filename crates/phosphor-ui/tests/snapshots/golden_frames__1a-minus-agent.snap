@@ -8,12 +8,11 @@ screen 1a-minus-agent · phosphor dark · 100x25 cells
     notification is S6 (T054/T057) and is absent, not stubbed.
   State-column marks and the `6 unseen` counter are fixture values;
     their source is the store (T041, S5).
-  KNOWN DIFFERENCE, row 11: the mockup paints `retry_with_backoff` in
-    syntax.function; it is neutrals.text here. The vendored renderer runs
-    the highlight query one line at a time, and rust's `(function_item
-    name: (identifier) @function)` needs a range that spans the whole
-    item — so a *definition* name loses its capture while every call site
-    (`op`, `sleep`, `jitter`) keeps it. Fork-level; see T018's report.
+  Row 11 paints `retry_with_backoff` in syntax.function, as the mockup
+    does. It did not before: the fixture stopped where the viewport
+    stops, so the `fn` never closed, the file did not parse, and the
+    definition name lost its capture. The fixture is a whole file now
+    — see RETRY_RS_1A.
 
 text
      0         1         2         3         4         5         6         7         8         9
@@ -58,7 +57,7 @@ fg
   8 │..kk..hhhhbbbhhhhhhhhhhhheeeeeeeeh..................................................................│
   9 │..kk..h.............................................................................................│
  10 │..kk................................................................................................│
- 11 │..kk..bbbhbbhhhhhhhhhhhhhhhhhhhhehhehh..............................................................│
+ 11 │..kk..bbbhbbhffffffffffffffffffhehhehh..............................................................│
  12 │..kk..hhhhbbbhhhhhbbbbheeeeehhhhhheeeeeehehhehh.....................................................│
  13 │..kk..hhhhhhhhhhhhbeeeeeeeeeeeh.....................................................................│
  14 │..kk..hhhhheeeeeehehhehhh...........................................................................│

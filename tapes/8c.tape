@@ -3,16 +3,18 @@
 # actor contract survives the lightness flip — CP-1 asks by eye whether
 # claude-green is still the brightest thing on screen here.
 #
-# STATUS / sentinel: see tapes/1a.tape's header for the main.rs blocker.
-# 8c has a SECOND, independent blocker on top of that one: there is no
-# confirmed way to select a non-default theme from outside the process yet.
-# `phosphor-ui` has `Theme::phosphor_light()` (T012), but nothing in
-# `crates/phosphor` wires a flag to it — no arg parsing exists at all
-# (`fn main() {}`). The `--theme phosphor-light` flag below is this tape's
-# ASSUMPTION, not a confirmed interface — flagged under `contract` in V003-
-# V005's report rather than silently guessed at. Update this `Type` line
-# once `spine`/`surface` settle the actual shape (CLI flag vs. a
-# `phosphor --eval` call vs. something else).
+# STATUS / sentinel: passes. Both blockers this header used to list are gone
+# — `T090` landed the S1 host AND `--theme <slug>`, so the flag below is the
+# real interface rather than this tape's assumption about one. Corrected
+# during the CP-1 gate pass; `phosphor-dark|light`, `catppuccin-mocha|latte`
+# and `tokyo-night|-day` are the six slugs `BUILTIN_SLUGS` ships.
+#
+# NOTE, found during that pass: this capture is byte-identical to
+# `theme-phosphor-light.png` — same file, same width, same theme. 8c's own
+# subject (the anchored region on line 18, tint + undercurl) needs a store
+# the S1 host has no CLI door to, so the light-theme *palette* is all this
+# still shows. The rest of 8c is covered at Tier 1 only, by
+# `golden_frames__8c.snap`.
 
 Output "artifacts/8c.gif"
 
@@ -27,5 +29,8 @@ Hide
 Type "phosphor --theme phosphor-light ../crates/phosphor-core/src/lib.rs"
 Enter
 Show
-Wait+Screen@10s /(?m)^ (NORMAL|INSERT|VISUAL|PAUSED)\b/
+Wait+Screen@10s /(?m)^ (NORMAL|INSERT|VISUAL|PAUSED|N|I|V|P)\b/
+# Settle guard for the screenshot pipeline, not a sync primitive — see
+# 1a.tape's header for the full finding and why this isn't V004's Sleep.
+Sleep 500ms
 Screenshot "artifacts/8c.png"

@@ -48,6 +48,26 @@ use ratatui_core::widgets::Widget;
 /// therefore uses the file **its own mockup draws**, so a line number in a
 /// snapshot is the line number on the screen it is being compared to. See
 /// [`RETRY_RS_TURN_8`].
+///
+/// # The trailing `}` is load-bearing — it is not part of any mockup
+///
+/// A mockup draws a **viewport onto a file**, and every one of these screens
+/// stops at the bottom of its window, mid-item: `1a`'s last row closes the
+/// `for` loop, not the `fn`. A fixture that stops where the *picture* stops is
+/// not the file the picture is a view of — it is a truncated one, and rust's
+/// grammar cannot parse it. tree-sitter recovers by rooting the whole thing in
+/// a single `(ERROR …)` node with no `function_item` anywhere in it, so
+/// `(function_item name: (identifier) @function)` has nothing to match and
+/// `retry_with_backoff` falls through to the catch-all `(identifier)
+/// @variable`, which no phosphor `Theme` field claims — `neutrals.text`. Every
+/// *call* site keeps its colour because `call_expression` is complete inside
+/// the error node, which is exactly the asymmetry `CP-1`'s fidelity pass saw
+/// on row 11.
+///
+/// So each fixture closes the item the viewport cuts through. The added line
+/// is **below the last row any frame renders** and cannot show up in a
+/// snapshot; what it changes is the parse, and through it the captures on the
+/// rows that *are* drawn.
 const RETRY_RS_1A: &str = "\
 use std::thread;
 use std::time::Duration;
@@ -73,10 +93,12 @@ pub fn retry_with_backoff<T, E>(
         }
         delay = (delay * 2).min(policy.max_delay);
     }
+}
 ";
 
 /// The same file as turn 8 draws it: `let mut last = None;` at line 17, which
-/// is what `8c`, `8d` and `9c` all show. See [`RETRY_RS_1A`].
+/// is what `8c`, `8d` and `9c` all show. See [`RETRY_RS_1A`] — including why
+/// this one also carries a closing `}` no mockup draws.
 const RETRY_RS_TURN_8: &str = "\
 use std::thread;
 use std::time::Duration;
@@ -103,6 +125,7 @@ pub fn retry_with_backoff<T, E>(
         }
         delay = (delay * 2).min(policy.max_delay);
     }
+}
 ";
 
 /// The half-open character range of a 1-based line, excluding its newline.
@@ -227,12 +250,11 @@ fn screen_1a_minus_agent() {
             "  notification is S6 (T054/T057) and is absent, not stubbed.",
             "State-column marks and the `6 unseen` counter are fixture values;",
             "  their source is the store (T041, S5).",
-            "KNOWN DIFFERENCE, row 11: the mockup paints `retry_with_backoff` in",
-            "  syntax.function; it is neutrals.text here. The vendored renderer runs",
-            "  the highlight query one line at a time, and rust's `(function_item",
-            "  name: (identifier) @function)` needs a range that spans the whole",
-            "  item — so a *definition* name loses its capture while every call site",
-            "  (`op`, `sleep`, `jitter`) keeps it. Fork-level; see T018's report.",
+            "Row 11 paints `retry_with_backoff` in syntax.function, as the mockup",
+            "  does. It did not before: the fixture stopped where the viewport",
+            "  stops, so the `fn` never closed, the file did not parse, and the",
+            "  definition name lost its capture. The fixture is a whole file now",
+            "  — see RETRY_RS_1A.",
         ],
     };
     insta::assert_snapshot!("1a-minus-agent", frame.to_text(&buf));
@@ -446,6 +468,68 @@ fn the_gutter_is_six_cells_and_the_editor_starts_two_in() {
     let editor = editor(&theme, RETRY_RS_1A, 1, area);
     assert_eq!(buffer_view::gutter_width(&editor), 6);
     assert_eq!(editor_area(area).x, 2);
+}
+
+/// Every symbol `1a` paints in a syntax colour, asserted by name at the cell —
+/// a **definition** name next to the call sites, because that is the pair that
+/// came apart.
+///
+/// The `fg` grid above already carries this, one key letter per cell; what it
+/// cannot carry is *why* a letter is the right one. Row 11 read `neutrals.text`
+/// for as long as the fixture was a truncated file, and it read that way in a
+/// grid nobody could check against the mockup without transcribing it. So the
+/// four cases that pin the shape — the `fn` definition, a call, a type, a
+/// keyword — are spelled out here against the colours `1a` draws, and this test
+/// fails on any re-baseline that quietly moves one of them.
+#[test]
+fn a_definition_name_takes_syntax_function_the_way_1a_paints_it() {
+    let theme = Theme::phosphor_dark();
+    let area = Rect::new(0, 0, 100, 25);
+    let (body, _) = split(area);
+    let editor = editor(&theme, RETRY_RS_1A, 1, body);
+
+    let mut buf = Buffer::empty(area);
+    BufferView::new(&editor, &theme).render(body, &mut buf);
+
+    // `text` is what the row reads; every cell of `symbol` must carry `colour`.
+    let painted = |text: &str, symbol: &str, colour: ratatui_core::style::Color| {
+        let row = (0..area.height)
+            .find(|&y| {
+                (0..area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+                    .contains(text)
+            })
+            .unwrap_or_else(|| panic!("no row reads {text:?}"));
+        let cells: String = (0..area.width).map(|x| buf[(x, row)].symbol()).collect();
+        let col = cells.find(symbol).unwrap_or_else(|| panic!("{symbol:?}"));
+        for x in col..col + symbol.chars().count() {
+            assert_eq!(
+                buf[(x as u16, row)].fg,
+                colour,
+                "row {row} col {x} of {symbol:?}"
+            );
+        }
+    };
+
+    // `1a`, row 12 of the file: `pub fn` in syntax.keyword, the definition name
+    // in syntax.function, `T`/`E` in syntax.ty.
+    painted(
+        "pub fn retry_with_backoff",
+        "retry_with_backoff",
+        theme.syntax.function,
+    );
+    painted("pub fn retry_with_backoff", "fn", theme.syntax.keyword);
+    // The call sites the definition name was out of step with.
+    painted("match op()", "op", theme.syntax.function);
+    painted(
+        "thread::sleep(jitter(delay))",
+        "jitter",
+        theme.syntax.function,
+    );
+    // A multi-line item whose name is on its first row, like the `fn`: the
+    // struct at 6–10 keeps `RetryPolicy` in syntax.ty.
+    painted("pub struct RetryPolicy", "RetryPolicy", theme.syntax.ty);
 }
 
 /// `8d`'s caption spells the ladder out — *"counters → jj → cursor pos →

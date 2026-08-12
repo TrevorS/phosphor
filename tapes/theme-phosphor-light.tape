@@ -3,11 +3,9 @@
 # as `8c` (which stays as its own tape — a named acceptance target, not just
 # a sweep frame); this is `1a`'s tape with the theme argument swapped in.
 #
-# STATUS: blocked exactly like `8c` — see `1a.tape`'s header for the
-# main.rs blocker and `8c.tape`'s header for the SECOND, independent
-# blocker this one shares: `--theme phosphor-light` is an ASSUMED flag
-# shape, not a confirmed interface (no arg parsing exists at all yet).
-# Update the `Type` line alongside `8c.tape`'s if the real shape differs.
+# STATUS: passes. Both blockers this header used to list are gone — `T090`
+# landed the S1 host and `--theme <slug>`, so the flag below is the real
+# interface. Corrected during the CP-1 gate pass.
 
 Output "artifacts/theme-phosphor-light.gif"
 
@@ -22,5 +20,8 @@ Hide
 Type "phosphor --theme phosphor-light ../crates/phosphor-core/src/lib.rs"
 Enter
 Show
-Wait+Screen@10s /(?m)^ (NORMAL|INSERT|VISUAL|PAUSED)\b/
+Wait+Screen@10s /(?m)^ (NORMAL|INSERT|VISUAL|PAUSED|N|I|V|P)\b/
+# Settle guard for the screenshot pipeline, not a sync primitive — see
+# 1a.tape's header for the full finding and why this isn't V004's Sleep.
+Sleep 500ms
 Screenshot "artifacts/theme-phosphor-light.png"

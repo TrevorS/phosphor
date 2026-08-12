@@ -6,9 +6,10 @@
 # argument swapped in, per the convention recorded in this file's own
 # "Screen library convention" section — copy, don't reinvent.
 #
-# STATUS: blocked exactly like `1a`/`9c`/`8c`/`8d` — see `1a.tape`'s header.
-# No default-theme selection blocker (phosphor-dark IS the default), so this
-# one only needs `crates/phosphor/src/main.rs` to stop being `fn main() {}`.
+# STATUS: passes. The `fn main() {}` blocker this header used to name is gone
+# (`T090`); corrected during the CP-1 gate pass. No theme flag is needed —
+# phosphor-dark IS the default — which is also why this capture is
+# byte-identical to `1a.png`, `9c.png` and `sweep-120.png`.
 
 Output "artifacts/theme-phosphor-dark.gif"
 
@@ -23,5 +24,8 @@ Hide
 Type "phosphor ../crates/phosphor-core/src/lib.rs"
 Enter
 Show
-Wait+Screen@10s /(?m)^ (NORMAL|INSERT|VISUAL|PAUSED)\b/
+Wait+Screen@10s /(?m)^ (NORMAL|INSERT|VISUAL|PAUSED|N|I|V|P)\b/
+# Settle guard for the screenshot pipeline, not a sync primitive — see
+# 1a.tape's header for the full finding and why this isn't V004's Sleep.
+Sleep 500ms
 Screenshot "artifacts/theme-phosphor-dark.png"

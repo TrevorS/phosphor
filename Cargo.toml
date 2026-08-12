@@ -23,11 +23,32 @@ version = "0.1.0"
 #   * `phosphor-ui` takes `ratatui-core` and never `ratatui`.
 #   * `steel-core` is pinned exactly (Q5) — a patch bump is its own scheduled task.
 [workspace.dependencies]
+# The CLI door's argument parser (SPIKES.md's manifest, `phosphor --eval`).
+# `T090` is its first consumer — `--theme <slug>` plus the file to open — and
+# `T023` takes the same parser when `--eval` lands, which is why it is pinned
+# here rather than in the binary's own manifest.
+#
+# `default-features = false` drops `color` and `suggestions`: the colour stack
+# (anstream/anstyle-query/colorchoice) writes SGR to a terminal this program is
+# about to take over, and `strsim`'s "did you mean" is not worth a dependency
+# for a two-flag CLI. What stays is the parser, the derive macro, and legible
+# errors.
+clap = { version = "4.6.6", default-features = false, features = [
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "usage",
+] }
 crossterm = "0.29.0"
 phosphor-agent = { path = "crates/phosphor-agent" }
 phosphor-buffer = { path = "crates/phosphor-buffer" }
 phosphor-core = { path = "crates/phosphor-core" }
 phosphor-steel = { path = "crates/phosphor-steel" }
+# T014's crate. Not in this table before T090 because nothing had drawn a frame
+# yet; the binary is its first consumer and every later one (T026, T088) goes
+# through the same `Term`.
+phosphor-term = { path = "crates/phosphor-term" }
 phosphor-ui = { path = "crates/phosphor-ui" }
 phosphor-vcs = { path = "crates/phosphor-vcs" }
 ratatui = "0.30.2"
