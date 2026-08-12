@@ -47,8 +47,11 @@ Two structural consequences worth building *tests* for, not just intentions:
 
 ## 1. Dependency reality check
 
-The Component Breakdown's buy list was verified against crates.io on 2026-08-11. Most of it
-holds. **Two entries do not**, and one carries far more risk than the doc implies.
+The Component Breakdown's buy list was verified against crates.io on 2026-08-11, then read
+against the source in the M-0 spikes. **Three of its entries did not survive** — two are
+unbuildable against the ratatui 0.30 workspace the same document specifies, and one is a
+perfectly healthy crate that is simply the wrong fit. Four dependencies the design needs but
+never named have been added. One carries far more risk than the doc implies.
 
 | crate | latest | ratatui dep | verdict |
 |---|---|---|---|
@@ -109,7 +112,7 @@ crates.io data makes the case stronger than the doc does: **v0.0.6, six releases
 2025-10-16, ~3.4k lifetime downloads, one maintainer.** The entire central surface of the
 editor rests on it. Treat it as *our code that happens to have an upstream*.
 
-### Mechanics
+#### Mechanics
 
 - **Vendor by `git subtree`** into `vendor/ratatui-code-editor`, consumed as a workspace
   `path` dependency. Not a submodule (breaks single-clone workflow, adds a fetch step to every
@@ -128,7 +131,7 @@ editor rests on it. Treat it as *our code that happens to have an upstream*.
   goes upstream as a PR. Phosphor-specific behaviour (the 3-column gutter contract, region
   tints, virtual-text interleaving) stays local, permanently.
 
-### The seams we need from it — spike results
+#### The seams we need from it — spike results
 
 The T008 spike read these against the published source. Full citations in
 [`SPIKES.md`](SPIKES.md); the verdicts:
@@ -170,6 +173,8 @@ Two guardrails, since this is a non-core surface carrying maintenance cost:
   (`highlight-lang-*`) and mermaid/JSON-tree extras; enable only what the transcript actually
   needs. Every enabled feature is more surface to keep compiling across the bump.
 
+---
+
 ## 3. Phased plan
 
 `M-0` is scaffolding (the handoff's "crate scaffolding first"). `S1`–`S8` are the Component
@@ -183,13 +188,20 @@ Screen ids (`1a`, `2a`, …) refer to `docs/design/TUI Mockups.dc.html`.
 
 **Goal:** an empty editor that already cannot violate the architecture.
 
+> **The two dependency spikes are done** — see [SPIKES.md](SPIKES.md). What remains in M-0 is
+> construction, plus one unresolved check (grammar ABI, below).
+
 - Cargo workspace with the units from the Component Breakdown: `phosphor`, `phosphor-core`,
   `phosphor-buffer`, `phosphor-ui`, `phosphor-agent`, `phosphor-steel`, `phosphor-vcs`, plus
   `runtime/` (not a crate — the Steel source tree).
 - Pin `ratatui 0.30.2` / `ratatui-core 0.1.2` at the workspace root. `phosphor-ui` depends on
   `ratatui-core` only.
-- `vendor/ratatui-code-editor` subtree + `VENDOR.md` + the `just vendor-*` recipes (§2).
-- The **ratatui-code-editor spike** (§2) — this is M-0's real content, and its outcome sizes S1.
+- **Both vendored subtrees** — `vendor/ratatui-code-editor` and `vendor/ratatui-markdown` — each
+  with its own `VENDOR.md`, plus the shared `just vendor-*` recipes (§2).
+- **The grammar ABI check.** Load all eleven bundled grammars against tree-sitter 0.26 and parse
+  a fixture; settle whether `tree-sitter-scheme` handles real Steel. The grammar crates were
+  built against bindings spanning 0.23–0.25, and tree-sitter versions its language ABI. Cheap
+  here, expensive at S4 — **this is the one unknown the spikes surfaced but did not close.**
 - CI: `fmt`, `clippy -D warnings`, `test`, and two structural lints that encode the invariants:
   - **no literal colours in `phosphor-ui`** — every widget takes `&Theme` (Design Language
     §12). A grep-level lint over `Color::Rgb` / `Color::Indexed` in that crate is enough.
@@ -199,14 +211,18 @@ Screen ids (`1a`, `2a`, …) refer to `docs/design/TUI Mockups.dc.html`.
     widget crate importing only the first two ([Q12](#q12)).
 
 **Scope**
-- Files: 7 `Cargo.toml` + 7 `lib.rs`/`main.rs` stubs, 1 `justfile`, 1 CI workflow, 1 `VENDOR.md`
-- Named units: 2 structural CI lints, 1 vendored subtree, 1 dependency spike
-- Verification: CI green on an empty workspace; spike written up in `VENDOR.md`
+- Files: 7 `Cargo.toml` + 7 `lib.rs`/`main.rs` stubs, 1 `justfile`, 1 CI workflow,
+  2 `VENDOR.md`, 1 `rust-toolchain.toml`, 1 `deny.toml`
+- Named units: 2 structural CI lints, 2 vendored subtrees, 1 grammar ABI check, the hygiene
+  tooling ([SPIKES.md](SPIKES.md))
+- Verification: CI green on an empty workspace; both lints fail on planted violations; all
+  eleven grammars parse a fixture under tree-sitter 0.26
 - Risk: public API no · data migration no · cross-module no · reversible yes · external
-  blocker **yes — the spike outcome sizes S1**
+  blocker no
 
-**Done when:** `cargo build` is green, both structural lints run in CI, and `VENDOR.md`
-records a yes/no on each of the five seams in §2.
+**Done when:** `cargo build` is green, both structural lints run in CI and fail on planted
+violations, `cargo-deny` rejects a duplicate `ratatui` major, and every bundled grammar parses
+a fixture under tree-sitter 0.26.
 
 ---
 
@@ -247,14 +263,15 @@ original) and `8c` (light) render the same slice with the actor contract intact 
 > second palette, actor contract intact — with a different palette substituted.
 
 **Scope**
-- Files: `phosphor-ui/{theme,buffer_view,status_line}.rs`, `phosphor-buffer/{rope,ts}.rs`,
-  3 theme files
+- Files: `phosphor-ui/{theme,buffer_view,status_line,soft_wrap}.rs`,
+  `phosphor-buffer/{rope,ts}.rs`, 3 theme files, plus the vendored fork's `VisualRow` patch
 - Named units: 3 widgets, 2 built-in themes + 2 mappings (each dark + light), 1 theme
-  validator, 1 synchronized-output wrapper
+  validator, 1 synchronized-output wrapper, **1 soft-wrap implementation** (unbudgeted — the
+  vendored crate has none)
 - Verification: golden-frame snapshot tests per screen id + a manual terminal pass at 80 and
-  120 columns
-- Risk: public API no · data migration no · cross-module no · reversible yes · external
-  blocker **yes — depends on the M-0 spike**
+  120 columns + wrapped-line correctness for cursor motion, click targeting and virtual text
+- Risk: public API no · data migration no · cross-module **yes — soft-wrap reaches cursor,
+  click targeting and virtual text** · reversible yes · external blocker no
 
 ---
 
@@ -328,8 +345,8 @@ with the error in a float.
 - The once-per-session unknown-key hint.
 
 **Acceptance:** `3c` (leader popup) · `6d` (`:help agent-objects`) renders from the live
-keymap · `8e` (first keystroke teaches once; folds, soft-wrap continuation, insert-only
-whitespace marks).
+keymap · `8e` (first keystroke teaches once; folds and insert-only whitespace marks — `8e`'s
+soft-wrap continuations are S1's, and are already passing by the time this step is assessed).
 
 > **Flag — two acceptance targets in the docs cannot be met at this step.**
 > The build order lists `7c` here ("plain editor complete: 7c"), but `7c` is *"lsp completion
@@ -341,12 +358,12 @@ whitespace marks).
 **Scope**
 - Files: `phosphor-ui/{gutter,virtual_text,keymap_footer}.rs`, `phosphor-buffer/undo.rs`,
   `phosphor/input.rs`, `runtime/{keymaps,leader}.scm`
-- Named units: 3 widgets, 4 agent text objects, 1 persistent-undo store, 1 input adapter
+- Named units: 3 widgets, 4 agent text objects, 1 persistent-undo store, **1 input machine**
+  (ours — modes, counts, named registers, operator-pending)
 - Verification: text-object unit tests against real source files; undo round-trip across a
   simulated restart
 - Risk: public API no · data migration **yes — the undo file format is on disk from here** ·
-  cross-module no · reversible yes · external blocker **yes — [Q3](#q3) may force a custom
-  input machine**
+  cross-module no · reversible yes · external blocker no
 
 ---
 
@@ -369,9 +386,9 @@ bought at S1, so this step is diagnostics, completion, signature help, and hover
     column model that surface needs.
   - **Steel uses `tree-sitter-scheme`** (0.24.7) — verify it parses real `runtime/*.scm`
     before committing to it. Steel is a Scheme dialect, not Scheme.
-  - **Check grammar ABI compatibility first.** The eleven grammar crates were built against
-    tree-sitter bindings spanning 0.23–0.25 while the runtime is 0.26. Cheap to check — load
-    all of them and parse a fixture — and expensive to discover later.
+  - **Grammar ABI compatibility is checked in M-0, not here.** The crates were built against
+    tree-sitter bindings spanning 0.23–0.25 while the runtime is 0.26; S4 assumes that check
+    already passed.
 
 > **Flag:** `define-language` is required for v1 (the Component Breakdown puts the
 > first-class-set declarations in `runtime/`) but appears in no build step. Assigned here,
@@ -442,7 +459,7 @@ source added live from the REPL appears without restart · seen-state survives a
 - Verification: anchor-survival tests (apply a real refactor, assert threads/seen/watches
   follow); line-fallback tests on an extensionless file; restart- and crash-persistence tests
 - Risk: public API no · data migration **yes — seen-state on disk** · cross-module **yes** ·
-  reversible yes · external blocker **yes — [Q1](#q1)**
+  reversible yes · external blocker no
 
 ---
 
@@ -506,7 +523,7 @@ untouched while Claude works, zero tearing) · `7b` (session dropped — editing
 - Verification: session-lifecycle tests (drop mid-turn, reattach, adopt); a torn-frame check
   under streaming load; permission rules round-trip to `init.scm`
 - Risk: public API no · data migration no · cross-module **yes** · reversible yes · external
-  blocker **yes — [Q6](#q6) wire details**
+  blocker no
 
 ---
 
@@ -516,7 +533,7 @@ untouched while Claude works, zero tearing) · `7b` (session dropped — editing
 
 Three workstreams the docs bundle into one step (see [Q10](#q10)):
 
-**7a — Review surfaces.** `DiffBody` — **built on `similar` and our own body**, not on a bought
+**S7.1 — Review surfaces.** `DiffBody` — **built on `similar` and our own body**, not on a bought
 widget: the T008 spike found the vendored crate's diff is a *mode of the Editor* rather than a
 separable component (`mod diff` is private), so there is nothing to restyle. Since `DiffBody`
 needs per-hunk seen state, directory grouping and Claude's annotations anyway, driving the
@@ -527,13 +544,13 @@ unread = unseen.
 → `2b` (hunk peek), `4b` (block diff), `5c` (inbox), `8b` (the 40-file block: grouping, not
 scrolling).
 
-**7b — Dirty state.** The changed-underneath indicator (`✱`) and offer to refresh;
+**S7.2 — Dirty state.** The changed-underneath indicator (`✱`) and offer to refresh;
 `:diff-disk` with its three-exit footer and **no auto-merge**. This is invariant 3 at its
 sharpest. Watching disk is `notify` + `notify-debouncer-full` — a dependency the design requires
 and no document listed until the spike. Debouncing is load-bearing: an agent writing a file
 produces a burst of events, and one `✱` per burst is the honest signal. → `1d`, `5b`.
 
-**7c — VCS.** `phosphor-vcs`: jj first, git second, both behind a trait, compiled in and
+**S7.3 — VCS.** `phosphor-vcs`: jj first, git second, both behind a trait, compiled in and
 activated on detection. **No feature may assume a repo exists** — the adapter's absence is a
 normal state, not an error path. → `3b` (jj timeline: agent turns are changes, undo is time
 travel).
@@ -543,7 +560,7 @@ comment and Claude's reply as virtual text under the region) · **every one of t
 passing in a directory with no VCS at all.**
 
 > **Flag:** `3a` is unassigned in the docs; it is the visible form of a thread overlay and
-> lands with the review surfaces. Assigned to 7a.
+> lands with the review surfaces. Assigned to S7.1.
 
 **Scope**
 - Files: `phosphor-ui/diff_body.rs`, `phosphor-core/{review,inbox}.rs`, `phosphor-vcs/*`,
@@ -577,7 +594,7 @@ above — the store (S5), the session (S6), and virtual text (S3).
 - Named units: 1 widget, 1 watch model, 1 Steel entry point
 - Verification: values from a real `cargo test` / `pytest` run streaming into a buffer
 - Risk: public API no · data migration no · cross-module no · reversible yes · external
-  blocker **yes — [Q6](#q6) streaming mechanism**
+  blocker no
 
 ---
 
@@ -586,8 +603,8 @@ above — the store (S5), the session (S6), and virtual text (S3).
 These are not phases; they are checks that run at each phase boundary:
 
 - **`8d` (80 columns)** — drop, never squeeze. Statusline shed order: counters → jj → cursor
-  pos → session prose (glyph stays) → mode word (initial stays). `✻` / `●n` is the last thing
-  standing. Pickers lose the preview split under 100 cols; floats go full-width.
+  pos → session prose (glyph stays) → mode word (initial stays). `✻` / `●n` / `!` are the last
+  things standing — the ask flag is load-bearing, not chrome ([Q9](#q9)). Pickers lose the preview split under 100 cols; floats go full-width.
 - **Degradation** — markers → `▎`, undercurl → underline, spinner → static `✻` on dumb
   terminals.
 - **Torn frames are P0** — synchronized output wraps every frame, checked whenever a new async
@@ -595,12 +612,12 @@ These are not phases; they are checks that run at each phase boundary:
 - **Voice** — lowercase, telegraphic, factual. Counts, not adjectives. Keyhints spell the whole
   command (`:reattach`, never `:ca`).
 
-### Unplaced by design
+### Deferred past v1
 
-`6a` (`:arch` — the editor draws its own architecture) and `4c` / `4d` (the pane Claude built;
-tmux control mode) are v1.5 or unscheduled. `6a` is a demonstration of invariant 4 and costs
-little once the store exists (an `ArchDiagram` float body over a store query) — a candidate to
-slot into S5 if it's wanted in v1. Raised as [Q11](#q11), not assumed.
+`4c` (the pane Claude built) and `4d` (tmux control mode) are v1.5 — except `4d`'s "coexists
+politely with your panes," which S1 covers by being tmux-friendly rather than tmux-native.
+
+`6a` (`:arch`) is **not** on this list: [Q11](#q11) put it in v1, at S5.
 
 ---
 
@@ -833,8 +850,8 @@ S8 carries one — the steps are very unevenly sized.*
 
 **Decided:** keep the numbering, since all four design docs cross-reference it, and add review
 points inside the two large steps. S6 splits at *session attaches and streams* / *directing*;
-S7 splits at its three workstream boundaries (review surfaces, dirty state, VCS), each
-independently shippable. Both are recorded in the phases above.
+S7 splits at `S7.1` / `S7.2` / `S7.3` (review surfaces, dirty state, VCS), each independently
+shippable. Both are recorded in the phases above.
 
 <a id="q11"></a>
 ### Q11 · `:arch` ships in v1, at S5

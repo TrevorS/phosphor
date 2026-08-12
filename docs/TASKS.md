@@ -135,7 +135,7 @@ can actually see each one is noted, since it isn't obvious:
 | S4 · LSP | T036–T040, T082 | **CP-4** — boring on purpose |
 | S5 · Store + seen + Picker | T041–T049 | **CP-5** — the awareness loop |
 | S6 · ACP + MCP + Transcript + Prompt | T050–T062 | **CP-6** session · **CP-7** directing |
-| S7 · Diffs + review + dirty + VCS | T063–T073 | **CP-8a/b/c** — three workstreams |
+| S7 · Diffs + review + dirty + VCS | T063–T073 | **CP-8a/b/c** — one per `S7.1`/`S7.2`/`S7.3` |
 | S8 · Watches | T074–T077 | **CP-9** — ship check |
 | **V · Verification harness** | **V001–V009** | *cross-cutting — lands with S1, used from CP-1 on* |
 
@@ -558,10 +558,11 @@ instrument.
 survives restart and `kill -9` · gutter priority resolution across all overlaps · `3c` and `8e`
 snapshots · every binding lives in `runtime/`.
 
-**VHS produces:** the leader popup opening (`3c`) · folds collapsing and expanding · soft-wrap
-continuations · insert-only whitespace marks · the once-per-session unknown-key hint firing and
-then *not* firing again (`8e`). Keystroke-driven surfaces are where tapes are strongest — the
-input is scripted, so the capture is exact.
+**VHS produces:** the leader popup opening (`3c`) · folds collapsing and expanding ·
+insert-only whitespace marks · the once-per-session unknown-key hint firing and then *not*
+firing again (`8e`). Soft-wrap continuations were captured at `CP-1`, where they belong (T081).
+Keystroke-driven surfaces are where tapes are strongest — the input is scripted, so the capture
+is exact.
 
 **Teej verifies:**
 - **Actually edit something real for a while.** Not a test file — something you were going to
@@ -881,9 +882,11 @@ float-over-float) are logged with their trade-offs.
 
 ## S7 · Diffs, review blocks, inbox, dirty-state, VCS
 
-Three independent workstreams; three checkpoints. Each is independently shippable.
+Three independent workstreams — `S7.1` / `S7.2` / `S7.3` — one checkpoint each, each
+independently shippable. The `S7.n` labels exist because bare `7a`/`7b`/`7c` collide with the
+mockup screen ids of the same name, which mean entirely different things.
 
-### 7a — Review surfaces
+### S7.1 — Review surfaces
 
 - [ ] **T063 · DiffBody** — **built on `similar`, not on a bought widget.** The T008 spike found
   `mod diff` private and the diff implemented as a *mode of the Editor*, so there is nothing to
@@ -919,7 +922,7 @@ without losing your place? The recurring sweep.
 
 **Fails if:** you'd rather read the diff in your terminal with `jj diff`.
 
-### 7b — Dirty state
+### S7.2 — Dirty state
 
 - [ ] **T069 · Changed-on-disk indicator** — `✱` + offer to refresh. **Buffer holds stable.**
   Watching disk is `notify` + `notify-debouncer-full` (added by the spike — the design requires
@@ -949,7 +952,7 @@ and the most damaging when it is.
 
 **Fails if:** the cursor moved, the viewport scrolled, or any exit silently merged.
 
-### 7c — VCS
+### S7.3 — VCS
 
 - [ ] **T071 · VCS trait + jj adapter** — compiled in, activated on detection. **No feature may
   assume a repo exists.** *Needs:* T041
