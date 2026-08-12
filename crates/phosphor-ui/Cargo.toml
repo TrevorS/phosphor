@@ -15,9 +15,26 @@ ratatui-core.workspace = true
 # the 3-column contract (Component Breakdown, `BufferView`). Taken here rather
 # than through `phosphor-buffer` because a UI crate's only `phosphor-*`
 # dependency may be `phosphor-core` — `scripts/lint-no-store-mutation.sh` check 2
-# — and this is a third-party widget crate, not a mutation path. It is
-# `ratatui-core`-only itself with `default-features = false`, so the rule above
-# still holds: no grammars, no `crossterm`, no `arboard`.
+# — and this is a third-party widget crate, not a mutation path.
+#
+# `default-features = false` here asks for no grammars, no `crossterm` and no
+# `arboard` — and asking is all a manifest can do. **Cargo unifies features per
+# crate across the graph**, so once `T090`'s host turned on this fork's
+# `crossterm` feature to ride its `editor_crossterm` handler, the feature is on
+# for this dependent too; there is one instance of the crate in the build.
+# `cargo tree --workspace -e features` shows it. An earlier version of this
+# comment claimed the opposite and was simply wrong.
+#
+# What still holds, and how:
+#   * `arboard` really is absent from the default graph — it sits behind a
+#     separate feature nobody enables (`just vendor-build-headless` proves both
+#     directions), so `T003`'s headless guarantee is intact.
+#   * The rule that a widget cannot reach the app layer is enforced at the
+#     source by `scripts/lint-no-app-layer-in-ui.sh`, because Cargo has no way
+#     to scope a feature to one dependent. Same shape as the store rule: the
+#     type system can't say it, so a lint does.
+# `T026` deletes the temporary input path and the `crossterm` feature with it,
+# at which point the manifest means what it says again on its own.
 ratatui-code-editor.workspace = true
 # The vendored markdown renderer (T004), for the transcript's prose body at S6.
 # OPTIONAL AND OFF BY DEFAULT, for two reasons:

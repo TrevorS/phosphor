@@ -75,6 +75,26 @@ and with `highlight-lang-*` grammars enabled. One pre-existing `unused import` w
 That the diff is one line is the argument for offering it upstream immediately. Until then the
 fork exists only to hold that line.
 
+### 2 · Delete `examples/screenshots/`
+
+**Files:** six binary assets removed — `mermaid-image.gif` (7.0 MB), plus `code-highlight.webp`,
+`custom-block.webp`, `image.webp`, `mermaid-pure-text.webp` and `tree-view.webp`.
+**Upstreamable:** no. Upstream wants its own screenshots; this is a vendoring decision, not a
+defect, and it is the one patch here that should *not* be offered back.
+
+7.9 MB of the repository was this directory, and the GIF alone was **80% of the entire packed
+object store** — for a fork whose actual content is a one-line version bump. Nothing references
+any of it: not the fork's source, not its tests, not its README (which loads the logo from
+`raw.githubusercontent.com`), not the translated guides under `docs/guides/`.
+
+Two things were deliberately **kept**, because they are referenced and the goal was weight, not
+tidiness: `examples/logo.webp` (98 KB), which every `docs/guides/*/index.md` embeds by relative
+path, and `examples/demo.webp` (160 KB), which `src/markdown/render_tests.rs` reads — deleting
+that one would break the fork's own test suite.
+
+Expect this to conflict on `just vendor-pull` whenever upstream touches a screenshot. Re-delete
+the directory; that is the whole resolution.
+
 ---
 
 ## Feature gate, and why the shape of it matters
