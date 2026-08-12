@@ -3,7 +3,7 @@
 Derived from [TASKS.md](TASKS.md) and [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).
 Five teammates, owning crates rather than features, gated by the twelve checkpoints.
 
-**96 of 98 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
+**97 of 99 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
 `T009` — the dependency spikes, already complete ([SPIKES.md](SPIKES.md)). `T005` is the single
 deliberate co-ownership and is called out where it appears.
 
@@ -33,7 +33,7 @@ Three other numbers worth carrying:
 
 | | |
 |---|---|
-| `T001` gates **88 of 98** tasks | The workspace skeleton is the whole build's front door. |
+| `T001` gates **89 of 99** tasks | The workspace skeleton is the whole build's front door. |
 | `T019` gates **60** | The `Action` enum. The plan calls it "reversible: no in practice." |
 | `T041` has **14 direct dependents** | Store core — the second serialisation point. |
 
@@ -128,7 +128,13 @@ Also owns the input machine, because it emits Actions and reads Steel-defined ke
 spine surfaces. And the pane manager, which is the same kind of thing one layer out: focus and
 event routing in the binary's loop.
 
-**Tasks:** T001, T002, T007, T019–T026, T033, T078–T080, T088 · **16**
+**Tasks:** T001, T002, T007, T019–T026, T033, T078–T080, T088, **T090** · **17**
+
+**`T090` is why `spine` is live in Window B.** The window table always listed it there, and the
+task breakdown gave it nothing to do — a contradiction nobody noticed until `CP-1` failed for
+want of an application to run. The S1 host writes `phosphor/main.rs`, which is spine's file, and
+it is deliberately *not* the Window C loop: no `Action`, no Steel, no input machine. Building it
+early is what lets four terminals see S1 at all.
 
 **Opus, without hesitation:** `T019` gates 56 tasks; `T079`'s frame cache is what keeps a pre-1.0
 scheme VM out of the frame budget; `T026` is a from-scratch vim grammar including the counts and
@@ -227,7 +233,7 @@ built on an unverified foundation.
 | Window | Ends at | Live teammates | Tasks |
 |---|---|---|---|
 | **A** | `CP-0` (build half) | spine, **surface**, harness | T001–T007, T083, V001 |
-| **B** | `CP-1` | spine, surface, harness | T010–T018, **T081**, **T084**, **T085**, V002–V005 |
+| **B** | `CP-1` | spine, surface, harness | T010–T018, **T081**, **T084**, **T085**, **T090**, V002–V005 |
 | **C** | `CP-2` | spine, harness | T019–T025, T078–T080 |
 | **D** | `CP-3`/`CP-4` | **all five** | T026–T040, T082, **T086**, V006–V009 |
 | **E** | `CP-5` | store, surface, harness | T041–T049, **T087** |

@@ -4,7 +4,7 @@ Decomposed from [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md), which is itsel
 the four design docs in [design/](design/). The plan says *what each phase is for*; this file
 says *what to build, in what order, and where we stop and look at it*.
 
-**89 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
+**90 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
 Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids
 are stable and assigned in order of creation — reference them in commits. New tasks append
 rather than renumber, so `T078`+ sit inside earlier phases.
@@ -18,6 +18,13 @@ means *the verdict passed*, not *M-0 is finished*.
 **`T084`–`T089` were added by the docs review.** Six widget/primitive tasks the design docs
 require and the first breakdown had no home for: the `Float` chrome primitive, undercurl, the
 `HelpGrid`, region tints, the pane manager, and `TabBar`. They are marked 📌 where they appear.
+
+**`T090` was added by the first `CP-1` attempt**, which failed on it and nothing else: the widget
+layer was complete and green, and no task built an application around it, so `cargo run` drew
+nothing and the checkpoint's manual half was impossible. It is marked 📌 too. The lesson is the
+same one `CP-0` taught — *a decision table enumerates the outcomes you predicted, and the useful
+findings are the ones outside it* — except here the gap was a task nobody wrote rather than an
+answer nobody expected.
 
 ---
 
@@ -135,7 +142,7 @@ can actually see each one is noted, since it isn't obvious:
 | Phase | Tasks | Checkpoint |
 |---|---|---|
 | M-0 · Scaffolding + spikes | T001–T009, T083 | **CP-0** — ✅ verdict passed · build half open |
-| S1 · Theme + BufferView + StatusLine | T010–T018, T081, T084, T085 | **CP-1** — does it look like the mockups |
+| S1 · Theme + BufferView + StatusLine | T010–T018, T081, T084, T085, T090 | **CP-1** — does it look like the mockups |
 | S2 · Steel + Action + REPL + view tree | T019–T025, T078–T080 | **CP-2** — is the editor live |
 | S3 · Input + undo + gutter | T026–T035, T086 | **CP-3** — does it feel like an editor |
 | S4 · LSP | T036–T040, T082 | **CP-4** — boring on purpose |
@@ -224,6 +231,12 @@ everything after them — do them first, together.
   Seven crates (`phosphor`, `-core`, `-buffer`, `-ui`, `-agent`, `-steel`, `-vcs`) plus
   `runtime/` as a plain source dir. Stub lib/main only.
   *Done when:* `cargo build` green. *Needs:* —
+
+  > **It is eight in the build.** `T014`'s terminal lifecycle — raw mode, alt screen, panic
+  > restore, the synchronized-output wrapper — is neither a widget (`surface`'s `phosphor-ui`)
+  > nor one of the three binary files the ownership table names for `spine`, so it landed as
+  > `phosphor-term`. The `members = ["crates/*"]` glob enrolled it without a root manifest edit,
+  > so no single-writer rule was crossed. Recorded here rather than quietly changing the number.
 
 - [ ] **T002 · Pin the dependency floor**
   `ratatui 0.30.2`, `ratatui-core 0.1.2`, `steel-core =0.8.2` (exact, per Q5), `ropey`,
@@ -412,6 +425,33 @@ First phase with anything to look at. Sized by CP-0.
   how every later phase gets cheap regression cover on layout.
   *Done when:* snapshots exist for `1a`-minus-agent, `9c`, `8c`, `8d`. *Needs:* T012, T013, T015,
   T017
+
+- [ ] **T090 · The S1 host — something to actually run** 📌
+  **`CP-1` says `cargo run -- src/some_real_file.rs`, and until this task nothing in the build
+  makes that draw a single cell.** Windows A and B produce a widget layer with no application
+  around it: `main.rs` stayed `fn main() {}`, so every screen tape died on `Require phosphor`,
+  the width sweep and four-theme sheets could not be produced, and `CP-1`'s manual half — four
+  terminals, the whole point of the checkpoint — had nothing to open. The first `CP-1` attempt
+  failed on exactly this and nothing else.
+  A **thin** host, and thin is the requirement: open the file named on argv, build the frame from
+  `Theme` + `BufferView` + `StatusLine` + `Float`, draw it through `T014`'s synchronized-output
+  wrapper, and quit cleanly. Plus `--theme <slug>`, which eight tapes already assume and no crate
+  implements.
+  **Input rides the fork's `editor_crossterm` handler**, exactly as the S1 preamble above says S1
+  does — which means turning the fork's `crossterm` feature back on, since `default-features =
+  false` is why that handler was never compiled and why `toggle_fold_at_mouse` warns dead in every
+  build. It is scaffolding with a demolition date: `T019`'s `Action` enum and `T026`'s input
+  machine replace it outright, and **nothing above it may grow to depend on it.**
+  *Done when:* `cargo run -- <a real source file>` renders `1a`-minus-agent on a real terminal,
+  `--theme` switches between all six, arrow keys and clicks move the cursor through the vendored
+  handler, `q`/`esc` restores the terminal, and every tape in `tapes/` gets past `Require phosphor`.
+  *Needs:* T014, T015, T017, T084
+
+  > **Why `spine` owns it, and why it is Window B rather than Window C.** It writes
+  > `phosphor/main.rs`, which the ownership table gives `spine` — and it is the reason TEAM.md
+  > lists `spine` as live in Window B while giving it no numbered task there. It is not `T019`
+  > through `T026`: no `Action` enum, no Steel, no input machine, no panes. It is the app shell
+  > the S1 preamble already assumes exists, which no task numbered.
 
 ### ✋ CP-1 — Does it look like the mockups?
 

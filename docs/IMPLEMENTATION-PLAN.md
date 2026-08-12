@@ -232,6 +232,13 @@ a fixture under tree-sitter 0.26.
 **Goal:** *"phosphor renders and edits a file with highlighting on day one; feels like the
 mockups."*
 
+> **"Renders and edits a file" needs a program, and the first pass at this phase did not build
+> one** — `T090` exists because of it. Every widget below landed, tested and lint-clean, around a
+> `main.rs` that was still `fn main() {}`, so `CP-1`'s own `cargo run --` line drew nothing and
+> the checkpoint's manual half could not happen at all. The host is thin and disposable — it
+> rides the fork's `editor_crossterm` handler and `T026` deletes it — but without it S1 is a
+> library, not a day one.
+
 - `Theme`: actor/state palette struct (`claude, you, attention, trouble, transient, steel`) +
   neutral ramp + syntax map. base16-style loading. **Actor-hue validation at load** — a theme
   reassigning actor hues is rejected, not themed (Design Language §10).
