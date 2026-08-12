@@ -22,6 +22,8 @@
 # phosphor's to carry forever and must have an entry in that fork's VENDOR.md.
 # Anything it prints that VENDOR.md does not explain is the fork quietly
 # becoming a rewrite.
+
+# Show a fork's divergence from the upstream SHA it was merged at.
 vendor-diff *args:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -56,6 +58,8 @@ vendor-diff *args:
 # Requires a clean working tree. Afterwards: re-run `just vendor-diff`, confirm
 # every surviving hunk still has a VENDOR.md entry, and update that file's
 # "last merged" line to the new SHA — `just vendor-check` will fail until you do.
+
+# Merge new upstream into a fork — `just vendor-pull <fork> <ref>`.
 vendor-pull fork ref:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -73,6 +77,8 @@ vendor-pull fork ref:
 # This is the half of `T003`'s acceptance criterion that is provable without a
 # container. The other half — that the build actually completes on a machine with
 # no X11 and no Wayland — needs a Linux container and has NOT been run.
+
+# Prove arboard is out of the default graph and returns with --features clipboard.
 vendor-build-headless:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -92,6 +98,8 @@ vendor-build-headless:
 
 # Does each VENDOR.md name the SHA that history says was actually merged? Cheap,
 # and it is the one way the provenance file can silently go stale.
+
+# Check each VENDOR.md's recorded SHA against git history.
 vendor-check:
     #!/usr/bin/env bash
     set -euo pipefail

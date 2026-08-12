@@ -28,6 +28,8 @@ build:
 # workspace members. Verified by planting a formatting violation in all seven
 # crates: all seven were flagged, and no vendored file was touched. Coverage of
 # our own code is identical; only the fork seam changes.
+
+# Format check — matches CI. Never add `--all` (see above).
 fmt:
     cargo fmt --check
 
@@ -42,12 +44,16 @@ clippy:
 # zero tests anywhere (true today — T005's "green on the empty workspace"
 # needs this). Safe to keep permanently: it only changes behavior in that
 # zero-tests-anywhere case, never once any test exists.
+
+# Run the test suite via cargo-nextest.
 test:
     cargo nextest run --workspace --no-tests=pass
 
 # cargo-deny: bans a second major of ratatui/ratatui-core (the rule SPIKES.md
 # says matters most), plus licenses and the RustSec advisory DB. See
 # deny.toml for the advisory-ignore list and why each entry is there.
+
+# cargo-deny: advisories, licences, and the duplicate-ratatui ban.
 deny:
     cargo deny check
 
@@ -56,7 +62,11 @@ deny:
 # contract. This recipe runs all of them in sorted order and is the ONLY
 # thing CI calls for lints, so two people (T006: no-literal-colours,
 # T007: no-store-mutation) can each add one without ever touching this file
-# or .github/workflows/ci.yml. Passes vacuously today — no scripts exist yet.
+# or .github/workflows/ci.yml. Three land today: no-literal-colours (T006),
+# no-store-mutation (T007) and no-app-layer-in-ui (T002). The vacuous-pass
+# branch below is kept as a guard, not as a description of the present.
+
+# Run every structural lint in scripts/lint-*.sh.
 lint:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -94,6 +104,8 @@ tapes:
 # (matching run-tapes.sh) so a tape's relative paths — `Source
 # "_config.tape"`, `Screenshot "artifacts/<id>.png"` — resolve identically
 # whether it's regenerated this way or via `just tapes`.
+
+# Regenerate exactly one screen — `just tape 1a`.
 tape id:
     @bash tapes/check-versions.sh
     cd tapes && vhs "{{ id }}.tape"
