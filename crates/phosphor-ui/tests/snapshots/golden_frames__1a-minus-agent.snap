@@ -1,0 +1,114 @@
+---
+source: crates/phosphor-ui/tests/golden_frames.rs
+expression: frame.to_text(&buf)
+---
+screen 1a-minus-agent · phosphor dark · 100x25 cells
+  BufferView (T015) + state column + StatusLine (T017), full width.
+  MINUS the agent surfaces, as CP-1 asks: the `✻ claude · review ready`
+    notification is S6 (T054/T057) and is absent, not stubbed.
+  State-column marks and the `6 unseen` counter are fixture values;
+    their source is the store (T041, S5).
+  KNOWN DIFFERENCE, row 11: the mockup paints `retry_with_backoff` in
+    syntax.function; it is neutrals.text here. The vendored renderer runs
+    the highlight query one line at a time, and rust's `(function_item
+    name: (identifier) @function)` needs a range that spans the whole
+    item — so a *definition* name loses its capture while every call site
+    (`op`, `sleep`, `jitter`) keeps it. Fork-level; see T018's report.
+
+text
+     0         1         2         3         4         5         6         7         8         9
+     0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │   1  use std::thread;                                                                              │
+  1 │   2  use std::time::Duration;                                                                      │
+  2 │   3                                                                                                │
+  3 │   4  use crate::util::jitter;                                                                      │
+  4 │   5                                                                                                │
+  5 │   6  pub struct RetryPolicy {                                                                      │
+  6 │   7      pub max_attempts: u32,                                                                    │
+  7 │   8      pub base_delay: Duration,                                                                 │
+  8 │   9      pub max_delay: Duration,                                                                  │
+  9 │  10  }                                                                                             │
+ 10 │  11                                                                                                │
+ 11 │  12  pub fn retry_with_backoff<T, E>(                                                              │
+ 12 │  13      mut op: impl FnMut() -> Result<T, E>,                                                     │
+ 13 │  14      policy: &RetryPolicy,                                                                     │
+ 14 │  15  ) -> Result<T, E> {                                                                           │
+ 15 │  16      let mut delay = policy.base_delay;                                                        │
+ 16 │  17      for attempt in 0..policy.max_attempts {                                                   │
+ 17 │  18          match op() {                                                                          │
+ 18 │  19              Ok(v) => return Ok(v),                                                            │
+ 19 │  20              Err(e) if attempt + 1 == policy.max_attempts => return Err(e),                    │
+ 20 │  21              Err(_) => thread::sleep(jitter(delay)),                                           │
+ 21 │  22          }                                                                                     │
+ 22 │  23          delay = (delay * 2).min(policy.max_delay);                                            │
+ 23 │  24      }                                                                                         │
+ 24 │ NORMAL  src/retry.rs                                        ✻ claude idle │ 6 unseen │ jj ✓ │ 12:1 │
+
+fg
+     0         1         2         3         4         5         6         7         8         9
+     0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │..kk..bbbhhhhhhhhhhhhh..............................................................................│
+  1 │..kk..bbbhhhhhhhhhhhheeeeeeeeh......................................................................│
+  2 │..kk................................................................................................│
+  3 │..kk..bbbhbbbbbhhhhhhhhhhhhhhh......................................................................│
+  4 │..kk................................................................................................│
+  5 │..kk..bbbhbbbbbbheeeeeeeeeeehh......................................................................│
+  6 │..kk..hhhhbbbhhhhhhhhhhhhhhheeeh....................................................................│
+  7 │..kk..hhhhbbbhhhhhhhhhhhhheeeeeeeeh.................................................................│
+  8 │..kk..hhhhbbbhhhhhhhhhhhheeeeeeeeh..................................................................│
+  9 │..kk..h.............................................................................................│
+ 10 │..kk................................................................................................│
+ 11 │..kk..bbbhbbhhhhhhhhhhhhhhhhhhhhehhehh..............................................................│
+ 12 │..kk..hhhhbbbhhhhhbbbbheeeeehhhhhheeeeeehehhehh.....................................................│
+ 13 │..kk..hhhhhhhhhhhhbeeeeeeeeeeeh.....................................................................│
+ 14 │..kk..hhhhheeeeeehehhehhh...........................................................................│
+ 15 │..kk..hhhhbbbhbbbhhhhhhhhhhhhhhhhhhhhhhhhhhh........................................................│
+ 16 │..kk..hhhhbbbhhhhhhhhhbbhehhhhhhhhhhhhhhhhhhhhhhh...................................................│
+ 17 │..kk..hhhhhhhhbbbbbhffhhhh..........................................................................│
+ 18 │..kk..hhhhhhhhhhhheehhhhhhhbbbbbbhffhhhh............................................................│
+ 19 │..kk..hhhhhhhhhhhheeehhhhbbhhhhhhhhhhhehhhhhhhhhhhhhhhhhhhhhhhhhhhbbbbbbhfffhhhh....................│
+ 20 │..kk..hhhhhhhhhhhheeehhhhhhhhhhhhhhhfffffhffffffhhhhhhhhh...........................................│
+ 21 │..kk..hhhhhhhhh.....................................................................................│
+ 22 │..kk..hhhhhhhhhhhhhhhhhhhhhhhhhehhfffhhhhhhhhhhhhhhhhhhh............................................│
+ 23 │..kk..hhhhh.........................................................................................│
+ 24 │gggggggghhhhhhhhhhhhh........................................aaaaaaaaaaaaajjjjjjjjjjjjjjjjjjjjjjjjj.│
+
+bg
+     0         1         2         3         4         5         6         7         8         9
+     0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  1 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  2 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  3 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  4 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  5 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  6 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  7 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  8 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  9 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 10 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 11 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 12 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 13 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 14 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 15 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 16 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 17 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 18 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 19 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 20 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 21 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 22 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 23 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 24 │aaaaaaaayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy│
+
+legend
+  a  #3ddc97  actors.claude
+  b  #82aecd  actors.you = syntax.keyword
+  e  #cfa86a  actors.transient = syntax.ty = syntax.constant = syntax.string = syntax.number
+  f  #9ec98c  actors.steel = syntax.function
+  g  #0c0f0c  neutrals.ground = chrome.mode_chip_fg = chrome.tab_bar
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  k  #414b42  neutrals.line_numbers
+  y  #1a201a  chrome.statusline

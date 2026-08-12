@@ -16,6 +16,27 @@ pub(crate) struct LineDiff {
 
 pub(crate) type LineDiffCache = HashMap<(usize, usize), LineDiff>;
 
+/// PHOSPHOR PATCH 6 — what one visual row draws, resolved once so that every
+/// consumer of the row stream reads the same answer. See `View::row_span`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RowSpan {
+    /// Source line this row is a slice of.
+    pub line_idx: usize,
+    /// `0` for an unwrapped line, and for the first segment of a wrapped one.
+    pub segment: usize,
+    /// First char column drawn, inclusive.
+    pub start_col: usize,
+    /// Last char column drawn, exclusive.
+    pub end_col: usize,
+    /// Cells spent before the text — the `↪ ` marker on a continuation row.
+    pub prefix_cells: usize,
+    /// Whether this row is one segment of a soft-wrapped line. `false` means
+    /// the row draws a whole line and honours the horizontal offset.
+    pub wrapped: bool,
+    /// Whether this row carries the end of its line.
+    pub is_last_segment: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum VisualRow {
     Real {
@@ -33,6 +54,25 @@ pub(crate) enum VisualRow {
         original_line_idx: usize,
         curr_line_idx: Option<usize>,
     },
+    /// PHOSPHOR PATCH 6 — one segment of a soft-wrapped source line.
+    ///
+    /// A line only ever becomes `Wrapped` when it does not fit: a line that
+    /// fits stays [`VisualRow::Real`], so with wrapping off the row stream is
+    /// byte-for-byte what upstream builds. A wrapped line owns a contiguous
+    /// run of `segment = 0..n` rows in document order, and their
+    /// `[start_col, end_col)` char spans partition the line exactly.
+    ///
+    /// `segment > 0` carries no line number — it renders `↪` instead.
+    Wrapped {
+        line_idx: usize,
+        segment: usize,
+        /// First char column of the line this row draws, inclusive.
+        start_col: usize,
+        /// Last char column of the line this row draws, exclusive.
+        end_col: usize,
+        is_added: bool,
+        orig_line_idx: Option<usize>,
+    },
 }
 
 impl VisualRow {
@@ -41,6 +81,8 @@ impl VisualRow {
             VisualRow::Real { is_added, .. } => *is_added,
             VisualRow::FoldSeparator { .. } => false,
             VisualRow::GhostDeleted { .. } => true,
+            // PHOSPHOR PATCH 6
+            VisualRow::Wrapped { is_added, .. } => *is_added,
         }
     }
 }

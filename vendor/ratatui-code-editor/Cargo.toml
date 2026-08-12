@@ -36,7 +36,9 @@ ratatui-code-editor = { path = "." }
 
 [dependencies]
 anyhow = "^1.0"
-ratatui-core = "~0.1.0"
+# PHOSPHOR PATCH 5 — was `~0.1.0`. `CellDiffOption::ForcedWidth`, which keeps an
+# escape-carrying cell one column wide, landed in 0.1.2. See VENDOR.md.
+ratatui-core = "~0.1.2"
 crossterm = { version = "~0.29", optional = true }
 ropey = "^1.6"
 rust-embed = { version = "^8.7", features = ["include-exclude"] }

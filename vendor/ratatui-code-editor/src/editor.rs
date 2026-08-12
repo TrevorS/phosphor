@@ -5,6 +5,8 @@ use crate::code::{EditBatch, Operation};
 use crate::code::{RopeGraphemes, grapheme_width, grapheme_width_and_chars_len};
 use crate::selection::{Selection, SelectionSnap};
 use crate::types::{CodeFoldingOptions, DiffOptions, HightlightCache, Theme, VisualRow, LineDiffCache};
+// PHOSPHOR PATCH 6 — the row-stream contract, and PATCH 7's marker glyphs.
+use crate::types::RowSpan;
 use crate::utils;
 use crate::view::{View, ViewMode};
 use anyhow::{Result, anyhow};
@@ -49,6 +51,17 @@ pub struct Editor {
     /// User marks for intervals: (start, end, color)
     pub(crate) marks: Option<Vec<(usize, usize, Color)>>,
 
+    /// PHOSPHOR PATCH 5 — cell styles the marks above cannot carry: §3's
+    /// undercurl, degrading to a straight underline. Separate from `marks`
+    /// rather than an extra tuple field, because the two are replaced by
+    /// different owners at different times (region tints `T087`, diagnostics
+    /// `T040`) and `set_marks` replaces wholesale.
+    pub(crate) styled_spans: Vec<crate::phosphor::cell_style::StyledSpan>,
+
+    /// PHOSPHOR PATCH 5 — `None` asks the environment (the default);
+    /// `Some` is an app layer that has negotiated with the terminal itself.
+    pub(crate) underline_capability: Option<crate::phosphor::cell_style::UnderlineCapability>,
+
     /// Syntax highlight cache by intervals to speed up rendering
     pub(crate) highlights_cache: RefCell<HightlightCache>,
 
@@ -69,6 +82,20 @@ pub struct Editor {
 
     /// Controls the left padding before writing the code
     pub(crate) left_code_padding: usize,
+
+    /// PHOSPHOR PATCH 4 — minimum width of the line-number column, in cells.
+    /// Defaults to 5, which is the constant this replaces.
+    pub(crate) line_number_min_digits: usize,
+
+    /// PHOSPHOR PATCH 7 — whether the fold gutter column is drawn and clickable.
+    /// Upstream conflates this with `code_folding_options.enabled`; phosphor
+    /// needs folding *without* the column, because `8e` puts the fold marker
+    /// inline after the code. `true` is upstream's behaviour.
+    pub(crate) fold_gutter_visible: bool,
+
+    /// PHOSPHOR PATCH 7 — whether trailing whitespace is marked with `·`.
+    /// Insert-only (`8e`), so the caller turns it on with the mode.
+    pub(crate) show_trailing_whitespace: bool,
 
     /// Current document-to-screen view mode.
     pub(crate) view_mode: ViewMode,
@@ -113,6 +140,10 @@ impl Editor {
             selection_snap: SelectionSnap::None,
             clipboard: None,
             marks: None,
+            // PHOSPHOR PATCH 5 — no spans, and the capability unasked until a
+            // span exists to draw.
+            styled_spans: Vec::new(),
+            underline_capability: None,
             highlights_cache,
             line_diff_cache,
             word_highlight_enabled: true,
@@ -120,6 +151,10 @@ impl Editor {
             show_line_numbers: true,
             code_folding_options: CodeFoldingOptions::default(),
             left_code_padding: 2,
+            line_number_min_digits: 5,
+            // PHOSPHOR PATCH 7 — both default to upstream's behaviour.
+            fold_gutter_visible: true,
+            show_trailing_whitespace: false,
             view_mode: ViewMode::Plain,
             original_code: None,
             diff_options: DiffOptions::default(),
@@ -127,13 +162,23 @@ impl Editor {
         })
     }
 
-    pub(crate) fn get_line_number_width(&self) -> usize {
+    /// PHOSPHOR PATCH 4 — the width of the line-number column, in cells.
+    /// Extracted so `render.rs` and [`Editor::get_line_number_width`] cannot
+    /// disagree, and so the minimum is configurable rather than a literal 5.
+    pub fn line_number_digits(&self) -> usize {
+        let max_line_number = self.code.len_lines().max(1);
+        max_line_number
+            .to_string()
+            .len()
+            .max(self.line_number_min_digits)
+    }
+
+    // PHOSPHOR PATCH 4 — `pub`, was `pub(crate)`: a consumer composing its own
+    // gutter around this widget has to know where the text column starts.
+    pub fn get_line_number_width(&self) -> usize {
         let fold_gutter_width = self.fold_gutter_width();
         if self.show_line_numbers {
-            let total_lines = self.code.len_lines();
-            let max_line_number = total_lines.max(1);
-            let line_number_digits = max_line_number.to_string().len().max(5);
-            line_number_digits + self.left_code_padding + fold_gutter_width
+            self.line_number_digits() + self.left_code_padding + fold_gutter_width
         } else {
             self.left_code_padding + fold_gutter_width
         }
@@ -156,14 +201,23 @@ impl Editor {
         let visible_width = width.saturating_sub(line_number_width);
         let visible_height = height;
 
+        // PHOSPHOR PATCH 6 — wrapped text has nowhere to scroll sideways to,
+        // so the horizontal offset is pinned at 0 rather than chased.
         let step_size = 10;
-        if col < self.offset_x {
+        if self.soft_wrap_width().is_some() {
+            self.offset_x = 0;
+        } else if col < self.offset_x {
             self.offset_x = col.saturating_sub(step_size);
         } else if col >= self.offset_x + visible_width {
             self.offset_x = col.saturating_sub(visible_width.saturating_sub(step_size));
         }
 
-        let visual_line = self.visual_line_idx(line);
+        // PHOSPHOR PATCH 6 — the cursor's *segment*, not the row its line
+        // starts on: revealing a wrapped line's head does not reveal a cursor
+        // forty cells into it.
+        let visual_line = self
+            .visual_row_for_position(line, col)
+            .unwrap_or(usize::MAX);
         if visual_line == usize::MAX {
             return;
         }
@@ -254,8 +308,21 @@ impl Editor {
         let line_start_char = self.code.line_to_char(clicked_row);
         let line_len = self.code.line_len(clicked_row);
 
-        let start_col = self.offset_x.min(line_len);
-        let end_col = line_len;
+        // PHOSPHOR PATCH 6 — on a wrapped row the click is measured inside the
+        // row's own span: past the `↪ ` marker, and clamped to the segment
+        // rather than to the whole line. Rows the row stream does not own a
+        // span for (diff ghosts) keep upstream's offset_x-based mapping.
+        let span = self
+            .row_span(clicked_visual_row)
+            .filter(|span| span.wrapped);
+        let clicked_col = match span {
+            Some(span) => clicked_col.saturating_sub(span.prefix_cells),
+            None => clicked_col,
+        };
+        let (start_col, end_col) = match span {
+            Some(span) => (span.start_col.min(line_len), span.end_col.min(line_len)),
+            None => (self.offset_x.min(line_len), line_len),
+        };
 
         let char_start = line_start_char + start_col;
         let char_end = line_start_char + end_col;
@@ -270,6 +337,18 @@ impl Editor {
             }
             current_col += g_width;
             char_idx += g_chars;
+        }
+
+        // PHOSPHOR PATCH 6 — a click past the end of a wrapped row stays on
+        // *that* row. Landing on `end_col` of a non-final segment would render
+        // the cursor one row lower, on the continuation, which is not the row
+        // the user clicked; and the whole-line clamp below is about the end of
+        // a line, which a non-final segment is not.
+        if let Some(span) = span {
+            if !span.is_last_segment && char_idx >= span.end_col {
+                char_idx = span.end_col.saturating_sub(1).max(span.start_col);
+            }
+            return Some(line_start_char + char_idx);
         }
 
         let line = self
@@ -564,7 +643,8 @@ impl Editor {
     }
 
     pub(crate) fn fold_gutter_width(&self) -> usize {
-        if !self.code_folding_options.enabled {
+        // PHOSPHOR PATCH 7 — folding can be on with the column off.
+        if !self.code_folding_options.enabled || !self.fold_gutter_visible {
             return 0;
         }
         self.code_folding_options
@@ -576,8 +656,11 @@ impl Editor {
     }
 
     pub(crate) fn code_fold_indicator(&self, line_idx: usize) -> Option<bool> {
-        self.code_folding_options
-            .enabled
+        // PHOSPHOR PATCH 7 — this is the *gutter* glyph and nothing else, so
+        // it follows the gutter rather than folding. Without the added
+        // condition, hiding the column would draw the indicator over the first
+        // cell of the text instead of dropping it.
+        (self.code_folding_options.enabled && self.fold_gutter_visible)
             .then(|| self.view.code_fold_indicator(&self.code, line_idx))
             .flatten()
     }
@@ -685,8 +768,58 @@ impl Editor {
         );
     }
 
+    /// PHOSPHOR PATCH 4 — as [`Editor::set_marks`], for a caller that already
+    /// owns `ratatui` colours. `set_marks` parses hex strings, and formatting a
+    /// `Color` back to hex to get in here is a round-trip that only `Color::Rgb`
+    /// survives.
+    pub fn set_marks_colored(&mut self, marks: Vec<(usize, usize, Color)>) {
+        self.marks = Some(marks);
+    }
+
     pub fn remove_marks(&mut self) {
         self.marks = None;
+    }
+
+    /// PHOSPHOR PATCH 5 — the one call site for §3's undercurl.
+    ///
+    /// Replaces the styled spans wholesale, as `set_marks` does. A span asks
+    /// for [`Underline::Curl`]; whether that reaches the terminal as SGR `4:3`
+    /// or as a straight underline is [`UnderlineCapability`]'s business, not
+    /// the caller's.
+    ///
+    /// [`Underline::Curl`]: crate::phosphor::cell_style::Underline::Curl
+    /// [`UnderlineCapability`]: crate::phosphor::cell_style::UnderlineCapability
+    pub fn set_styled_spans(&mut self, spans: Vec<crate::phosphor::cell_style::StyledSpan>) {
+        self.styled_spans = spans;
+    }
+
+    /// PHOSPHOR PATCH 5 — clears every styled span.
+    pub fn clear_styled_spans(&mut self) {
+        self.styled_spans.clear();
+    }
+
+    /// PHOSPHOR PATCH 5 — the spans currently drawn.
+    pub fn styled_spans(&self) -> &[crate::phosphor::cell_style::StyledSpan] {
+        &self.styled_spans
+    }
+
+    /// PHOSPHOR PATCH 5 — which underline the terminal gets, detected from the
+    /// environment unless [`Editor::set_underline_capability`] has said
+    /// otherwise.
+    pub fn underline_capability(&self) -> crate::phosphor::cell_style::UnderlineCapability {
+        self.underline_capability
+            .unwrap_or_else(crate::phosphor::cell_style::UnderlineCapability::detect)
+    }
+
+    /// PHOSPHOR PATCH 5 — overrides the detected capability. `None` restores
+    /// detection. This is the terminal, not the call site: a test forces both
+    /// halves of the degradation path through it, and an app layer that has
+    /// negotiated capabilities itself can hand down what it learned.
+    pub fn set_underline_capability(
+        &mut self,
+        capability: Option<crate::phosphor::cell_style::UnderlineCapability>,
+    ) {
+        self.underline_capability = capability;
     }
 
     pub fn has_marks(&self) -> bool {
@@ -731,7 +864,9 @@ impl Editor {
         self.offset_x
     }
 
-    pub(crate) fn visual_len_lines(&self) -> usize {
+    // PHOSPHOR PATCH 4 — `pub`, was `pub(crate)`: the number of rows the widget
+    // will draw is what a caller clamps its own scrolling against.
+    pub fn visual_len_lines(&self) -> usize {
         self.view
             .visual_len_lines(&self.code, self.active_view_mode())
     }
@@ -739,6 +874,92 @@ impl Editor {
     pub(crate) fn line_for_visual_row(&self, visual_row: usize) -> Option<usize> {
         self.view
             .line_for_visual_row(&self.code, self.active_view_mode(), visual_row)
+    }
+
+    // ------------------------------------------------------------------
+    // PHOSPHOR PATCH 6 — soft wrap. The row stream is the single source of
+    // truth for row<->line mapping, cursor placement, click targeting and
+    // (from `T032`) virtual-text placement; everything below reads it.
+    // ------------------------------------------------------------------
+
+    /// Wraps text at `width` cells of the *text column* — the area width minus
+    /// [`Editor::get_line_number_width`]. `None` restores upstream behaviour:
+    /// long lines do not wrap and scroll horizontally instead.
+    ///
+    /// Rebuilds the row stream when the width changes, and nothing else: it
+    /// does not move the viewport and does not touch the cursor.
+    pub fn set_soft_wrap(&mut self, width: Option<usize>) {
+        if self.view.set_soft_wrap(width) {
+            self.rebuild_view();
+        }
+    }
+
+    /// The wrap width, or `None` when wrapping is off.
+    pub fn soft_wrap_width(&self) -> Option<usize> {
+        self.view.soft_wrap()
+    }
+
+    /// What a visual row draws — see [`RowSpan`]. `None` for rows that are not
+    /// a slice of the current buffer (fold separators, diff ghosts).
+    pub fn row_span(&self, visual_row: usize) -> Option<RowSpan> {
+        self.view
+            .row_span(&self.code, self.active_view_mode(), visual_row)
+    }
+
+    /// The visual row showing `char_col` of `line_idx` — the wrapped-line
+    /// answer to [`Editor::visual_line_idx`], which returns the row a line
+    /// *starts* on. A column on a segment boundary belongs to the later row.
+    pub fn visual_row_for_position(&self, line_idx: usize, char_col: usize) -> Option<usize> {
+        self.view
+            .visual_row_for_position(self.active_view_mode(), line_idx, char_col)
+    }
+
+    /// The visual row the cursor is on, segments included.
+    pub fn visual_row_for_cursor(&self) -> Option<usize> {
+        let (line, col) = self.code.point(self.cursor);
+        self.visual_row_for_position(line, col)
+    }
+
+    /// The char offset at `visual_col` cells into `visual_row`, clamped to the
+    /// row's own span. `None` for a row that draws no buffer text.
+    pub fn cursor_at_visual_row_col(&self, visual_row: usize, visual_col: usize) -> Option<usize> {
+        let span = self.row_span(visual_row)?;
+        let line_start = self.code.line_to_char(span.line_idx);
+        let base = self.code.char_col_to_visual(span.line_idx, span.start_col);
+        let col = self
+            .code
+            .visual_to_char_col(span.line_idx, base + visual_col)
+            .clamp(span.start_col, span.end_col);
+        Some(line_start + col)
+    }
+
+    /// One visual row up (`-1`) or down (`1`) from the cursor, keeping its
+    /// column within the row. `None` when wrapping is off — which is what
+    /// makes `MoveUp`/`MoveDown` fall through to their upstream, line-wise
+    /// behaviour — or when there is no such row.
+    pub fn soft_wrap_row_step(&self, delta: isize) -> Option<usize> {
+        self.soft_wrap_width()?;
+        let from = self.visual_row_for_cursor()?;
+        let to = from.checked_add_signed(delta)?;
+        if to >= self.visual_len_lines() {
+            return None;
+        }
+        let span = self.row_span(from)?;
+        let (line, col) = self.code.point(self.cursor);
+        let visual_col = self
+            .code
+            .char_col_to_visual(line, col)
+            .saturating_sub(self.code.char_col_to_visual(span.line_idx, span.start_col));
+        self.cursor_at_visual_row_col(to, visual_col)
+    }
+
+    /// PHOSPHOR PATCH 7 — how many lines the collapsed fold starting on
+    /// `line_idx` hides, or `None` when there is none. The `n` in `▸⋯ n lines`.
+    pub fn fold_hidden_lines(&self, line_idx: usize) -> Option<usize> {
+        self.code_folding_options
+            .enabled
+            .then(|| self.view.code_fold_hidden_lines(&self.code, line_idx))
+            .flatten()
     }
 
     pub(crate) fn visual_row(&self, visual_row: usize) -> Option<VisualRow> {
@@ -978,7 +1199,12 @@ impl Editor {
         let line_number_width = self.get_line_number_width();
 
         let (cursor_line, cursor_char_col) = self.code.point(self.cursor);
-        let cursor_visual_line = self.visual_line_idx(cursor_line);
+        // PHOSPHOR PATCH 6 — the cursor sits on its *segment*, and measures its
+        // column from that segment's start rather than from the line's.
+        let cursor_visual_line = self
+            .visual_row_for_position(cursor_line, cursor_char_col)
+            .unwrap_or(usize::MAX);
+        let wrap_span = self.row_span(cursor_visual_line).filter(|span| span.wrapped);
 
         if cursor_visual_line >= self.offset_y
             && cursor_visual_line < self.offset_y + area.height as usize
@@ -987,7 +1213,13 @@ impl Editor {
             let line_len = self.code.line_len(cursor_line);
 
             let max_x = (area.width as usize).saturating_sub(line_number_width);
-            let start_col = self.offset_x;
+            // PHOSPHOR PATCH 6 — wrapped rows have no horizontal offset; the
+            // segment's own start is what the cursor is relative to.
+            let start_col = match wrap_span {
+                Some(span) => span.start_col,
+                None => self.offset_x,
+            };
+            let prefix_cells = wrap_span.map_or(0, |span| span.prefix_cells);
 
             let cursor_visual_col: usize = {
                 let slice = self.code.char_slice(
@@ -1005,7 +1237,8 @@ impl Editor {
             };
 
             let relative_visual_col = cursor_visual_col.saturating_sub(offset_visual_col);
-            let visible_x = relative_visual_col.min(max_x);
+            // PHOSPHOR PATCH 6 — past the `↪ ` marker on a continuation row.
+            let visible_x = (relative_visual_col + prefix_cells).min(max_x);
 
             let cursor_x = area.left() + (line_number_width + visible_x) as u16;
             let cursor_y = area.top() + (cursor_visual_line - self.offset_y) as u16;
@@ -1024,6 +1257,48 @@ impl Editor {
 
     pub fn set_left_code_padding(&mut self, char_count: usize) {
         self.left_code_padding = char_count
+    }
+
+    /// PHOSPHOR PATCH 4 — sets the minimum width of the line-number column.
+    /// The default is 5, the constant this replaced.
+    pub fn set_line_number_min_digits(&mut self, digits: usize) {
+        self.line_number_min_digits = digits
+    }
+
+    /// PHOSPHOR PATCH 4 — replaces the syntax theme with an already-built one.
+    /// [`Editor::new`] takes `Vec<(&str, &str)>` of hex strings; a caller that
+    /// already owns `ratatui` styles has no way in short of formatting them
+    /// back to hex. Invalidates the highlight cache, which bakes the styles in.
+    pub fn set_theme(&mut self, theme: Theme) {
+        self.theme = theme;
+        self.reset_highlight_cache();
+    }
+
+    /// PHOSPHOR PATCH 7 — adds one entry to the theme map without replacing it.
+    /// The renderer's non-syntax keys (`line_number`, `default_text`,
+    /// `fold_marker`, `wrap_indicator`, `trailing_whitespace`) are not
+    /// tree-sitter captures, so a consumer that owns them has no reason to
+    /// rebuild the whole syntax map to change one.
+    pub fn set_theme_key(&mut self, key: &str, style: Style) {
+        self.theme.insert(key.to_string(), style);
+        self.reset_highlight_cache();
+    }
+
+    /// PHOSPHOR PATCH 7 — shows or hides the fold gutter column, independently
+    /// of whether folding works. `true` is upstream's behaviour.
+    pub fn set_fold_gutter_visible(&mut self, visible: bool) {
+        self.fold_gutter_visible = visible;
+    }
+
+    /// PHOSPHOR PATCH 7 — marks trailing whitespace with `·`. Off by default;
+    /// `8e` shows it in INSERT only.
+    pub fn set_show_trailing_whitespace(&mut self, show: bool) {
+        self.show_trailing_whitespace = show;
+    }
+
+    /// PHOSPHOR PATCH 7 — whether trailing whitespace is currently marked.
+    pub fn show_trailing_whitespace(&self) -> bool {
+        self.show_trailing_whitespace
     }
 
     fn active_view_mode(&self) -> ViewMode {

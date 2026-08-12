@@ -110,6 +110,19 @@ pub struct MoveUp {
 
 impl Action for MoveUp {
     fn apply(&mut self, editor: &mut Editor) {
+        // PHOSPHOR PATCH 6 — with soft wrap on, up and down move by *visual*
+        // row, so a wrapped line is not one keypress tall. Returns `None` when
+        // wrapping is off, which is upstream's line-wise path below.
+        if let Some(new_cursor) = editor.soft_wrap_row_step(-1) {
+            if self.shift {
+                editor.extend_selection(new_cursor);
+            } else {
+                editor.clear_selection();
+            }
+            editor.set_cursor(new_cursor);
+            editor.clamp_cursor_to_focus_rows();
+            return;
+        }
         let cursor = editor.get_cursor();
         let code = editor.code_ref();
         let (row, col) = code.point(cursor);
@@ -151,6 +164,17 @@ pub struct MoveDown {
 
 impl Action for MoveDown {
     fn apply(&mut self, editor: &mut Editor) {
+        // PHOSPHOR PATCH 6 — see `MoveUp`.
+        if let Some(new_cursor) = editor.soft_wrap_row_step(1) {
+            if self.shift {
+                editor.extend_selection(new_cursor);
+            } else {
+                editor.clear_selection();
+            }
+            editor.set_cursor(new_cursor);
+            editor.clamp_cursor_to_focus_rows();
+            return;
+        }
         let cursor = editor.get_cursor();
         let code = editor.code_ref();
         let (row, col) = code.point(cursor);

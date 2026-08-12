@@ -6,9 +6,17 @@
 # that V002/V003 add) are convention for `Source`d fragments, not standalone
 # tapes, and are skipped.
 #
-# There are no real tapes yet — V002-V005 (Window B) add the first ones and the
-# per-screen convention they follow. Until then this is intentionally quiet:
-# an empty library is success, not a no-op error.
+# `set -euo pipefail` means the first tape that fails stops the run right
+# there — deliberate (fail loud, don't paper over a broken capture with a
+# partial "success"), but it does mean `just tapes` won't tell you about
+# tape #7's problem until #1-6 pass. Not a concern while every real tape is
+# expected to fail (see tapes/README.md's "Screen library convention" —
+# Window B ships the harness before Window C ships anything for it to
+# capture); worth revisiting if that ever hides real regressions once some
+# tapes pass and others don't.
+#
+# An empty library (no *.tape files at all, `_`-prefixed or not) is still
+# success, not a no-op error — see the branch below.
 set -euo pipefail
 cd "$(dirname "$0")"
 

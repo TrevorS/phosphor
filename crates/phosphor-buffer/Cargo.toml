@@ -23,6 +23,21 @@ tree-sitter.workspace = true
 # cargo unifies them to the same object code the editor links; `tree-sitter-scheme`
 # is the one the fork does not bundle.
 [dev-dependencies]
+# `T085`'s two artifacts, both dev-only.
+#
+#   * `tests/undercurl.rs` renders the fork into a `Buffer` and asserts the
+#     cells on both halves of the degradation path — it needs `ratatui-core`
+#     for the buffer and the `Widget` trait, and no backend at all.
+#   * `examples/undercurl.rs` is the runnable fixture `V002` points VHS at and
+#     `CP-1` opens on each terminal. It draws through `phosphor-term` rather
+#     than raw `ratatui` on purpose: Design Language §8 wants every frame
+#     inside the synchronized-output wrapper, and that crate is the only thing
+#     that can emit one. Taking it here also keeps `ratatui` itself out of this
+#     crate's dependency line — it arrives through the crate built to own it.
+#     `crossterm` is only "wait for a keypress, then quit".
+crossterm.workspace = true
+phosphor-term = { path = "../phosphor-term" }
+ratatui-core.workspace = true
 tree-sitter-css = "0.25.0"
 tree-sitter-html = "0.23.2"
 tree-sitter-javascript = "0.25.0"

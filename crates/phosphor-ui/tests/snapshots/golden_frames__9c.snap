@@ -1,0 +1,133 @@
+---
+source: crates/phosphor-ui/tests/golden_frames.rs
+expression: out
+---
+screen 9c · phosphor dark · 61x5 cells
+  Lines 16-19 with the anchored region on 18: tint + undercurl (§3),
+    through the fork's set_marks_colored and StyledSpan (T085).
+  MINUS the two `┊ ⚓ you` / `┊ ✻ claude` annotation rows, which are
+    VirtualText (T032, S3) and do not exist yet.
+  The mockup tints the whole row including the gutter; the marks API
+    tints only the characters it covers. T087 owns that difference.
+  The mockup draws `●6 │ jj ✓`; at 61 columns the ladder still has
+    room for `6 unseen`, and contracts it at 64. Order agrees, width
+    does not — see the `shed-ladder` snapshot.
+
+text
+     0         1         2         3         4         5         6
+     0123456789012345678901234567890123456789012345678901234567890
+  0 │  16      let mut delay = policy.base_delay;                 │
+  1 │  17      let mut last = None;                               │
+  2 │  18      for attempt in 0..policy.max_attempts {            │
+  3 │  19          match op() {                                   │
+  4 │ NORMAL  src/retry.rs [+]    ✻ claude idle │ 6 unseen │ jj ✓ │
+
+fg
+     0         1         2         3         4         5         6
+     0123456789012345678901234567890123456789012345678901234567890
+  0 │..kk..hhhhbbbhbbbhhhhhhhhhhhhhhhhhhhhhhhhhhh.................│
+  1 │..kk..hhhhbbbhbbbhhhhhhhheeeeh...............................│
+  2 │..kk..hhhhbbbhhhhhhhhhbbhehhhhhhhhhhhhhhhhhhhhhhh............│
+  3 │..kk..hhhhhhhhbbbbbhffhhhh...................................│
+  4 │gggggggghhhhhhhhhhhhhhccc....aaaaaaaaaaaaajjjjjjjjjjjjjjjjjj.│
+
+bg
+     0         1         2         3         4         5         6
+     0123456789012345678901234567890123456789012345678901234567890
+  0 │agggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  1 │agggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  2 │ggggggnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnngggggggggggg│
+  3 │ggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  4 │aaaaaaaayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy│
+
+style
+     0         1         2         3         4         5         6
+     0123456789012345678901234567890123456789012345678901234567890
+  0 │.............................................................│
+  1 │.............................................................│
+  2 │......~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~............│
+  3 │.............................................................│
+  4 │.............................................................│
+
+legend
+  a  #3ddc97  actors.claude
+  b  #82aecd  actors.you = syntax.keyword
+  c  #e0a94e  actors.attention
+  e  #cfa86a  actors.transient = syntax.ty = syntax.constant = syntax.string = syntax.number
+  f  #9ec98c  actors.steel = syntax.function
+  g  #0c0f0c  neutrals.ground = chrome.mode_chip_fg = chrome.tab_bar
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  k  #414b42  neutrals.line_numbers
+  n  #141d16  regions.anchor
+  y  #1a201a  chrome.statusline
+
+style
+  ~  undercurl — SGR 4:3 wrapped around the glyph, plus Modifier::UNDERLINED
+  _  Modifier::UNDERLINED alone (the degraded path)
+     underline colour #2a5c44  regions.anchor_undercurl
+
+screen 9c · phosphor light · 61x5 cells
+  Lines 16-19 with the anchored region on 18: tint + undercurl (§3),
+    through the fork's set_marks_colored and StyledSpan (T085).
+  MINUS the two `┊ ⚓ you` / `┊ ✻ claude` annotation rows, which are
+    VirtualText (T032, S3) and do not exist yet.
+  The mockup tints the whole row including the gutter; the marks API
+    tints only the characters it covers. T087 owns that difference.
+  The mockup draws `●6 │ jj ✓`; at 61 columns the ladder still has
+    room for `6 unseen`, and contracts it at 64. Order agrees, width
+    does not — see the `shed-ladder` snapshot.
+
+text
+     0         1         2         3         4         5         6
+     0123456789012345678901234567890123456789012345678901234567890
+  0 │  16      let mut delay = policy.base_delay;                 │
+  1 │  17      let mut last = None;                               │
+  2 │  18      for attempt in 0..policy.max_attempts {            │
+  3 │  19          match op() {                                   │
+  4 │ NORMAL  src/retry.rs [+]    ✻ claude idle │ 6 unseen │ jj ✓ │
+
+fg
+     0         1         2         3         4         5         6
+     0123456789012345678901234567890123456789012345678901234567890
+  0 │..kk..hhhhbbbhbbbhhhhhhhhhhhhhhhhhhhhhhhhhhh.................│
+  1 │..kk..hhhhbbbhbbbhhhhhhhheeeeh...............................│
+  2 │..kk..hhhhbbbhhhhhhhhhbbhehhhhhhhhhhhhhhhhhhhhhhh............│
+  3 │..kk..hhhhhhhhbbbbbhffhhhh...................................│
+  4 │gggggggghhhhhhhhhhhhhhccc....aaaaaaaaaaaaajjjjjjjjjjjjjjjjjj.│
+
+bg
+     0         1         2         3         4         5         6
+     0123456789012345678901234567890123456789012345678901234567890
+  0 │agggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  1 │agggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  2 │ggggggnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnngggggggggggg│
+  3 │ggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  4 │aaaaaaaayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy│
+
+style
+     0         1         2         3         4         5         6
+     0123456789012345678901234567890123456789012345678901234567890
+  0 │.............................................................│
+  1 │.............................................................│
+  2 │......~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~............│
+  3 │.............................................................│
+  4 │.............................................................│
+
+legend
+  a  #1a9a62  actors.claude = regions.anchor_undercurl
+  b  #3568a8  actors.you = syntax.keyword
+  c  #a06a10  actors.attention
+  e  #8f6a2e  actors.transient = syntax.ty = syntax.constant = syntax.string = syntax.number
+  f  #5d9645  actors.steel = syntax.function
+  g  #f4f2ec  neutrals.ground = chrome.mode_chip_fg = chrome.tab_bar
+  h  #3a3830  neutrals.text = syntax.text
+  j  #8a8474  neutrals.meta = syntax.comment
+  k  #b0aa98  neutrals.line_numbers
+  n  #e6efe6  regions.anchor
+  y  #e8e4d8  chrome.statusline
+
+style
+  ~  undercurl — SGR 4:3 wrapped around the glyph, plus Modifier::UNDERLINED
+  _  Modifier::UNDERLINED alone (the degraded path)
+     underline colour #1a9a62  actors.claude

@@ -1,6 +1,8 @@
 use crate::code::Code;
+// PHOSPHOR PATCH 6 — the wrap engine itself lives under `phosphor/`.
+use crate::phosphor::soft_wrap;
 use crate::diff;
-use crate::types::VisualRow;
+use crate::types::{RowSpan, VisualRow};
 
 #[derive(Clone, Copy)]
 pub(crate) enum FoldExpandDirection {
@@ -31,6 +33,11 @@ pub(crate) struct View {
     rows: Vec<VisualRow>,
     expanded_hidden_ranges: Vec<(usize, usize)>,
     collapsed_code_folds: Vec<(usize, usize)>,
+    /// PHOSPHOR PATCH 6 — text-column width to wrap at, in cells. `None` is
+    /// upstream's behaviour: no wrapping, long lines scroll horizontally.
+    /// Held here rather than passed to [`View::rebuild`] so every existing
+    /// call site keeps its signature.
+    soft_wrap: Option<usize>,
 }
 
 impl View {
@@ -49,6 +56,20 @@ impl View {
 
     pub(crate) fn rows(&self) -> &[VisualRow] {
         &self.rows
+    }
+
+    /// PHOSPHOR PATCH 6 — the wrap width, in cells of the text column.
+    pub(crate) fn soft_wrap(&self) -> Option<usize> {
+        self.soft_wrap
+    }
+
+    /// PHOSPHOR PATCH 6 — sets the wrap width. Returns `true` when it changed,
+    /// which is the caller's cue to rebuild.
+    pub(crate) fn set_soft_wrap(&mut self, width: Option<usize>) -> bool {
+        let width = width.filter(|w| *w >= soft_wrap::MIN_WIDTH);
+        let changed = width != self.soft_wrap;
+        self.soft_wrap = width;
+        changed
     }
 
     pub(crate) fn clear(&mut self) {
@@ -85,6 +106,16 @@ impl View {
         self.collapsed_code_folds.clear();
     }
 
+    /// PHOSPHOR PATCH 7 — how many lines a fold starting on `line_idx` is
+    /// currently hiding, or `None` when there is no collapsed fold there.
+    /// The count the `▸⋯ n lines` marker prints (mockup `8e`).
+    pub(crate) fn code_fold_hidden_lines(&self, code: &Code, line_idx: usize) -> Option<usize> {
+        let range = code.fold_range_at_start(line_idx)?;
+        self.collapsed_code_folds
+            .contains(&(range.start_line, range.end_line))
+            .then(|| range.end_line.saturating_sub(range.start_line))
+    }
+
     pub(crate) fn code_fold_indicator(&self, code: &Code, line_idx: usize) -> Option<bool> {
         code.fold_range_at_start(line_idx).map(|range| {
             self.collapsed_code_folds
@@ -112,6 +143,8 @@ impl View {
                     orig_line_idx: None,
                 })
                 .collect();
+            // PHOSPHOR PATCH 6
+            self.rows = soft_wrap::apply(std::mem::take(&mut self.rows), code, self.soft_wrap);
             return;
         }
 
@@ -139,6 +172,8 @@ impl View {
                 Self::apply_code_folds(rows, &self.collapsed_code_folds)
             }
         };
+        // PHOSPHOR PATCH 6
+        self.rows = soft_wrap::apply(std::mem::take(&mut self.rows), code, self.soft_wrap);
     }
 
     /// Filters out rows whose source lines fall inside any collapsed fold range.
@@ -153,6 +188,12 @@ impl View {
                     .iter()
                     .any(|(start, end)| *anchor_line > *start + 1 && *anchor_line <= *end + 1),
                 VisualRow::FoldSeparator { .. } => true,
+                // PHOSPHOR PATCH 6 — folds are applied before wrapping, so
+                // this arm is unreachable today; it filters like `Real` so it
+                // stays correct if the two ever swap order.
+                VisualRow::Wrapped { line_idx, .. } => !folds
+                    .iter()
+                    .any(|(start, end)| *line_idx > *start && *line_idx <= *end),
             })
             .collect()
     }
@@ -273,7 +314,69 @@ impl View {
                 Some(anchor_line.saturating_sub(1).min(last))
             }
             VisualRow::FoldSeparator { .. } => None,
+            // PHOSPHOR PATCH 6 — every segment maps back to its source line.
+            VisualRow::Wrapped { line_idx, .. } => Some(*line_idx),
         })
+    }
+
+    /// PHOSPHOR PATCH 6 — the char span `[start_col, end_col)` a row draws,
+    /// with the source line it belongs to and the cells its marker costs.
+    ///
+    /// `None` for rows that are not a slice of the current buffer — fold
+    /// separators, and diff ghosts, whose text comes from the original.
+    /// **This is the row-stream contract**: cursor placement, click targeting
+    /// and (at `T032`) virtual-text placement all resolve a row through this
+    /// one function, so they cannot disagree about what a row shows.
+    pub(crate) fn row_span(
+        &self,
+        code: &Code,
+        mode: ViewMode,
+        visual_row: usize,
+    ) -> Option<RowSpan> {
+        if !mode.has_diff() && self.rows.is_empty() {
+            let line_idx = visual_row.min(code.len_lines().saturating_sub(1));
+            return Some(RowSpan {
+                line_idx,
+                segment: 0,
+                start_col: 0,
+                end_col: code.line_len(line_idx),
+                prefix_cells: 0,
+                wrapped: false,
+                is_last_segment: true,
+            });
+        }
+
+        match self.rows.get(visual_row)? {
+            VisualRow::Real { line_idx, .. } => Some(RowSpan {
+                line_idx: *line_idx,
+                segment: 0,
+                start_col: 0,
+                end_col: code.line_len(*line_idx),
+                prefix_cells: 0,
+                wrapped: false,
+                is_last_segment: true,
+            }),
+            VisualRow::Wrapped {
+                line_idx,
+                segment,
+                start_col,
+                end_col,
+                ..
+            } => Some(RowSpan {
+                line_idx: *line_idx,
+                segment: *segment,
+                start_col: *start_col,
+                end_col: *end_col,
+                prefix_cells: if *segment == 0 {
+                    0
+                } else {
+                    soft_wrap::CONTINUATION_PREFIX
+                },
+                wrapped: true,
+                is_last_segment: *end_col >= code.line_len(*line_idx),
+            }),
+            VisualRow::FoldSeparator { .. } | VisualRow::GhostDeleted { .. } => None,
+        }
     }
 
     pub(crate) fn visual_row_for_line(&self, mode: ViewMode, line_idx: usize) -> Option<usize> {
@@ -281,9 +384,50 @@ impl View {
             return Some(line_idx);
         }
 
-        self.rows.iter().position(
-            |row| matches!(row, VisualRow::Real { line_idx: idx, .. } if *idx == line_idx),
-        )
+        // PHOSPHOR PATCH 6 — a wrapped line's first segment is the row that
+        // carries its number, so it is the row the line is "at".
+        self.rows.iter().position(|row| match row {
+            VisualRow::Real { line_idx: idx, .. } => *idx == line_idx,
+            VisualRow::Wrapped {
+                line_idx: idx,
+                segment,
+                ..
+            } => *idx == line_idx && *segment == 0,
+            _ => false,
+        })
+    }
+
+    /// PHOSPHOR PATCH 6 — the row that shows `char_col` of `line_idx`.
+    ///
+    /// Differs from [`View::visual_row_for_line`] only for wrapped lines,
+    /// where it picks the segment rather than the line's first row. A column
+    /// sitting exactly on a segment boundary belongs to the *later* row, which
+    /// is where a cursor typed up to the wrap point appears.
+    pub(crate) fn visual_row_for_position(
+        &self,
+        mode: ViewMode,
+        line_idx: usize,
+        char_col: usize,
+    ) -> Option<usize> {
+        let first = self.visual_row_for_line(mode, line_idx)?;
+        let mut last = first;
+        for (offset, row) in self.rows.iter().enumerate().skip(first) {
+            match row {
+                VisualRow::Wrapped {
+                    line_idx: idx,
+                    end_col,
+                    ..
+                } if *idx == line_idx => {
+                    last = offset;
+                    if char_col < *end_col {
+                        return Some(offset);
+                    }
+                }
+                _ if offset > first => break,
+                _ => {}
+            }
+        }
+        Some(last)
     }
 
     pub(crate) fn line_visible(&self, mode: ViewMode, line_idx: usize) -> bool {
@@ -296,12 +440,14 @@ impl View {
         }
 
         self.rows.iter().rev().find_map(|row| {
-            if let VisualRow::Real { line_idx: idx, .. } = row
-                && *idx < line_idx
-            {
-                return Some(*idx);
-            }
-            None
+            // PHOSPHOR PATCH 6 — `Wrapped` rows are real lines too; without
+            // this arm, up/down motion would skip every wrapped line.
+            let idx = match row {
+                VisualRow::Real { line_idx: idx, .. }
+                | VisualRow::Wrapped { line_idx: idx, .. } => *idx,
+                _ => return None,
+            };
+            (idx < line_idx).then_some(idx)
         })
     }
 
@@ -312,12 +458,13 @@ impl View {
         }
 
         self.rows.iter().find_map(|row| {
-            if let VisualRow::Real { line_idx: idx, .. } = row
-                && *idx > line_idx
-            {
-                return Some(*idx);
-            }
-            None
+            // PHOSPHOR PATCH 6 — see `prev_line`.
+            let idx = match row {
+                VisualRow::Real { line_idx: idx, .. }
+                | VisualRow::Wrapped { line_idx: idx, .. } => *idx,
+                _ => return None,
+            };
+            (idx > line_idx).then_some(idx)
         })
     }
 

@@ -1,3 +1,10 @@
 # Cargo.lock is committed on purpose: this workspace ships a binary, and the VHS
 # reference images (V001) are only comparable if the build resolves identically.
 /target
+
+# Scratch output from manually running a tape at the top level of tapes/ (e.g.
+# `vhs tapes/_dimensions.tape`) — GIF/PNG side effects of a probe or calibration
+# run, not the committed references. Real per-screen references (V005) live
+# under tapes/artifacts/ and are unaffected by this non-recursive pattern.
+/tapes/*.gif
+/tapes/*.png

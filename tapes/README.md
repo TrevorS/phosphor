@@ -5,10 +5,21 @@ compared against committed references. Proves what actually appeared on screen,
 which Tier-1 snapshot tests (ratatui `TestBackend`) structurally cannot — see
 `docs/TASKS.md`'s "three verification tiers" for the full split.
 
-**No real tapes exist yet.** `V002`–`V005` (Window B) add the first ones and the
-per-screen convention (`tapes/<id>.tape` → `artifacts/<id>.png`) they follow.
-This phase (`V001`) is the harness those tapes will run inside: pinned tool
-versions, the version gate, and the `just tapes` entry point.
+`V001` built the harness tapes run inside: pinned tool versions, the version
+gate, and the `just tapes` entry point. `V002` added the first `_`-prefixed
+reference file — the column-width table. `V003`–`V005` (this phase) add the
+shared config fragment, the no-`Sleep` / sentinel convention, and the first
+real per-screen tapes and recipes — see the three sections below, in that
+order (each is `Needs:` the one before it in `docs/TASKS.md`).
+
+**The tapes in the library today cannot pass yet, on purpose.** They're
+staged for CP-1's gate phase, not for this moment: `crates/phosphor/src/
+main.rs` is still `fn main() {}` (Window C's event loop), so there is
+nothing yet that opens a file and draws a frame. Every tape below is
+structurally complete — `Require`, config, sentinel, `Screenshot` — and
+`just tape 1a` proves the *mechanism* end to end (version gate → cd → vhs →
+clear failure), just not a passing capture. See "Screen library convention"
+for the exact status of each and what's blocking it.
 
 ## Pinned versions
 
@@ -54,15 +65,280 @@ default silently resolves to `Menlo` here today, and would silently resolve to
 `JetBrains Mono` on any machine that happens to have it — same tape, different
 pixels, no diff that explains why.
 
-**Pinned font: `Menlo`**, at whatever size `V002`'s column calibration lands
-on. Menlo ships with every Mac (`/System/Library/Fonts/Menlo.ttc` — confirmed
+**Pinned font: `Menlo`**, at **size `16`** — decided by `V002`, since sizing is
+what the column calibration below needed fixed before it could mean anything.
+Menlo ships with every Mac (`/System/Library/Fonts/Menlo.ttc` — confirmed
 present on the reference machine, zero install cost) and is what the unpinned
 default already falls through to here, so pinning it costs nothing and matches
 today's captures if any exist before `_config.tape` is written explicitly.
+16 was not derived from anything in the design docs — nothing pins a size —
+it's simply a normal, legible terminal size that produces whole-pixel cell
+metrics (10px/column, see below); any future change to it invalidates the
+whole calibration table and needs a full re-run of `V002`'s method.
 
-This becomes a `Set FontFamily "Menlo"` line in `tapes/_config.tape` (`V003`,
-Window B — `Source`d by every tape). Recorded here first because V001's brief
-is where the pin belongs; V003 is where it becomes code.
+This becomes `Set FontFamily "Menlo"` + `Set FontSize 16` lines in
+`tapes/_config.tape` (`V003`, Window B — `Source`d by every tape). Recorded
+here first because V001's brief is where the pin belongs; V003 is where it
+becomes code.
+
+## Column calibration (V002)
+
+VHS sizes the terminal in pixels (`Set Width`/`Set Height`), never columns.
+`tapes/_dimensions.tape` is the committed `(FontSize, Width) -> columns`
+table, derived by binary search against a real `tput cols` readout inside the
+capture (not computed/assumed) — full methodology, the table, and three
+non-obvious parser/renderer gotchas are documented in that file's header.
+Short version for reference here:
+
+| columns | `Set Width` (px) |
+|---|---|
+| 80  | 828  |
+| 100 | 1028 |
+| 120 | 1228 |
+| 200 | 2028 |
+
+(Full table with valid ranges lives in `_dimensions.tape` itself — this is a
+pointer, not a second copy to keep in sync.) Requires `Set Padding 0`,
+`Set Margin 0`, `WindowBar` unset, and — this bit is load-bearing, not
+style — **an even `Set Width`**; an odd value breaks VHS's ffmpeg pipeline
+outright (`Padded dimensions cannot be smaller than input dimensions`, no
+GIF, no Screenshot). `_dimensions.tape` also carries a `vhs`-parser gotcha
+that affects `V003`: any `Output`/`Screenshot`/`Source` path starting with
+`_` must be quoted (`Source "_config.tape"`, not `Source _config.tape`) or
+the tape fails to parse.
+
+**Proven reproducible**, per V002's *"done when"*: the calibration tape's
+`Wait+Screen` assertion for exactly 80 columns passed on every run in the
+investigation (n>=10, two different working directories), and its
+`Screenshot` output hashed byte-identical (sha256) across independent runs
+where it succeeded. `Screenshot` itself is separately flaky specifically
+when `vhs` runs with cwd inside this worktree (~50% miss rate, no error, no
+nonzero exit) — not a V002 blocker (nothing here depends on the PNG existing
+to prove the count), but flagged for `V004`/`V007` since a pixel-diff runner
+that treats a missing PNG as *the* failure will misreport this as a product
+regression. Not reproduced outside the worktree (3/3 clean in `/tmp`).
+
+## Open empirical questions (owned by V002) — both now closed
+
+Two questions V002 was asked to settle, closed in two passes as their
+surfaces landed. `T010` (a real theme, see `crates/phosphor-ui/src/theme.rs`)
+answered the first one against real values earlier in this window; `T085`
+(undercurl in the vendored renderer) answered the second once it existed to
+capture — see its own method below rather than being inferred from VHS's
+documentation, per V002's brief.
+
+- **Do captured pixels match theme hex values exactly? — Answered: no, not
+  byte-exact, but close enough that a small tolerance is the fix, not a
+  problem to solve.**
+
+  Method: paint raw 24-bit truecolor blocks (`printf '\033[48;2;R;G;Bm ...'`)
+  for four values actually in `Theme::phosphor_dark()` — `claude` `#3ddc97`,
+  `neutrals.text` `#c6cec6`, `actors.attention` `#e0a94e`,
+  `neutrals.ground` `#0c0f0c` — plus pure white `#ffffff` as a control, under
+  the same `FontSize 16` / `Padding 0` / `Margin 0` pin as the column table.
+  Screenshot, sample the flat interior of each block (away from
+  antialiased edges) with two independent readers (Python/Pillow and
+  ImageMagick `identify` — agreed exactly, so it isn't a reader artifact).
+
+  | theme value | hex | expected RGB | captured RGB | delta |
+  |---|---|---|---|---|
+  | `actors.claude` | `#3ddc97` | (61, 220, 151) | (60, 219, 150) | (-1, -1, -1) |
+  | `neutrals.text` | `#c6cec6` | (198, 206, 198) | (198, 205, 198) | (0, -1, 0) |
+  | `actors.attention` | `#e0a94e` | (224, 169, 78) | (224, 168, 78) | (0, -1, 0) |
+  | `neutrals.ground` | `#0c0f0c` | (12, 15, 12) | (12, 14, 11) | (0, -1, -1) |
+  | control white | `#ffffff` | (255, 255, 255) | (255, 255, 255) | (0, 0, 0) |
+
+  Deterministic, not noise — re-ran the `claude` capture from a clean state
+  and got the identical (60, 219, 150) both times. Small (never more than 1
+  of 255 in any channel, ~0.4%, invisible by eye), one-directional (every
+  observed delta is 0 or -1, never +1), and channel-dependent rather than a
+  flat "-1 to everything" (white round-trips exact; the others each lose 1
+  in one or more channels). Root cause not chased down — somewhere in the
+  headless-Chromium-canvas -> PNG path, not `vhs`'s terminal emulation of
+  the escape code itself, but which specific stage wasn't isolated.
+  **Consequence for `V007`:** the pixel-diff runner cannot assert byte
+  equality against a theme hex; it needs a small per-channel tolerance
+  (>=1) baked in from the start, or every reference will show a spurious
+  1-bit diff on channels that never actually changed.
+
+- **Does undercurl survive VHS capture? — Answered: yes.** The rendered pixels
+  are distinguishable from the underline degradation on three independent
+  signals, not just eyeballed.
+
+  Method: `T085`'s fixture (`crates/phosphor-buffer/examples/undercurl.rs`,
+  reachable without `crates/phosphor/src/main.rs`, which is still a stub this
+  window — the whole reason the fixture is a standalone example) renders one
+  call site three ways, each its own `_undercurl-check-*.tape` (investigation
+  tapes, `_`-prefixed like `_dimensions.tape`, run manually, not part of the
+  V005 screen library):
+
+  | tape | what it forces | what it answers |
+  |---|---|---|
+  | `_undercurl-check-forced-curl.tape` | `PHOSPHOR_UNDERCURL=1` | does the SGR `4:3` escape survive ttyd → xterm.js → headless-Chromium → PNG |
+  | `_undercurl-check-forced-underline.tape` | `PHOSPHOR_UNDERCURL=0` | the degradation-path control: same span, same colour intent, no escape |
+  | `_undercurl-check-auto.tape` | nothing (real detection) | what `UnderlineCapability::resolve` sees VHS itself as |
+
+  All three captured clean (Width 828 / Height 240, `_config.tape`'s pins).
+  Screenshots at `tapes/artifacts/undercurl-check-{auto,forced-curl,forced-underline}.png`.
+
+  **Signal 1 — not byte-identical.** `forced-curl` and `forced-underline` hash
+  differently (sha256 `29db34b8…` vs `88fa34fc…`); `auto` hashes **identical**
+  to `forced-underline` — VHS's own ttyd session reports `TERM=xterm-256color`
+  (visible in the fixture's own on-screen legend), which
+  `crates/phosphor-buffer/tests/undercurl.rs`'s
+  `the_capability_is_detected_from_the_environment` test already asserts
+  resolves to `UnderlineCapability::Underline`. **Consequence for `V009`:** VHS
+  records the *degraded* look by default; capturing the primary-terminal
+  undercurl treatment needs `PHOSPHOR_UNDERCURL=1` (or an equivalent forced
+  override) in the tape, not just pointing VHS at the fixture.
+
+  **Signal 2 — colour.** Sampling the `anchored` span (anchor-undercurl,
+  `#2a5c44`) and the `expect("unanchored")` span (failure-undercurl,
+  `#d97b6c`) with Pillow: `forced-curl` shows a green-tinted band under
+  `anchored` (greenness 6–10 across every column of the span, background/text
+  noise floor is ~4) and a red-tinted pixel in 189/320 columns under
+  `expect(…)`; `forced-underline` shows **zero** columns with either tint —
+  the degraded path drops the requested colour entirely, it does not
+  approximate it.
+
+  **Signal 3 — shape.** A per-row luminance profile under `anchored`
+  (`x=140..207`, the span's exact width) is the clearest evidence of the two:
+  `forced-curl`'s ink is spread across four rows (`y=18..21`) with *partial*,
+  varying coverage per row (9/67, 57/67, 67/67, 22/67 columns) — the signature
+  of a line whose y-position moves with x, i.e. a wave. `forced-underline`'s
+  ink is a flat, full-width, two-row-thick band (67/67 at both `y=18` and
+  `y=19`, zero elsewhere) — a straight line, no waviness at all. Same font,
+  same span, same background; the only variable was the escape.
+
+  Not re-run for a second-sample determinism check the way Q1 was (the byte-
+  hash match between `auto` and `forced-underline` across two full `vhs`
+  invocations already demonstrates the pipeline is deterministic here too),
+  but the three signals agree with each other and with the fixture's own
+  unit tests, which is a stronger check than a bare re-run would have been.
+
+  **Consequence for `V007`/`CP-1`:** a pixel-diff reference for an undercurled
+  region is meaningful — the capability is not silently downsampled to a
+  straight line the way, say, a font substitution would. Tier 2 can assert
+  "this region is undercurled" the same way it asserts colour, so long as the
+  capturing tape forces or genuinely runs on a `TERM` that resolves to
+  `UnderlineCapability::Undercurl` — VHS's own default does not.
+
+## V003 — shared tape configuration
+
+`tapes/_config.tape`, `Source`d by every real tape right after `Require` and
+before that tape's own `Set Width`/`Set Height` (the position matters — see
+the file's own header and `_dimensions.tape`'s gotcha #2). It pins everything
+V003 asks for: `FontFamily`/`FontSize` (V001/V002's pin), `Padding 0`,
+`Margin 0`, `Shell "bash"`, `CursorBlink false`, a fixed `TypingSpeed` and
+`Framerate`, and a neutral background — sourced from
+`Theme::phosphor_dark()`'s own `neutrals.ground`/`neutrals.text`
+(`crates/phosphor-ui/src/theme.rs`) rather than an invented placeholder or
+one of vhs's ~250 bundled named themes.
+
+**Reproducibility proof** (`tapes/_config-check.tape`, the same
+`_`-prefixed reference-and-runnable-proof pattern as `_dimensions.tape`):
+sources `_config.tape`, types a fixed line, waits for it, screenshots.
+Deliberately does not drive `phosphor` — main.rs is still a stub this
+window — so it isolates the config fragment's own determinism. **Three
+independent runs, same working directory, all three byte-identical:**
+
+```
+sha256 2be4295e7ea6a21bac5fc7458663e1e0e4ca516aa34aabc457633e79f1e1303b  config-check.png
+```
+
+(All three runs also succeeded on the first try — `_config-check.tape`
+never hit the `Screenshot`-flakiness `_dimensions.tape` documented, though
+that's not proof it's immune; re-run a few times if it ever misses.)
+
+## V004 — deterministic waits, no `Sleep`
+
+Every tape in the library synchronises with `Wait+Screen@<timeout>
+/<regex>/` against a real rendered frame — never a bare `Sleep`. Checked
+mechanically: `grep -n Sleep tapes/*.tape` returns nothing (`_config.tape`
+and the reference/proof files included).
+
+**The sentinel.** The statusline is the natural ready-state signal (it's
+the last thing every real frame draws), and `T017` landed *during* this
+phase — so this is read off the actual implementation
+(`crates/phosphor-ui/src/status_line.rs`), not guessed at:
+
+```
+(?m)^ (NORMAL|INSERT|VISUAL|PAUSED)\b
+```
+
+Why this and not the `│` segment separators the design doc's prose
+emphasizes: `status_line.rs`'s own code shows the mode chip is the **one**
+piece that is never shed to nothing (only `NORMAL` → `N`, at very narrow
+widths) and always the first thing written to the row — see `compose()`,
+where `left` starts life as `vec![Piece::new(format!(" {word} "), chip)]`
+unconditionally. The `│` separators, by contrast, only appear *between*
+two or more right-hand segments (`if i > 0 { row.write(SEP, ...) }`) — at
+S1, with no live ACP session (`SessionState::None`) and no store-backed
+counters yet, the right-hand group could easily be down to zero or one
+piece, in which case no `│` ever renders and a `│`-based wait would hang
+until timeout on a perfectly correct frame. The mode word has no such
+failure mode: `Mode::Normal` is `StatusLineVm`'s `Default`, so a freshly
+opened file renders it before a single keystroke.
+
+Assumes the statusline spans the full terminal width starting at column 0
+(§5: "statusline, bottom, always" — the standard case, not the widget's own
+unit tests, which use an inset test-harness `Rect` for coverage reasons).
+If the temporary S1 main.rs ever boots into a mode other than Normal, or
+insets the statusline for some reason, this regex still matches — all four
+mode words are covered and the leading-space anchor doesn't depend on which
+one shows up.
+
+**Timeout.** Every real tape uses `Wait+Screen@10s`, not vhs's implicit
+default — pinned for the same reason everything else in this file is
+pinned: an explicit number that fails predictably beats an implicit one
+that might change with a vhs upgrade. `10s` is generous for "a file opens
+and one frame renders"; tighten it once real timings are known.
+
+## V005 — screen library convention
+
+One tape per screen id: `tapes/<id>.tape` → `Require phosphor` →
+`Source "_config.tape"` → per-tape `Set Width`/`Set Height` (from
+`_dimensions.tape`'s table) → `Hide` the setup keystrokes → `Show` →
+`Wait+Screen` on the V004 sentinel → `Screenshot "artifacts/<id>.png"`.
+`Output "artifacts/<id>.gif"` is present on every tape (vhs writes no
+`Screenshot` at all without an `Output` — confirmed empirically, not
+documented upstream) even where motion isn't the point; the GIF is a free
+byproduct there, not the reviewed artifact.
+
+**Recipes** (`justfile`): `just tape <id>` regenerates one screen —
+`vhs tapes/<id>.tape`, run with cwd `tapes/` so relative paths
+(`Source "_config.tape"`, `Screenshot "artifacts/..."`) resolve the same
+way as they do under `just tapes` → `run-tapes.sh` (which also `cd`s into
+`tapes/`). Both go through the same version gate first. `tapes/artifacts/`
+is a real, committed directory (`.gitkeep`) — vhs does not create missing
+parent directories for `Screenshot`/`Output`, confirmed by testing it.
+
+**Library status today** — every tape below validates
+(`vhs validate tapes/*.tape`) and exercises the full recipe mechanism
+(`just tape 1a` was **re-run for real this phase**, binary built and put on
+`$PATH` by hand: version gate passes, `cd`, `vhs` starts, `Require phosphor`
+succeeds against the real built binary, then a real 10s timeout on the V004
+sentinel — `phosphor some_file.rs` exits `0` immediately without drawing
+anything, so the sentinel never appears; clean nonzero `vhs` exit). Still
+true this phase, reconfirmed rather than assumed stale. None can *pass* yet:
+
+| tape(s) | blocked on |
+|---|---|
+| `1a`, `9c`, `8d`, `sweep-*` (6), `theme-phosphor-dark` | `crates/phosphor/src/main.rs` still `fn main() {}` (Window C) — nothing opens a file or draws a frame yet. Also needs the `phosphor` binary on `$PATH`, which nothing in this repo does for you yet (`cargo build --release && export PATH="$PWD/target/release:$PATH"` until there's a real install step). |
+| `8c`, `theme-phosphor-light`, `theme-catppuccin`, `theme-tokyo-night` | Both of the above, **plus** a second, independent blocker: no confirmed way to select a non-default theme from outside the process. Each assumes a `--theme <slug>` flag that does not exist — flagged, not guessed at silently. Slugs (`phosphor-light`, `catppuccin-mocha`, `tokyo-night`) are real — `crates/phosphor-ui/src/theme/builtin.rs`'s `BUILTIN_SLUGS` — only the CLI surface to reach them is missing. |
+
+The four-theme sweep is now **written** (`theme-{phosphor-dark,phosphor-light,
+catppuccin,tokyo-night}.tape`, this phase) — structurally complete and
+`vhs validate`-clean, same convention as `1a`: same buffer
+(`crates/phosphor-core/src/lib.rs`), same `Width 1228`/`Height 700`, theme
+argument swapped in. `theme-catppuccin`/`theme-tokyo-night` are the only
+captures of mockup ids `9a`/`9b`'s acceptance *shape* (see
+IMPLEMENTATION-PLAN.md's S1 amendment) — no separate `9a.tape`/`9b.tape`
+exists, this family is their home.
+
+Once `main.rs` renders a frame (and, separately, theme selection exists),
+regenerating the real CP-1 artifact set is `just tapes` — no further recipe
+work needed. That's the point of building this now.
 
 ## Convention: every tape gets a `Require`
 
@@ -80,23 +356,47 @@ below) — because a tape doesn't invoke them by name, `vhs` invokes the tape.
 
 ```
 tapes/
-  README.md            this file
-  check-versions.sh     the version gate `just tapes` runs first
-  run-tapes.sh           runs every tapes/*.tape (currently none)
+  README.md              this file
+  check-versions.sh      the version gate `just tapes` / `just tape <id>` run first
+  run-tapes.sh            runs every real tapes/*.tape (`_`-prefixed skipped)
+  _dimensions.tape         V002 — the column-width calibration table (+ V005's 40/60 rows)
+  _config.tape              V003 — Source'd by every real tape
+  _config-check.tape         V003 — its reproducibility proof
+  _undercurl-check-{auto,forced-curl,forced-underline}.tape
+                              V002 — the second open question's investigation,
+                              run manually, not part of the V005 screen library
+  1a.tape, 9c.tape, 8c.tape, 8d.tape   V005 — the four CP-1 stills
+  sweep-{200,120,100,80,60,40}.tape     V005 — the CP-1 width sweep
+  theme-{phosphor-dark,phosphor-light,catppuccin,tokyo-night}.tape
+                                          the CP-1 four-theme sweep
+  artifacts/                             V005 — committed Screenshot/gif output
+    .gitkeep
 ```
 
 `_`-prefixed files (`_config.tape`, `_dimensions.tape`, …) are `V002`/`V003`
-additions: shared fragments other tapes `Source`, not standalone recordings.
-`run-tapes.sh` already skips them by convention, ahead of any of them existing.
+additions, skipped by `run-tapes.sh` by convention — not standalone
+recordings a checkpoint captures. The two aren't quite the same shape,
+though: `_config.tape` (`V003`) is a true fragment, meant to be `Source`d
+verbatim by every real tape. `_dimensions.tape` is a **reference table**, not
+something to `Source` — it sets one specific `Set Width` for one specific
+column count, and VHS only honours `Set` directives before a tape's first
+real command (see the file's own header), so sourcing it would just lock in
+whichever column count happens to be its live stanza. A real tape wanting,
+say, 120 columns copies `1228` from the table into its own `Set Width` line
+near the top, after `Source "_config.tape"`.
 
 ## Running
 
 ```
-just tapes
+just tapes        # every real tape
+just tape 1a       # exactly one, by screen id — V005
 ```
 
-Version-checks `vhs`, `ttyd`, and `ffmpeg` first; fails loudly and legibly if
-any is missing or the wrong version (see `tapes/check-versions.sh` — the
-message names what's expected and what was found). Once versions check out,
-records every `tapes/*.tape`. Against today's empty library that's a quiet,
-successful no-op — there is nothing to regenerate until Window B.
+Both version-check `vhs`, `ttyd`, and `ffmpeg` first; fail loudly and
+legibly if any is missing or the wrong version (see
+`tapes/check-versions.sh` — the message names what's expected and what was
+found). Once versions check out, `just tapes` records every real
+`tapes/*.tape` (`_`-prefixed skipped) and `just tape <id>` records just
+`tapes/<id>.tape`. **Today, every real tape fails** — not silently, and not
+a harness bug: see "Screen library convention" above for exactly what each
+one is blocked on and why that's expected at this point in the build.

@@ -1,0 +1,77 @@
+# FIXTURE — NOT A SHIPPED THEME. `T011`'s acceptance criterion in file form:
+# phosphor dark with one line changed, `actor.claude` moved to a red, so the
+# loader has something to reject. Nothing loads this except the tests that
+# assert the rejection and check the error is legible.
+#
+# claude-is-red — the planted bad theme
+#
+# base16-style: one `key: value` per line, values are `#rrggbb`.
+# A line whose first non-blank character is `#` is a comment; there are no
+# trailing comments (a value is the rest of its line).
+#
+# `actor.*` is the contract, not a preference: each actor is locked to a hue
+# family and `Theme::load` rejects a file that moves one out of it. Hue is
+# fixed; saturation and lightness are yours (Design Language §10).
+#
+# PROVENANCE — every value is Design Language §1/§3/§4/§5, transcribed. This
+# file and `Theme::phosphor_dark()` are two encodings of one palette and a test
+# asserts they agree field for field; edit one and the other fails the build.#
+# DERIVATION METHOD — a derived value is never invented freehand. Each is the
+# phosphor-dark relationship re-applied to this palette: a lightness offset from
+# this theme's own `ground` (anchor +/-0.043, dimmed +/-0.094, selection
+# +/-0.122, failure +/-0.047, statusline +/-0.061, tab_bar_rule +/-0.074,
+# float.body +/-0.018 in HSL L, sign by variant), or a ratio off this theme's
+# own actor colour (float.informational = claude at S x0.54 / L x0.48 on dark;
+# float.needs_you = attention likewise; region.failure takes trouble's hue).
+# Reproduce or re-derive them and the numbers come back.
+name: phosphor
+variant: dark
+
+# actors — Design Language §1. Validated at load.
+actor.claude: #d9534f
+actor.you: #82aecd
+actor.attention: #e0a94e
+actor.trouble: #d97b6c
+actor.transient: #cfa86a
+actor.steel: #9ec98c
+
+# neutral ramp — §1
+neutral.ground: #0c0f0c
+neutral.text: #c6cec6
+neutral.prose: #9aa39a
+neutral.meta: #59635a
+neutral.line_numbers: #414b42
+neutral.dimmed_under_float: #232823
+neutral.bright_text: #e8f0e8
+
+# region tints and undercurl — §3
+region.anchor: #141d16
+region.anchor_undercurl: #2a5c44
+region.selection: #26332a
+region.failure: #211114
+region.failure_undercurl: #d97b6c
+
+# float chrome — §4
+float.informational: #2a5c44
+float.needs_you: #6b5426
+float.needs_you_body: #171207
+float.needs_you_rule: #3d3418
+float.passive: #2a3c2e
+float.body: #101410
+
+# statusline and tab bar — §5
+chrome.statusline: #1a201a
+chrome.mode_chip_fg: #0c0f0c
+chrome.tab_bar: #0c0f0c
+chrome.tab_bar_rule: #1d241d
+chrome.divider: #242a24
+
+# syntax — theme-owned (§10). Not validated.
+syntax.text: #c6cec6
+syntax.keyword: #82aecd
+syntax.type: #cfa86a
+syntax.function: #9ec98c
+syntax.constant: #cfa86a
+syntax.string: #cfa86a
+syntax.number: #cfa86a
+syntax.comment: #59635a

@@ -1,0 +1,69 @@
+---
+source: crates/phosphor-ui/tests/golden_frames.rs
+expression: frame.to_text(&buf)
+---
+screen 8c · phosphor light · 100x7 cells
+  Lines 15-20, wide, on warm paper. The acceptance question is whether
+    claude-green is still the brightest thing on screen (§10, Q7).
+  MINUS the VirtualText annotation rows (T032, S3), as in 9c.
+
+text
+     0         1         2         3         4         5         6         7         8         9
+     0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │  15  ) -> Result<T, E> {                                                                           │
+  1 │  16      let mut delay = policy.base_delay;                                                        │
+  2 │  17      let mut last = None;                                                                      │
+  3 │  18      for attempt in 0..policy.max_attempts {                                                   │
+  4 │  19          match op() {                                                                          │
+  5 │  20              Ok(v) => return Ok(v),                                                            │
+  6 │ NORMAL  src/retry.rs                                               ✻ claude idle │ 2 unseen │ jj ✓ │
+
+fg
+     0         1         2         3         4         5         6         7         8         9
+     0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │..kk..hhhhheeeeeehehhehhh...........................................................................│
+  1 │..kk..hhhhbbbhbbbhhhhhhhhhhhhhhhhhhhhhhhhhhh........................................................│
+  2 │..kk..hhhhbbbhbbbhhhhhhhheeeeh......................................................................│
+  3 │..kk..hhhhbbbhhhhhhhhhbbhehhhhhhhhhhhhhhhhhhhhhhh...................................................│
+  4 │..kk..hhhhhhhhbbbbbhffhhhh..........................................................................│
+  5 │..kk..hhhhhhhhhhhheehhhhhhhbbbbbbhffhhhh............................................................│
+  6 │gggggggghhhhhhhhhhhhh...............................................aaaaaaaaaaaaajjjjjjjjjjjjjjjjjj.│
+
+bg
+     0         1         2         3         4         5         6         7         8         9
+     0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  1 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  2 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  3 │ggggggnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  4 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  5 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  6 │aaaaaaaayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy│
+
+style
+     0         1         2         3         4         5         6         7         8         9
+     0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │....................................................................................................│
+  1 │....................................................................................................│
+  2 │....................................................................................................│
+  3 │......~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~...................................................│
+  4 │....................................................................................................│
+  5 │....................................................................................................│
+  6 │....................................................................................................│
+
+legend
+  a  #1a9a62  actors.claude = regions.anchor_undercurl
+  b  #3568a8  actors.you = syntax.keyword
+  e  #8f6a2e  actors.transient = syntax.ty = syntax.constant = syntax.string = syntax.number
+  f  #5d9645  actors.steel = syntax.function
+  g  #f4f2ec  neutrals.ground = chrome.mode_chip_fg = chrome.tab_bar
+  h  #3a3830  neutrals.text = syntax.text
+  j  #8a8474  neutrals.meta = syntax.comment
+  k  #b0aa98  neutrals.line_numbers
+  n  #e6efe6  regions.anchor
+  y  #e8e4d8  chrome.statusline
+
+style
+  ~  undercurl — SGR 4:3 wrapped around the glyph, plus Modifier::UNDERLINED
+  _  Modifier::UNDERLINED alone (the degraded path)
+     underline colour #1a9a62  actors.claude

@@ -1,11 +1,23 @@
-use crate::code::{RopeGraphemes, grapheme_width_and_bytes_len, grapheme_width_and_chars_len};
+use crate::code::{Code, RopeGraphemes, grapheme_width_and_bytes_len, grapheme_width_and_chars_len};
 use crate::editor::Editor;
+// PHOSPHOR PATCH 5 — see VENDOR.md.
+use crate::phosphor::cell_style;
+// PHOSPHOR PATCH 6 — the cell budget a `↪` continuation spends before its text.
+use crate::phosphor::soft_wrap::CONTINUATION_PREFIX;
 use crate::types::VisualRow;
 use crate::view::View;
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Style};
 use ratatui_core::widgets::Widget;
+
+// PHOSPHOR PATCH 6 / 7 — the glyphs screen `8e` adds, all from Design Language
+// §2's lexicon: `↪` soft-wrap continuation, `▸` fold closed, `⋯` elided, and
+// the midline dot for whitespace. Single-cell and Nerd-Font-free, per §2.
+const WRAP_INDICATOR: &str = "↪ ";
+const FOLD_CLOSED: &str = "▸";
+const FOLD_ELIDED: &str = "⋯";
+const WHITESPACE_MARK: &str = "·";
 
 /// Draws the main editor view in the provided area using the ratatui rendering buffer.
 ///
@@ -22,16 +34,21 @@ use ratatui_core::widgets::Widget;
 impl Widget for &Editor {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let code = self.code_ref();
-        let total_lines = code.len_lines();
-        let max_line_number = total_lines.max(1);
-        let line_number_digits = max_line_number.to_string().len().max(5);
+        // PHOSPHOR PATCH 4 — one source of truth for the digit count, so this
+        // and `get_line_number_width()` cannot disagree about where text starts.
+        let line_number_digits = self.line_number_digits();
         let line_number_width = self.get_line_number_width();
         let fold_gutter_width = self.fold_gutter_width();
         let total_visual_lines = self.visual_len_lines();
         let mut draw_y = area.top();
 
-        let line_number_style = Style::default().fg(Color::DarkGray);
-        let default_text_style = Style::default().fg(Color::White);
+        // PHOSPHOR PATCH 4 — both were hardcoded. They now come from the theme
+        // map like every other colour in this function, falling back to the
+        // previous constants when the theme does not carry the key.
+        let line_number_style = Style::default()
+            .fg(self.theme_style("line_number").fg.unwrap_or(Color::DarkGray));
+        let default_text_style = Style::default()
+            .fg(self.theme_style("default_text").fg.unwrap_or(Color::White));
 
         let diff_added_bg = self.theme_style("diff_added").bg
             .or(self.theme_style("diff_added").fg)
@@ -52,6 +69,24 @@ impl Widget for &Editor {
             .unwrap_or(Color::Rgb(48, 54, 64));
 
         let fold_separator_style = Style::default().fg(Color::DarkGray);
+
+        // PHOSPHOR PATCH 6 / 7 — the three glyph styles screen `8e` adds, read
+        // from the theme map like everything else in this function and falling
+        // back to the line-number colour, so a standalone build still renders.
+        let wrap_indicator_style = Style::default().fg(self
+            .theme_style("wrap_indicator")
+            .fg
+            .unwrap_or(Color::DarkGray));
+        let fold_marker_style = Style::default().fg(self
+            .theme_style("fold_marker")
+            .fg
+            .unwrap_or(Color::DarkGray));
+        let trailing_whitespace_style = self.theme_style("trailing_whitespace");
+
+        // PHOSPHOR PATCH 5 — §3's undercurl, which marks cannot carry. Resolved
+        // once per frame, not once per cell: the answer cannot change mid-frame.
+        let styled_spans = self.styled_spans();
+        let underline_capability = self.underline_capability();
 
         // draw lines, syntax highlighting, selection and marks in a single unified loop
         for visual_row_idx in self.offset_y..total_visual_lines {
@@ -87,7 +122,19 @@ impl Widget for &Editor {
                     VisualRow::GhostDeleted {
                         original_line_idx, curr_line_idx, ..
                     } => (*original_line_idx, false, true, *curr_line_idx),
+                    // PHOSPHOR PATCH 6 — a soft-wrap segment is a slice of a
+                    // real line and draws like one; only its number column and
+                    // its char span differ.
+                    VisualRow::Wrapped { line_idx, is_added, orig_line_idx, .. } => (*line_idx, *is_added, false, *orig_line_idx),
                     _ => unreachable!(),
+                };
+                // PHOSPHOR PATCH 6 — (segment, start_col, end_col), or `None`
+                // for a row that is not one segment of a wrapped line.
+                let wrap = match &row {
+                    VisualRow::Wrapped { segment, start_col, end_col, .. } => {
+                        Some((*segment, *start_col, *end_col))
+                    }
+                    _ => None,
                 };
                 let source_code = if is_ghost {
                     self.original_code.as_ref().unwrap_or(code)
@@ -97,10 +144,13 @@ impl Widget for &Editor {
 
                 // 1. Draw line numbers
                 if self.show_line_numbers {
-                    let line_number = if is_ghost {
-                        format!("{:>width$}", " ", width = line_number_digits)
-                    } else {
+                    // PHOSPHOR PATCH 6 — `8e`: "carries no line number — the
+                    // gutter stays honest". Only segment 0 is numbered.
+                    let numbered = !is_ghost && wrap.is_none_or(|(segment, ..)| segment == 0);
+                    let line_number = if numbered {
                         format!("{:>width$}", line_idx + 1, width = line_number_digits)
+                    } else {
+                        format!("{:>width$}", " ", width = line_number_digits)
                     };
                     buf.set_string(area.left(), draw_y, &line_number, line_number_style);
                 }
@@ -120,12 +170,37 @@ impl Widget for &Editor {
                     }
                 }
 
-                let text_x = area.left() + line_number_width as u16;
-                let width = (area.width as usize).saturating_sub(line_number_width);
+                let mut text_x = area.left() + line_number_width as u16;
+                let mut width = (area.width as usize).saturating_sub(line_number_width);
 
                 let line_len = source_code.line_len(line_idx);
-                let start_col = self.offset_x.min(line_len);
-                let end_col = (start_col + width).min(line_len);
+                // PHOSPHOR PATCH 6 — a wrapped row draws the char span the row
+                // stream gave it, not a window onto the whole line, and a
+                // continuation row spends its first cells on `↪ `.
+                let (start_col, end_col) = match wrap {
+                    Some((segment, seg_start, seg_end)) => {
+                        if segment > 0 {
+                            if text_x < area.right() {
+                                buf.set_string(text_x, draw_y, WRAP_INDICATOR, wrap_indicator_style);
+                            }
+                            text_x = text_x.saturating_add(CONTINUATION_PREFIX as u16);
+                            width = width.saturating_sub(CONTINUATION_PREFIX);
+                        }
+                        (seg_start.min(line_len), seg_end.min(line_len))
+                    }
+                    None => {
+                        let start = self.offset_x.min(line_len);
+                        (start, (start + width).min(line_len))
+                    }
+                };
+
+                // PHOSPHOR PATCH 7 — first column of the line's trailing
+                // whitespace run; `usize::MAX` when the row has none to mark.
+                let trailing_start = if self.show_trailing_whitespace() && !is_ghost {
+                    trailing_whitespace_start(source_code, line_idx, line_len)
+                } else {
+                    usize::MAX
+                };
 
                 let line_start_char = source_code.line_to_char(line_idx);
                 let char_slice_start = line_start_char + start_col;
@@ -249,15 +324,77 @@ impl Widget for &Editor {
                         }
                     }
 
+                    // PHOSPHOR PATCH 5 — Layer E: styled spans. Ghost rows are
+                    // the original buffer, whose char offsets are not the ones
+                    // a span was built against, so they take none.
+                    let cell_style = if is_ghost {
+                        None
+                    } else {
+                        cell_style::span_at(styled_spans, global_char_idx)
+                    };
+                    if let Some(cell_style) = cell_style {
+                        style = cell_style::patch_style(style, cell_style);
+                    }
+
+                    // PHOSPHOR PATCH 7 — `8e`: trailing whitespace shows as a
+                    // midline dot on the failure tint, in INSERT only. Patched
+                    // over everything else so it survives a diff background.
+                    let is_trailing_ws = char_col >= trailing_start;
+                    if is_trailing_ws {
+                        style = style.patch(trailing_whitespace_style);
+                    }
+
                     // Draw character
-                    let display_g = g.to_string().replace('\t', " ");
+                    let display_g = if is_trailing_ws {
+                        WHITESPACE_MARK.to_string()
+                    } else {
+                        g.to_string().replace('\t', " ")
+                    };
                     if start_x < area.right() {
                         buf.set_string(start_x, draw_y, &display_g, style);
+                        // PHOSPHOR PATCH 5 — undercurl has no ratatui
+                        // `Modifier`, so where the terminal has it the SGR pair
+                        // rides in the cell's symbol. A no-op everywhere else,
+                        // which is the whole degradation path.
+                        if let Some(cell_style) = cell_style {
+                            cell_style::decorate_cell(
+                                buf,
+                                start_x,
+                                draw_y,
+                                cell_style,
+                                underline_capability,
+                            );
+                        }
                     }
 
                     x = x.saturating_add(g_width);
                     byte_idx_in_rope += g_bytes;
                     char_col += g_chars;
+                }
+
+                // PHOSPHOR PATCH 7 — `8e`: a collapsed fold marks its header
+                // line inline, after the code — `▸⋯ 13 lines` in meta-gray —
+                // rather than in a gutter column no mockup draws. The fold
+                // itself is upstream's: the hidden lines are already absent
+                // from the row stream.
+                if !is_ghost
+                    && wrap.is_none_or(|(_, _, seg_end)| seg_end >= line_len)
+                    && x < width
+                    && let Some(hidden) = self.fold_hidden_lines(line_idx)
+                {
+                    let marker = format!(
+                        " {}{} {} line{}",
+                        FOLD_CLOSED,
+                        FOLD_ELIDED,
+                        hidden,
+                        if hidden == 1 { "" } else { "s" }
+                    );
+                    let marker_x = text_x + x as u16;
+                    if marker_x < area.right() {
+                        let room = (width - x).min((area.right() - marker_x) as usize);
+                        let visible = marker.chars().take(room).collect::<String>();
+                        buf.set_string(marker_x, draw_y, &visible, fold_marker_style);
+                    }
                 }
 
                 // 4. Fill remaining width with background if needed
@@ -277,5 +414,30 @@ impl Widget for &Editor {
             }
             draw_y += 1;
         }
+    }
+}
+
+/// PHOSPHOR PATCH 7 — first char column of `line_idx`'s trailing whitespace
+/// run, or `usize::MAX` when the line does not end in any. A line that is
+/// nothing but whitespace is trailing whitespace from column 0, which is what
+/// vim's `trail` listchar does and what `8e` asks for.
+fn trailing_whitespace_start(code: &Code, line_idx: usize, line_len: usize) -> usize {
+    if line_len == 0 {
+        return usize::MAX;
+    }
+    let line_start = code.line_to_char(line_idx);
+    let slice = code.char_slice(line_start, line_start + line_len);
+    let mut col = 0usize;
+    let mut trailing_start = 0usize;
+    for c in slice.chars() {
+        col += 1;
+        if c != ' ' && c != '\t' {
+            trailing_start = col;
+        }
+    }
+    if trailing_start == line_len {
+        usize::MAX
+    } else {
+        trailing_start
     }
 }

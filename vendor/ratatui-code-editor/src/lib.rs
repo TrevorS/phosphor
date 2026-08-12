@@ -8,6 +8,8 @@ pub mod editor;
 #[cfg(feature = "crossterm")]
 pub mod editor_crossterm;
 pub mod history;
+// PHOSPHOR PATCH 5 — everything phosphor adds lives under here. See VENDOR.md.
+pub mod phosphor;
 pub mod render;
 pub mod selection;
 pub mod theme;

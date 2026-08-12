@@ -1,0 +1,81 @@
+---
+source: crates/phosphor-ui/tests/golden_frames.rs
+expression: frame.to_text(&buf)
+---
+screen 8d · phosphor dark · 80x13 cells
+  80 columns: the float goes full-width and docks to the bottom of the
+    buffer area (§11, Layout::FullWidth).
+  THE STATUSLINE DOES NOT SHED AT 80. The mockup draws the ladder's floor
+    (`N` · `retry.rs [+]` · `✻` · `●6`), which this VM reaches at width 24.
+    The whole ladder is the `shed-ladder` snapshot; the order matches 8d's
+    caption exactly, only the widths differ from the drawing.
+  Body is TextBody, T084's fixture body — Picker is T045, S5. The
+    mockup's per-row picker colouring is therefore flat here.
+  The header's query cursor block is the Picker's too, and is absent.
+  FloatSlot dims the code behind the float to neutrals.dimmed_under_float
+    (§9). Mockup 8d draws those two rows undimmed; 3c/3d/7a draw the dim.
+  The float body is painted float.body; mockup 8d leaves the docked float
+    on neutrals.ground and only 8a's centered float paints a body colour.
+
+text
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │  17      let mut last = None;                                                  │
+  1 │  18      for attempt in 0..policy.max_attempts {                               │
+  2 │────────────────────────────────────────────────────────────────────────────────│
+  3 │  ❯ unseen                                                                      │
+  4 │────────────────────────────────────────────────────────────────────────────────│
+  5 │                                                                                │
+  6 │  ▸ src/retry.rs:6–10   +RetryPolicy struct                                     │
+  7 │    src/retry.rs:12–24  +retry_with_backoff                                     │
+  8 │    no preview under 100 cols · ↵ opens                                         │
+  9 │                                                                                │
+ 10 │────────────────────────────────────────────────────────────────────────────────│
+ 11 │  ↵ open · s mark seen · esc                                                    │
+ 12 │ NORMAL  src/retry.rs [+]                ✻ claude idle │ 6 unseen │ jj ✓ │ 18:1 │
+
+fg
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  1 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  2 │oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo│
+  3 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+  4 │CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC│
+  5 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+  6 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+  7 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+  8 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+  9 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 10 │CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC│
+ 11 │hhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 12 │gggggggghhhhhhhhhhhhhhccc................aaaaaaaaaaaaajjjjjjjjjjjjjjjjjjjjjjjjj.│
+
+bg
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  1 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  2 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+  3 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+  4 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+  5 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+  6 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+  7 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+  8 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+  9 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 10 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 11 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 12 │aaaaaaaayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy│
+
+legend
+  a  #3ddc97  actors.claude
+  c  #e0a94e  actors.attention
+  g  #0c0f0c  neutrals.ground = chrome.mode_chip_fg = chrome.tab_bar
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  l  #232823  neutrals.dimmed_under_float
+  o  #2a5c44  regions.anchor_undercurl = float.informational
+  x  #101410  float.body
+  y  #1a201a  chrome.statusline
+  C  #242a24  chrome.divider

@@ -80,11 +80,20 @@ lint:
     exit "$status"
 
 # Version-checks vhs/ttyd/ffmpeg (pixel comparison only means anything against
-# the pinned renderer, tapes/README.md), then records every tapes/*.tape. The
-# library is empty until V002-V005 land in Window B, so today this only proves
-# the gate — recording zero tapes.
+# the pinned renderer, tapes/README.md), then records every tapes/*.tape.
+# `_`-prefixed files (Source fragments, reference tables) are skipped by
+# run-tapes.sh's own convention — see tapes/README.md's "Layout" section.
 
-# Regenerate the Tier-2 (VHS) tape library.
+# Regenerate the Tier-2 (VHS) tape library — every screen.
 tapes:
     @bash tapes/check-versions.sh
     @bash tapes/run-tapes.sh
+
+# V005: regenerate exactly one screen — `just tape 1a`. Same version gate as
+# `just tapes`, but runs a single `tapes/<id>.tape`. Runs with cwd `tapes/`
+# (matching run-tapes.sh) so a tape's relative paths — `Source
+# "_config.tape"`, `Screenshot "artifacts/<id>.png"` — resolve identically
+# whether it's regenerated this way or via `just tapes`.
+tape id:
+    @bash tapes/check-versions.sh
+    cd tapes && vhs "{{ id }}.tape"

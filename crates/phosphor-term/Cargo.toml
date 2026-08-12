@@ -1,0 +1,29 @@
+[package]
+name = "phosphor-term"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+# Terminal lifecycle (T014): raw mode, the alternate screen, keyboard-protocol
+# negotiation, panic/exit restore, and the synchronized-output draw wrapper.
+#
+# WHY A CRATE AND NOT A MODULE IN `phosphor` — this is T014's whole acceptance
+# criterion, not packaging taste. The task is "no frame can be emitted outside
+# the wrapper, enforced by making the raw writer private," and Rust privacy is
+# module-scoped: inside the `phosphor` binary, `main.rs` or `panes.rs` could
+# always reach a `pub(crate)` writer, so the guarantee would be a convention
+# again. Across a crate boundary a non-`pub` field is unreachable by anything
+# but this crate, permanently and for every future consumer. The ownership seam
+# it resolves is in the crate docs.
+#
+# `ratatui` (not `ratatui-core`) is correct here for the same reason it is
+# correct in `phosphor`: backends and `Terminal` live in the full crate, and
+# this IS the app layer that owns the terminal. `phosphor-ui` stays on
+# `ratatui-core` and never depends on this crate.
+[dependencies]
+crossterm.workspace = true
+ratatui.workspace = true
+
+[lints]
+workspace = true

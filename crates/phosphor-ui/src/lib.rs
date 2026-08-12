@@ -8,3 +8,13 @@
 //!     ViewModels; they never mutate.
 //!
 //! Every colour comes from `&Theme` — no literal `Color::Rgb` in this crate (T006).
+//!
+//! `lib.rs` is the crate's module index and has no single owner in TEAM.md's
+//! per-file split — each widget's owner adds their own `pub mod` line and
+//! nothing else. Keep it to that.
+
+pub mod buffer_view;
+pub mod float;
+pub mod soft_wrap;
+pub mod status_line;
+pub mod theme;

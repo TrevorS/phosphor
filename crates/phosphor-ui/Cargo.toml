@@ -10,6 +10,15 @@ version.workspace = true
 [dependencies]
 phosphor-core.workspace = true
 ratatui-core.workspace = true
+# The vendored editor core (T003), which `BufferView` composes around: it owns
+# text, highlighting, cursor and selection, and phosphor's layer wraps it with
+# the 3-column contract (Component Breakdown, `BufferView`). Taken here rather
+# than through `phosphor-buffer` because a UI crate's only `phosphor-*`
+# dependency may be `phosphor-core` — `scripts/lint-no-store-mutation.sh` check 2
+# — and this is a third-party widget crate, not a mutation path. It is
+# `ratatui-core`-only itself with `default-features = false`, so the rule above
+# still holds: no grammars, no `crossterm`, no `arboard`.
+ratatui-code-editor.workspace = true
 # The vendored markdown renderer (T004), for the transcript's prose body at S6.
 # OPTIONAL AND OFF BY DEFAULT, for two reasons:
 #   * Q4's guardrail — the transcript must render with the gate on and off, so the
@@ -21,6 +30,34 @@ ratatui-core.workspace = true
 #     still shows one ratatui — but it is a real relaxation of the ratatui-core
 #     rule and is flagged to `spine` rather than assumed.
 ratatui-markdown = { workspace = true, optional = true, features = ["markdown"] }
+
+# T017's statusline invariant is a *property*, not a set of examples: no width
+# from 40 to 200, with any ViewModel, may produce a second row. SPIKES.md's
+# hygiene table names proptest 1.11.0 for exactly this task.
+#
+# Declared here rather than in `[workspace.dependencies]` deliberately: the root
+# manifest is `spine`'s (TEAM.md, settled at CP-0) and a member's own dev-only
+# test dependency is not a contract change. Lift it to the root if a second
+# crate ever needs it — one version in one place is the rule that matters.
+[dev-dependencies]
+# T018's Tier-1 golden frames. SPIKES.md's hygiene table names it for exactly
+# this — "purpose-built, with review tooling for intentional changes", which is
+# `cargo insta review`. Declared here for the same reason `proptest` is: a
+# member's dev-only test dependency is that crate's own business, and the root
+# manifest is `spine`'s.
+#
+# `default-features = false` drops `similar`, `console` and the colour-diff
+# stack: this crate commits plain-text snapshots and never needs a prettier
+# diff than `cargo insta` itself prints. Lift it to the root if a second crate
+# ever takes it.
+insta = { version = "1.48.0", default-features = false }
+proptest = "1.11.0"
+# T015's tests assert that tree-sitter highlighting actually reaches the cells,
+# which needs a grammar. Rust only, and dev-only: every mockup CP-1 checks is a
+# Rust slice, and a widget crate has no business linking eleven C grammars into
+# its own lib build. In a workspace build cargo unifies this with
+# `phosphor-buffer`'s `grammars-phosphor`, so it costs nothing there.
+ratatui-code-editor = { workspace = true, features = ["grammar-rust"] }
 
 [features]
 default = []

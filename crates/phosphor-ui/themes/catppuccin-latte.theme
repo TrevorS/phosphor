@@ -1,0 +1,73 @@
+# catppuccin · latte — mapping (mockup 9a, right)
+#
+# base16-style: one `key: value` per line, values are `#rrggbb`.
+# A line whose first non-blank character is `#` is a comment; there are no
+# trailing comments (a value is the rest of its line).
+#
+# `actor.*` is the contract, not a preference: each actor is locked to a hue
+# family and `Theme::load` rejects a file that moves one out of it. Hue is
+# fixed; saturation and lightness are yours (Design Language §10).
+#
+# PROVENANCE — mockup `9a` (right), same role mapping as mocha against the
+# published Latte palette.
+# DERIVED: dimmed_under_float, bright_text, region.selection, region.failure,
+# all six float.*, chrome.tab_bar_rule. Method below.#
+# DERIVATION METHOD — a derived value is never invented freehand. Each is the
+# phosphor-dark relationship re-applied to this palette: a lightness offset from
+# this theme's own `ground` (anchor +/-0.043, dimmed +/-0.094, selection
+# +/-0.122, failure +/-0.047, statusline +/-0.061, tab_bar_rule +/-0.074,
+# float.body +/-0.018 in HSL L, sign by variant), or a ratio off this theme's
+# own actor colour (float.informational = claude at S x0.54 / L x0.48 on dark;
+# float.needs_you = attention likewise; region.failure takes trouble's hue).
+# Reproduce or re-derive them and the numbers come back.
+name: catppuccin
+variant: light
+
+# actors — Design Language §1. Validated at load.
+actor.claude: #40a02b
+actor.you: #1e66f5
+actor.attention: #df8e1d
+actor.trouble: #d20f39
+actor.transient: #fe640b
+actor.steel: #179299
+
+# neutral ramp — §1
+neutral.ground: #eff1f5
+neutral.text: #4c4f69
+neutral.prose: #6c6f85
+neutral.meta: #8c8fa1
+neutral.line_numbers: #bcc0cc
+neutral.dimmed_under_float: #d1d7e3
+neutral.bright_text: #2f3141
+
+# region tints and undercurl — §3
+region.anchor: #e2e6ec
+region.anchor_undercurl: #40a02b
+region.selection: #c8cfde
+region.failure: #eedee2
+region.failure_undercurl: #d20f39
+
+# float chrome — §4
+float.informational: #338022
+float.needs_you: #b27217
+float.needs_you_body: #f7ecde
+float.needs_you_rule: #d8c09e
+float.passive: #c2d5bd
+float.body: #e9ecf1
+
+# statusline and tab bar — §5
+chrome.statusline: #e6e9ef
+chrome.mode_chip_fg: #eff1f5
+chrome.tab_bar: #eff1f5
+chrome.tab_bar_rule: #d7dce7
+chrome.divider: #ccd0da
+
+# syntax — theme-owned (§10). Not validated.
+syntax.text: #4c4f69
+syntax.keyword: #8839ef
+syntax.type: #fe640b
+syntax.function: #179299
+syntax.constant: #fe640b
+syntax.string: #fe640b
+syntax.number: #fe640b
+syntax.comment: #8c8fa1
