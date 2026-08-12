@@ -392,6 +392,14 @@ First phase with anything to look at. Sized by CP-0.
   *Done when:* no frame can be emitted outside the wrapper (enforce by making the raw writer
   private). *Needs:* T002
 
+  > **This is `spine`'s, and it landed in its own crate.** The breakdown listed it under
+  > `surface`, which built it — but terminal lifecycle is neither a widget nor one of the three
+  > binary files the ownership table named, so it became `phosphor-term`, an eighth crate. Settled
+  > to `spine` after `CP-1`: its only production consumer is the binary, it is where `crossterm`
+  > and `ratatui` live (both of which `scripts/lint-no-app-layer-in-ui.sh` forbids in
+  > `phosphor-ui`), kitty-protocol negotiation is input and input is `T026`, and it draws nothing.
+  > Same rule that moved `T034`/`T035` to `surface` — **the file decides the task.**
+
 - [x] **T015 · BufferView — the 3-column contract**
   1-cell state bar → line numbers (`#414b42`, always) → text. Tree-sitter highlighting through
   the vendored core. **Scroll authority lives here** — the viewport moves only on an explicit

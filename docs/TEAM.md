@@ -72,7 +72,7 @@ owning crates gives near-zero merge contention for free.
 
 | Teammate | Model | Owns (exclusive write) |
 |---|---|---|
-| **spine** | `claude-opus-5` | `phosphor-core/{action,view}.rs` · `phosphor-steel/**` · `phosphor/{main,input,panes}.rs` · `runtime/{init,keymaps,leader}.scm` · **the root manifest** |
+| **spine** | `claude-opus-5` | `phosphor-core/{action,view}.rs` · `phosphor-steel/**` · `phosphor/{main,input,panes}.rs` · `phosphor-term/**` · `runtime/{init,keymaps,leader}.scm` · **the root manifest** |
 | **surface** | `claude-opus-5` | `vendor/**` · `phosphor-buffer/**` · `phosphor-ui/{theme,buffer_view,status_line,gutter,virtual_text,float,help_grid,keymap_footer,tab_bar,soft_wrap}.rs` |
 | **store** | `claude-opus-5` | `phosphor-core/{store,region,anchor,seen}.rs` · `phosphor-ui/picker.rs` · `phosphor-vcs/**` · `runtime/pickers/**` |
 | **agent** | `claude-sonnet-5` | `phosphor-agent/**` · `phosphor-core/{review,inbox,watch}.rs` · `phosphor-ui/{transcript,prompt_line,question,diff_body,watch_overlay}.rs` · `runtime/{permissions,inbox,watch}.scm` |
@@ -80,11 +80,24 @@ owning crates gives near-zero merge contention for free.
 
 Two things the build added that this table predates:
 
-- **`phosphor-term` — an eighth crate, and its owner is unsettled.** `T014`'s terminal lifecycle
-  (raw mode, alt screen, panic restore, the synchronized-output wrapper) is neither a widget nor
-  one of the three binary files named for `spine`, so it landed on its own. `surface` built it
-  under `T014`; `spine` is its only consumer, through `T090`. Decide before `T088` puts panes in
-  the same neighbourhood.
+- **`phosphor-term` is `spine`'s, and `T014` moved with it.** The eighth crate — raw mode, alt
+  screen, panic restore, kitty-protocol negotiation, and the synchronized-output wrapper — is
+  neither a widget nor one of the three binary files this table used to name, so it landed
+  unowned. Settled on five facts rather than on who happened to write it:
+  1. **Its only production consumer is `crates/phosphor`**, which is `spine`'s. `phosphor-buffer`
+     takes it as a *dev-dependency* for one runnable example, not in its dependency line.
+  2. **It is where `crossterm` and `ratatui` live** — the two things
+     `scripts/lint-no-app-layer-in-ui.sh` forbids in `phosphor-ui`. `surface`'s crate is defined
+     by not being allowed to contain this code.
+  3. **Kitty-protocol negotiation is input**, and the input machine (`T026`) is `spine`'s.
+  4. **Panic and exit restore are process lifecycle**, which belongs to whoever owns the binary.
+  5. **It draws nothing.** No widget, no `Widget` impl. Every other entry on `surface`'s list
+     either draws or is a fork.
+
+  This is the `T034`/`T035` precedent run in reverse. Those were `spine` tasks that moved to
+  `surface` because they wrote `surface`'s files; the rule is that **the file decides the task,
+  not the other way round**. `T014` writes app-layer files, so `T014` is `spine`'s. Window B
+  already lists `spine` as live, so no window changes.
 - **`scripts/lint-*.sh` is deliberately unowned.** The glob *is* the contract: `just lint` runs
   every script matching it, so any role adds a structural lint by dropping a file in, without
   touching `harness`'s justfile or CI. Three exist — `T006`'s (harness), `T007`'s (spine) and the
@@ -141,7 +154,14 @@ Also owns the input machine, because it emits Actions and reads Steel-defined ke
 spine surfaces. And the pane manager, which is the same kind of thing one layer out: focus and
 event routing in the binary's loop.
 
-**Tasks:** T001, T002, T007, T019–T026, T033, T078–T080, T088, **T090** · **17**
+**And the app layer under all of it** — `phosphor-term` (`T014`) and the S1 host (`T090`). This
+role is the only one allowed to touch a terminal: raw mode, the alt screen, panic restore,
+kitty-protocol negotiation, and the synchronized-output wrapper every frame goes through. The
+rule that keeps it honest is mechanical — `scripts/lint-no-app-layer-in-ui.sh` fails CI on a
+`crossterm::` or `ratatui::` reference from `phosphor-ui`, so "spine decides when pixels land,
+surface decides what they look like" is a boundary the build enforces rather than a convention.
+
+**Tasks:** T001, T002, T007, **T014**, T019–T026, T033, T078–T080, T088, **T090** · **18**
 
 **`T090` is why `spine` is live in Window B.** The window table always listed it there, and the
 task breakdown gave it nothing to do — a contradiction nobody noticed until `CP-1` failed for
@@ -163,14 +183,20 @@ second shape later.
 
 Both vendored forks, the buffer engine, and every primitive widget that draws.
 
-**Tasks:** T003, T004, T005*, T010–T018, T027, T029, T031, T032, T034–T040, T081–T087, T089 ·
-**31**
+**Tasks:** T003, T004, T005*, T010–T013, T015–T018, T027, T029, T031, T032, T034–T040,
+T081–T087, T089 · **30**
 
 The largest list, and it grew by seven in the docs review — five new widget tasks that the design
 docs require and the first breakdown had no home for (`T084` Float, `T085` undercurl, `T086`
 HelpGrid, `T087` region tints, `T089` TabBar), plus `T034`/`T035` moving here from `spine` because
 they write `surface` files. Two of the five are fork work inside `vendor/`, which only this role
 may touch.
+
+**`T014` went the other way, after `CP-1`.** Terminal setup landed in a crate of its own,
+`phosphor-term`, and that crate is `crossterm`, the alt screen and panic restore — the app layer,
+whose only production consumer is the binary. It is `spine`'s now, by the same rule that brought
+`T034`/`T035` here: the file decides the task. The line is worth stating positively, because it
+is what this role *is* — **`surface` draws, and never touches a terminal.**
 
 *(`T005` CI scaffolding is co-owned with `harness` — `surface` needs it in wave 1, `harness`
 takes it over at `CP-1`.)*

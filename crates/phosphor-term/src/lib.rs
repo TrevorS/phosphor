@@ -4,10 +4,19 @@
 //!
 //! # Where this lives, and why it is its own crate
 //!
-//! **An ownership seam, resolved here and reported at `CP-1`.** TEAM.md's role
-//! list assigns `T014` to `surface`; its ownership table gives `spine`
-//! `phosphor/{main,input,panes}.rs`. Terminal lifecycle is neither a widget nor
-//! one of those three files, so it needed a home that collides with neither.
+//! **An ownership seam, reported at `CP-1` and settled after it: this crate is
+//! `spine`'s, and `T014` moved with it.** The breakdown had assigned `T014` to
+//! `surface`, which built it, while the ownership table gave `spine`
+//! `phosphor/{main,input,panes}.rs` — and terminal lifecycle is neither a widget
+//! nor one of those three files, so it needed a home that collides with neither.
+//!
+//! It is `spine`'s because the only production consumer is the binary
+//! (`phosphor-buffer` takes it as a dev-dependency, for one example); because
+//! this is where `crossterm` and `ratatui` live, and
+//! `scripts/lint-no-app-layer-in-ui.sh` fails CI on either of them appearing in
+//! `phosphor-ui`; because keyboard-protocol negotiation is input, and the input
+//! machine (`T026`) is `spine`'s; and because nothing here draws. The rule is
+//! the one that moved `T034`/`T035` the other way: **the file decides the task.**
 //!
 //! A crate rather than a fourth module in the `phosphor` binary, because the
 //! task's acceptance criterion is a *type-system* obligation — "no frame can be
