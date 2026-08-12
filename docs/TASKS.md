@@ -4,7 +4,7 @@ Decomposed from [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md), which is itsel
 the four design docs in [design/](design/). The plan says *what each phase is for*; this file
 says *what to build, in what order, and where we stop and look at it*.
 
-**90 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
+**91 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
 Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids
 are stable and assigned in order of creation — reference them in commits. New tasks append
 rather than renumber, so `T078`+ sit inside earlier phases.
@@ -17,8 +17,21 @@ never executed and says so at the task.
 
 **`CP-1` has passed too, both halves** — the mechanical gate and Teej's four-terminal pass. Four
 rulings came out of the manual half; three amend design docs and are tabled in
-[§5](IMPLEMENTATION-PLAN.md#5-decisions). **Window C — `spine`'s contract phase, `T019`'s `Action`
-enum first — is unblocked, and `CP-2` is the next full stop.**
+[§5](IMPLEMENTATION-PLAN.md#5-decisions).
+
+**Window C is built and its mechanical half is green.** The `Action` vocabulary is 208
+capabilities generated from one table, the three doors are total functions over it, and the
+parity test walks all 624 door checks end to end. `CP-2`'s **manual half is outstanding** — it is
+the checkpoint that asks whether the Steel layer is the editor or a config file with a Rust
+editor hiding behind it, and only Teej can answer that. Nothing in S3 starts until he does.
+
+The gate failed on its first run and the three findings are worth keeping, because none was on
+its own criterion list: no Tier-1 snapshot for `6b`; `T079`'s frame cache exercised by a
+benchmark and by nothing that ships; and the statusline composed in Steel on the REPL surface
+only — found by **deleting `runtime/statusline.scm` and watching a statusline still draw**. All
+three are fixed. The second and third had one cause: the window's phases froze `main.rs` so that
+parallel agents could not collide in it, and the two tasks that needed to wire themselves into
+the host had nowhere to do it.
 
 Checkboxes below track *tasks*, not checkpoints: a task is ticked when its own *done when* is
 demonstrably met. The two are deliberately separate, because a checkpoint is a human judgement
@@ -549,36 +562,47 @@ right. Ambiguity here compounds — every later screen inherits this baseline.
 The plan calls this the decision the rest of the build is hardest to reverse. Take the extra
 care here rather than at S5.
 
-- [ ] **T019 · `Action` enum + query vocabulary**
+- [x] **T019 · `Action` enum + query vocabulary**
   The single mutation API — buffer edits, seen marks, session messages, float open/close. Plus
   the read side over ViewModels. Design it for the surfaces in *all* the mockups, not just S1's.
   *Done when:* every mutation in phases S3–S8 has a named Action, even if unimplemented.
   *Needs:* T007
 
-- [ ] **T020 · The tri-door registry**
+- [x] **T020 · The tri-door registry**
   One registration per capability yields the Steel binding, the MCP tool schema, and the CLI
   verb. Adding a capability to one door must add it to all **by construction** — this is
   invariant 2's only real defence.
   *Done when:* a new Action registered in one place appears in all three doors with no further
   edits. *Needs:* T019
 
-- [ ] **T021 · Embed `steel-core`; boot `init.scm`**
+- [x] **T021 · Embed `steel-core`; boot `init.scm`**
   A **broken `init.scm` boots the editor anyway**, with the error in a float. Steel can emit
   Actions and read ViewModels — nothing else.
   *Done when:* a syntax error in `init.scm` yields a working editor with a legible error float.
   *Needs:* T020, T084
 
-- [ ] **T022 · Steel REPL**
+- [x] **T022 · Steel REPL**
   The primary extension workflow, not a debug tool. `(keymap-set! …)` is live; the next frame
   has it.
-  *Done when:* screen `6b` reproduces. *Needs:* T021
+  *Done when:* a rebind typed at the REPL is in force on the very next keystroke, with no
+  restart. *Needs:* T021
 
-- [ ] **T023 · `phosphor --eval` (the CLI door)**
+  > **The criterion was split at `CP-2`, on Teej's ruling.** It read *"screen `6b`
+  > reproduces"*, and `6b` cannot reproduce at S2: Steel resolves a lambda's free identifiers
+  > at *definition*, and three of the four lines `6b` types name `goto`, `claude` and
+  > `region-author`, which belong in `runtime/` over records `T041` returns at S5. The chrome,
+  > the prompt glyphs, the header and the statusline do reproduce — committed as a Tier-1
+  > golden frame at `crates/phosphor/tests/snapshots/`, refusals and all, with a per-line note
+  > saying which task closes each gap. Full `6b` reproduction moves to the S5 task that lands
+  > the store, and `CP-5`'s sweep re-checks it. The liveness half was verified on a real pty,
+  > not only in tests.
+
+- [x] **T023 · `phosphor --eval` (the CLI door)**
   Nearly free once the registry exists.
   *Done when:* `phosphor --eval` and the REPL return identical results for the same expression.
   *Needs:* T020
 
-- [ ] **T024 · Door-parity test**
+- [x] **T024 · Door-parity test**
   A test that **enumerates the registry** and asserts every capability is present in all three
   doors. Enumeration is the point — a hand-written list rots.
   **Careful about what "reachable" means before S6.** The MCP *server* is `T052`; at S2 there is
@@ -588,24 +612,32 @@ care here rather than at S5.
   shape — the point is that a capability can never be *registered* in fewer than three doors.
   *Done when:* adding an Action wired to only one door fails CI. *Needs:* T020, T023
 
-- [ ] **T025 · StatusLine composition moves to Steel**
+- [x] **T025 · StatusLine composition moves to Steel**
   Not just segment *order* — the statusline is **composed as a view tree returned from Steel**
   (Q12): which segments, in what order, with what shed priority. The first real surface to prove
   the tree protocol on, and small enough to get wrong cheaply.
   *Done when:* redefining the whole statusline composition in the REPL changes the next frame.
   *Needs:* T017, T022, T079
 
+  > **Both surfaces compose, and the `CP-2` gate is why.** As first built, only the REPL
+  > surface asked Steel; the buffer surface fell through to the Rust widget. The gate found it
+  > by **deleting `runtime/statusline.scm` and watching a statusline still draw** — which is
+  > the *"config file with a Rust editor hiding behind it"* reading `CP-2` exists to catch.
+  > There is now no widget fallback on the buffer path: a layer that composes no statusline
+  > draws none. Re-verified the same way, under a pty, against the shipped tree and against a
+  > copy with the file removed. The `phosphor-ui` widget stays for its own golden frames.
+
 > **Appended after the initial breakdown** (Q12). Ids are assigned in order of creation, not
 > position, so `T001`–`T077` keep the meanings they were committed with.
 
-- [ ] **T078 · The view-tree protocol**
+- [x] **T078 · The view-tree protocol**
   `phosphor_core::view` — the tree as plain data: **no Steel dependency, no ratatui
   dependency**, so neither side owns the contract. Node kinds for every `phosphor-ui` primitive
   plus layout and the `spans` escape hatch.
   *Done when:* the crate compiles with neither `steel-core` nor `ratatui` in its dependency
   tree. *Needs:* T019
 
-- [ ] **T079 · Tree interpreter + frame cache**
+- [x] **T079 · Tree interpreter + frame cache**
   `phosphor-ui` walks a view tree into ratatui calls. **Rust caches the last tree and redraws
   every frame without re-entering the VM** — Steel re-runs only when a ViewModel changes. This
   is the whole reason a pre-1.0 scheme VM can sit under the UI safely.
@@ -618,6 +650,11 @@ care here rather than at S5.
   name to check when a frame-budget regression shows up.
   *Done when:* `:arch` (T048) is built entirely from it, with no primitive of its own.
   *Needs:* T079
+
+  > **Built at S2, deliberately not ticked.** The primitive exists, is reachable from Steel,
+  > and `scripts/lint-one-escape-hatch.sh` proves it is the *only* custom-draw path — verified
+  > on two planted violations. What cannot be met until S5 is the criterion as written: `:arch`
+  > is `T048`, and there is no store to query. `T048` ticks this.
 
 ### ✋ CP-2 — Is the editor live?
 
@@ -665,6 +702,22 @@ CP-0 settled the shape: **the input machine is ours.**
   checklist even though we no longer depend on it.
   *Done when:* a scripted keystroke sequence produces the expected Action stream, including
   counts and named registers. *Needs:* T019
+
+  > **Two things `T026` deletes, not wraps.** The fork's `Editor::input` ends every keystroke
+  > with its own `focus()` and `Editor::mouse` calls `scroll_up`/`scroll_down` directly, so
+  > wrapping them leaves two writers on the viewport and invariant 3 stops holding —
+  > `Action::Scroll` is the single writer. And `T022` wired temporary per-keystroke dispatch
+  > into the host to make the keymap live; that goes too. When both are gone, so do the three
+  > lines in `crates/phosphor/Cargo.toml` that turn the fork's `crossterm` feature on.
+
+- [ ] **T091 · Real VM invocations, measured in the binary** 📌
+  `T079`'s benchmark proves the frame cache with a *Rust* composer, because `phosphor-ui` may
+  not depend on `phosphor-steel` — `scripts/lint-no-store-mutation.sh` check 2 allows it
+  exactly one `phosphor-*` dependency. That makes the control arm a floor and not a lie, but
+  nothing yet counts a real `steel-core` invocation against frames drawn. The binary is the
+  one crate that can.
+  *Done when:* a measurement in `crates/phosphor` shows real Steel invocations flat while
+  frames climb, on the loop that ships. *Needs:* T026, T079
 
 - [ ] **T027 · Kitty keyboard protocol**
   Real modifier chords, with graceful fallback where unsupported.

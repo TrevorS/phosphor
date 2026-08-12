@@ -3,7 +3,7 @@
 Derived from [TASKS.md](TASKS.md) and [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).
 Five teammates, owning crates rather than features, gated by the twelve checkpoints.
 
-**97 of 99 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
+**98 of 100 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
 `T009` — the dependency spikes, already complete ([SPIKES.md](SPIKES.md)). `T005` is the single
 deliberate co-ownership and is called out where it appears.
 
@@ -17,7 +17,7 @@ Computed from `TASKS.md`, the longest-path wave widths are:
 
 ```
 wave    0   1   2   3    4    5    6    7   8   9
-tasks   2   5   8   6   15   20   19   11   8   3
+tasks   2   5   8   6   15   20   19   12   8   3
 ```
 
 By the graph, wave 4 is 15-wide and includes `T050` (ACP session client, S6) and `T069`
@@ -33,8 +33,8 @@ Three other numbers worth carrying:
 
 | | |
 |---|---|
-| `T001` gates **89 of 99** tasks | The workspace skeleton is the whole build's front door. |
-| `T019` gates **60** | The `Action` enum. The plan calls it "reversible: no in practice." |
+| `T001` gates **90 of 100** tasks | The workspace skeleton is the whole build's front door. |
+| `T019` gates **61** | The `Action` enum. The plan calls it "reversible: no in practice." |
 | `T041` has **14 direct dependents** | Store core — the second serialisation point. |
 
 And the shape that matters most for staffing: **waves 0–3 are 2, 5, 8 and 6 tasks wide.** The
@@ -161,7 +161,7 @@ rule that keeps it honest is mechanical — `scripts/lint-no-app-layer-in-ui.sh`
 `crossterm::` or `ratatui::` reference from `phosphor-ui`, so "spine decides when pixels land,
 surface decides what they look like" is a boundary the build enforces rather than a convention.
 
-**Tasks:** T001, T002, T007, **T014**, T019–T026, T033, T078–T080, T088, **T090** · **18**
+**Tasks:** T001, T002, T007, **T014**, T019–T026, T033, T078–T080, T088, **T090**, **T091** · **19**
 
 **`T090` is why `spine` is live in Window B.** The window table always listed it there, and the
 task breakdown gave it nothing to do — a contradiction nobody noticed until `CP-1` failed for
@@ -293,8 +293,10 @@ built on an unverified foundation.
 > **Where the build actually is.** `CP-0` and `CP-1` have both passed, both halves each.
 > Windows A and B are complete: the workspace, both vendored forks, three structural lints proven
 > to bite, the grammar ABI check, the whole S1 widget layer, the S1 host, and a calibrated tape
-> harness. **Window C is live** — `spine` and `harness`, `T019`'s `Action` enum first — and
-> `CP-2` is the next full stop.
+> harness. **Window C is built** — `spine` and `harness` — and `CP-2`'s mechanical half is
+> green: 208 capabilities, three doors derived from one table, 624 door checks walked end to
+> end, Steel booted from `runtime/`, the REPL live, and the statusline composed in the editor
+> layer. **`CP-2`'s manual half is outstanding**, and Window D does not start until it passes.
 >
 > `CP-1`'s manual half produced four rulings, three of which amend design docs. That is the
 > checkpoint doing its job: they are the first amendments in this build that came from looking at
