@@ -1,0 +1,9 @@
+/target
+test.rs
+test/
+.DS_Store
+.idea
+flamegraph.svg
+.claude
+.anycode/
+tmp/
