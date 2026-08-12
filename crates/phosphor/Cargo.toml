@@ -1,0 +1,22 @@
+[package]
+name = "phosphor"
+default-run = "phosphor"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+# The only crate that may depend on `ratatui` itself: the app layer owns the
+# terminal, the frame and the event loop. Widgets stay on `ratatui-core`.
+[dependencies]
+crossterm.workspace = true
+phosphor-agent.workspace = true
+phosphor-buffer.workspace = true
+phosphor-core.workspace = true
+phosphor-steel.workspace = true
+phosphor-ui.workspace = true
+phosphor-vcs.workspace = true
+ratatui.workspace = true
+
+[lints]
+workspace = true

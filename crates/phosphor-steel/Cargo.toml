@@ -1,0 +1,16 @@
+[package]
+name = "phosphor-steel"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+# `steel-core` is pinned exactly (Q5): the whole editor layer sits on a pre-1.0
+# crate that moves embedding APIs in patch releases. An upgrade is a scheduled
+# task gated by the door-parity test, never an incidental resolve.
+[dependencies]
+phosphor-core.workspace = true
+steel-core.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,13 @@
+[package]
+name = "phosphor-buffer"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+ropey.workspace = true
+tree-sitter.workspace = true
+
+[lints]
+workspace = true

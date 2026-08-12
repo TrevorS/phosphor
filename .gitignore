@@ -1,0 +1,3 @@
+# Cargo.lock is committed on purpose: this workspace ships a binary, and the VHS
+# reference images (V001) are only comparable if the build resolves identically.
+/target

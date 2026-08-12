@@ -1,0 +1,47 @@
+[workspace]
+members = ["crates/*"]
+# `vendor/*` is not listed on purpose: the two vendored subtrees (T003, T004) become
+# workspace members automatically once a member declares a path dependency on them.
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+publish = false
+rust-version = "1.85"
+version = "0.1.0"
+
+# The dependency floor (T002). Versions are SPIKES.md's manifest, verified 2026-08-11.
+# Two rules this table exists to hold:
+#   * `phosphor-ui` takes `ratatui-core` and never `ratatui`.
+#   * `steel-core` is pinned exactly (Q5) — a patch bump is its own scheduled task.
+[workspace.dependencies]
+crossterm = "0.29.0"
+phosphor-agent = { path = "crates/phosphor-agent" }
+phosphor-buffer = { path = "crates/phosphor-buffer" }
+phosphor-core = { path = "crates/phosphor-core" }
+phosphor-steel = { path = "crates/phosphor-steel" }
+phosphor-ui = { path = "crates/phosphor-ui" }
+phosphor-vcs = { path = "crates/phosphor-vcs" }
+ratatui = "0.30.2"
+ratatui-core = "0.1.2"
+ropey = "1.6.1"
+steel-core = "=0.8.2"
+steel-derive = "=0.8.2"
+tree-sitter = "0.26"
+
+# One lint configuration for all seven crates, inherited via `[lints] workspace = true`,
+# rather than seven `#![warn(...)]` preambles that drift (SPIKES.md, hygiene).
+# The T006 / T007 structural lints get their teeth here.
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unsafe_code = "deny"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# The TUI owns the terminal: a stray print corrupts the frame. The CLI door
+# (`phosphor --eval`) is the one legitimate writer and allows these locally.
+dbg_macro = "warn"
+print_stderr = "warn"
+print_stdout = "warn"

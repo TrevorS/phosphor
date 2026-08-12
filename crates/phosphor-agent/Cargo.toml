@@ -1,0 +1,14 @@
+[package]
+name = "phosphor-agent"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+# The transports (`agent-client-protocol`, `rmcp`, tokio) arrive with S6/T050;
+# nothing in the floor belongs here yet.
+[dependencies]
+phosphor-core.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,90 @@
+# cargo-deny configuration. Pinned tool version: cargo-deny 0.20.2 (SPIKES.md's
+# hygiene-tooling table). Schema below matches what `cargo deny init` generates
+# under that exact binary — checked directly rather than copied from memory,
+# since cargo-deny's config schema has moved between versions (e.g. the old
+# per-lint `[advisories]` fields were folded away before 0.20).
+#
+# Three risks this file exists to catch, per SPIKES.md's hygiene-tooling table:
+#
+#   1. [bans]       — a duplicate major of ratatui / ratatui-core. "The one that
+#                      matters most": it would have caught the tui-textarea /
+#                      ratatui-markdown 0.29-vs-0.30 split mechanically, before
+#                      either reached the plan.
+#   2. [licenses]   — both vendored forks (vendor/ratatui-code-editor,
+#                      vendor/ratatui-markdown) are MIT; everything else must
+#                      clear the same permissive bar.
+#   3. [advisories] — the RustSec DB, which subsumes cargo-audit.
+#
+# NOT run end-to-end yet — see this phase's report under `evidence` for what
+# was and wasn't checked against the real workspace.
+
+[advisories]
+# T005: first real `cargo deny check` run against the workspace. All four ignores
+# below are "unmaintained" advisories (not vulnerabilities), all transitive through
+# `steel-core =0.8.2` (pinned exactly, Q5) via its `im-rc` persistent-data-structure
+# dependency. Each advisory's own "Solution" field says "No safe upgrade is
+# available" — the fork (`imbl`) is not a drop-in steel-core takes, so there is
+# nothing for us to bump. Ignoring is a decision about *this* deny.toml, not a
+# reversal of Q5; revisit if steel-core moves off `im-rc` upstream, or the moment
+# any of these four is *also* flagged for an actual vulnerability (RUSTSEC-2025-0141,
+# RUSTSEC-2026-0247, RUSTSEC-2026-0250, RUSTSEC-2026-0251 are unmaintained-only).
+ignore = [
+    "RUSTSEC-2025-0141", # bincode 1.3.3 — unmaintained; steel-core's serialization dep
+    "RUSTSEC-2026-0247", # bitmaps 2.1.0 — unmaintained; im-rc's dep
+    "RUSTSEC-2026-0250", # im-rc 15.1.0 — unmaintained; steel-core's persistent-map dep
+    "RUSTSEC-2026-0251", # sized-chunks 0.6.5 — unmaintained; im-rc's dep
+]
+
+[licenses]
+# Both vendored forks are MIT. The rest is the practical union of what the
+# SPIKES.md dependency manifest actually pulls in (tokio/serde/tree-sitter-*
+# ecosystem crates commonly dual- or triple-license across these). Expect to
+# extend this list the first time `cargo deny check` runs for real against
+# the full manifest — narrowing it later is the wrong direction to correct in.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+# All seven workspace crates set `publish.workspace = true` -> `publish = false`
+# (Cargo.toml) — this is a binary, never published. Requiring a `license` field
+# on crates that will never leave this repo has no payoff; this is what the
+# `ignore` flag exists for. Verified against the real workspace: without this,
+# `cargo deny check` fails on all seven of our own crates for a missing
+# `license` field, not on anything the check is actually meant to catch.
+ignore = true
+
+[bans]
+# Global default stays relaxed. A seven-crate workspace carrying two vendored
+# forks and a dozen tree-sitter grammars will accumulate ordinary, harmless
+# duplicate versions of unrelated crates — that's not the risk this file is
+# for. `deny-multiple-versions` below is the targeted version of the same
+# check, scoped to the two crates where a duplicate is never harmless:
+# `phosphor-ui` depends on `ratatui-core` alone, never `ratatui`
+# (IMPLEMENTATION-PLAN §1) — a second version of either is precisely the shape
+# of the split that reached the plan undetected.
+multiple-versions = "warn"
+
+deny = [
+    { crate = "ratatui", deny-multiple-versions = true, reason = "phosphor-ui depends on ratatui-core alone; a second ratatui version is the 0.29/0.30 split happening again" },
+    { crate = "ratatui-core", deny-multiple-versions = true, reason = "the one crate phosphor-ui is allowed to depend on — a second version defeats the point" },
+
+    # Q3 (SPIKES.md, T009): the input machine is ours. edtui's register is a
+    # compile-time HashMap that can't express counts or named registers, and
+    # our keymaps live in Steel anyway. Dropped, not merely unused.
+    { crate = "edtui", reason = "dropped per Q3/T009 — the input machine is ours, don't reintroduce edtui" },
+
+    # IMPLEMENTATION-PLAN §1: pins ratatui ^0.29, stale two years, incompatible
+    # with this workspace's 0.30. ratatui-textarea is the maintained fork we use.
+    { crate = "tui-textarea", reason = "pins ratatui ^0.29, incompatible with this workspace's 0.30.2 — use ratatui-textarea instead" },
+]

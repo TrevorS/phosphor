@@ -1,0 +1,99 @@
+# Phosphor CI (T005). Owned by `harness` (TEAM.md).
+#
+# Three jobs T005 asks for (fmt / clippy / test), plus the two seams this phase
+# adds: `lint` (the scripts/lint-*.sh convention — see justfile's `lint` recipe;
+# this is the ONLY CI edit either T006 or T007 should ever require) and `deny`
+# (cargo-deny, wired as its own job per SPIKES.md's hygiene-tooling table).
+#
+# Every job calls a `just` recipe rather than inlining cargo invocations, so
+# "does CI pass" and "does `just <recipe>` pass locally" never drift apart.
+#
+# NOTE: this repo has no git remote yet, so none of this has executed on a
+# runner. Verified locally instead — see this phase's report.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Cancel a superseded run on the same ref instead of burning runner time on
+# stale pushes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # No explicit toolchain-install action in any job below: rust-toolchain.toml
+  # pins the exact channel (1.93.1) and components (rustfmt, clippy) for
+  # determinism (see that file's own comment), and GitHub's ubuntu-latest
+  # runners ship rustup, which auto-installs the pinned override on the first
+  # `cargo`/`rustc` invocation.
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: just fmt
+        env:
+          RUST_BACKTRACE: "1"
+
+  clippy:
+    name: cargo clippy -D warnings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: just clippy
+        env:
+          RUST_BACKTRACE: "1"
+
+  test:
+    name: cargo nextest run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # cargo-nextest: per-test process isolation (SPIKES.md's hygiene table) —
+      # tests that touch the XDG state dir and terminal state get flaky under a
+      # shared-process runner otherwise.
+      # Pinned to 0.9.135: what's actually installed and verified locally for
+      # this task (`cargo nextest --version`). SPIKES.md's hygiene table names
+      # 0.9.143, which is not what's on this machine — flagged under this
+      # phase's report rather than silently trusting either number.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.135
+      - run: just test
+        env:
+          RUST_BACKTRACE: "1"
+
+  lint:
+    name: just lint (structural lints)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # `just` itself isn't preinstalled on GitHub's runners.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      # The whole seam: every structural lint is one scripts/lint-*.sh script,
+      # and `just lint` runs all of them. Nobody edits this workflow to add a
+      # lint — T006 and T007 each add a script and nothing else.
+      - run: just lint
+
+  deny:
+    name: cargo deny check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # bans: denies a second major of ratatui/ratatui-core — the rule
+      # SPIKES.md says matters most, and the one that would have caught the
+      # tui-textarea / ratatui-markdown 0.29-vs-0.30 split mechanically.
+      # licenses + advisories run in the same pass; see deny.toml for the
+      # advisory ignores (all four are "unmaintained", not vulnerabilities,
+      # transitive through steel-core =0.8.2 with no safe upgrade available).
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check

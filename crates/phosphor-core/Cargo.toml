@@ -1,0 +1,13 @@
+[package]
+name = "phosphor-core"
+edition.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+# Deliberately dependency-free at the floor. The view tree carries neither a Steel
+# nor a ratatui dependency (Q12, T078), so neither side can come to own it.
+[dependencies]
+
+[lints]
+workspace = true

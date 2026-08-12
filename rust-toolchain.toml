@@ -1,0 +1,29 @@
+# Pinned for determinism, not for a version floor.
+#
+# The version floor is `workspace.package.rust-version = "1.85"` in Cargo.toml
+# (edition 2024, which the vendored `ratatui-code-editor` fork also requires).
+# This file exists for the reason SPIKES.md gives under "configuration rather
+# than tools": VHS reference images (V001/V002) are only comparable if the
+# binary that produced them was built by the same compiler. A floor ("1.85+")
+# doesn't give you that — two machines both satisfying the floor can still
+# differ in codegen, and the tapes would drift for no reason a diff explains.
+#
+# `rustup toolchain list`, checked before writing this file, showed three
+# toolchains already installed:
+#   stable-aarch64-apple-darwin (active, default)  — a moving alias, currently
+#     rustc 1.97.1, but "moving" is exactly what determinism can't have
+#   nightly-aarch64-apple-darwin                   — not relevant here
+#   1.93.1-aarch64-apple-darwin                    — an exact version, already
+#     present under that literal name
+#
+# 1.93.1 clears the 1.85 floor, so it's pinned by exact version below at zero
+# download cost on this machine. Pinning the *name* "stable" would fail the
+# determinism goal outright (it moves under you on the next `rustup update`).
+# Pinning today's resolved value of stable ("1.97.1") would satisfy
+# determinism but isn't installed under that literal name here — every
+# machine, including this one, would fetch a second toolchain on first build,
+# which is exactly the worse-failure-than-the-drift-it-prevents case this
+# file's own instructions warn against. So: pin what's already on disk.
+[toolchain]
+channel = "1.93.1"
+components = ["rustfmt", "clippy"]
