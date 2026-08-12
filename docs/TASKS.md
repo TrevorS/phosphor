@@ -15,10 +15,10 @@ what they found. The build half followed: the workspace, both vendored subtrees,
 lints and the grammar ABI check all landed and the gate ran green. One criterion in `T003` was
 never executed and says so at the task.
 
-**`CP-1`'s mechanical half has passed; its manual half has not.** Window B's surfaces are built
-and checked off, and the gate verified them by running the binary rather than reading it. What
-remains is Teej on four real terminals — `CP-1` is *"does it look like the mockups?"*, and no
-command answers that. **Window C does not start until he says so.**
+**`CP-1` has passed too, both halves** — the mechanical gate and Teej's four-terminal pass. Four
+rulings came out of the manual half; three amend design docs and are tabled in
+[§5](IMPLEMENTATION-PLAN.md#5-decisions). **Window C — `spine`'s contract phase, `T019`'s `Action`
+enum first — is unblocked, and `CP-2` is the next full stop.**
 
 Checkboxes below track *tasks*, not checkpoints: a task is ticked when its own *done when* is
 demonstrably met. The two are deliberately separate, because a checkpoint is a human judgement
@@ -152,7 +152,7 @@ can actually see each one is noted, since it isn't obvious:
 | Phase | Tasks | Checkpoint |
 |---|---|---|
 | M-0 · Scaffolding + spikes | T001–T009, T083 | **CP-0** — ✅ passed, both halves |
-| S1 · Theme + BufferView + StatusLine | T010–T018, T081, T084, T085, T090 | **CP-1** — ✅ mechanical half · four-terminal half open |
+| S1 · Theme + BufferView + StatusLine | T010–T018, T081, T084, T085, T090 | **CP-1** — ✅ passed, both halves |
 | S2 · Steel + Action + REPL + view tree | T019–T025, T078–T080 | **CP-2** — is the editor live |
 | S3 · Input + undo + gutter | T026–T035, T086 | **CP-3** — does it feel like an editor |
 | S4 · LSP | T036–T040, T082 | **CP-4** — boring on purpose |
@@ -486,7 +486,21 @@ First phase with anything to look at. Sized by CP-0.
   > through `T026`: no `Action` enum, no Steel, no input machine, no panes. It is the app shell
   > the S1 preamble already assumes exists, which no task numbered.
 
-### ✋ CP-1 — Does it look like the mockups?
+### ✋ CP-1 — Does it look like the mockups? · **PASSED**
+
+**Both halves, on 2026-08-12.** The mechanical half is below; the manual half was Teej on the
+four-terminal matrix, and it passed on all six checks — `1a` against the mockup at 100×25, the
+six themes including the light-mode contrast question, a live 200→40 resize, floats in both
+moods with the dim behind them, soft wrap with cursor and click on a continuation, and undercurl
+across the matrix.
+
+**Four rulings came out of it**, three of which amend design docs and are tabled in
+[§5](IMPLEMENTATION-PLAN.md#5-decisions): §10's brightest-colour contract became dark-mode only,
+`8d`'s shed ladder is fit-driven rather than width-labelled, the statusline's bars join the
+counter group only, and undercurl detection now consults `TERM_PROGRAM` before the plain-`TERM`
+family rule. The fourth is code-only and shipped with them.
+
+**Window C is unblocked.**
 
 The baseline visual checkpoint, and the one that establishes your terminal matrix. Everything
 after this trusts that colours and frames are right.

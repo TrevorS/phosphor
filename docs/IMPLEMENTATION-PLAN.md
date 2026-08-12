@@ -1032,9 +1032,31 @@ appears there is exactly one place to look.
 **M-0 and S1 are built.** `CP-0` passed both halves and `CP-1`'s mechanical half passed; the
 sections below describe what was planned, and this one records where that left things.
 
-**The single open item is `CP-1`'s manual half** — Teej on the four-terminal matrix, judging
-whether it looks like the mockups. No command answers that, and **Window C (`T019`–`T025`,
-`T078`–`T080`, `spine`'s contract phase) does not start until it passes.**
+**`CP-1` passed both halves on 2026-08-12**, including Teej's four-terminal pass, and produced
+four rulings — three of them design-doc amendments, tabled in [§5](#5-decisions). **Window C is
+next: `T019`–`T025` and `T078`–`T080`, `spine`'s contract phase, ending at `CP-2`.**
+
+**`T019` is the task to get right.** It gates 60 others and the plan calls it *"reversible: no in
+practice."* Four things the S1 host learned by being the first thing to actually run the widget
+layer, all recorded in `crates/phosphor/src/main.rs`'s header:
+
+- **Scroll is a request, and today the viewport moves from two places.**
+  `buffer_view::apply_scroll` is invariant 3's single writer, but the vendored handler S1 rides
+  calls `focus()` on every keystroke and `scroll_up`/`scroll_down` on every mouse event. `Action`
+  needs a `Scroll(ScrollRequest)` variant — `ScrollRequest` is already shaped as its payload —
+  and `T026` has to **stop calling** `input`/`mouse` rather than wrap them.
+- **A mode is a fact the statusline reads, not a flag input owns.** The chip is hardcoded to
+  `Normal` because S1 has no modality; `soft_wrap::set_mode` already wants the real one
+  (whitespace marks are INSERT-only).
+- **Dirty is per buffer and comes from the edit stream**, not from a save path.
+- **Floats need `OpenFloat(kind)` / `CloseFloat`.** The one-float rule lives in the widget;
+  `T021`'s broken-`init.scm` float is the first real caller.
+
+**The Steel VM is checked, not assumed.** `crates/phosphor-steel/tests/embed_smoke.rs` confirms
+`steel-core 0.8.2` embeds, evaluates Steel-dialect `define`/`lambda`, and lets Rust register a
+value the Scheme side then uses — the direction invariant 1 depends on. Same reasoning as the
+grammar ABI check: the pin is exact *because* the VM is pre-1.0, and six tasks were about to be
+built on top of an assumption nothing had exercised.
 
 What the two checkpoints changed, beyond ticking tasks:
 

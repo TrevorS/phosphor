@@ -290,12 +290,15 @@ built on an unverified foundation.
 > one-tape-per-screen convention, which is standing work rather than a numbered task. The
 > standing instruction below is what governs it.
 
-> **Where the build actually is.** `CP-0` has passed both halves: the spikes settled the
-> verdict, and Window A's build gate ran green — workspace, both subtrees, the structural lints
-> proven to bite on planted violations, and the grammar ABI check. **`CP-1`'s mechanical half
-> has passed too**, and its manual half — Teej on four real terminals — has not. Windows A and B
-> are therefore complete as *tasks*, and **Window C does not start until he passes `CP-1`**,
-> which is the whole point of a checkpoint being a human judgement.
+> **Where the build actually is.** `CP-0` and `CP-1` have both passed, both halves each.
+> Windows A and B are complete: the workspace, both vendored forks, three structural lints proven
+> to bite, the grammar ABI check, the whole S1 widget layer, the S1 host, and a calibrated tape
+> harness. **Window C is live** — `spine` and `harness`, `T019`'s `Action` enum first — and
+> `CP-2` is the next full stop.
+>
+> `CP-1`'s manual half produced four rulings, three of which amend design docs. That is the
+> checkpoint doing its job: they are the first amendments in this build that came from looking at
+> a running program rather than reasoning on paper.
 >
 > Window B also cost more than the table below says. `T090`, the S1 host, did not exist when
 > this plan was written: the first `CP-1` attempt failed because a complete, tested widget layer
