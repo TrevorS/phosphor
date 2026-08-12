@@ -83,14 +83,24 @@ jobs:
     name: just lint (structural lints)
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 — the ONE job that needs full history. `just vendor-check`
+      # (reached through scripts/lint-vendor-provenance.sh) reads each fork's
+      # `git-subtree-split` trailer to prove the SHA its VENDOR.md records is the
+      # SHA history actually merged. The default shallow clone has no such
+      # commit, so the check cannot answer its question at all — it failed here
+      # the first time for exactly that reason. A lint that needs history gets
+      # history; the alternative is a lint that silently skips, which is the
+      # failure mode all of these exist to prevent.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       # `just` itself isn't preinstalled on GitHub's runners.
       - uses: taiki-e/install-action@v2
         with:
           tool: just
-      # The whole seam: every structural lint is one scripts/lint-*.sh script,
-      # and `just lint` runs all of them. Nobody edits this workflow to add a
-      # lint — T006 and T007 each add a script and nothing else.
+      # The whole seam: every lint is one scripts/lint-*.sh script, and
+      # `just lint` runs all of them. Nobody edits this workflow to add a lint —
+      # six exist now and none of them changed this file.
       - run: just lint
 
   deny:
