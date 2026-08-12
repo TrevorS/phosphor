@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<script src="./doc-page.js"></script>
+<style>
+  doc-page:not(:defined){visibility:hidden}
+  body{margin:0;font-family:'IBM Plex Sans',sans-serif;color:#1a1d1a;}
+  a{color:#1a6b4a;text-decoration:none;border-bottom:1px solid #9ec7b3;}
+  a:hover{color:#0d4530;border-bottom-color:#1a6b4a;}
+  .keep{break-inside:avoid;orphans:3;widows:3;}
+</style>
+</helmet>
+<doc-page margin="0.85in" style="font-family:'IBM Plex Sans',sans-serif;">
+  <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#1a6b4a;letter-spacing:0.08em;margin-bottom:10px;">DESIGN BRIEF · V1 · AUGUST 2026</div>
+  <h1 style="font-size:30px;font-weight:600;line-height:1.2;margin:0 0 6px;">Phosphor</h1>
+  <p style="font-size:16px;line-height:1.6;color:#3d423d;margin:0 0 28px;font-style:italic;">A spiritual successor to Light Table for the age of coding agents, with the terminal as a first-class citizen.</p>
+
+  <h2 style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1.5px solid #1a1d1a;padding-bottom:6px;margin:28px 0 12px;">Thesis</h2>
+  <p style="font-size:14.5px;line-height:1.65;margin:0 0 12px;">Light Table's bet was killing the edit-compile-run loop: inline evaluation, watches, seeing your program's live behavior instead of imagining it. Agents change what "live state" means. The state you need to see is no longer just your code's values — it's what the agent is doing, thinking, and touching in your tree. Phosphor recreates the Light Table moment for that: <em>I can see what my agent is doing to my codebase in real time, the way Light Table let me see what my functions were doing to my data.</em></p>
+  <p style="font-size:14.5px;line-height:1.65;margin:0 0 12px;">The workflow it serves: mostly reading and directing, rarely editing. The user glances at what changed, talks to Claude, occasionally edits by hand. The editor's job is <strong>awareness, not gatekeeping</strong> — the tree is the truth, the VCS journal is the safety net, and no ceremony stands between the agent and the code.</p>
+
+  <h2 style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1.5px solid #1a1d1a;padding-bottom:6px;margin:28px 0 12px;">Core bets</h2>
+  <div class="keep" style="margin:0 0 14px;">
+    <p style="font-size:14.5px;line-height:1.65;margin:0 0 4px;"><strong>TUI-native, tmux-friendly.</strong> It runs <em>in</em> the terminal. The multiplexer is already the window manager developers trust; don't fight it, embed in it. Expected v1 usage: one tmux window for the editor, an adjacent shell alongside. Zellij/wezterm compatibility later; tmux-first is the wedge because that's where agent sessions live today.</p>
+  </div>
+  <div class="keep" style="margin:0 0 14px;">
+    <p style="font-size:14.5px;line-height:1.65;margin:0 0 4px;"><strong>Code-first layout.</strong> Buffers dominate. The agent transcript is a summonable pane, not the primary surface. Unseen-change markers pull you to files; the code speaks for itself.</p>
+  </div>
+  <div class="keep" style="margin:0 0 14px;">
+    <p style="font-size:14.5px;line-height:1.65;margin:0 0 4px;"><strong>Nothing moves unless you asked.</strong> The agent writes to disk continuously, but open buffers never update under your cursor. One mental rule, applied everywhere.</p>
+  </div>
+  <div class="keep" style="margin:0 0 14px;">
+    <p style="font-size:14.5px;line-height:1.65;margin:0 0 4px;"><strong>No VCS requirement.</strong> Works in any directory. jj (or git) is an enhancement — a stronger safety net when present — never a dependency. No feature may assume a repo exists.</p>
+  </div>
+  <div class="keep" style="margin:0 0 14px;">
+    <p style="font-size:14.5px;line-height:1.65;margin:0 0 4px;"><strong>Modal editing.</strong> Vim habits carry.</p>
+  </div>
+
+  <h2 style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1.5px solid #1a1d1a;padding-bottom:6px;margin:28px 0 12px;">Awareness model</h2>
+  <p style="font-size:14.5px;line-height:1.65;margin:0 0 12px;"><strong>Unseen-change markers.</strong> The editor tracks which agent changes you haven't looked at, like unread markers. Open a file and modified regions are flagged in the gutter — markers only in v1, no inline provenance. Glance, mark seen, move on. That <em>is</em> review.</p>
+  <p style="font-size:14.5px;line-height:1.65;margin:0 0 12px;"><strong>Claude declares review blocks.</strong> No task model, no watermark, no approve/reject lifecycle. The harness knows where its own seams are: when a coherent block of work is ready, Claude signals it, which surfaces as a grouped set of unseen markers plus a notification. The user reads when they get a chance.</p>
+  <p style="font-size:14.5px;line-height:1.65;margin:0 0 12px;"><strong>Dirty-state handling.</strong> When Claude modifies a file that's open in a buffer, the buffer holds stable and shows a changed-underneath indicator with an offer to refresh. If the user also has unsaved edits, resolution is a manual choice: refresh, or save over — the cheapest honest rule. With jj present, both versions survive in the journal regardless.</p>
+  <p style="font-size:14.5px;line-height:1.65;margin:0 0 12px;"><strong>Rejection machinery: none.</strong> Don't like a change? Edit it, tell Claude, or undo via your VCS. All of these already exist.</p>
+
+  <h2 style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1.5px solid #1a1d1a;padding-bottom:6px;margin:28px 0 12px;">Directing model</h2>
+  <p style="font-size:14.5px;line-height:1.65;margin:0 0 12px;"><strong>The <code style="font-family:'IBM Plex Mono',monospace;font-size:13px;background:#eef2ee;padding:1px 5px;border-radius:3px;">:</code>-prompt is the primary gesture.</strong> Talking to Claude costs the same as an ex command: a command-line-style prompt available from anywhere. The transcript stays closed unless summoned.</p>
+  <p style="font-size:14.5px;line-height:1.65;margin:0 0 12px;"><strong>Selections anchor automatically.</strong> Visual-select a region and invoke the prompt: the message carries file and range context. Commenting on code is just talking to Claude with spatial context attached — a message that happens to carry an anchor, not a workflow object. No batch-submit, no thread lifecycle.</p>
+  <p style="font-size:14.5px;line-height:1.65;margin:0 0 12px;"><strong>One session.</strong> One Claude Code session per editor per repo in v1. Multi-agent parallelism changes the inbox, the markers, and who owns the tree — deferred deliberately.</p>
+
+  <h2 style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1.5px solid #1a1d1a;padding-bottom:6px;margin:28px 0 12px;">V1 scope</h2>
+  <ul style="font-size:14.5px;line-height:1.65;margin:0 0 12px;padding-left:22px;">
+    <li style="margin-bottom:6px;">TUI editor, modal, tmux-friendly</li>
+    <li style="margin-bottom:6px;">One attached Claude Code session; transcript as summonable pane</li>
+    <li style="margin-bottom:6px;">Unseen-change gutter markers + seen-tracking; Claude-signaled review blocks</li>
+    <li style="margin-bottom:6px;">Dirty-state indicator + offer-to-refresh</li>
+    <li style="margin-bottom:6px;"><code style="font-family:'IBM Plex Mono',monospace;font-size:13px;background:#eef2ee;padding:1px 5px;border-radius:3px;">:</code>-prompt to Claude with selection-anchored messages</li>
+    <li style="margin-bottom:6px;">VCS-aware when present (jj first), fully functional without</li>
+    <li style="margin-bottom:6px;">Persistent undo + seen-state persistence on disk (survive restarts)</li>
+    <li style="margin-bottom:6px;">Session protocol: ACP + MCP combo — ACP for the agent session, MCP for editor-facing tools (review-block signals, notifications)</li>
+  </ul>
+
+  <h2 style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1.5px solid #1a1d1a;padding-bottom:6px;margin:28px 0 12px;">V1.5</h2>
+  <ul style="font-size:14.5px;line-height:1.65;margin:0 0 12px;padding-left:22px;">
+    <li style="margin-bottom:6px;"><strong>Agent-scriptable workspace</strong> — editor internals legible to the agent; say a sentence and Claude writes a pane into existence. The extension language's real audience is Claude, not the user.</li>
+    <li style="margin-bottom:6px;"><strong>Built-in tmux support</strong> — spawning/adopting panes, layout integration. V1 is tmux-<em>friendly</em>; v1.5 makes it tmux-<em>native</em>.</li>
+  </ul>
+
+  <h2 style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1.5px solid #1a1d1a;padding-bottom:6px;margin:28px 0 12px;">Decided since (design passes 2–9)</h2>
+  <ul style="font-size:14.5px;line-height:1.65;margin:0 0 12px;padding-left:22px;">
+    <li style="margin-bottom:6px;"><strong>Name: Phosphor.</strong> Leader key: <code style="font-family:'IBM Plex Mono',monospace;font-size:13px;background:#eef2ee;padding:1px 5px;border-radius:3px;">SPC</code>, alongside full ex commands.</li>
+    <li style="margin-bottom:6px;"><strong>Theme:</strong> the original "phosphor" palette (dark + light) is the v1 default; themes ship base16-style, Catppuccin and Ayu as the first two mappings. Hue is the contract — green always means Claude.</li>
+    <li style="margin-bottom:6px;"><strong>Architecture:</strong> tree-sitter + LSP + ACP + MCP feed one semantic store; every surface (markers, anchors, watches, inbox, pickers) is a query over it. Widgets are pure renderers over a ViewModel; key → Action → store.</li>
+    <li style="margin-bottom:6px;"><strong>Anchors bind to tree-sitter nodes,</strong> not lines — threads, seen-state, and watches survive rewrites (promoted from the cut list).</li>
+    <li style="margin-bottom:6px;"><strong>Lineage: Emacs and Light Table, not vim</strong> — Rust is the C core; the editor layer itself ships as Steel in the source tree, redefinable live from the REPL. First-class languages are a curated set (TS, JS, Rust, Python, Steel, Markdown, JSON, CSV + TOML/YAML/HTML/CSS); everything else is honest plain text where the full agent loop still works, with <code style="font-family:'IBM Plex Mono',monospace;font-size:13px;background:#eef2ee;padding:1px 5px;border-radius:3px;">define-language</code> as the userspace road up.</li>
+    <li style="margin-bottom:6px;"><strong>Scripting: Steel</strong> — one scheme dialect for config, the live REPL, and (v1.5) Claude-built panes. Vim grammar extends with agent nouns: <code style="font-family:'IBM Plex Mono',monospace;font-size:13px;background:#eef2ee;padding:1px 5px;border-radius:3px;">viu</code>, <code style="font-family:'IBM Plex Mono',monospace;font-size:13px;background:#eef2ee;padding:1px 5px;border-radius:3px;">sib</code>, <code style="font-family:'IBM Plex Mono',monospace;font-size:13px;background:#eef2ee;padding:1px 5px;border-radius:3px;">dih</code>, <code style="font-family:'IBM Plex Mono',monospace;font-size:13px;background:#eef2ee;padding:1px 5px;border-radius:3px;">:'&lt;,'&gt;c</code>.</li>
+    <li style="margin-bottom:6px;"><strong>Inbox and watches are v1 surfaces:</strong> the inbox is one list of everything Claude said (severity = one MCP flag; unread = unseen); watches stream values from real runs as virtual text — the Light Table inheritance.</li>
+    <li style="margin-bottom:6px;"><strong>Chrome is three strips:</strong> tab bar (2+ panes only), statusline (never wraps; sheds right-to-left at narrow widths), tmux below. UI keyhints spell full commands (<code style="font-family:'IBM Plex Mono',monospace;font-size:13px;background:#eef2ee;padding:1px 5px;border-radius:3px;">:reattach</code>, never :ca).</li>
+    <li style="margin-bottom:6px;"><strong>Interaction rules:</strong> at most one float focused, needs-you never steals focus, esc pauses Claude at tool boundaries (steer / resume / abort), permission always-allow writes a legible rule to init.scm, large review blocks group by directory with Claude's annotations.</li>
+  </ul>
+
+  <h2 style="font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1.5px solid #1a1d1a;padding-bottom:6px;margin:28px 0 12px;">Cut from v1 (Beyond)</h2>
+  <ul style="font-size:14.5px;line-height:1.65;margin:0 0 12px;padding-left:22px;color:#3d423d;">
+    <li style="margin-bottom:6px;"><strong>Review ceremony</strong> — approve/reject gates, ready-states, watermarks. Process for teams that don't trust each other; layered on later by users who want it.</li>
+    <li style="margin-bottom:6px;"><strong>Provenance-on-keypress</strong> — the transcript excerpt that produced an edit, foldable at the marker. A strong v1.5 candidate now that the store tracks provenance anyway.</li>
+    <li style="margin-bottom:6px;"><strong>Multi-session / parallel agents</strong></li>
+  </ul>
+</doc-page>
+</x-dc>
+</body>
+</html>

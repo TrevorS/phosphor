@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="./doc-page.js"></script>
+<style>
+  doc-page:not(:defined){visibility:hidden}
+  body{margin:0;font-family:'IBM Plex Sans',sans-serif;color:#1a1d1a;}
+  a{color:#1a6b4a;text-decoration:none;border-bottom:1px solid #9ec7b3;}
+  a:hover{color:#0d4530;border-bottom-color:#1a6b4a;}
+  .keep{break-inside:avoid;orphans:3;widows:3;}
+  code{font-family:'IBM Plex Mono',monospace;font-size:12.5px;background:#eef2ee;padding:1px 5px;border-radius:3px;}
+  h2{font-size:14px;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;border-bottom:1.5px solid #1a1d1a;padding-bottom:6px;margin:28px 0 12px;}
+  h3{font-size:14px;font-weight:600;margin:18px 0 6px;font-family:'IBM Plex Mono',monospace;color:#0d4530;}
+  p,li{font-size:13.5px;line-height:1.6;}
+  table{border-collapse:collapse;width:100%;font-size:12.5px;line-height:1.5;}
+  th{text-align:left;font-weight:600;border-bottom:1.5px solid #1a1d1a;padding:4px 10px 4px 0;}
+  td{border-bottom:1px solid #d8ded8;padding:5px 10px 5px 0;vertical-align:top;}
+  td:first-child{font-family:'IBM Plex Mono',monospace;font-size:11.5px;white-space:nowrap;}
+</style>
+</helmet>
+<doc-page margin="0.85in">
+  <div style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#1a6b4a;letter-spacing:0.08em;margin-bottom:10px;">PHOSPHOR · COMPONENT BREAKDOWN · V1 · AUGUST 2026</div>
+  <h1 style="font-size:28px;font-weight:600;line-height:1.2;margin:0 0 6px;">Ratatui component breakdown</h1>
+  <p style="font-size:15px;line-height:1.6;color:#3d423d;margin:0 0 24px;font-style:italic;">Crate layout, buy-vs-build calls on the ratatui ecosystem, and the custom widget specs — companion to the Design Brief and Design Language v0.2.</p>
+
+  <h2>Crate layout</h2>
+  <table class="keep">
+    <tr><th style="width:190px;">crate</th><th>owns</th></tr>
+    <tr><td>phosphor</td><td>the binary: event loop, terminal setup, config load, session bootstrap</td></tr>
+    <tr><td>phosphor-core</td><td>the semantic store: regions, seen-state, anchors, threads, watches, inbox, review blocks; persistence (undo history + seen-state on disk); no UI deps</td></tr>
+    <tr><td>phosphor-buffer</td><td>text engine: rope, edits, persistent undo, tree-sitter parse + highlight, LSP client state</td></tr>
+    <tr><td>phosphor-ui</td><td>the substrate widgets below — pure renderers; depends on ratatui-core + phosphor-core ViewModels only</td></tr>
+    <tr><td>phosphor-agent</td><td>ACP session client, MCP server (editor tools exposed to claude), transcript model</td></tr>
+    <tr><td>phosphor-steel</td><td>Steel embedding: the runtime, the Action/query bindings (same vocabulary MCP exposes), REPL</td></tr>
+    <tr><td>phosphor-vcs</td><td>optional jj/git adapters behind a trait; compiled in, activated on detection</td></tr>
+    <tr><td>runtime/*.scm</td><td>not a crate — the editor layer, in Steel, shipped in the source tree: keymaps + leader tree, picker sources, statusline segment order, permission rules, float layouts, define-language calls for the first-class set</td></tr>
+  </table>
+  <p style="margin-top:10px;">Dependency rule mirrors the design language and the Emacs architecture: <strong>widgets are pure renderers, policy is Steel.</strong> <code>phosphor-ui</code> reads ViewModels derived from <code>phosphor-core</code>, never mutates. Input maps key → <code>Action</code>; Actions mutate the store; the store re-derives. The Rust crates are the C core; <code>runtime/*.scm</code> is the editor, and Steel, MCP, and the CLI call the same Action API — which is what makes the workspace scriptable by you, your shell, and claude alike.</p>
+
+  <h2>Platform layer</h2>
+  <ul>
+    <li><strong>ratatui 0.30+ workspace</strong> — depend on <code>ratatui</code> in the app; <code>phosphor-ui</code> depends on <code>ratatui-core</code> only, per the modular split, so it stays a lean widget library.</li>
+    <li><strong>crossterm backend</strong> — with the kitty keyboard protocol enabled for real modifier chords, synchronized output wrapping every frame (torn frame = P0), OSC 8 hyperlinks for transcript jump-links, undercurl via escape passthrough with underline fallback.</li>
+    <li><strong>ropey</strong> — rope text buffer; the same choice ratatui-code-editor validates.</li>
+    <li><strong>tree-sitter</strong> — incremental parsing; node ids are the anchor substrate, highlight queries drive syntax color. Grammars bundled for the first-class set (TypeScript, JavaScript, Rust, Python, Steel, Markdown, JSON, CSV, TOML, YAML, HTML, CSS); loadable as dylibs via <code>define-language</code> beyond it.</li>
+    <li><strong>steel-core</strong> — the embedded scheme that IS the editor layer: config, REPL, and everything in <code>runtime/*.scm</code>.</li>
+  </ul>
+
+  <h2>Buy, fork, or build — the ecosystem calls</h2>
+  <p>Posture: <strong>buy first.</strong> Custom code is reserved for the two things that are the product — the semantic store and the gutter/virtual-text contract. Where a buy covers 80%, wrap and restyle rather than rebuild.</p>
+  <table class="keep">
+    <tr><th style="width:190px;">crate</th><th style="width:70px;">verdict</th><th>reasoning</th></tr>
+    <tr><td>ratatui-code-editor</td><td><strong>buy + extend</strong></td><td>carries more than expected: tree-sitter highlighting with per-viewport caching, full editing + undo/redo, visual marks, diff views with expandable unchanged sections, grapheme-correct cursor/selection, mouse. Adopt as the BufferView core; the gutter contract, region tints, and virtual-text rows layer on via fork or upstream PRs. Its marks API is the seam for unseen regions; its diff view seeds DiffBody. Vendor the fork — the one dependency we must be able to patch same-day</td></tr>
+    <tr><td>edtui</td><td><strong>buy (input)</strong></td><td>its vim event handler is a customizable KeyEventHandler — modes, registers, insertable custom bindings. Adopt as the modal input machine; agent nouns (viu, sib, dih) register as custom text objects/operators on top. If the operator-pending grammar hits its ceiling, replace the handler only — the Action layer isolates it</td></tr>
+    <tr><td>tui-textarea / ratatui-textarea</td><td><strong>buy</strong></td><td>single-line and small multi-line inputs: the :-prompt line, picker filter lines, REPL input. Proven, backend-agnostic; don't rebuild text input</td></tr>
+    <tr><td>nucleo (helix's matcher)</td><td><strong>buy</strong></td><td>fuzzy matching for every Picker: parallel matcher worker, lock-free item streaming, never blocks the UI thread, grapheme-correct highlight indices. The engine helix ships; zero reason to write matching code</td></tr>
+    <tr><td>tui-tree-widget</td><td><strong>buy</strong></td><td>directory grouping in the block-diff review and the files picker; wrap in our Float body</td></tr>
+    <tr><td>ratatui-explorer</td><td><strong>study</strong></td><td>file-browser widget; if its data model takes custom columns it can seed the files picker, but nucleo + Picker likely covers it — decide in week one</td></tr>
+    <tr><td>throbber-widgets-tui</td><td><strong>buy</strong></td><td>the working spinner (braille frames, 80ms); trivial but already correct</td></tr>
+    <tr><td>ratatui-comfy-tabs</td><td><strong>study</strong></td><td>tab navigation; if it renders our flat 2px-rule style without fighting, TabBar becomes a styling wrapper — otherwise TabBar is ~100 lines anyway</td></tr>
+    <tr><td>tui-logger</td><td><strong>buy (dev)</strong></td><td>internal debug pane during development; not a user surface</td></tr>
+    <tr><td>ratatui-markdown</td><td><strong>buy (feature-gated)</strong></td><td>transcript prose rendering — claude writes markdown whether we render it or not; buying now beats plain text + a later migration. Gate mermaid/JSON-tree extras off</td></tr>
+    <tr><td>rat-salsa</td><td><strong>skip</strong></td><td>event-queue framework with focus/dialog management — overlaps our Action loop and one-float rule; adopting it means fighting it</td></tr>
+    <tr><td>tui-overlay / ratatui-toaster</td><td><strong>skip</strong></td><td>generic overlay/toast primitives; our Float contract (header/body/footer, mood borders, one-float rule) is stricter than what they offer</td></tr>
+    <tr><td>tachyonfx</td><td><strong>skip</strong></td><td>effects library; design language says only three things animate — no transitions to buy</td></tr>
+  </table>
+  <p style="margin-top:10px;">Net effect: the only fully hand-built widgets left are <strong>Float, StatusLine, GutterBar, TranscriptPane, and the virtual-text layer</strong> — everything else is a bought engine wearing phosphor styling.</p>
+
+  <h2>Custom widgets — phosphor-ui</h2>
+  <p>Reading order for implementation. Each lists its ViewModel input and key states; all take <code>&amp;Theme</code>.</p>
+
+  <div class="keep"><h3>Theme</h3>
+  <p>Actor/state palette struct: <code>claude, you, attention, trouble, transient, steel</code> + neutral ramp + syntax map. Loaded from base16-style files; phosphor dark/light built in, Catppuccin and Ayu ship as mappings. Validation: a theme that reassigns actor hues is rejected at load.</p></div>
+
+  <div class="keep"><h3>BufferView <span style="font-weight:400;color:#6b6f6b;">(ratatui-code-editor core + phosphor layer)</span></h3>
+  <p>The bought editor owns text rendering, highlighting, cursor, selection, and edit history. The phosphor layer wraps it with the 3-column contract (1-cell state bar → line numbers → text), region tints + undercurl via its marks API, interleaved virtual-text rows (┊-prefixed, owned by a region id: threads, watches, diagnostics, hints), soft-wrap ↪ continuations (no line number), fold rows (▸⋯ n lines), insert-only trailing-whitespace marks. Never scrolls under the user — "nothing moves unless you asked" is enforced in this wrapper.</p></div>
+
+  <div class="keep"><h3>GutterBar</h3>
+  <p>The 1-cell state column, resolved per row from <code>Vec&lt;RegionState&gt;</code> with priority trouble &gt; attention &gt; claude-unseen &gt; none. Degrades to ▎ on non-truecolor terminals.</p></div>
+
+  <div class="keep"><h3>StatusLine</h3>
+  <p>Mode chip + file/dirty + spring + <code>SessionState</code> + counters, segments joined by │. <code>SessionState</code> is ONE enum (Idle, Working{elapsed}, Waiting, Paused, Lost, None) rendered identically everywhere it appears. The widget renders and truncates; the segment list, order, and shed priority (counters → jj → cursor pos → session prose → mode word; ✻/●n last) come from Steel — redefine a segment in the REPL and the next frame has it. Never wraps — a second line is a bug, enforced by truncation in the widget.</p></div>
+
+  <div class="keep"><h3>TabBar</h3>
+  <p>Appears at 2+ panes. Flat vim-style: active tab = 2px actor-colored top rule + bright text; inactive = meta-gray; per-tab unseen counts (●n). Input: <code>Vec&lt;TabVM { title, kind, unseen }&gt;</code>.</p></div>
+
+  <div class="keep"><h3>Float</h3>
+  <p>The one chrome primitive: Block wrapper enforcing header / body / footer and mood border (informational #2a5c44, needs-you #6b5426 + dark-amber body, passive #2a3c2e no-footer). Enforces the one-float rule (opening replaces), full-width under 100 cols, background dim to the theme's behind color. Bodies plug in: Picker, DiffBody, QuestionBody, HelpGrid, ArchDiagram.</p></div>
+
+  <div class="keep"><h3>Picker <span style="font-weight:400;color:#6b6f6b;">(nucleo engine)</span></h3>
+  <p>Filter line (tui-textarea) + nucleo matcher worker + list + optional preview split (dropped under 100 cols). One widget, many sources — and sources are Steel: unseen regions, files (with agent activity columns), inbox, grep/symbols (tab cycles source), session adoption, jj timeline all ship as <code>(define-picker-source ...)</code> in runtime/, so adding one is userspace. nucleo streams items and matches off-thread; match-highlight indices color the rows. List rows are <code>Vec&lt;Span&gt;</code> so agent context (● counts, ✻ activity, seen ✓) renders in actor colors. Selection → Action, never direct mutation.</p></div>
+
+  <div class="keep"><h3>DiffBody <span style="font-weight:400;color:#6b6f6b;">(ratatui-code-editor diff view + phosphor layer)</span></h3>
+  <p>The bought diff view (added/deleted lines, expandable unchanged sections) restyled; phosphor adds per-hunk seen state, directory grouping via tui-tree-widget, and claude's group annotations as meta text. Used by: review block, hunk peek, :diff-disk (three-exit footer).</p></div>
+
+  <div class="keep"><h3>QuestionBody</h3>
+  <p>Needs-input and permission asks: prose, amber digit options [1]–[n], full-command footer. Never steals focus — renders alongside a waiting statusline flag; digits only answer while it's focused. Always-allow answers emit a Steel rule write.</p></div>
+
+  <div class="keep"><h3>TranscriptPane</h3>
+  <p>A pane, not a float. Turn list: prompt lines (claude-green ❯), prose, tool rows (▸ verb file ±counts — OSC 8 jump links), seam markers (⏸ paused, ✕ lost), review-ready lines. Folds by turn at scale. Streams during Working; input line docks at bottom when focused.</p></div>
+
+  <div class="keep"><h3>PromptLine</h3>
+  <p>The : line at screen bottom; ⚓ anchor chip prefix when a selection rides along; ex-style history (q: integration); routes to command parse or claude message.</p></div>
+
+  <div class="keep"><h3>KeymapFooter / WhichKey</h3>
+  <p>Same data, two densities: float footers (verb-labeled, primary first, esc last) and the SPC leader grid. Fed from the live keymap so Steel rebinds appear automatically. Also owns the once-per-session unknown-key hint.</p></div>
+
+  <div class="keep"><h3>WatchOverlay</h3>
+  <p>Virtual-text value streams: ◉ ⇒ sequences with run provenance line. Values arrive over the session/MCP from real executions; renders through BufferView's virtual-text rows — this widget only formats.</p></div>
+
+  <h2>Event & data flow</h2>
+  <ul>
+    <li><strong>Input:</strong> crossterm event → edtui KeyEventHandler (operator-pending, counts, registers; agent nouns u/h/t/b registered as custom text objects) → <code>Action</code>. The Action layer isolates the handler so it stays replaceable if the grammar outgrows it.</li>
+    <li><strong>Actions</strong> are the single mutation API: buffer edits, seen marks, session messages, float open/close. Steel and MCP invoke the same enum.</li>
+    <li><strong>Store → ViewModel:</strong> after each Action batch (or ACP/LSP event), dirty ViewModels re-derive; one draw call renders the frame inside a synchronized-output block.</li>
+    <li><strong>Async:</strong> tokio; ACP stream, LSP, tree-sitter re-parse, and VCS polls post events into the same queue as input — no widget ever blocks.</li>
+  </ul>
+
+  <h2>Philosophy — languages, scripting, and the Rust–Steel barrier</h2>
+  <p style="font-style:italic;color:#3d423d;">The design lineage is Emacs and Light Table, not vim: a small compiled core under a live, self-modifying editor. Vim gave us the grammar; Emacs gives us the architecture.</p>
+
+  <div class="keep">
+  <h3>Language support: first-class citizens, and an honest second tier</h3>
+  <p><strong>First-class languages are a curated, opinionated set:</strong> TypeScript, JavaScript, Rust, Python, Steel, Markdown, JSON, CSV, plus the config dialects agents live in (TOML, YAML) and the web substrate (HTML, CSS). First-class means the full promise, tuned by hand: bundled grammar, blessed LSP auto-configured (not just discovered), watch-expression shapes that actually work, test-runner integration for review blocks, structural text objects verified against real code, and CSV/Markdown getting bespoke surfaces (virtual column alignment, live preview) rather than generic buffer treatment. These are the languages phosphor is <em>for</em> — the agent-era working set — and each one is a maintained product commitment, which is exactly why the list is short.</p>
+  <p><strong>Everything else is second tier, and the tier is honest:</strong> plain text with line-based regions. Unseen markers, review blocks, the inbox, the transcript, dirty-state — the entire agent loop — work on any file, because they're store features, not language features. What second tier lacks is node anchoring (anchors fall back to line+content matching), structural text objects, and watches. There is no in-between: we do not ship half-tuned grammars that anchor wrongly and erode trust in the anchor promise. The road up is Steel — <code>(define-language ...)</code> declares a grammar, an LSP command, and locale hooks, and a second-tier language becomes first-class in userspace; the bundled set is just the define-language calls we wrote and stand behind.</p>
+  </div>
+
+  <div class="keep">
+  <h3>Push Rust down: the editor is written in its own extension language</h3>
+  <p>The Emacs lesson, taken literally: <strong>Rust is the C core, Steel is the editor.</strong> Rust owns the substrate that must be fast and crash-free — the rope, tree-sitter, transports (LSP/ACP/MCP), the semantic store, the renderer, the raw input decoder. Everything above that line is Steel <em>that ships with the editor</em>: the keymaps and leader tree, the pickers' sources and columns, the statusline segments, float layouts, the inbox, permission rules, which-key, even the :arch diagram. Not "configurable via Steel" — <em>implemented in</em> Steel, readable in the source tree, redefinable at runtime. <code>:describe-key</code> on any binding jumps to the scheme that implements it, Emacs-style. The placement test: "would two reasonable users want this to differ?" → Steel; "can this corrupt a buffer or drop a frame?" → Rust. When in doubt, push down later — promoting hot Steel to Rust is an optimization; excavating baked-in Rust into Steel is a rewrite.</p>
+  </div>
+
+  <div class="keep">
+  <h3>The live surface: REPL-driven editing of the editor</h3>
+  <p>The Light Table inheritance applied to phosphor itself: <strong>the editor is a running image you reshape while using it.</strong> The Steel REPL isn't a debugging tool bolted on — it's the primary extension workflow. Evaluate <code>(keymap-set! ...)</code> and the binding is live and which-key knows it; redefine a picker source and the open picker re-derives; <code>(watch-place ...)</code> from the REPL and the buffer sprouts virtual text. Surface changes never require restart — init.scm is just the REPL session that runs at boot, and anything you evaluate can be persisted back to it with one command. Safety comes from the barrier, not from ceremony: Steel can only emit Actions and read ViewModels, so live redefinition can misconfigure but never corrupt a buffer, and a broken init.scm boots the editor anyway with the error in a float. This is also, unchanged, the v1.5 agent story — claude scripting a pane into existence is a REPL session with a different author. One API, three doors (Steel in-process, MCP for agents, <code>phosphor --eval</code> for the shell); the doors differ in transport, never in vocabulary.</p>
+  </div>
+
+  <h2>Build order</h2>
+  <p>Steel is step 2, not step 7 — the Emacs architecture only holds if the editor layer grows up in scheme from the start; retrofitting policy out of Rust is the rewrite we swore off.</p>
+  <ol style="font-size:13.5px;line-height:1.7;">
+    <li>Theme + ratatui-code-editor integration + StatusLine shell — phosphor renders and edits a file with highlighting on day one; feels like the mockups</li>
+    <li>Steel runtime + Action/query bindings + REPL — from here on, every keymap, segment, and picker source lands in runtime/*.scm, not Rust</li>
+    <li>edtui input handler wired to Actions + persistent undo + the gutter/virtual-text layer (plain editor complete: 7c) · keymaps in Steel, WhichKey reads them (3c, 6d)</li>
+    <li>LSP (completion float via passive Float) — highlighting already bought</li>
+    <li>semantic store + GutterBar + seen-tracking + Picker with Steel sources (unseen/files) — the awareness loop (1a, 2a, 3d)</li>
+    <li>ACP session + MCP tool surface + TranscriptPane + PromptLine + QuestionBody — the directing loop (1b, 1c, 4a, 7a, 7e)</li>
+    <li>DiffBody + review blocks + inbox (2b, 4b, 5c) · dirty-state + :diff-disk (1d, 5b) · jj adapter + timeline (3b)</li>
+    <li>watches (5a) — last, it rides on everything above</li>
+  </ol>
+</doc-page>
+</x-dc>
+</body>
+</html>
