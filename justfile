@@ -33,6 +33,15 @@ build:
 fmt:
     cargo fmt --check
 
+# Formats in place. Same scoping rule as `fmt`, and the same prohibition: a
+# `--all` here would reformat the forks, which is the one thing `vendor-diff`
+# exists to stop. This recipe exists so there is a right verb to reach for —
+# agents kept reaching for `cargo fmt --all` and hitting the hook that blocks it.
+
+# Format in place (never `--all`).
+fmt-fix:
+    cargo fmt
+
 # Clippy, warnings denied — matches CI exactly.
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
@@ -118,3 +127,57 @@ tapes:
 tape id:
     @bash tapes/check-versions.sh
     cd tapes && vhs "{{ id }}.tape"
+
+# Builds the binary and puts it where the tapes can find it. `just tapes` and
+# `just tape <id>` both need `phosphor` on `$PATH`, and until this recipe
+# existed nothing in the repo put it there — a gap CLAUDE.md documented rather
+# than closed, and one that is hit at every checkpoint that produces artifacts.
+#
+# Release, not debug: a tape records a real terminal session, and a debug binary
+# is slow enough that `Sleep` values calibrated against one would not transfer.
+
+# Build and install `phosphor` on $PATH (for `just tapes`).
+install:
+    cargo install --path crates/phosphor --locked
+
+# Everything CI runs, in CI's order, as one command.
+#
+# CI runs these as five separate jobs and `vendor-diff` inside `lint`, so
+# "is it green" has been six invocations to remember and one to forget. A
+# checkpoint gate asks that question every time; this is the answer.
+#
+# Deliberately NOT `bench`: T079's measurement is a measurement, and a number
+# that moves with the machine has no business failing a build (harness's
+# standing rule — a change detector that gates CI teaches people to ignore it).
+
+# Everything CI runs: fmt, lint, clippy, test, deny, vendor-diff.
+gate:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    status=0
+    for recipe in fmt lint clippy test deny vendor-diff; do
+        echo "── just ${recipe} ──"
+        if ! just "$recipe"; then
+            echo "FAILED: just ${recipe}"
+            status=1
+        fi
+    done
+    if [ "$status" -ne 0 ]; then
+        echo
+        echo "just gate: NOT green — see the FAILED lines above."
+    else
+        echo
+        echo "just gate: green — fmt, lint, clippy, test, deny, vendor-diff."
+    fi
+    exit "$status"
+
+# `insta` snapshot review — the golden frames (T018) and screen 6b (T022).
+#
+# A snapshot that changed without a mockup changing is a regression; a layout
+# diff is geometry and an fg/bg diff with the text grid unchanged is a palette
+# change, which is the more serious of the two. Window D adds four more screens
+# (3c, 6d, 8e, 7c), so the review loop is about to matter more than it has.
+
+# Review changed golden frames interactively.
+review:
+    cargo insta review

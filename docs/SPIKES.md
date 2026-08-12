@@ -339,7 +339,8 @@ produce. Nothing on the list is a default.
 Plus two things that are configuration rather than tools, and belong in the same conversation:
 
 - **`rust-toolchain.toml`, pinned.** `ratatui-code-editor` is `edition = "2024"`, so we need
-  1.85+ regardless — but the real reason is determinism: VHS reference images (V001) are only
+  1.85+ regardless, and `ratatui` 0.30.2's family pushes the real floor to 1.88 — but the
+  reason for a *pin* rather than a floor is determinism: VHS reference images (V001) are only
   comparable if the binary producing them is built the same way.
 - **`[workspace.lints]`** in the root manifest. One clippy configuration shared across seven
   crates, rather than seven `#![warn(...)]` preambles that drift. This is also where the T006 /

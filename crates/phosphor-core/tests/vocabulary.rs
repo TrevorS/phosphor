@@ -305,6 +305,47 @@ fn every_mutating_task_in_s3_to_s8_has_a_capability() {
     );
 }
 
+/// Tasks a capability may name that `docs/TASKS.md` does not define.
+///
+/// One entry, and it is a version rather than a task: `v1.5` is post-1.0 work
+/// the breakdown deliberately stops short of. Anything else here would be a
+/// capability parked under an id nobody can look up.
+const NOT_IN_TASKS: &[&str] = &["v1.5"];
+
+/// Every capability's `Since.task` names a task that exists.
+///
+/// `surfaces.txt`'s header claims this check runs, and until this test it did
+/// not: `tasks_by_phase()` was read for the S3–S8 coverage direction and for
+/// the exemption list, and nothing looked at the checklist's own task column.
+/// A capability could cite `T999` — or keep citing a task after it was
+/// renumbered — and every gate would pass it.
+///
+/// Which is the defect class `CLAUDE.md` names: prose asserting a check that
+/// is not performed, in the one file whose job is to describe the check.
+#[test]
+fn every_capability_names_a_task_that_exists() {
+    let phases = tasks_by_phase();
+    let all: BTreeSet<&String> = phases.values().flatten().collect();
+
+    let mut dangling: Vec<String> = Vec::new();
+    for capability in registry::capabilities() {
+        let task = capability.since.task;
+        if NOT_IN_TASKS.contains(&task) {
+            continue;
+        }
+        if !all.contains(&task.to_owned()) {
+            dangling.push(format!("{} cites {task}", capability.name));
+        }
+    }
+
+    assert!(
+        dangling.is_empty(),
+        "these capabilities name a task docs/TASKS.md does not define: {dangling:#?}\n\
+         A task id in the registry is a claim about the breakdown. Either the task was \
+         renumbered and the row is stale, or the id was invented.",
+    );
+}
+
 #[test]
 fn exemptions_are_real_tasks_with_reasons() {
     let phases = tasks_by_phase();

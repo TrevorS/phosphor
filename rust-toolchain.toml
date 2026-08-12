@@ -1,10 +1,12 @@
 # Pinned for determinism, not for a version floor.
 #
-# The version floor is `workspace.package.rust-version = "1.85"` in Cargo.toml
-# (edition 2024, which the vendored `ratatui-code-editor` fork also requires).
+# The version floor is `workspace.package.rust-version = "1.88"` in Cargo.toml.
+# Edition 2024 — ours and the vendored fork's — needs 1.85; `ratatui` 0.30.2 and
+# its family need 1.88, which is what actually sets it. `scripts/lint-msrv.sh`
+# recomputes that from the graph, so the number above cannot drift from reality.
 # This file exists for the reason SPIKES.md gives under "configuration rather
 # than tools": VHS reference images (V001/V002) are only comparable if the
-# binary that produced them was built by the same compiler. A floor ("1.85+")
+# binary that produced them was built by the same compiler. A floor ("1.88+")
 # doesn't give you that — two machines both satisfying the floor can still
 # differ in codegen, and the tapes would drift for no reason a diff explains.
 #

@@ -59,7 +59,7 @@
 //! field (`#1a201a`, Design Language §5) is painted by
 //! [`crate::status_line::StatusLine`] today; a statusline *composed as a tree*
 //! (`T025`) has no way to ask for it — [`Tone`] names foregrounds and
-//! [`Tint`](phosphor_core::view::Tint) is a row tint on
+//! [`phosphor_core::view::Tint`] is a row tint on
 //! the `spans` hatch alone. This interpreter therefore draws a line
 //! transparently, over whatever the caller painted. Raised as a contract
 //! question rather than patched here, because the view tree is `spine`'s single

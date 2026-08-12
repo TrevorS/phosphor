@@ -16,8 +16,9 @@
 //! judgeable**:
 //!
 //! * open the file named on argv, pick a theme by slug, build one frame out of
-//!   [`BufferView`] + [`StatusLine`] + [`FloatSlot`], draw it through `T014`'s
-//!   synchronized-output wrapper, and quit restoring the terminal;
+//!   [`BufferView`] + [`FloatSlot`] and a statusline the editor layer composes
+//!   (`T025`), draw it through `T014`'s synchronized-output wrapper, and quit
+//!   restoring the terminal;
 //! * input rides the vendored core's own `editor_crossterm` handler, exactly as
 //!   `TASKS.md`'s S1 preamble says S1 does.
 //!
@@ -80,8 +81,9 @@
 //!    shaped as its payload, `RevealRow { row, margin }` included — and `T026`
 //!    has to stop calling `input`/`mouse` rather than wrap them.
 //! 2. **A mode is a fact the statusline reads, not a flag input owns.** The
-//!    chip here is hardcoded [`Mode::Normal`] because S1 has no modality at all
-//!    and every keystroke inserts text. `T026`'s grammar owns the real one, and
+//!    chip here is hardcoded `"normal"` — a word the layer maps to `NORMAL` and
+//!    an actor — because S1 has no modality at all and every keystroke inserts
+//!    text. `T026`'s grammar owns the real one, and
 //!    `soft_wrap::set_mode` already wants it (whitespace marks are INSERT-only).
 //! 3. **Dirty is per buffer and comes from the edit stream**, not from a save
 //!    path — see [`dirty_flag`].
@@ -264,7 +266,7 @@ const INIT: &str = "init.scm";
 /// `(keymap-set! …)` would come back on the next start as a free-identifier
 /// fault in a boot float, because `keymaps.scm` has not loaded yet. Found by
 /// running it; the regression is
-/// [`a_persisted_rebind_survives_the_next_boot`](tests::a_persisted_rebind_survives_the_next_boot).
+/// `a_persisted_rebind_survives_the_next_boot`, in this file's `tests` module.
 ///
 /// So the layer names the file that loads last (`runtime/repl.scm`), and this
 /// reads it. The path is resolved once, after the boot, in [`vm`] — the host is
@@ -444,10 +446,10 @@ fn vm() -> (Runtime, Arc<AppHost>) {
 /// the VM to ask when a form arrives.
 fn boot(root: Option<&Path>, host: &Arc<AppHost>) -> Runtime {
     let runtime = Runtime::boot(root, Arc::clone(host) as Arc<dyn Host>);
-    if let Ok(value) = runtime.global(PERSIST_FILE) {
-        if let Ok(Value::Text(file)) = phosphor_steel::convert::from_steel(&value) {
-            host.persist_to(&file);
-        }
+    if let Ok(value) = runtime.global(PERSIST_FILE)
+        && let Ok(Value::Text(file)) = phosphor_steel::convert::from_steel(&value)
+    {
+        host.persist_to(&file);
     }
     runtime
 }

@@ -9,14 +9,14 @@
 //! Every subcommand, every flag and every argument decoder comes out of
 //! [`phosphor_core::registry::cli`], which is a total function of a registry
 //! row. This module contains **no list of capabilities** — it walks
-//! [`cli::verbs`] to build the parser and hands the resulting
-//! [`Call`] straight back through [`cli::assemble`]. Adding an Action to the
+//! [`cli::verbs`](phosphor_core::registry::cli::verbs) to build the parser and hands the resulting
+//! [`Call`] straight back through [`cli::assemble`](phosphor_core::registry::cli::assemble). Adding an Action to the
 //! `actions!` table adds a verb here with no edit, which is the whole of `T020`'s
 //! *"by construction"* claim as it lands on this door.
 //!
 //! The single name this file knows is [`EVAL`], and it is not an exception: it
 //! is the capability `--eval` is *sugar for*, resolved through
-//! [`registry::lookup`] like any other and checked for the shape the sugar
+//! [`registry::lookup`](phosphor_core::registry::lookup) like any other and checked for the shape the sugar
 //! assumes ([`eval_call`]). `phosphor --eval EXPR` and `phosphor eval --source
 //! EXPR` assemble the same [`Call`], which is a test below and not a comment.
 //!
@@ -294,7 +294,7 @@ fn after_help(generated: &[Verb]) -> String {
 
 /// The call a matched subcommand asked for.
 ///
-/// The walk is [`cli::assemble`]'s, not this file's: clap hands back the flags
+/// The walk is [`cli::assemble`](phosphor_core::registry::cli::assemble)'s, not this file's: clap hands back the flags
 /// that were supplied, and the registry reassembles them into the same
 /// door-neutral [`Call`] Steel and MCP produce.
 ///

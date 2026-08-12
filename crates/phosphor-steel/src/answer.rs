@@ -20,7 +20,7 @@
 //! `6b` draws `⇒ #ok · persisted to init.scm` in two colours — the answer in
 //! prose, the note in meta-grey (TUI Mockups.dc.html:499). A single
 //! pre-formatted line could not be toned, so [`answered`] keeps them apart and
-//! [`line`] is the join the CLI door wants, where there is one colour anyway.
+//! [`line()`](fn@line) is the join the CLI door wants, where there is one colour anyway.
 //!
 //! # Where this belongs, eventually
 //!

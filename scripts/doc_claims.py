@@ -64,6 +64,38 @@ for path in sorted(pathlib.Path("docs").glob("*.md")):
     if missing:
         fail(f"{path}: references tasks that do not exist", ", ".join(missing))
 
+# The same check, pointed at the source. Every `T0xx` in a Rust comment is a
+# claim about the breakdown — "T026 deletes this", "T041 builds it", "owed to
+# T078" — and there are hundreds of them threaded through the module headers
+# that carry this build's reasoning. Nothing verified them until this block: a
+# renumbered or dropped task left every citation of it silently wrong, and the
+# rot would surface as an agent chasing a task id that no longer means what the
+# comment says.
+#
+# Scoped to `crates/`: `vendor/` is upstream code we do not write, and its
+# comments are not ours to hold to this standard.
+# `T999` is reserved as the obviously-fake id: `parity.rs`'s planted-violation
+# tests build a capability that cites it, and `vocabulary.rs` names it when
+# explaining what a dangling citation looks like. Reserving one id keeps those
+# honest without weakening the check — a real typo lands on a plausible number,
+# not on this one.
+FAKE_TASK = "T999"
+
+src_refs: dict[str, list[str]] = {}
+for path in sorted(pathlib.Path("crates").rglob("*.rs")):
+    text = path.read_text(encoding="utf-8", errors="replace")
+    for ref in set(re.findall(r"\b((?:T|V)\d{3})\b", text)):
+        if ref not in defined and ref != FAKE_TASK:
+            src_refs.setdefault(ref, []).append(str(path))
+
+if src_refs:
+    detail = "; ".join(
+        f"{ref} in {', '.join(sorted(paths)[:3])}"
+        + (f" (+{len(paths) - 3} more)" if len(paths) > 3 else "")
+        for ref, paths in sorted(src_refs.items())
+    )
+    fail("crates/: source comments cite tasks that do not exist", detail)
+
 anchors = set(re.findall(r'<a id="(q\d+)">', PLAN))
 q_refs = set(re.findall(r"#(q\d+)\)", TASKS + TEAM + PLAN + README))
 dangling_q = sorted(q_refs - anchors)

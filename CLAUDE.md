@@ -9,19 +9,24 @@ ratatui 0.30 for drawing.
 
 Use the `just` recipes, not raw cargo — several of them differ from the obvious invocation:
 
+- **`just gate`** — everything CI runs, in CI's order: `fmt`, `lint`, `clippy`, `test`, `deny`,
+  `vendor-diff`. It runs all six even when one fails, so one invocation tells you everything that
+  is wrong. **This is the command to run before saying something is green.**
 - `just test` — `cargo nextest`, not `cargo test` (per-test process isolation; tests touch the XDG
   state dir and terminal state)
 - `just lint` — the structural lints below; runs every `scripts/lint-*.sh`. Add a lint by dropping
   a script in, never by editing the justfile or CI.
-- `just build` · `just clippy` (warnings denied) · `just deny` · `just vendor-diff` · `just tapes`
+- `just fmt` (check) · `just fmt-fix` (in place) · `just build` · `just clippy` (warnings denied) ·
+  `just deny` · `just vendor-diff` · `just bench` (T079's frame cache; not in CI, it is a
+  measurement) · `just review` (`cargo insta review` for the golden frames)
 
 **Never run `cargo fmt --all`.** `--all` does not mean "workspace members" — it recurses through the
 path dependencies into both vendored forks and fails on upstream code. The only way to green it
-would be reformatting the forks, which permanently breaks `just vendor-diff`. Use `just fmt`, which
-omits `--all` deliberately.
+would be reformatting the forks, which permanently breaks `just vendor-diff`. Use `just fmt-fix`.
+A PreToolUse hook blocks the `--all` form.
 
-`just tapes` and `just tape <id>` need the `phosphor` binary on `$PATH`; nothing in the repo puts it
-there for you.
+`just tapes` and `just tape <id>` need the `phosphor` binary on `$PATH` — `just install` puts it
+there.
 
 ## Version control
 
@@ -49,14 +54,26 @@ Architecture:
 - **No `crossterm::`, `ratatui::` or `editor_crossterm` in `phosphor-ui`.** It takes `ratatui-core`
   only. A source lint because Cargo unifies features per crate across the graph, so the manifest
   cannot express it.
+- **No `Action` construction in `phosphor-ui`.** The store lint closes the *applying* half; this
+  closes the *building* half, because a widget that can construct a mutation is one refactor from
+  applying one.
+- **One registry, three derived doors.** The Steel, MCP and CLI modules are total functions over
+  the capability table; none may name a capability. That is what makes a one-door Action
+  unconstructible rather than merely tested for.
+- **One escape hatch.** `Node::Spans` is the only custom-draw path, drawn in exactly one place.
+- **The Steel barrier.** `phosphor-steel` reaches `phosphor-core` and the VM, and nothing else.
 
 Hygiene and truthfulness — each of these exists because the thing it catches already happened:
 
 - **Repo hygiene** — no tracked file over 1 MB, no undocumented byte-identical reference capture,
   no refs outside the normal namespaces.
 - **Doc claims** — the task counts, wave widths and gate counts in `TEAM.md` are recomputed from
-  the dependency graph in `TASKS.md`, and the toolchain version quoted in prose is checked against
-  `rust-toolchain.toml`.
+  the dependency graph in `TASKS.md`, the toolchain version quoted in prose is checked against
+  `rust-toolchain.toml`, and every `T0xx` cited in a Rust comment must be a task that exists.
+- **Doc links** — `cargo doc` with warnings denied. This codebase cross-references itself through
+  intra-doc links and nothing ran `cargo doc` until this lint; the first run found eight broken.
+- **MSRV** — `workspace.package.rust-version` is recomputed from the dependency graph. It read
+  `1.85` for two windows while `ratatui` required `1.88`.
 - **Vendor provenance** — each `VENDOR.md`'s recorded SHA and claimed licence are checked against
   git history and the fork's own `Cargo.toml`.
 
