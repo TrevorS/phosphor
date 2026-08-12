@@ -31,8 +31,11 @@ Then:
   published sources with `file:line` citations, the full dependency manifest with verified
   versions, and the hygiene tooling. **Read this before T001** — it inverts one recorded
   decision and uncovers unbudgeted work.
-- **[TASKS.md](TASKS.md)** — the plan decomposed into 77 tasks across the 9 phases, with **12
-  checkpoints** where work stops for manual verification. Each checkpoint splits what can be
+- **[TASKS.md](TASKS.md)** — the plan decomposed into 83 tasks across the 9 phases, plus 9
+  verification-harness tasks, with **12 checkpoints** where work stops for manual verification.
+- **[TEAM.md](TEAM.md)** — five teammates owning crates rather than features, gated by those
+  checkpoints. Includes the wave-width analysis showing why the early phases are deliberately
+  under-staffed, and the kickoff prompt. Each checkpoint splits what can be
   proven mechanically from what needs eyes on a real terminal, because most of this design
   language is perceptual and none of that half survives CI.
 - **[design/CLAUDE-CODE-HANDOFF.md](design/CLAUDE-CODE-HANDOFF.md)** — the brief that produced
