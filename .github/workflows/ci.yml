@@ -28,7 +28,7 @@ env:
 
 jobs:
   # No explicit toolchain-install action in any job below: rust-toolchain.toml
-  # pins the exact channel (1.93.1) and components (rustfmt, clippy) for
+  # pins the exact channel (1.97.1) and components (rustfmt, clippy) for
   # determinism (see that file's own comment), and GitHub's ubuntu-latest
   # runners ship rustup, which auto-installs the pinned override on the first
   # `cargo`/`rustc` invocation.
@@ -36,7 +36,7 @@ jobs:
     name: cargo fmt --check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # `just` is not preinstalled on GitHub's runners (same reason the `lint`
       # job installs it). Every job that shells out to a recipe needs this.
       - uses: taiki-e/install-action@v2
@@ -50,7 +50,7 @@ jobs:
     name: cargo clippy -D warnings
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: taiki-e/install-action@v2
         with:
           tool: just
@@ -62,7 +62,7 @@ jobs:
     name: cargo nextest run
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # cargo-nextest: per-test process isolation (SPIKES.md's hygiene table) —
       # tests that touch the XDG state dir and terminal state get flaky under a
       # shared-process runner otherwise.
@@ -83,7 +83,7 @@ jobs:
     name: just lint (structural lints)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # `just` itself isn't preinstalled on GitHub's runners.
       - uses: taiki-e/install-action@v2
         with:
@@ -97,7 +97,7 @@ jobs:
     name: cargo deny check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # bans: denies a second major of ratatui/ratatui-core — the rule
       # SPIKES.md says matters most, and the one that would have caught the
       # tui-textarea / ratatui-markdown 0.29-vs-0.30 split mechanically.

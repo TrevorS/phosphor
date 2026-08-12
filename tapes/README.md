@@ -50,8 +50,10 @@ profile, and update this record — not just the images — the day that changes
 - **Model:** Mac mini (Mac16,10), Apple M4, arm64
 - **OS:** macOS 26.5 (build 25F71), Darwin 25.5.0
 - **Toolchain:** whatever `rust-toolchain.toml` pins at the root (currently
-  `1.93.1`) — the binary being captured must be built the same way every time,
-  per SPIKES.md's reasoning for pinning it at all
+  `1.97.1`) — the binary being captured must be built the same way every time,
+  per SPIKES.md's reasoning for pinning it at all. **Raising that pin
+  invalidates every reference image**, which is why it is a deliberate,
+  reviewed commit rather than a drive-by bump
 
 ## Font
 

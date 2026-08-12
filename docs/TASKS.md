@@ -9,11 +9,21 @@ Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's buil
 are stable and assigned in order of creation — reference them in commits. New tasks append
 rather than renumber, so `T078`+ sit inside earlier phases.
 
-**`CP-0`'s go/no-go is settled. Its build half is not.** Both M-0 spikes are done
-([SPIKES.md](SPIKES.md)); `T008` and `T009` are checked off and their consequences are folded in
-below. `T081`–`T083` exist because of what they found. But the rest of M-0 — the workspace, both
-subtrees, the two structural lints, the grammar ABI check — has not been built, so the ✅ below
-means *the verdict passed*, not *M-0 is finished*.
+**`CP-0` has passed, both halves.** The go/no-go verdict was settled by the two spikes
+([SPIKES.md](SPIKES.md)), whose consequences are folded in below — `T081`–`T083` exist because of
+what they found. The build half followed: the workspace, both vendored subtrees, the structural
+lints and the grammar ABI check all landed and the gate ran green. One criterion in `T003` was
+never executed and says so at the task.
+
+**`CP-1`'s mechanical half has passed; its manual half has not.** Window B's surfaces are built
+and checked off, and the gate verified them by running the binary rather than reading it. What
+remains is Teej on four real terminals — `CP-1` is *"does it look like the mockups?"*, and no
+command answers that. **Window C does not start until he says so.**
+
+Checkboxes below track *tasks*, not checkpoints: a task is ticked when its own *done when* is
+demonstrably met. The two are deliberately separate, because a checkpoint is a human judgement
+about whether the result is any good, and every task in a window can be green while the answer
+to that is still no.
 
 **`T084`–`T089` were added by the docs review.** Six widget/primitive tasks the design docs
 require and the first breakdown had no home for: the `Float` chrome primitive, undercurl, the
@@ -141,8 +151,8 @@ can actually see each one is noted, since it isn't obvious:
 
 | Phase | Tasks | Checkpoint |
 |---|---|---|
-| M-0 · Scaffolding + spikes | T001–T009, T083 | **CP-0** — ✅ verdict passed · build half open |
-| S1 · Theme + BufferView + StatusLine | T010–T018, T081, T084, T085, T090 | **CP-1** — does it look like the mockups |
+| M-0 · Scaffolding + spikes | T001–T009, T083 | **CP-0** — ✅ passed, both halves |
+| S1 · Theme + BufferView + StatusLine | T010–T018, T081, T084, T085, T090 | **CP-1** — ✅ mechanical half · four-terminal half open |
 | S2 · Steel + Action + REPL + view tree | T019–T025, T078–T080 | **CP-2** — is the editor live |
 | S3 · Input + undo + gutter | T026–T035, T086 | **CP-3** — does it feel like an editor |
 | S4 · LSP | T036–T040, T082 | **CP-4** — boring on purpose |
@@ -162,7 +172,7 @@ land alongside S1 so `CP-1` can use them; the rest follow as the surfaces they c
 Separately numbered from the `T` tasks because it is a distinct workstream with a different
 lifetime: the harness outlives any single phase and gets extended at every checkpoint.
 
-- [ ] **V001 · Pin VHS and its dependencies**
+- [x] **V001 · Pin VHS and its dependencies**
   VHS 0.11.0 + `ttyd` + `ffmpeg`, pinned by exact version. `Require` at the top of every tape so
   a missing dep fails loudly rather than silently producing a wrong recording. Record the
   reference-regeneration machine and font — pixel comparison is only meaningful against a fixed
@@ -170,7 +180,7 @@ lifetime: the harness outlives any single phase and gets extended at every check
   *Done when:* `just tapes` fails with a clear message on a machine with the wrong VHS version.
   *Needs:* —
 
-- [ ] **V002 · Column calibration**
+- [x] **V002 · Column calibration**
   Map `(FontSize, Width)` → exact column count, since VHS sizes in pixels. Build a probe tape,
   binary-search the width for 80 / 100 / 120 / 200 columns, and commit the table as
   `tapes/_dimensions.tape`. **Also settle the two open empirical questions here:** does undercurl
@@ -178,19 +188,19 @@ lifetime: the harness outlives any single phase and gets extended at every check
   *Done when:* a tape asserting "exactly 80 columns" is reproducible, and both questions have
   written answers. *Needs:* V001
 
-- [ ] **V003 · Shared tape config**
+- [x] **V003 · Shared tape config**
   `tapes/_config.tape`, `Source`d by every tape: pinned font and size, `Set CursorBlink false`,
   fixed `TypingSpeed`, fixed `Framerate`, `Set Padding 0`, neutral background. **Every source of
   nondeterminism removed** — anything that varies between runs makes pixel comparison useless.
   *Done when:* the same tape run twice produces byte-identical PNGs. *Needs:* V002
 
-- [ ] **V004 · Deterministic waits — no `Sleep`**
+- [x] **V004 · Deterministic waits — no `Sleep`**
   Use `Wait+Screen /regex/` against a known sentinel instead of sleeping. Phosphor needs a
   stable, greppable ready-state for this; the statusline is the natural sentinel.
   *Done when:* no tape in the library contains a bare `Sleep` as a synchronisation primitive.
   *Needs:* V003
 
-- [ ] **V005 · Tape library convention**
+- [x] **V005 · Tape library convention**
   One tape per screen id: `tapes/<id>.tape` → `Screenshot artifacts/<id>.png`, plus a GIF where
   motion is the point. `Hide`/`Show` around setup so only the interesting frames are captured.
   *Done when:* `just tape 1a` regenerates one screen; `just tapes` regenerates all. *Needs:*
@@ -227,7 +237,7 @@ lifetime: the harness outlives any single phase and gets extended at every check
 Nothing here is blocked on a decision. The two spikes are reads, not builds, and they size
 everything after them — do them first, together.
 
-- [ ] **T001 · Cargo workspace skeleton**
+- [x] **T001 · Cargo workspace skeleton**
   Seven crates (`phosphor`, `-core`, `-buffer`, `-ui`, `-agent`, `-steel`, `-vcs`) plus
   `runtime/` as a plain source dir. Stub lib/main only.
   *Done when:* `cargo build` green. *Needs:* —
@@ -238,12 +248,12 @@ everything after them — do them first, together.
   > `phosphor-term`. The `members = ["crates/*"]` glob enrolled it without a root manifest edit,
   > so no single-writer rule was crossed. Recorded here rather than quietly changing the number.
 
-- [ ] **T002 · Pin the dependency floor**
+- [x] **T002 · Pin the dependency floor**
   `ratatui 0.30.2`, `ratatui-core 0.1.2`, `steel-core =0.8.2` (exact, per Q5), `ropey`,
   `tree-sitter`, `crossterm 0.29`. `phosphor-ui` gets `ratatui-core` only — never `ratatui`.
   *Done when:* `cargo tree` shows no second ratatui major. *Needs:* T001
 
-- [ ] **T003 · Vendor `ratatui-code-editor`**
+- [x] **T003 · Vendor `ratatui-code-editor`**
   `git subtree` into `vendor/`, workspace path dep, `VENDOR.md` with upstream SHA + patch log,
   `just vendor-diff` and `just vendor-pull`.
   **Two inherited-baggage items the spike flagged and nothing else owns:** feature-gate the
@@ -256,34 +266,49 @@ everything after them — do them first, together.
   container with no X11/Wayland.
   *Needs:* T001
 
+  > **One criterion was never executed.** The container build with no X11/Wayland has no verdict:
+  > the Docker daemon was down on the build machine at `CP-0` and at `CP-1`. What stands in its
+  > place is structural and is checked by `just vendor-build-headless` — `arboard` is absent from
+  > the default dependency graph, and `--features clipboard` brings it back, so the gate is live
+  > in both directions. That proves nothing links a clipboard library by default; it does not
+  > prove a bare Linux runner builds. **CI now exercises `ubuntu-latest` on every push**, which is
+  > closer to the real question than anything available when this was written.
+
   > **Why not "an empty diff".** The first wording asked for one, which this task cannot satisfy:
   > gating 16 grammars and gating `arboard` *are* patches, so a clean fork and an empty diff are
   > mutually exclusive. The contract that means something is that no hunk is undocumented — that
   > is what keeps the fork from silently becoming a rewrite. Against the **SHA**, not a tag:
   > upstream published `0.0.6` to crates.io without ever tagging it.
 
-- [ ] **T004 · Vendor `ratatui-markdown` and bump it to 0.30**
+- [x] **T004 · Vendor `ratatui-markdown` and bump it to 0.30**
   Version bump only — no phosphor behaviour inside it (Q4). Feature-gated; per-language
   highlight features off.
   *Done when:* it compiles in-workspace and the gate can be toggled off cleanly. *Needs:* T002
 
-- [ ] **T005 · CI: fmt, clippy, test**
+- [x] **T005 · CI: fmt, clippy, test**
   `cargo fmt --check`, `clippy -D warnings`, `cargo test` on every push.
   *Done when:* green on the empty workspace. *Needs:* T001
 
-- [ ] **T006 · Structural lint — no literal colours in `phosphor-ui`**
+  > **Written blind, and it showed.** There was no git remote until after `CP-1`, so this
+  > workflow was authored, reviewed and marked done without ever executing. When a remote finally
+  > appeared it ran for the first time and needed a fix that only a real runner could surface:
+  > three of its five jobs called `just` with no install step. Five jobs run on every push now —
+  > `fmt`, `clippy`, `nextest`, `deny`, `lint` — and CI invokes the same `just` recipes a human
+  > does, so "green in CI" and "green on my machine" cannot drift.
+
+- [x] **T006 · Structural lint — no literal colours in `phosphor-ui`**
   Every widget takes `&Theme`. Grep-level lint over `Color::Rgb` / `Color::Indexed` in that
   crate is sufficient.
   *Done when:* CI fails on a deliberately planted literal. *Needs:* T005
 
-- [ ] **T007 · Structural lint — no store mutation from `phosphor-ui`**
+- [x] **T007 · Structural lint — no store mutation from `phosphor-ui`**
   Split `phosphor_core::vm` (ViewModels) and `phosphor_core::view` (the view tree, Q12) — both
   public to the UI — from `phosphor_core::store` (mutation, not). Enforced by dependency
   direction, not convention.
   *Done when:* CI fails on a deliberately planted `store::` import in `phosphor-ui`.
   *Needs:* T005
 
-- [ ] **T083 · Grammar ABI check** *(spike finding)*
+- [x] **T083 · Grammar ABI check** *(spike finding)*
   The grammar crates were built against tree-sitter bindings spanning **0.23–0.25** while the
   runtime is **0.26**. tree-sitter versions its language ABI and mixing generations is a known
   breakage source. Load all **eleven** grammars we ship (the first-class twelve minus CSV, which
@@ -342,44 +367,44 @@ First phase with anything to look at. Sized by CP-0.
 > is what makes `T081`'s cursor-motion and click checks possible at `CP-1`. It is scaffolding, not
 > a keeper: `T026` replaces it outright, and nothing above it may grow to depend on it.
 
-- [ ] **T010 · `Theme` struct**
+- [x] **T010 · `Theme` struct**
   Actor/state palette (`claude, you, attention, trouble, transient, steel`) + neutral ramp +
   syntax map. Values from Design Language §1.
   *Done when:* every colour in the language has a named field. *Needs:* T001
 
-- [ ] **T011 · base16-style loading + actor-hue validation**
+- [x] **T011 · base16-style loading + actor-hue validation**
   A theme that reassigns an actor hue is **rejected at load**, not accepted-and-warned.
   *Done when:* a fixture theme with a red `claude` fails to load with a legible error.
   *Needs:* T010
 
-- [ ] **T012 · Phosphor dark + light built in**
+- [x] **T012 · Phosphor dark + light built in**
   Dark is the default. Light is "warm paper with deepened hues" — claude-green `#1a9a62`.
   *Done when:* both load and pass validation. *Needs:* T011
 
-- [ ] **T013 · Catppuccin + Tokyo Night mappings**
+- [x] **T013 · Catppuccin + Tokyo Night mappings**
   The two shipped mappings (Q7 — Ayu is out). Each dark + light. Screen `9a` is Catppuccin;
   Tokyo Night has no mockup and inherits `9b`'s acceptance shape.
   *Done when:* all four pass actor-hue validation. *Needs:* T011
 
-- [ ] **T014 · Terminal setup + synchronized output**
+- [x] **T014 · Terminal setup + synchronized output**
   Raw mode, alt screen, panic/exit restore, and a **draw wrapper that puts every frame inside a
   synchronized-output block**. Kitty keyboard protocol negotiation with fallback detection.
   *Done when:* no frame can be emitted outside the wrapper (enforce by making the raw writer
   private). *Needs:* T002
 
-- [ ] **T015 · BufferView — the 3-column contract**
+- [x] **T015 · BufferView — the 3-column contract**
   1-cell state bar → line numbers (`#414b42`, always) → text. Tree-sitter highlighting through
   the vendored core. **Scroll authority lives here** — the viewport moves only on an explicit
   Action.
   *Done when:* a file renders with correct columns and the viewport provably never
   self-scrolls. *Needs:* T014, CP-0
 
-- [ ] **T016 · Folds and whitespace marks**
+- [x] **T016 · Folds and whitespace marks**
   Fold rows render `▸ ⋯ n lines`. Insert-only trailing-whitespace marks. Folds come from the
   vendored crate's existing `VisualRow::FoldSeparator`.
   *Done when:* screen `8e`'s fold and whitespace details reproduce. *Needs:* T015
 
-- [ ] **T081 · Soft-wrap** ⚠️ *unbudgeted — surfaced by the T008 spike*
+- [x] **T081 · Soft-wrap** ⚠️ *unbudgeted — surfaced by the T008 spike*
   **The vendored crate has none.** `↪` continuations carry no line number. Build it as a
   `VisualRow` variant alongside the existing fold and ghost variants, **not** as a layer above
   them — row↔line mapping, cursor positioning, click targeting and virtual-text placement all
@@ -390,7 +415,7 @@ First phase with anything to look at. Sized by CP-0.
   *Done when:* a long line wraps with continuations, and **cursor motion and mouse clicks** land
   correctly on a wrapped line. *Needs:* T015
 
-- [ ] **T085 · Undercurl in the vendored renderer, with underline fallback** 📌
+- [x] **T085 · Undercurl in the vendored renderer, with underline fallback** 📌
   The marks API is **colour only** — no style, no priority (`editor.rs:660-682`) — so the
   undercurl half of Design Language §3's anchored-region treatment (*"tint + undercurl"*) is
   ours to add to the fork. A cell-style capability with a degradation path, so it belongs beside
@@ -400,13 +425,13 @@ First phase with anything to look at. Sized by CP-0.
   *Done when:* a styled span renders undercurled on the primary terminal and underlined on the
   degradation terminal, from one call site. *Needs:* T015
 
-- [ ] **T017 · StatusLine**
+- [x] **T017 · StatusLine**
   Mode chip (the only inverted text on screen) + file + dirty flag + spring + `SessionState`
   (renders `None` for now) + counters, joined by `│`. **Truncation enforced in the widget** —
   emitting a second row must be impossible, not merely avoided.
   *Done when:* a property test at widths 40–200 never produces two rows. *Needs:* T010
 
-- [ ] **T084 · `Float` — the chrome primitive** 📌
+- [x] **T084 · `Float` — the chrome primitive** 📌
   **The one chrome primitive**, and the first breakdown had no task for it — only the passive
   variant at `T038`, three phases after `T021` already needs a float to show a broken `init.scm`
   in. Block wrapper enforcing **header / body / footer**; mood border (`#2a5c44` informational,
@@ -420,13 +445,13 @@ First phase with anything to look at. Sized by CP-0.
   in, and opening a second float provably replaces the first rather than stacking.
   *Needs:* T010, T014
 
-- [ ] **T018 · Golden-frame snapshot harness**
+- [x] **T018 · Golden-frame snapshot harness**
   Render a fixed buffer + state to a cell grid, compare against a committed snapshot. This is
   how every later phase gets cheap regression cover on layout.
   *Done when:* snapshots exist for `1a`-minus-agent, `9c`, `8c`, `8d`. *Needs:* T012, T013, T015,
   T017
 
-- [ ] **T090 · The S1 host — something to actually run** 📌
+- [x] **T090 · The S1 host — something to actually run** 📌
   **`CP-1` says `cargo run -- src/some_real_file.rs`, and until this task nothing in the build
   makes that draw a single cell.** Windows A and B produce a widget layer with no application
   around it: `main.rs` stayed `fn main() {}`, so every screen tape died on `Require phosphor`,

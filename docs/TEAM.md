@@ -17,10 +17,10 @@ Computed from `TASKS.md`, the longest-path wave widths are:
 
 ```
 wave    0   1   2   3    4    5    6    7   8   9
-tasks   2   5   8   6   14   20   19   11   8   3
+tasks   2   5   8   6   15   20   19   11   8   3
 ```
 
-By the graph, wave 4 is 14-wide and includes `T050` (ACP session client, S6) and `T069`
+By the graph, wave 4 is 15-wide and includes `T050` (ACP session client, S6) and `T069`
 (dirty-state indicator, S7). **A team that schedules off the graph would be building the agent
 transport and disk-watching before anyone has confirmed the theme renders correctly** — past
 `CP-1`, `CP-2`, `CP-3` and `CP-4`, none of which a graph edge represents, because they are human
@@ -56,7 +56,7 @@ keep.
 
 The skill this plan came from suggests 5–6 tasks per teammate. This plan gives each teammate
 ~19, because it staffs **all of v1** rather than one wave — teammates are persistent role
-owners, not task batches. If you'd rather run a wave at a time, take **wave 4** alone: 14 tasks,
+owners, not task batches. If you'd rather run a wave at a time, take **wave 4** alone: 15 tasks,
 and the first wave wide enough to need everyone — that is the shape the skill has in mind.
 (Windows are not waves. Window D spans two checkpoints and carries 21 tasks; wave 4 is a
 longest-path layer inside it.)
@@ -77,6 +77,19 @@ owning crates gives near-zero merge contention for free.
 | **store** | `claude-opus-5` | `phosphor-core/{store,region,anchor,seen}.rs` · `phosphor-ui/picker.rs` · `phosphor-vcs/**` · `runtime/pickers/**` |
 | **agent** | `claude-sonnet-5` | `phosphor-agent/**` · `phosphor-core/{review,inbox,watch}.rs` · `phosphor-ui/{transcript,prompt_line,question,diff_body,watch_overlay}.rs` · `runtime/{permissions,inbox,watch}.scm` |
 | **harness** | `claude-sonnet-5` | `tapes/**` · `.github/**` · `justfile` · `deny.toml` · `rust-toolchain.toml` · snapshot + benchmark infra |
+
+Two things the build added that this table predates:
+
+- **`phosphor-term` — an eighth crate, and its owner is unsettled.** `T014`'s terminal lifecycle
+  (raw mode, alt screen, panic restore, the synchronized-output wrapper) is neither a widget nor
+  one of the three binary files named for `spine`, so it landed on its own. `surface` built it
+  under `T014`; `spine` is its only consumer, through `T090`. Decide before `T088` puts panes in
+  the same neighbourhood.
+- **`scripts/lint-*.sh` is deliberately unowned.** The glob *is* the contract: `just lint` runs
+  every script matching it, so any role adds a structural lint by dropping a file in, without
+  touching `harness`'s justfile or CI. Three exist — `T006`'s (harness), `T007`'s (spine) and the
+  app-layer lint added after `CP-1` (which closes a hole Cargo's feature unification opened, and
+  which no manifest can express).
 
 ### Two single-writer invariants
 
@@ -251,10 +264,17 @@ built on an unverified foundation.
 > one-tape-per-screen convention, which is standing work rather than a numbered task. The
 > standing instruction below is what governs it.
 
-> **`CP-0` is half-passed.** Its go/no-go verdict is settled — both spikes are done and
-> [SPIKES.md](SPIKES.md) records them. Its *build* verification (`cargo build` green, both lints
-> failing on planted violations, both subtrees building) is Window A's exit gate and is still
-> open. `TASKS.md` now says this at the source, so the ✅ there means *the verdict passed*.
+> **Where the build actually is.** `CP-0` has passed both halves: the spikes settled the
+> verdict, and Window A's build gate ran green — workspace, both subtrees, the structural lints
+> proven to bite on planted violations, and the grammar ABI check. **`CP-1`'s mechanical half
+> has passed too**, and its manual half — Teej on four real terminals — has not. Windows A and B
+> are therefore complete as *tasks*, and **Window C does not start until he passes `CP-1`**,
+> which is the whole point of a checkpoint being a human judgement.
+>
+> Window B also cost more than the table below says. `T090`, the S1 host, did not exist when
+> this plan was written: the first `CP-1` attempt failed because a complete, tested widget layer
+> had no application around it, so `cargo run` drew nothing and there was nothing to look at on
+> any terminal. It is `spine`'s, and it is why `spine` is listed live in Window B.
 
 **Window C runs with two teammates on purpose.** The contract is being defined; three more
 agents would be writing against an interface that changes under them. This is the plan's

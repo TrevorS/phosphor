@@ -1029,25 +1029,32 @@ appears there is exactly one place to look.
 
 ## 7. Immediate next steps
 
-**Both M-0 spikes have run** ([SPIKES.md](SPIKES.md)), so `CP-0`'s **go/no-go verdict** is
-settled and nothing is blocked on either a decision or an unknown. Its **build** half — the
-workspace, both subtrees, the two structural lints, the grammar ABI check — is Window A's exit
-gate and is still open. What remains in M-0 is construction, and it has not been done.
+**M-0 and S1 are built.** `CP-0` passed both halves and `CP-1`'s mechanical half passed; the
+sections below describe what was planned, and this one records where that left things.
 
-1. **T001–T007 — the workspace.** Seven crates, the pins (`ratatui 0.30.2`,
-   `ratatui-core 0.1.2`, `steel-core =0.8.2`), both vendored subtrees, and the two structural
-   lints. `cargo-deny` lands here too, with a `[bans]` rule on duplicate `ratatui` majors — the
-   check that would have caught the `tui-textarea` / `ratatui-markdown` split mechanically.
-2. **The grammar ABI check** (`T083`). Load all eleven grammars we ship — the first-class twelve
-   minus CSV, which `T082` implements by hand — against tree-sitter 0.26 and parse a fixture.
-   Cheap now, expensive at S4. This is the one unknown the spikes surfaced but did not close.
-3. **Then S1** — sized larger than originally planned twice over: soft-wrap is ours to build
-   (`T081`), and the docs review added the `Float` primitive (`T084`) and undercurl (`T085`) to
-   the same phase, neither of which had a task anywhere.
+**The single open item is `CP-1`'s manual half** — Teej on the four-terminal matrix, judging
+whether it looks like the mockups. No command answers that, and **Window C (`T019`–`T025`,
+`T078`–`T080`, `spine`'s contract phase) does not start until it passes.**
 
-The two things worth carrying into S1 and S3 respectively: **soft-wrap is unbudgeted and
-touches four subsystems at once**, and **the input machine is now ours**, so counts and named
-registers are designed in rather than retrofitted.
+What the two checkpoints changed, beyond ticking tasks:
+
+1. **`T090` had to be invented.** `CP-1` failed on its first attempt because Windows A and B
+   built a complete, tested, lint-clean widget layer around a `main.rs` that was still
+   `fn main() {}` — so `cargo run` drew nothing, every tape died on `Require phosphor`, and the
+   checkpoint could not be judged at all. The plan assumed an application existed and no task
+   built one. It is `spine`'s, thin, and `T026` deletes it.
+2. **Three design-doc amendments** came out of `CP-1`, tabled in [§5](#5-decisions). They are the
+   first that came from looking at a running program rather than from reasoning on paper, which
+   is precisely what the checkpoint exists to produce.
+3. **The grammar ABI unknown is closed.** All eleven shipped grammars plus two auxiliary load
+   and parse under tree-sitter 0.26 with no `ERROR` nodes. `tree-sitter-scheme` handles Steel
+   with two characterised gaps — `#u8(...)` bytevectors and `#%`-prefixed compiler internals —
+   which will bite `S4`/`T037` only if `T033`'s Steel uses either.
+
+The two things worth carrying into S3: **the input machine is ours**, so counts and named
+registers are designed in rather than retrofitted; and **the S1 host moves the viewport from two
+places today** — `buffer_view::apply_scroll` and the fork's own handler — so `T019`'s `Action`
+needs a `Scroll` variant and `T026` must stop calling `input`/`mouse` rather than wrap them.
 
 Settled and needing no further input: `tui-textarea` → `ratatui-textarea` (§1), the
 `ratatui-markdown` bump (§2, before S6), and the full dependency manifest and hygiene tooling
