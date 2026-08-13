@@ -304,6 +304,40 @@ mod driven {
         })
     }
 
+    /// Whether `wanted` was drawn, tolerating cells the terminal did not
+    /// redraw.
+    ///
+    /// **A frame is a diff.** ratatui emits only the cells whose character
+    /// *and* style changed, and [`printable`] renders the cursor motion that
+    /// skipped one as a space — so a sentence drawn over a row that happened to
+    /// share a character loses that character. It bites exactly once, on the
+    /// statusline: a notice replaces a row that is holding the file's path, and
+    /// the path is a temp directory whose name is different every run. Every
+    /// other assertion in this file reads a region that was blank before it.
+    ///
+    /// So a skipped cell may be a space, and two thirds of the characters have
+    /// to be there exactly — which a run of spaces cannot satisfy.
+    fn shows(frame: &str, wanted: &str) -> bool {
+        let frame: Vec<char> = frame.chars().collect();
+        let wanted: Vec<char> = wanted.chars().collect();
+        if frame.len() < wanted.len() {
+            return false;
+        }
+        let least = wanted.len() * 2 / 3;
+        frame.windows(wanted.len()).any(|window| {
+            window
+                .iter()
+                .zip(&wanted)
+                .all(|(drawn, want)| drawn == want || *drawn == ' ')
+                && window
+                    .iter()
+                    .zip(&wanted)
+                    .filter(|(drawn, want)| drawn == want)
+                    .count()
+                    >= least
+        })
+    }
+
     fn count(haystack: &[u8], needle: &[u8]) -> u64 {
         haystack
             .windows(needle.len())
@@ -729,6 +763,198 @@ mod driven {
             editor.press(b"\x1b");
             editor.quit();
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // `T097` — `:help`
+    // -----------------------------------------------------------------------
+
+    /// **The one surface the `CP-3` repair pass missed.** `open-help` was
+    /// declared, `:h[elp]` was bound, and `main.rs` had no arm — so `6d`
+    /// existed as a snapshot and as nothing else. The snapshot
+    /// (`crates/phosphor/tests/screen_6d.rs`) hand-builds its tree and says so;
+    /// this presses the keys.
+    #[test]
+    fn help_opens_the_grid_and_closes_on_q() {
+        let scratch = Scratch::new("help");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let before = editor.mark();
+        editor.press(b":help\r");
+        let frame = editor.since(before);
+
+        assert!(
+            frame.contains(":help"),
+            "the float's header is the command that opened it; frame was: {frame}"
+        );
+        // `open-help`'s own wording: *"absent opens the index"*. Every row is a
+        // topic that binds something, counted off the live table on this frame.
+        assert!(
+            frame.contains("agent-objects"),
+            "the index names its topics; frame was: {frame}"
+        );
+        assert!(
+            frame.contains("4 bound"),
+            "and counts each one off the live table — the four agent nouns; \
+             frame was: {frame}"
+        );
+        // `6d` draws `q close` in the footer, and it is honest on a grid.
+        let after = editor.mark();
+        editor.press(b"q");
+        assert!(
+            !editor.since(after).contains("agent-objects"),
+            "q closes the help float, as its own footer promises"
+        );
+        editor.quit();
+    }
+
+    /// `:help <topic>` narrows the same grid — `6d`'s own topic.
+    ///
+    /// `agent-objects` is not a page of prose kept somewhere: it is the four
+    /// `TextObject`s the vocabulary calls agent-native, found in the live
+    /// table by their role. So the rows are the shipped verbs and the topic
+    /// cannot list a key nothing binds.
+    #[test]
+    fn help_narrows_to_the_agent_objects_topic() {
+        let scratch = Scratch::new("help-topic");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let before = editor.mark();
+        editor.press(b":help agent-objects\r");
+        let frame = editor.since(before);
+
+        for noun in ["unseen region", "hunk", "thread", "review block"] {
+            assert!(
+                frame.contains(noun),
+                "6d's four nouns are the topic; {noun} was missing from: {frame}"
+            );
+        }
+        assert!(
+            !frame.contains("toggle the fold here"),
+            "a topic narrows — the fold keys are not agent objects; frame was: {frame}"
+        );
+        editor.press(b"\x1b");
+        editor.quit();
+    }
+
+    /// `T086`'s liveness claim, through the loop: the grid is composed from
+    /// `keymap-entries` when `:help` opens it, so a rebind typed at the REPL is
+    /// in the next page with nothing wired for it.
+    ///
+    /// The copy of the layer this test runs against never mentions `zebra`.
+    #[test]
+    fn a_repl_rebind_shows_up_in_the_help_grid() {
+        let scratch = Scratch::new("help-rebind");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press(b":repl\r");
+        editor.press(b"(keymap-set! \"SPC z\" (key/group) \"zebra\" \"normal\")\r");
+        editor.press(b"\x1b");
+
+        let before = editor.mark();
+        editor.press(b":help zebra\r");
+        let frame = editor.since(before);
+        assert!(
+            frame.contains("zebra"),
+            "a rebind at the REPL is in the very next :help; frame was: {frame}"
+        );
+        editor.press(b"\x1b");
+        editor.quit();
+    }
+
+    // -----------------------------------------------------------------------
+    // `T098` — the deliberately deferred keys
+    // -----------------------------------------------------------------------
+
+    /// A key bound to a capability the binary does not apply yet **says which
+    /// task builds it**, instead of doing nothing.
+    ///
+    /// The refusal was always produced — `Editing::act` answers
+    /// `NotYetImplemented` off each row's own task id — and `Session::key`
+    /// dropped it on the floor, which is why `runtime/keymaps.scm`'s own claim
+    /// that pressing a leader leaf *"answers `not built yet — T058 builds it`
+    /// rather than nothing at all"* was not true of the running binary.
+    #[test]
+    fn a_deferred_key_names_the_task_that_builds_it() {
+        let scratch = Scratch::new("deferred");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // `/` is vim's search. It is bound to the search prompt, which `T058`
+        // builds, and the ex line already declines the same capability.
+        let before = editor.mark();
+        editor.press(b"/");
+        let frame = editor.since(before);
+        assert!(
+            shows(
+                &frame,
+                "only the ex line exists yet — T058 builds the message and search prompts"
+            ),
+            "a deferred key names its task on the statusline; frame was: {frame}"
+        );
+
+        // `n` walks the search matches, and walking a sequence is
+        // `goto-sequence` — declared at `T049` and not applied, so the refusal
+        // is derived from that row rather than written anywhere.
+        let after = editor.mark();
+        editor.press(b"n");
+        let frame = editor.since(after);
+        assert!(
+            shows(&frame, "not built yet — T049 builds it"),
+            "the task comes off the capability's own row; frame was: {frame}"
+        );
+        editor.quit();
+    }
+
+    /// The half `T035`'s ruling is about: `q` is *known and not built*, so it
+    /// does not spend the session's one teaching row — and a key that is
+    /// genuinely nobody's still does.
+    ///
+    /// Both in one session on purpose. The latch is per session, so a test that
+    /// pressed only `q` could not tell "the hint was not spent" from "the hint
+    /// was already gone".
+    #[test]
+    fn a_deferred_key_does_not_spend_the_session_hint() {
+        let scratch = Scratch::new("deferred-hint");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // `q` — vim's macro record, deferred on purpose and bound to say so.
+        let before = editor.mark();
+        editor.press(b"q");
+        assert!(
+            !editor.since(before).contains("unknown key"),
+            "q is bound, so it is not an unknown key; frame was: {}",
+            editor.since(before)
+        );
+
+        // `Q` is nobody's in the shipped table, and the hint is still there to
+        // be spent on it.
+        let after = editor.mark();
+        editor.press(b"Q");
+        let taught = editor.since(after);
+        assert!(
+            taught.contains("unknown key"),
+            "the session's one hint survives a deferred key; frame was: {taught}"
+        );
+        assert!(
+            taught.contains("shown once"),
+            "and it is still 8e's row; frame was: {taught}"
+        );
+        editor.quit();
     }
 
     impl Editor {

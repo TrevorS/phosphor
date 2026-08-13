@@ -688,6 +688,67 @@ fn two_roots_in_one_bucket_is_loud() {
     );
 }
 
+/// **The `S4` flake, as a test.** `RootCollision { occupant: "" }`, twice, on
+/// two different process tests that both pass alone.
+///
+/// The empty occupant is the whole diagnosis. A bucket is claimed by writing
+/// the canonical root into `<dir>/root`, and `fs::write` is create-truncate-
+/// write: between the truncate and the write the file exists and says nothing.
+/// A reader in that window read an empty marker, compared it against its own
+/// root, and reported a collision with a root that never existed.
+///
+/// It is **not** two tests sharing a bucket — every test here builds its own
+/// `TempDir` and its own state home. The two racers are the parent and the
+/// child *inside one test*: [`ChildSession::start`] spawns the child, the child
+/// calls `journal::workspace_dir` on the root it was given, and the parent
+/// calls [`child_paths`] on the same root a moment later. Two processes, one
+/// root, one marker — which is exactly what two phosphor windows on one
+/// repository are, so the fix belongs in `journal.rs` and not here.
+#[test]
+fn a_marker_caught_mid_write_is_not_an_occupant() {
+    let tmp = TempDir::new("torn-marker");
+    let home = tmp.made("state");
+    let root = tmp.made("workspace");
+
+    let dir = journal::workspace_dir_in(&home, &root).expect("dir");
+    fs::write(dir.join("root"), b"").expect("plant what the racer saw");
+
+    let again = journal::workspace_dir_in(&home, &root)
+        .expect("an empty marker is unclaimed, not occupied");
+    assert_eq!(again, dir);
+    assert_eq!(
+        fs::read_to_string(dir.join("root")).expect("marker"),
+        fs::canonicalize(&root)
+            .expect("canonical")
+            .to_string_lossy(),
+        "and the arrival claims the bucket rather than failing"
+    );
+}
+
+/// The same race, run rather than reasoned about: several openers of one fresh
+/// root at once, none of which may see a half-claimed bucket.
+#[test]
+fn openers_of_one_root_never_see_a_half_claimed_bucket() {
+    let tmp = TempDir::new("marker-race");
+    let home = tmp.made("state");
+    // Fresh root per round: the claim happens once per bucket, so the window
+    // this is aimed at is only open on the first opener of each one.
+    for round in 0..64 {
+        let root = tmp.made(&format!("workspace-{round}"));
+        std::thread::scope(|scope| {
+            let racers: Vec<_> = (0..4)
+                .map(|_| scope.spawn(|| journal::workspace_dir_in(&home, &root)))
+                .collect();
+            for racer in racers {
+                racer
+                    .join()
+                    .expect("the opener did not panic")
+                    .expect("one root, one bucket, no collision");
+            }
+        });
+    }
+}
+
 #[test]
 fn one_journal_per_file() {
     let tmp = TempDir::new("undo-path");

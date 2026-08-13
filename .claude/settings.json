@@ -9,6 +9,12 @@
             "command": "\"${CLAUDE_PROJECT_DIR:-.}/scripts/hook-block-fmt-all.sh\"",
             "timeout": 10,
             "statusMessage": "Checking for cargo fmt --all"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR:-.}/scripts/hook-warn-piped-exit-code.sh\"",
+            "timeout": 10,
+            "statusMessage": "Checking for a piped exit code"
           }
         ]
       }

@@ -173,6 +173,9 @@ pub struct Machine {
     pending: Pending,
     /// `Some(inner)` between `i`/`a` and the object key — [`Scope::Object`].
     object: Option<bool>,
+    /// Whether the operator now running arrived as `~` — the one fused key vim
+    /// leaves the cursor *after* what it changed. See [`Machine::land`].
+    fused_advance: bool,
     /// What the next key is data for, if it is data — set by `"`, `f` or `r`
     /// and cleared by the key that answers.
     awaiting: Option<Awaiting>,
@@ -517,6 +520,13 @@ impl Machine {
             Role::Operator(operator) => self.operator(operator, text, out),
             Role::Fused { operator, motion } => {
                 self.pending.operator = Some(operator);
+                // `~`, and only `~`: the case operator fused with `l` is the one
+                // key that ends to the right of what it changed
+                // (`change.txt:315-318`). `g~l` is the same operator over the
+                // same motion, unfused, and takes the general rule — so the
+                // fact rides on the fusion rather than on the operator.
+                self.fused_advance =
+                    operator == Operator::ToggleCase && motion == Motion::CharRight;
                 if text::is_find(motion) {
                     self.awaiting = Some(Awaiting::FindTarget(motion));
                 } else {
@@ -583,7 +593,7 @@ impl Machine {
     ) {
         if let Some(operator) = self.pending.operator {
             match text::motion_span_with_target(text, text.cursor(), motion, count, target) {
-                Some((span, kind)) => self.operate(operator, span, kind, out),
+                Some((span, kind)) => self.operate(operator, span, kind, text, out),
                 // A motion with no span — a search with no search state, an
                 // `f` that found nothing — leaves the operator waiting rather
                 // than deleting something else.
@@ -630,7 +640,7 @@ impl Machine {
                 text.cursor().line.min(line),
                 text.cursor().line.max(line),
             );
-            self.operate(operator, span, SelectionKind::Line, out);
+            self.operate(operator, span, SelectionKind::Line, text, out);
             return;
         }
         let position = text::first_non_blank(text, line.clamp(1, text.lines().max(1)));
@@ -693,7 +703,7 @@ impl Machine {
         if self.pending.operator == Some(operator) {
             let first = text.cursor().line;
             let span = text::line_span(text, first, first + self.pending.count() - 1);
-            self.operate(operator, span, SelectionKind::Line, out);
+            self.operate(operator, span, SelectionKind::Line, text, out);
             return;
         }
         // In visual mode the operand is already on screen.
@@ -710,7 +720,7 @@ impl Machine {
                 }
                 _ => span_between(anchor, text.cursor(), text),
             };
-            self.operate(operator, span, kind, out);
+            self.operate(operator, span, kind, text, out);
             return;
         }
         self.pending.operator = Some(operator);
@@ -738,7 +748,7 @@ impl Machine {
         }));
         let resolved = text::object_span(text, text.cursor(), object, inner, count, delimiter);
         match (self.pending.operator, resolved) {
-            (Some(operator), Some((span, kind))) => self.operate(operator, span, kind, out),
+            (Some(operator), Some((span, kind))) => self.operate(operator, span, kind, text, out),
             // No span. **`T028`'s no-op, and the choice is deliberate: it is
             // silent, not spoken.** The two candidates were a keystroke that
             // vanishes and one that says *"no regions yet"*, and three things
@@ -772,12 +782,13 @@ impl Machine {
         }
     }
 
-    /// Select, act, clear — the one path an operator takes (decision 3).
+    /// Select, act, land, clear — the one path an operator takes (decision 3).
     fn operate(
         &mut self,
         operator: Operator,
         span: Span,
         kind: SelectionKind,
+        text: &dyn Text,
         out: &mut Vec<Action>,
     ) {
         let register = self.pending.register.clone();
@@ -821,6 +832,7 @@ impl Machine {
                 target: Target::Selection {},
             })),
         }
+        self.land(operator, span, kind, text, out);
         out.push(Action::Motion(MotionAction::ClearSelection {}));
         self.anchor = None;
         if operator == Operator::Change {
@@ -839,6 +851,82 @@ impl Machine {
         }
         self.pending = Pending::default();
         self.object = None;
+        self.fused_advance = false;
+    }
+
+    /// Where an operator leaves the cursor, said out loud.
+    ///
+    /// **The rule is vim's and it is written down.** `motion.txt:71-74`
+    /// (`*operator-resulting-pos*`): *"After applying the operator the cursor is
+    /// mostly left at the start of the text that was operated upon. For example,
+    /// `yfe` doesn't move the cursor, but `yFe` moves the cursor leftwards to
+    /// the `e` where the yank started."* Nothing in this machine used to say so,
+    /// and the cursor ended wherever the *applier* left it — which for `gUiw` is
+    /// the far end of the word, because a case change is a splice and a splice
+    /// ends where it ends. A rule that lives in the applier is a rule each
+    /// applier can get differently; this is the same argument as
+    /// [`text::cased`].
+    ///
+    /// Three exceptions, each documented, and one refusal:
+    ///
+    /// * **A linewise yank keeps its column.** *"With a linewise yank command
+    ///   the cursor is put in the first line, but the column is unmodified"*
+    ///   (`change.txt:1254-1255`). A charwise yank is the general rule already —
+    ///   *"the first yanked character that is closest to the start of the
+    ///   buffer"* (`change.txt:1246-1249`) — which is why `yl` does not move the
+    ///   cursor and `yh` does.
+    /// * **`~` moves right.** *"Switch case of the character under the cursor
+    ///   and move the cursor to the right. If a \[count\] is given, do that many
+    ///   characters"* (`change.txt:315-318`, `'notildeop'`, the default).
+    /// * **`'startofline'`, for a linewise `d`, `<` and `>` only.** *"the
+    ///   commands listed below move the cursor to the first non-blank of the
+    ///   line … `d`, `<<`, `==` and `>>` with a linewise operator"*
+    ///   (`options.txt:8260-8266`, on by default), and `motion.txt:75` says it
+    ///   applies to those and to nothing else — `c` and the case trio are not on
+    ///   the list. It is asked for as a `MoveCursor` rather than computed here,
+    ///   because *which* line the cursor lands on only exists once the delete
+    ///   has been applied and this machine reads the buffer before it.
+    ///
+    /// The refusal is `gs`. Mark-seen is not vim's, it changes no text, and a
+    /// keystroke that moved the cursor for neither reason would be an invention.
+    /// `gc` takes the general rule by analogy — vim has no comment operator, so
+    /// there is nothing to cite and this is a phosphor ruling rather than a
+    /// reading.
+    fn land(
+        &self,
+        operator: Operator,
+        span: Span,
+        kind: SelectionKind,
+        text: &dyn Text,
+        out: &mut Vec<Action>,
+    ) {
+        if operator == Operator::MarkSeen {
+            return;
+        }
+        if self.fused_advance {
+            out.push(set_cursor(text::clamp(text, span.end)));
+            return;
+        }
+        let position = if operator == Operator::Yank && kind == SelectionKind::Line {
+            Position {
+                line: span.start.line,
+                column: text.cursor().column,
+            }
+        } else {
+            span.start
+        };
+        out.push(set_cursor(position));
+        if kind == SelectionKind::Line
+            && matches!(
+                operator,
+                Operator::Delete | Operator::Indent | Operator::Dedent
+            )
+        {
+            out.push(Action::Motion(MotionAction::MoveCursor {
+                motion: Motion::FirstNonBlank,
+                count: 1,
+            }));
+        }
     }
 
     /// `i`, `a`, `I`, `A`, `o`, `O`, `R`.
@@ -997,6 +1085,7 @@ impl Machine {
         self.pending = Pending::default();
         self.object = None;
         self.awaiting = None;
+        self.fused_advance = false;
         if self.mode.get() == EditMode::OperatorPending {
             self.set_mode(EditMode::Normal, out);
         }
@@ -1010,6 +1099,7 @@ impl Machine {
         }
         self.pending = Pending::default();
         self.object = None;
+        self.fused_advance = false;
     }
 
     fn set_mode(&mut self, mode: EditMode, out: &mut Vec<Action>) {

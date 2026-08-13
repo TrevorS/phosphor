@@ -608,6 +608,82 @@
   (list "[b" (key/run (key/cmd "goto-sequence" "sequence" "block-file" "seek" "prev"))
         "previous file in the review block")))
 
+;; ---------------------------------------------------------------------------
+;; the deliberately deferred keys — T098
+;; ---------------------------------------------------------------------------
+;;
+;; nine keys a vim user's hands reach for that this editor does not have yet:
+;; macros (`q` `@`), marks (`m` `'` backtick) and search (`/` `?` `n` `N`).
+;; every one of them was *unbound*, and unbound is the wrong answer twice over.
+;; the first one pressed spends T035's single teaching row on a key that is
+;; nobody's **by design**, and every one after it does nothing at all — so `q`
+;; reads as broken rather than as deferred, which is exactly the question CP-3
+;; asks: where does muscle memory break.
+;;
+;; bound, each says what it will be. that is the rule the leader tree's leaves
+;; already follow — *"unimplemented is a value, not an absence"* — and the loop
+;; says it out loud now: a key whose actions are refused puts the refusal on the
+;; statusline, the way an ex line always has.
+;;
+;; **the operand key is not consumed.** vim's `q`, `@`, `m`, `'` and backtick
+;; all take a following letter and this machine has no role for one — `"` is
+;; `key/register` and a mark is not a register. so `ma` answers on `m` and the
+;; `a` then enters insert, which is what an unbound `m` did too. the role
+;; arrives with the feature that needs it.
+
+;; search. T058 builds the prompt, and the ex line already declines this same
+;; capability by naming it. `/` and `?` name one prompt kind because there is
+;; one: which direction a search runs is the prompt's argument, not the
+;; keymap's.
+;;
+;; `n` and `N` walk what a search left behind, and walking a sequence is
+;; `goto-sequence` — the same capability `]u` and `SPC u n` name, with the
+;; search-match sequence in place of the unseen one.
+(keymap-set-rows!
+ '("normal" "visual")
+ (list
+  (list "/" (key/run (key/cmd "open-prompt" "kind" "search")) "search forward")
+  (list "?" (key/run (key/cmd "open-prompt" "kind" "search")) "search backward")
+  (list "n" (key/run (key/cmd "goto-sequence" "sequence" "search-match" "seek" "next"))
+        "next match")
+  (list "N" (key/run (key/cmd "goto-sequence" "sequence" "search-match" "seek" "prev"))
+        "previous match")))
+
+;; a key that is deferred and has **no capability to name**.
+;;
+;; it resolves — so the machine does not call it unknown and T035's one hint is
+;; not spent on it — and it does nothing, because the vocabulary has no verb it
+;; could honestly ask for. binding it to the nearest-looking verb would put a
+;; keystroke in front of a capability that means something else, which is worse
+;; than silence: the refusal would name the wrong task. the truth is in the
+;; *verb*, which `:help` and which-key both draw.
+;;
+;; a thunk rather than an empty `key/run` on purpose: what lands here is the
+;; editor layer's own implementation, and the editor layer's bindings are
+;; closures. the shape does not change when the feature arrives.
+(define (key/deferred) (lambda () void))
+
+;; macros. ruled 2026-08-12: **macros are the editor layer's, over
+;; `input/feed-keys`** — recording is capturing keystrokes into a register and
+;; playing is feeding them back. two things are missing and neither is a
+;; keymap's to invent: a verb for *start recording*, and a query that answers a
+;; register's contents so `@` can feed them.
+(keymap-set-rows!
+ '("normal")
+ (list
+  (list "q" (key/deferred) "record a macro — not built; the layer's, over feed-keys")
+  (list "@" (key/deferred) "play a macro — not built; the layer's, over feed-keys")))
+
+;; marks. a mark is an anchor and anchoring is T042's, but `goto-anchor` names
+;; an `AnchorId` that nothing yet produces and there is no setter at all — so
+;; these name the task rather than calling a verb with an invented id.
+(keymap-set-rows!
+ '("normal" "visual")
+ (list
+  (list "m" (key/deferred) "set a mark — not built; T042 anchors the store")
+  (list "'" (key/deferred) "go to a mark's line — not built; T042 anchors the store")
+  (list "`" (key/deferred) "go to a mark — not built; T042 anchors the store")))
+
 ;; leaving. `<C-c>` is the safety valve — raw mode means the terminal will not
 ;; deliver SIGINT, so an editor with no binding for it is one you cannot get
 ;; out of. `ZZ` writes first; `ZQ` does not, and says so.
@@ -956,7 +1032,7 @@
          (lambda (rest bang)
            (key/run (key/cmd "close-buffer" "target" (key/at-cursor) "force" bang))))
 
-(ex-set! "h[elp]" "the whole keymap, at width"
+(ex-set! "h[elp]" "the keymap — :help <topic> narrows it"
          (lambda (rest bang)
            (key/run (if (equal? rest "")
                         (key/cmd "open-help")

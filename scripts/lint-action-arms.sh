@@ -74,39 +74,57 @@ import sys
 # nothing in the graph owns the work — it is a debt with no creditor, and those
 # are the entries worth reading twice.
 # ---------------------------------------------------------------------------
+# Citations here name SYMBOLS, never line numbers. The first version of this
+# table cited four (`main.rs:794` for the theme local, `:924` for the float slot,
+# `:891` for the soft-wrap flag, `text.rs:600` for `char_right_operand`) and all
+# four had drifted within a day, because concurrent agents were editing those
+# files while this ran. A wrong line number inside a lint is worse than one in a
+# comment: it reads as authoritative. TEAM.md's concurrency rules say cite
+# symbols; this is that rule applied to itself.
 RECORDED = {
-    "SetTheme": ("", "`:theme <slug>` is bound (runtime/keymaps.scm) and answers a refusal. "
-                     "The theme is an immutable local at main.rs:794 baked into each Editor at "
-                     "construction, so runtime switching needs a rebuild path, not an arm. "
-                     "`--theme <slug>` works and is what the eight theme tapes use."),
-    "ReloadTheme": ("", "Same rebuild path as `SetTheme`; re-reading a theme file needs a user "
-                        "theme path, and main.rs:794 only ever calls `builtin()`."),
-    "OpenFloat": ("", "The float slot exists (`FloatSlot`, main.rs:924) and the boot report opens "
-                      "one, but no verb reaches it, so Steel and MCP cannot open a float."),
-    "CloseFloat": ("", "The paired half of `OpenFloat`; `esc` closes a float through the input "
-                       "machine, not through this verb."),
-    "CloseAllFloats": ("", "Same seam as `CloseFloat`."),
-    "LoadRuntimeFile": ("", "Evaluating a further `.scm` after boot. The REPL evaluates forms and "
-                            "`init.scm` reads the load order once at startup; neither is this."),
-    "ReloadRuntime": ("", "Re-booting the editor layer without restarting. Nothing rebuilds a "
-                          "`Runtime` in place today."),
-    "Jump": ("T042", "The jumplist. Jump targets are anchors, and anchors are the store's — "
-                     "`T042` builds node anchoring at S5."),
+    "SetTheme": ("T092", "`:theme <slug>` is bound in runtime/keymaps.scm and answers a refusal. "
+                         "The theme is an immutable local — `builtin(&cli.theme)` in `main` — "
+                         "baked into each `Editor` at construction, so runtime switching is a "
+                         "rebuild path, not an arm. `--theme <slug>` works and is what the eight "
+                         "theme tapes use."),
+    "ReloadTheme": ("T092", "Same rebuild path as `SetTheme`; re-reading a theme file also needs "
+                            "a user-theme path, and `main` only ever calls `builtin()`."),
+    "OpenFloat": ("T093", "The float slot exists (`FloatSlot::empty` in `main`) and the boot "
+                          "report opens one, but no verb reaches it, so Steel and MCP cannot "
+                          "open a float."),
+    "CloseFloat": ("T093", "The paired half of `OpenFloat`; `esc` closes a float through the "
+                           "input machine, not through this verb."),
+    "CloseAllFloats": ("T093", "Same seam as `CloseFloat`."),
+    "LoadRuntimeFile": ("T094", "Evaluating a further `.scm` after boot. The REPL evaluates forms "
+                                "and `init.scm` reads the load order once at startup; neither is "
+                                "this."),
+    "ReloadRuntime": ("T094", "Re-booting the editor layer without restarting. Nothing rebuilds a "
+                              "`Runtime` in place today."),
+    "UndoToCheckpoint": ("T095", "`UndoTree::goto` and `CheckpointId` both exist and `Timeline` "
+                                 "owns the tree; nothing routes a checkpoint id to it."),
+    "CompactHistory": ("T095", "`journal.rs` implements compaction and proves it under a real "
+                               "`SIGKILL`; nothing triggers it, so a history only grows."),
+    "SetSoftWrap": ("T096", "Soft wrap is reachable and works — `--soft-wrap` and "
+                            "`host.flag(\"soft-wrap\")` — but the verb is not applied, so it "
+                            "cannot be toggled from Steel, MCP or the CLI door. `T081` is ticked; "
+                            "this is `T016`'s shape and was found by the same audit."),
     "SetVirtualTextVisible": ("T041", "Collapsing a virtual-text rail addresses it by owning "
                                       "region, and regions arrive with the store at `T041`. The "
                                       "one live rail today is the unknown-key hint, which is "
                                       "unowned by design (`Node::VirtualText.owner` is None)."),
+    # The two below disagree with their own declared task, which is an attribution
+    # question rather than a missing arm — see docs/OPEN-QUESTIONS.md.
+    "Jump": ("T042", "The jumplist. `action.rs` declares `jump` as `[S3 / \"T026\"]`, but `T026` "
+                     "is ticked and its own coverage diff records marks and the jumplist as "
+                     "deliberately deferred because *anchors are the store's*. So the row's task "
+                     "and the reason it is unbuilt name different tasks. Consequence, found by "
+                     "the wiring agent: a truthful refusal derived from the row would read "
+                     "*T026 builds it*, which is false."),
     "ApplyEdits": ("", "A batch of edits applied as one undo group — the shape an agent writes "
                        "through. `T029`'s tree supports it (`record_batch`); no caller exists "
-                       "until there is a session."),
-    "UndoToCheckpoint": ("", "`UndoTree::goto` and `CheckpointId` both exist and the `Timeline` "
-                             "at main.rs:1481 owns the tree; nothing routes a checkpoint id to it."),
-    "CompactHistory": ("", "`journal.rs` implements compaction and proves it under a real "
-                           "`SIGKILL`; nothing triggers it, so a history only grows."),
-    "SetSoftWrap": ("", "Soft wrap is reachable and works — `--soft-wrap` and "
-                        "`host.flag(\"soft-wrap\")` at main.rs:891 — but the verb is not applied, "
-                        "so it cannot be toggled from Steel, MCP or the CLI door. `T081` is "
-                        "ticked; this is the same shape as `T016` and was found by the same audit."),
+                       "until there is a session. Declared `[S3 / \"T029\"]`, and `T029` is "
+                       "ticked and did not build it — the same attribution question as `Jump`, "
+                       "which is why this one still has no blocker."),
 }
 
 ACTIONS = pathlib.Path("crates/phosphor-core/src/action.rs")

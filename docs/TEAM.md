@@ -3,7 +3,7 @@
 Derived from [TASKS.md](TASKS.md) and [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).
 Five teammates, owning crates rather than features, gated by the twelve checkpoints.
 
-**98 of 100 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
+**105 of 107 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
 `T009` — the dependency spikes, already complete ([SPIKES.md](SPIKES.md)). `T005` is the single
 deliberate co-ownership and is called out where it appears.
 
@@ -16,8 +16,8 @@ The task graph and the checkpoints disagree, and **the checkpoints win.**
 Computed from `TASKS.md`, the longest-path wave widths are:
 
 ```
-wave    0   1   2   3    4    5    6    7   8   9
-tasks   2   5   8   6   15   20   19   12   8   3
+wave    0   1   2   3    4    5    6    7   8   9  10
+tasks   2   5   8   6   15   24   20   13   8   3   1
 ```
 
 By the graph, wave 4 is 15-wide and includes `T050` (ACP session client, S6) and `T069`
@@ -33,14 +33,19 @@ Three other numbers worth carrying:
 
 | | |
 |---|---|
-| `T001` gates **90 of 100** tasks | The workspace skeleton is the whole build's front door. |
-| `T019` gates **61** | The `Action` enum. The plan calls it "reversible: no in practice." |
+| `T001` gates **97 of 107** tasks | The workspace skeleton is the whole build's front door. |
+| `T019` gates **68** | The `Action` enum. The plan calls it "reversible: no in practice." |
 | `T041` has **14 direct dependents** | Store core — the second serialisation point. |
 
 And the shape that matters most for staffing: **waves 0–3 are 2, 5, 8 and 6 tasks wide.** The
 early build is close to single-file. Adding people there buys contention, not speed. The team
 goes wide at wave 4 and stays wide through wave 6, which is where five teammates earn their
 keep.
+
+**Wave 10 has one task in it.** `T098` — honest refusals for the deferred vim keys — sits alone
+at the end of the longest path, because it needs both the keymap (`T033`) and the unknown-key
+hint (`T035`) before it can say anything sensible. A lone task at the far end of the graph is
+what unwired work looks like from here, and it is worth noticing rather than smoothing over.
 
 > **Staffing follows that curve.** Windows A and B run with **three** teammates (`spine`,
 > `surface`, `harness`); Window C drops back to **two** as the contract is defined. `store` and
@@ -55,10 +60,10 @@ keep.
 ### Note on the task count per teammate
 
 The skill this plan came from suggests 5–6 tasks per teammate. This plan gives each teammate
-~19, because it staffs **all of v1** rather than one wave — teammates are persistent role
+~21, because it staffs **all of v1** rather than one wave — teammates are persistent role
 owners, not task batches. If you'd rather run a wave at a time, take **wave 4** alone: 15 tasks,
 and the first wave wide enough to need everyone — that is the shape the skill has in mind.
-(Windows are not waves. Window D spans two checkpoints and carries 21 tasks; wave 4 is a
+(Windows are not waves. Window D spans two checkpoints and carries 22 tasks; wave 4 is a
 longest-path layer inside it.)
 
 ---
@@ -73,7 +78,7 @@ owning crates gives near-zero merge contention for free.
 | Teammate | Model | Owns (exclusive write) |
 |---|---|---|
 | **spine** | `claude-opus-5` | `phosphor-core/{action,view}.rs` · `phosphor-steel/**` · `phosphor/{main,input,panes}.rs` · `phosphor-term/**` · `runtime/{init,keymaps,leader}.scm` · **the root manifest** |
-| **surface** | `claude-opus-5` | `vendor/**` · `phosphor-buffer/**` · `phosphor-ui/{theme,buffer_view,status_line,gutter,virtual_text,float,help_grid,keymap_footer,tab_bar,soft_wrap}.rs` |
+| **surface** | `claude-opus-5` | `vendor/**` · `phosphor-buffer/**` · `phosphor-ui/{theme,buffer_view,status_line,gutter,virtual_text,float,key_hints,unknown_key,tab_bar,soft_wrap}.rs` |
 | **store** | `claude-opus-5` | `phosphor-core/{store,region,anchor,seen}.rs` · `phosphor-ui/picker.rs` · `phosphor-vcs/**` · `runtime/pickers/**` |
 | **agent** | `claude-sonnet-5` | `phosphor-agent/**` · `phosphor-core/{review,inbox,watch}.rs` · `phosphor-ui/{transcript,prompt_line,question,diff_body,watch_overlay}.rs` · `runtime/{permissions,inbox,watch}.scm` |
 | **harness** | `claude-sonnet-5` | `tapes/**` · `.github/**` · `justfile` · `deny.toml` · `rust-toolchain.toml` · snapshot + benchmark infra |
@@ -121,10 +126,17 @@ These override ownership and are the reason invariant 2 survives contact with a 
   modules, it belongs to `spine`.
 - `phosphor-ui` is split per widget file. A new widget file needs `spine` to add its view-tree
   node kind first ([Q12](IMPLEMENTATION-PLAN.md#q12)). **This rule decides `T034`/`T035`:** both
-  were originally `spine` tasks writing into `phosphor-ui/keymap_footer.rs` and
+  were originally `spine` tasks writing into `phosphor-ui/key_hints.rs` and
   `virtual_text.rs`, which are `surface` files. They moved to `surface`; `spine` keeps `T033`,
   the keymaps themselves, which live in `runtime/`. The live keymap reaches the widget as a
   ViewModel like everything else.
+  - **`key_hints.rs` is one file, and the rule above is why.** The table used to name
+    `help_grid.rs` and `keymap_footer.rs`; neither ever existed. `spine` added **one** node kind
+    — `Node::KeyHints` at `crates/phosphor-core/src/view.rs:500`, carrying a `Density`
+    (`crates/phosphor-core/src/view/props.rs:496`) — drawn at three densities: the float footer,
+    the `SPC` leader grid, and the `:help` body. One kind, one file, one draw site, which is the
+    same principle `scripts/lint-one-escape-hatch.sh` enforces for `Node::Spans`. So `T034` and
+    `T086` are one widget at two densities, not two widgets.
 - **The pane manager (`T088`) is `spine`, not `surface`.** Panes are focus and event routing in
   the binary's loop, not a widget — `phosphor/panes.rs`. The `TabBar` that renders *over* them
   (`T089`) is `surface`. This is the same split as input: `spine` decides, `surface` draws.
@@ -161,13 +173,24 @@ rule that keeps it honest is mechanical — `scripts/lint-no-app-layer-in-ui.sh`
 `crossterm::` or `ratatui::` reference from `phosphor-ui`, so "spine decides when pixels land,
 surface decides what they look like" is a boundary the build enforces rather than a convention.
 
-**Tasks:** T001, T002, T007, **T014**, T019–T026, T033, T078–T080, T088, **T090**, **T091** · **19**
+**Tasks:** T001, T002, T007, **T014**, T019–T026, **T027**, T033, T078–T080, T088, **T090**,
+**T091**, **T092–T098** · **27**
 
 **`T090` is why `spine` is live in Window B.** The window table always listed it there, and the
 task breakdown gave it nothing to do — a contradiction nobody noticed until `CP-1` failed for
 want of an application to run. The S1 host writes `phosphor/main.rs`, which is spine's file, and
 it is deliberately *not* the Window C loop: no `Action`, no Steel, no input machine. Building it
 early is what lets four terminals see S1 at all.
+
+**`T027` is `spine`'s, and `T092`–`T098` are the arms it owes.** The kitty-keyboard task moved
+here at the `CP-3` audit by the same rule that moved `T014`: the negotiation already lives in
+`phosphor-term` (`KeyboardProtocol::Kitty`, `crates/phosphor-term/src/lib.rs:124`), which is a
+`spine` crate, and the table's own line for `surface` — *"`surface` draws, and never touches a
+terminal"* — cannot hold with `T027` on that list. The seven tasks `T092`–`T098` arrived the same
+way: six are declared mutations whose missing arm is in `crates/phosphor/src/main.rs` and one is
+a set of bindings missing from `runtime/keymaps.scm` — both `spine` files, and the file decides
+the task. They are the mechanical proof of the wiring rule below: verbs that shipped declared,
+tested at the widget, and unreachable from a keystroke.
 
 **Opus, without hesitation:** `T019` gates 56 tasks; `T079`'s frame cache is what keeps a pre-1.0
 scheme VM out of the frame budget; `T026` is a from-scratch vim grammar including the counts and
@@ -183,20 +206,24 @@ second shape later.
 
 Both vendored forks, the buffer engine, and every primitive widget that draws.
 
-**Tasks:** T003, T004, T005*, T010–T013, T015–T018, T027, T029, T031, T032, T034–T040,
-T081–T087, T089 · **30**
+**Tasks:** T003, T004, T005*, T010–T013, T015–T018, T029, T031, T032, T034–T040,
+T081–T087, T089 · **29**
 
-The largest list, and it grew by seven in the docs review — five new widget tasks that the design
+The largest list. It grew by seven in the docs review — five new widget tasks that the design
 docs require and the first breakdown had no home for (`T084` Float, `T085` undercurl, `T086`
 HelpGrid, `T087` region tints, `T089` TabBar), plus `T034`/`T035` moving here from `spine` because
-they write `surface` files. Two of the five are fork work inside `vendor/`, which only this role
-may touch.
+they write `surface` files — and shrank by one at the `CP-3` audit, when `T027` went to `spine`.
+Two of the five are fork work inside `vendor/`, which only this role may touch.
 
-**`T014` went the other way, after `CP-1`.** Terminal setup landed in a crate of its own,
-`phosphor-term`, and that crate is `crossterm`, the alt screen and panic restore — the app layer,
-whose only production consumer is the binary. It is `spine`'s now, by the same rule that brought
-`T034`/`T035` here: the file decides the task. The line is worth stating positively, because it
-is what this role *is* — **`surface` draws, and never touches a terminal.**
+**`T014` went the other way, after `CP-1`, and `T027` followed it at `CP-3`.** Terminal setup
+landed in a crate of its own, `phosphor-term`, and that crate is `crossterm`, the alt screen and
+panic restore — the app layer, whose only production consumer is the binary. It is `spine`'s now,
+by the same rule that brought `T034`/`T035` here: the file decides the task. `T027`, the kitty
+keyboard protocol, was on this list and is the same crate — the negotiation is
+`KeyboardProtocol::Kitty` in `phosphor-term`, and the arm that consumes it is
+`machine.set_protocol(…)` in the binary. The line is worth stating positively, because it is what
+this role *is* — **`surface` draws, and never touches a terminal**, and a task on this list that
+touches one is a mis-filed task, not an exception.
 
 *(`T005` CI scaffolding is co-owned with `harness` — `surface` needs it in wave 1, `harness`
 takes it over at `CP-1`.)*
@@ -274,11 +301,26 @@ built on an unverified foundation.
 | **A** | `CP-0` (build half) | spine, **surface**, harness | T001–T007, T083, V001 |
 | **B** | `CP-1` | spine, surface, harness | T010–T018, **T081**, **T084**, **T085**, **T090**, V002–V005 |
 | **C** | `CP-2` | spine, harness | T019–T025, T078–T080 |
-| **D** | `CP-3`/`CP-4` | **all five** | T026–T040, T082, **T086**, V006–V009 |
+| **D** | `CP-3`/`CP-4` | spine, surface, store, harness | T026–T040, T082, **T086**, **T097**, V006–V009 |
 | **E** | `CP-5` | store, surface, harness | T041–T049, **T087** |
 | **F** | `CP-6`/`CP-7` | agent, store, surface, spine, harness | T050–T062, **T088**, **T089** |
 | **G** | `CP-8a/b/c` | agent, store, surface | T063–T073 |
 | **H** | `CP-9` | agent, harness | T074–T077 |
+
+> **Window D runs with four, not five.** The table said *all five* until the `CP-3` audit
+> checked it against the task lists: `agent` owns `T050`–`T070` and `T074`–`T077`, and **not one
+> of them falls in Window D**. The live roles are `spine`, `surface`, `store` and `harness`.
+> `agent` joins at `CP-2` in the staffing narrative and has nothing to build until `S6`, which is
+> Window F — the same shape as `harness` being live in E, F and H with no numbered task, noted
+> below.
+
+> **`T092`–`T096` and `T098` are unscheduled by window on purpose.** They are the arms owed for verbs
+> already declared and already shipped in the vocabulary — see `TASKS.md`'s *Arms owed* section
+> and the RECORDED table in `scripts/lint-action-arms.sh`. Each belongs to the window that next
+> touches its surface (`T092` theme, `T093` floats, `T094` the Steel layer, `T095` history,
+> `T096` soft wrap, `T098` the deferred vim keys), and putting them in a window now would be
+> inventing a schedule rather than recording one. `T097` is the exception: `T086` cannot pass without it, so it sits in Window D
+> with `T086`.
 
 > **Window F reopens `spine` and `surface` briefly.** `T088` (pane manager) and `T089` (`TabBar`)
 > both gate `T054`, so they run at the front of F and then those two roles go quiet again. It is
@@ -294,13 +336,23 @@ built on an unverified foundation.
 > Windows A and B are complete: the workspace, both vendored forks, three structural lints proven
 > to bite, the grammar ABI check, the whole S1 widget layer, the S1 host, and a calibrated tape
 > harness. **Window C is built** — `spine` and `harness` — and `CP-2`'s mechanical half is
-> green: 208 capabilities, three doors derived from one table, 624 door checks walked end to
+> green: 209 capabilities, three doors derived from one table, 627 door checks walked end to
 > end, Steel booted from `runtime/`, the REPL live, and the statusline composed in the editor
-> layer. **`CP-2`'s manual half is outstanding**, and Window D does not start until it passes.
+> layer. **Window D's S3 half is built too**, across two concurrent runs and a repair pass, and
+> `CP-3`'s mechanical half is green. **`CP-3`'s manual half is outstanding**, and `S4` does not
+> start until it passes.
+>
+> One bookkeeping gap, recorded rather than resolved: `TASKS.md`'s `CP-2` section carries no
+> **PASSED** mark and `TASKS.md:29` still reads *"`CP-2`'s manual half is outstanding"*, while
+> Window D demonstrably ran past it. Either the verdict was given and never written down or the
+> window started early; only Teej knows which, and a doc may not guess. **A checkpoint verdict is
+> written where the checkpoint is, or it did not happen.**
 >
 > `CP-1`'s manual half produced four rulings, three of which amend design docs. That is the
 > checkpoint doing its job: they are the first amendments in this build that came from looking at
-> a running program rather than reasoning on paper.
+> a running program rather than reasoning on paper. `CP-3`'s audit produced the next two, plus
+> the concurrency rules below — which came from watching sixteen agents finish green and leave
+> four surfaces dead to the keyboard.
 >
 > Window B also cost more than the table below says. `T090`, the S1 host, did not exist when
 > this plan was written: the first `CP-1` attempt failed because a complete, tested widget layer
@@ -323,6 +375,51 @@ lines are for.
 
 **Contract changes.** A teammate needing a new `Action`, query, or view-tree node opens a request
 to `spine` and continues on something else. Never fork the enum locally "temporarily."
+
+### Concurrency — several agents, one worktree
+
+The role table above assumes one agent per role. Windows C and D were run differently: a role was
+split across many agents working **concurrently in a single worktree**, each given a named set of
+files. That is faster and it is how the rest of this build will run, so the rules it needs belong
+here rather than in a prompt somebody rewrites each time. **All five come from something that
+already went wrong.**
+
+1. **One writer per file-group per phase, and you `CONTRACT` rather than reach.** An agent's
+   prompt names the files it owns; creating, editing or deleting anything outside that set is not
+   a judgement call, it is a report — *`CONTRACT` requesting `<thing>` — `<why>`* — and the agent
+   moves on to something else. This is the crate-ownership rule from above at a finer grain, and
+   it is the only thing making concurrent writes to one tree safe.
+
+2. **The wiring agent goes last, always.** Window D's S3 run gave `crates/phosphor/src/main.rs`
+   to one agent in **phase 2**, so that concurrent agents could never collide in the host. The
+   run was safe and it starved the integration point: every surface built in phases 3 and 4
+   landed complete, tested, ticked and **uncomposed**, because by then nobody could write the
+   file that composes it. Sixteen agents finished, `just gate` was green, and pressing `SPC` did
+   nothing — the leader popup, the unknown-key hint, folds and undo were all built and all dead
+   to the keyboard. **The last phase of every window belongs to a wiring agent** whose entire job
+   is that nothing shipped this window is unreachable from a keystroke. `scripts/lint-action-arms.sh`
+   is the mechanical half of the same rule; this is the scheduling half.
+
+3. **`just fmt-fix` is workspace-wide.** It rewrites files the agent running it does not own,
+   mid-edit — observed: a `T029` agent reformatted `main.rs` while `spine` was writing it.
+   Nothing broke, because formatting is what CI checks and `just fmt` is that check — but the
+   file lock is unenforceable as written. **In a concurrent window, run `just fmt` (check) and
+   fix only your own files by hand.** Never `cargo fmt --all`, in any window: it recurses through
+   the path dependencies into both vendored forks, and a hook blocks it.
+
+4. **Only the final gate counts.** A shared crate is often uncompilable mid-window, because
+   another agent is halfway through it. So a per-agent *"gate: green"* is a claim about a moment
+   and about that agent's own files, not about the tree. Report **what is red and whose it is**;
+   the gate that means something is the one run after every agent has landed. The corollary:
+   never read an exit code through a pipe — `just lint | tail` gives you `tail`'s status, and
+   this build has twice reported a lint green that was red exactly that way.
+
+5. **`file:line` citations drift, so cite symbols.** Two agents editing neighbouring files in the
+   same window move each other's line numbers, and a report written at minute five is wrong by
+   minute forty. A gate that audited agent reports killed eleven claims across two windows,
+   several of them line numbers that had simply slid. **Name the symbol** — `fn under`,
+   `struct Timeline`, `driven::pressing_space_opens_the_leader_popup` — and add the line number
+   as a convenience, not as the identifier.
 
 **Context discipline.** Every teammate returns a **≤1500-token summary** — what landed, what
 broke, what it needs from another teammate. Never raw tool output, never full diffs. The root

@@ -275,6 +275,8 @@ fn a_count_folds_into_the_operand_and_3dd_is_one_delete() {
             "select-range",
             "yank",
             "delete",
+            "set-cursor",
+            "move-cursor",
             "clear-selection",
             "set-mode",
             "commit-undo-group",
@@ -292,6 +294,12 @@ fn a_count_folds_into_the_operand_and_3dd_is_one_delete() {
     assert_eq!(deleted.start, Position { line: 2, column: 1 });
     assert_eq!(deleted.end, Position { line: 5, column: 1 });
     assert_eq!(buffer.content(), "one\nfive");
+    assert_eq!(
+        buffer.cursor(),
+        Position { line: 2, column: 1 },
+        "'startofline': a linewise delete lands on the first non-blank of the \
+         line that took its place"
+    );
     assert_eq!(machine.mode(), EditMode::Normal);
     assert!(machine.pending().is_clear(), "the count is spent");
 }
@@ -301,7 +309,7 @@ fn a_named_register_is_state_the_yank_reads() {
     let mut machine = Machine::new();
     let mut keymap = support::table();
     let mut buffer = Buffer::new("alpha\nbeta");
-    buffer.at(1, 1);
+    buffer.at(1, 3);
 
     let stream = drive(&mut machine, &mut keymap, &mut buffer, "\"ayy");
 
@@ -312,10 +320,16 @@ fn a_named_register_is_state_the_yank_reads() {
             "set-mode",
             "select-range",
             "yank",
+            "set-cursor",
             "clear-selection",
             "set-mode",
         ],
         "{stream:#?}"
+    );
+    assert_eq!(
+        buffer.cursor(),
+        Position { line: 1, column: 3 },
+        "a linewise yank keeps its column (change.txt:1254)"
     );
     let register = stream
         .iter()
@@ -371,6 +385,7 @@ fn an_operator_over_a_text_object_selects_then_acts() {
             "select-range",
             "yank",
             "delete",
+            "set-cursor",
             "clear-selection",
             "set-mode",
         ],
@@ -454,6 +469,8 @@ fn visual_mode_extends_a_selection_and_the_operator_takes_it() {
             "select-range",
             "yank",
             "delete",
+            "set-cursor",
+            "move-cursor",
             "clear-selection",
             "set-mode",
             "commit-undo-group",
@@ -957,7 +974,7 @@ fn case_change_is_an_operator_and_tilde_is_the_fused_form() {
 
     // `gUiw` — an operator over an object, and the stream says so.
     let mut buffer = Buffer::new("alpha beta");
-    buffer.at(1, 1);
+    buffer.at(1, 3);
     let stream = drive(&mut machine, &mut keymap, &mut buffer, "gUiw");
     assert_eq!(
         names(&stream),
@@ -966,6 +983,7 @@ fn case_change_is_an_operator_and_tilde_is_the_fused_form() {
             "select-object",
             "select-range",
             "set-case",
+            "set-cursor",
             "clear-selection",
             "set-mode",
             "commit-undo-group",
@@ -973,6 +991,12 @@ fn case_change_is_an_operator_and_tilde_is_the_fused_form() {
         "{stream:#?}"
     );
     assert_eq!(buffer.content(), "ALPHA beta");
+    assert_eq!(
+        buffer.cursor(),
+        Position { line: 1, column: 1 },
+        "the cursor lands at the start of what was changed, not the end of it \
+         (motion.txt:71, *operator-resulting-pos*)"
+    );
     assert!(
         stream.iter().any(|action| matches!(
             action,
@@ -991,19 +1015,235 @@ fn case_change_is_an_operator_and_tilde_is_the_fused_form() {
     assert_eq!(buffer.content(), "alpha beta\nNEXT");
 
     // `~` is `g~l` in one key, and a count takes that many characters.
-    //
-    // The line is longer than the count on purpose: `3~` on a three-character
-    // line changes two, because `char-right` clamps to the last character and
-    // the span is exclusive of it. That is `3x`'s behaviour too and it predates
-    // this task — `R1`'s report names it rather than folding a fix for `x`,
-    // `~` and `d3l` into a vocabulary change.
     let mut buffer = Buffer::new("abcdef");
     buffer.at(1, 1);
     drive(&mut machine, &mut keymap, &mut buffer, "~");
     assert_eq!(buffer.content(), "Abcdef");
+    assert_eq!(
+        buffer.cursor(),
+        Position { line: 1, column: 2 },
+        "`~` switches the case *and moves the cursor to the right* \
+         (change.txt:315-318) — the one operator that does not land on its start"
+    );
     buffer.at(1, 1);
     drive(&mut machine, &mut keymap, &mut buffer, "3~");
     assert_eq!(buffer.content(), "aBCdef");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 4 });
+
+    // …and `g~l`, the same operator over the same motion unfused, is the
+    // general rule instead: it does not move.
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "g~l");
+    assert_eq!(buffer.content(), "ABCdef");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 1 });
+}
+
+// ---------------------------------------------------------------------------
+// `B1` — a counted fused operator at the end of a line
+// ---------------------------------------------------------------------------
+
+/// **`3x` on `abc` deletes three characters.** It used to delete two.
+///
+/// vim spells `x` as `dl` and `X` as `dh` (`vim91/doc/change.txt:31-33`,
+/// `:41-43`), and `l` is an |exclusive| motion (`motion.txt:189`) that stops
+/// "at the end of the line" (`motion.txt:170-171`). For a *cursor* the end of
+/// the line is the last character; for an *operand* it is the boundary past it,
+/// and conflating the two is what lost the last character. One rule, in
+/// `text::char_right_operand`, because five spellings share it — which is why
+/// this was deferred rather than patched at `x`.
+#[test]
+fn a_counted_fused_operator_takes_the_last_character_of_the_line() {
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+
+    // The count is exactly the line: all three go.
+    let mut buffer = Buffer::new("abc");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "3x");
+    assert_eq!(buffer.content(), "");
+
+    // A count past the end takes what is there rather than refusing — `x` is
+    // not `r`, which does refuse (`replace_char`).
+    let mut buffer = Buffer::new("abc");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "9x");
+    assert_eq!(buffer.content(), "");
+
+    // `d3l` is the same keystroke spelled long, and has to agree.
+    let mut buffer = Buffer::new("abc");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "d3l");
+    assert_eq!(buffer.content(), "");
+
+    // `s` — vim's substitute, the same operand under a different operator.
+    let mut buffer = Buffer::new("abc");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "3s");
+    assert_eq!(machine.mode(), EditMode::Insert);
+    drive(&mut machine, &mut keymap, &mut buffer, "Z<esc>");
+    assert_eq!(buffer.content(), "Z");
+
+    // `~` — the fused case operator, which is what found this.
+    let mut buffer = Buffer::new("abc");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "3~");
+    assert_eq!(buffer.content(), "ABC");
+
+    // `X` is `dh` and was never wrong: column 1 is a real boundary, so the
+    // clamp there is the answer rather than an off-by-one.
+    let mut buffer = Buffer::new("abc");
+    buffer.at(1, 3);
+    drive(&mut machine, &mut keymap, &mut buffer, "3X");
+    assert_eq!(
+        buffer.content(),
+        "c",
+        "`3X` at column 3 takes the two before it"
+    );
+}
+
+/// End of line and end of buffer are not the same test.
+///
+/// At the end of a *line* the newline is the thing that must survive: default
+/// `'whichwrap'` does not let `l` cross one, so `3x` on a three-character line
+/// empties the line and does not join the next. At the end of the *buffer*
+/// there is no newline to leave alone, and the span ends past the last
+/// character of the last line — which is the case that runs off the end of
+/// every position helper if the rule is written carelessly.
+#[test]
+fn the_char_right_operand_stops_at_the_newline_and_at_the_end_of_the_buffer() {
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+
+    // End of line: the line empties, the newline stays, the next line is whole.
+    let mut buffer = Buffer::new("abc\ndef");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "5x");
+    assert_eq!(
+        buffer.content(),
+        "\ndef",
+        "no join: `l` does not cross a line"
+    );
+
+    // End of buffer: the last line, with nothing after it.
+    let mut buffer = Buffer::new("abc\ndef");
+    buffer.at(2, 2);
+    drive(&mut machine, &mut keymap, &mut buffer, "5x");
+    assert_eq!(buffer.content(), "abc\nd");
+
+    // The same again where the buffer is one line, so the span's end is the end
+    // of everything.
+    let mut buffer = Buffer::new("abc");
+    buffer.at(1, 2);
+    drive(&mut machine, &mut keymap, &mut buffer, "2~");
+    assert_eq!(buffer.content(), "aBC");
+}
+
+/// An operand of no characters is not an operand: vim beeps, and so does this.
+///
+/// The alternative is a `Delete` of nothing that still closes an undo group —
+/// an empty step in `T029`'s tree, and a `.` that repeats it.
+#[test]
+fn an_operator_over_nothing_cancels_rather_than_editing_nothing() {
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+    let mut buffer = Buffer::new("\nabc");
+
+    // `x` on an empty line.
+    buffer.at(1, 1);
+    let stream = drive(&mut machine, &mut keymap, &mut buffer, "x");
+    assert_eq!(names(&stream), ["cancel-pending"]);
+
+    // `X` and `d0` in column 1, which are the same shape from the other side.
+    buffer.at(2, 1);
+    let stream = drive(&mut machine, &mut keymap, &mut buffer, "X");
+    assert_eq!(names(&stream), ["cancel-pending"]);
+    let stream = drive(&mut machine, &mut keymap, &mut buffer, "d0");
+    assert_eq!(names(&stream), ["set-mode", "cancel-pending", "set-mode"]);
+
+    assert_eq!(buffer.content(), "\nabc", "and nothing was edited");
+}
+
+// ---------------------------------------------------------------------------
+// `B2` — where an operator leaves the cursor
+// ---------------------------------------------------------------------------
+
+/// `*operator-resulting-pos*`, `vim91/doc/motion.txt:71-74`: *"After applying
+/// the operator the cursor is mostly left at the start of the text that was
+/// operated upon."*
+///
+/// The exceptions are the interesting half, and they are checked against
+/// documentation rather than memory — see [`Machine::land`]'s citations. `gc`
+/// and `gs` are not vim's and are not asserted against it here: `gs` moves
+/// nothing (it is not an edit) and `gc` takes the general rule by analogy.
+#[test]
+fn an_operator_lands_the_cursor_at_the_start_of_what_it_touched() {
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+
+    // The three case operators, from the middle of the word — the report's
+    // `gUiw`, and its two siblings.
+    for (keys, expected) in [
+        ("gUiw", "ALPHA beta"),
+        ("guiw", "alpha beta"),
+        ("g~iw", "ALPHA beta"),
+    ] {
+        let mut buffer = Buffer::new("alpha beta");
+        buffer.at(1, 3);
+        drive(&mut machine, &mut keymap, &mut buffer, keys);
+        assert_eq!(buffer.content(), expected, "{keys}");
+        assert_eq!(buffer.cursor(), Position { line: 1, column: 1 }, "{keys}");
+    }
+
+    // A backwards yank moves the cursor to where the yank started; a forwards
+    // one does not move it at all. *"`yfe` doesn't move the cursor, but `yFe`
+    // moves the cursor leftwards"* — `motion.txt:73-74`.
+    let mut buffer = Buffer::new("alpha beta");
+    buffer.at(1, 7);
+    drive(&mut machine, &mut keymap, &mut buffer, "yb");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 1 });
+    assert_eq!(buffer.content(), "alpha beta", "a yank changes nothing");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "yw");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 1 });
+
+    // `c` lands where the insert begins.
+    let mut buffer = Buffer::new("alpha beta");
+    buffer.at(1, 3);
+    drive(&mut machine, &mut keymap, &mut buffer, "ciw");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 1 });
+    assert_eq!(machine.mode(), EditMode::Insert);
+    drive(&mut machine, &mut keymap, &mut buffer, "X<esc>");
+    assert_eq!(buffer.content(), "X beta");
+}
+
+/// `'startofline'` — and only for the three operators it names.
+///
+/// `options.txt:8260-8266` lists *"`d`, `<<`, `==` and `>>` with a linewise
+/// operator"*, and `motion.txt:75` says it applies to those and nothing else.
+/// So a linewise `d` lands on the first non-blank and a linewise `gU` lands in
+/// column 1, which is the distinction this test exists to hold.
+#[test]
+fn startofline_applies_to_a_linewise_delete_and_not_to_the_case_operators() {
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+
+    let mut buffer = Buffer::new("one\n    two\nthree");
+    buffer.at(1, 2);
+    drive(&mut machine, &mut keymap, &mut buffer, "dd");
+    assert_eq!(buffer.content(), "    two\nthree");
+    assert_eq!(
+        buffer.cursor(),
+        Position { line: 1, column: 5 },
+        "the first non-blank of the line that took its place"
+    );
+
+    // The doubled case operator is linewise by the same rule as `dd`, and lands
+    // in column 1 because 'startofline' does not list it.
+    let mut buffer = Buffer::new("    two\nthree");
+    buffer.at(1, 6);
+    drive(&mut machine, &mut keymap, &mut buffer, "gUgU");
+    assert_eq!(buffer.content(), "    TWO\nthree");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 1 });
 }
 
 #[test]

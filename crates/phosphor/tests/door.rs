@@ -146,7 +146,7 @@ fn the_host_still_needs_a_file_and_the_door_does_not() {
     let file = scratch("host").with_extension("rs");
     fs::write(&file, "fn main() {}\n").expect("write");
     // Not run — opening it would take the terminal. What is under test is that
-    // the *parser* accepts the host's line unchanged now that 208 subcommands
+    // the *parser* accepts the host's line unchanged now that 209 subcommands
     // sit beside it, which `--help` exercises without drawing a frame.
     let help = run(&["--help"]);
     let _ = fs::remove_file(&file);

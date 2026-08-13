@@ -672,77 +672,142 @@ that's needed; no tape content should need to change.
 `docs/TASKS.md`'s `CP-3` line asks for four captures: the leader popup
 opening (`3c`), folds collapsing and expanding, insert-only whitespace marks,
 and the once-per-session unknown-key hint firing and then not firing again
-(`8e`). **One of the four is captured.** The other three are real, tested
-widgets — each has its own Rust module and its own Tier-1 golden-frame test —
-but none is reachable by a keystroke in `crates/phosphor/src/main.rs` today,
-checked against the tree this session rather than assumed from the task
-list. Building a tape against a surface the running binary cannot show would
-be a false artifact, so none was built for them; this section is the record
-of what was checked and how, so the next window doesn't have to rediscover
-it.
+(`8e`). **All four are captured now.** This section used to record why three
+of the four were refused — `main.rs` couldn't compose any of those widgets
+from a keystroke, confirmed empirically as well as by reading — and that
+finding is kept below (as *history*) because both the defect and the fix are
+worth having on record: `spine`'s repair pass wired all three in the same
+window, `crates/phosphor/tests/loop_pty.rs` grew a `driven::` test per
+surface, and `harness` re-verified each one this session (`cargo nextest run
+-p phosphor --test loop_pty driven::`, 13/13 green) before capturing
+anything.
 
-- **`insert-whitespace-marks.tape` — captured.** `T016`'s claim (trailing
-  whitespace marks in INSERT only) is genuinely wired: `main.rs` calls
-  `soft_wrap::configure` once at startup and `soft_wrap::set_mode` every
-  frame, driven off `machine.mode()`
-  (`crates/phosphor/src/main.rs:825-832`, `:1066-1067`). Two screenshots off
-  one real session — before `i` (NORMAL, no mark) and after (INSERT, `··`
-  appears on the same line) — prove the mode-gating live rather than only in
-  `crates/phosphor/tests/screen_8e.rs`'s hand-built `Tree`. Fixture is
-  created inline in the tape's own `Hide`den setup (`printf` to
-  `/tmp/phosphor-whitespace-fixture.rs`), not added to `fixtures/`
-  (`V006`'s tree is fmt-clean by construction and out of this window's file
-  lock, which scopes to `tapes/**` + `scripts/**`).
+- **`3c.tape` — the `SPC` leader popup.** `main.rs:1411` `fn under(layer,
+  machine)` reads the live keymap table for the pending prefix and
+  `:1318`/`:1339-1340` compose it as a real `Node::KeyHints { density:
+  Density::Grid, .. }` strip; `loop_pty.rs:451`
+  `driven::pressing_space_opens_the_leader_popup` and `:494`
+  `driven::a_repl_rebind_reaches_the_leader_popup` prove it on a pty. Two
+  screenshots: the popup open (`SPC ·` title, the shipped groups — `+claude`,
+  `+unseen`, `+disk`, …) and after `<esc>`.
+  **Finding, captured rather than avoided:** the "closed" frame is not a
+  plain buffer — `<esc>` while `SPC` is pending has no dedicated cancel path
+  (every key while a sequence is pending is looked up as part of that
+  sequence, `input.rs:376-378`), so `"SPC <esc>"` resolves `Unbound`
+  (`input.rs:407`), which closes the popup **and** spends the once-per-session
+  unknown-key hint in the same turn (`:414`, `:417`). The tape's own header
+  has the full citation trail; not fixed here (`input.rs` is outside
+  `tapes/**`), reported to `spine`/Teej.
 
-- **The leader popup (`3c`) — not captured; not wired.** The widget exists
+- **`folds.tape` — `za`/`zR` collapsing and expanding a real fold.**
+  `crates/phosphor-core/src/action.rs` declares
+  `SetFold`/`FoldAll`/`UnfoldAll`; `main.rs:1964`, `:1971`, `:1975` are the
+  three arms (current line numbers — `docs/TASKS.md`'s own citation,
+  `:1911`/`:1918`/`:1922`, had already drifted off the tree by the time this
+  was checked); `runtime/keymaps.scm:586-593` binds `za zc zo zM zR`;
+  `loop_pty.rs:566` `driven::za_closes_the_fold_the_cursor_is_in` proves it.
+  Three screenshots: open, closed (`▸⋯ 5 lines`, the hidden body gone from
+  the frame), reopened. The first and third are byte-identical by
+  construction — `zR` puts back exactly what was there
+  (`tapes/artifacts/DUPLICATES.md`).
+
+- **`8e.tape` — the unknown-key hint, firing once and then not again.**
+  `unknown_key.rs:71`/`:76` are the exact strip text; `main.rs:875` owns the
+  session latch, `:2009` is the `ShowUnknownKeyHint` arm, `:1332` composes
+  it; `loop_pty.rs:521` `driven::an_unbound_key_teaches_once_and_never_again`
+  proves it (same key order this tape scripts: `Q`, `Q`, `<esc>`). Two
+  screenshots: taught (`unknown key Q — SPC opens the keymap · :help
+  agent-objects · shown once`) and silent (the row gone, one more buffer
+  line visible in its place). The silent frame turned out to be
+  pixel-identical to a sibling tape's frame for an unrelated reason — see
+  `DUPLICATES.md`'s `1a-degraded-term.png` ≡ `8e-silent.png` entry, which is
+  also where a real staleness in the `CP-1` reference stills got found as a
+  side effect of this check.
+
+- **`insert-whitespace-marks.tape` — recaptured.** History matters here: the
+  previous pair of artifacts were byte-identical (51293 bytes each, both
+  frames), which reads as "the second screenshot never advanced" — a
+  capture-pipeline symptom, not a whitespace-marks defect, per `T016`'s own
+  repair-pass note in `docs/TASKS.md`. They were deleted rather than
+  diagnosed or documented, which is the wrong call
+  (`tapes/artifacts/DUPLICATES.md` exists for exactly this). Recaptured
+  three times this session: `NORMAL` (no mark after `sum = 0;`) and `INSERT`
+  (`··` appears on the same line, nothing else on the frame changes)
+  produced two **different** hashes every run, and the same two hashes
+  across all three runs — reproducible, and the mark is real. The wiring
+  citation is unchanged: `main.rs` calls `soft_wrap::configure` once at
+  startup and `soft_wrap::set_mode` every frame, driven off
+  `machine.mode()`.
+
+**Reproducibility, checked rather than assumed.** Each new tape was run 2-3
+times this session (`insert-whitespace-marks` and `3c` three times, `folds`
+and `8e` twice) — zero `vhs` failures (`no frames` / `recording failed`),
+zero short/truncated PNGs. `folds` and `8e`/`insert-whitespace-marks`
+reproduced with byte-identical `sha256` hashes run over run; `3c`'s hashes
+varied run over run for the *same* screenshot despite `magick compare
+-metric AE` reporting `0` (pixel-identical) between two of those runs —
+vhs's PNG encoder is not byte-deterministic across invocations even when the
+pixels are, which matters for judging *this* kind of run-to-run diff (bytes
+differing is not proof of a real difference; check pixels) but not for the
+library's own correctness (only one version of each file is ever
+committed).
+
+**What this means for the checkpoint.** `docs/TASKS.md`'s fold task note
+already says it plainly: `T016` was ticked *"screen `8e`'s fold and
+whitespace details reproduce"* for three windows while the fold half had no
+binding at all — every gate asked *does the widget draw correctly* and never
+*does a keystroke reach it*. These four tapes are that second question,
+answered on a real pty before a single pixel was captured, not inferred from
+the widget tests passing. `CP-3`'s manual half (*"`SPC` leader popup — is
+the namespace learnable?"*) can now actually be judged against a build where
+pressing `SPC` does something.
+
+### History — why three of the four were refused before this window
+
+Kept for the record, and because the method (read the code, then confirm
+empirically before trusting the read) is worth showing rather than just the
+conclusion.
+
+- **The leader popup (`3c`).** The widget existed
   (`phosphor-ui/src/key_hints.rs`) and `crates/phosphor/tests/screen_3c.rs`
-  proves it renders correctly from the live keymap table — but that test
-  builds its own `Tree` by hand (its own module doc says so: *"The only Rust
+  proved it rendered correctly from the live keymap table — but that test
+  built its own `Tree` by hand (its own module doc said so: *"The only Rust
   in the composition is the split itself and the strip's height"*).
-  `crates/phosphor/src/main.rs` never references `KeyHints`, `Node::KeyHints`
-  or `Density::Grid` (grepped clean), and neither its `Surface` enum
-  (`main.rs:2040-2052`: `Buffer`/`Repl`/`Boot`/`Fixture`/`Ex`, no leader
-  variant) nor its `Intent` enum (`main.rs:227`:
-  `OpenRepl`/`CloseRepl`/`History`/`ToBuffer`/`Keymap`, same) has anything a
-  `SPC`-pending state could route through. Confirmed empirically, not just by
-  reading: a real capture of `phosphor`, one frame before `Space` and one
-  frame after, diffed at **0 px** (`magick compare -metric AE`, exact
-  match — investigation tape and screenshots not committed, this is the
-  finding).
+  `crates/phosphor/src/main.rs` referenced neither `KeyHints`,
+  `Node::KeyHints` nor `Density::Grid` (grepped clean), and neither its
+  `Surface` enum nor its `Intent` enum had anything a `SPC`-pending state
+  could route through. Confirmed empirically, not just by reading: a real
+  capture of `phosphor`, one frame before `Space` and one frame after,
+  diffed at **0 px** (`magick compare -metric AE`, exact match —
+  investigation tape and screenshots not committed, this was the finding).
 
-- **Folds — not captured; not wired.** `Action::View(ViewAction::SetFold |
-  FoldAll | UnfoldAll)` exists and is documented `"za"`
-  (`crates/phosphor-core/src/action.rs:414-424`), but no `"z` binding of any
-  kind exists in `runtime/keymaps.scm` (grepped clean), and
-  `Editing::act`'s match in `main.rs` has no arm for any `ViewAction` besides
-  `Scroll` (`main.rs:1433`) — a fold action falls through to the catch-all
-  `Refused(NotYetImplemented)` (`main.rs:1505`). Confirmed empirically: a
-  real capture of `phosphor`, typing `za`, shows exactly the vim primitive
-  `a` (append: cursor moves right one cell, mode switches NORMAL → INSERT) —
-  `z` is silently swallowed as unbound, and nothing fold-shaped happens. The
-  vendored editor's own fold API (`toggle_fold_at_line`) is real and used by
-  `screen_8e.rs`'s test setup, but nothing in the shipping input path calls
-  it.
+- **Folds.** `Action::View(ViewAction::SetFold | FoldAll | UnfoldAll)`
+  existed and was documented `"za"`, but no `"z` binding of any kind existed
+  in `runtime/keymaps.scm` (grepped clean), and `Editing::act`'s match in
+  `main.rs` had no arm for any `ViewAction` besides `Scroll` — a fold action
+  fell through to the catch-all `Refused(NotYetImplemented)`. Confirmed
+  empirically: a real capture of `phosphor`, typing `za`, showed exactly the
+  vim primitive `a` (append: cursor moves right one cell, mode switches
+  NORMAL → INSERT) — `z` was silently swallowed as unbound, and nothing
+  fold-shaped happened. The vendored editor's own fold API
+  (`toggle_fold_at_line`) was real and used by `screen_8e.rs`'s test setup,
+  but nothing in the shipping input path called it.
 
-- **The unknown-key hint (`T035`, `8e`) — not captured; not wired.** The
-  module (`phosphor-ui/src/unknown_key.rs`, `UnknownKeyHint`) and its Tier-1
-  test (`screen_8e.rs`) both exist and pass, but `unknown_key`/
-  `UnknownKeyHint` is never referenced anywhere under `crates/phosphor/src/`
-  (grepped clean) — there is no call to `UnknownKeyHint::teach` anywhere in
-  the real event loop, so no key, bound or not, can make the hint appear on
-  a running `phosphor`.
+- **The unknown-key hint (`T035`, `8e`).** The module
+  (`phosphor-ui/src/unknown_key.rs`, `UnknownKeyHint`) and its Tier-1 test
+  (`screen_8e.rs`) both existed and passed, but `unknown_key`/
+  `UnknownKeyHint` was never referenced anywhere under `crates/phosphor/src/`
+  (grepped clean) — there was no call to `UnknownKeyHint::teach` anywhere in
+  the real event loop, so no key, bound or not, could make the hint appear
+  on a running `phosphor`.
 
-**What this means, and what it doesn't.** All three ungapped surfaces are one
-wiring step in `main.rs` away from being real — `spine`'s file, not
-`harness`'s, and product work is frozen for this gate per this window's
-brief. This is not "the feature is missing"; `T034`/`T035`/`T016`'s fold half
-all have working widgets and passing Tier-1 tests, which is most of the
-work. It is a gap between the widget landing and the binary's event loop
-composing it in, and CP-3's manual half (*"SPC leader popup — is the
-namespace learnable?"*) cannot be judged against a build where pressing
-`SPC` does nothing at all. Flagged for `spine`/Teej, not folded in — per
-harness's own standing instruction (`docs/TEAM.md`), the tape and reference
-for each get built once the surface is.
+All three were one wiring step in `main.rs` away from being real —
+`spine`'s file, not `harness`'s, and product work was frozen for that gate
+per that window's brief. Not "the feature is missing": `T034`/`T035`/`T016`'s
+fold half all had working widgets and passing Tier-1 tests, which was most
+of the work. It was a gap between the widget landing and the binary's event
+loop composing it in — flagged for `spine`/Teej rather than folded in, per
+`harness`'s own standing instruction (`docs/TEAM.md`).
 
 ## Convention: every tape gets a `Require`
 
@@ -786,8 +851,9 @@ tapes/
                                           library originally scoped
   broken-init.tape, 6b.tape,             the CP-2 tapes — see "CP-2 — the
   repl-liveness.tape                     spine's tapes" above
-  insert-whitespace-marks.tape           the CP-3 tape — see "CP-3 — harness's
-                                          tapes" above
+  3c.tape, folds.tape,                   the CP-3 tapes — see "CP-3 —
+  insert-whitespace-marks.tape,          harness's tapes" above
+  8e.tape
   artifacts/                             V005 — committed Screenshot/gif output
     .gitkeep
     DUPLICATES.md                        why each byte-identical pair is allowed

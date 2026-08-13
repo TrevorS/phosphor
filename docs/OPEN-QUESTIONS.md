@@ -13,7 +13,8 @@ lives here after it has been answered is the same rot this repo already has lint
 
 **The standard for an entry** is the one `CLAUDE.md` sets for everything else: state a fact about a
 file only if you read that file, and give `file:line` when the claim is load-bearing. Every
-citation below was checked against the tree on 2026-08-12.
+citation below was checked against the tree on 2026-08-12, and every citation added or amended
+in the 2026-08-13 ruling pass was re-checked then.
 
 ---
 
@@ -23,87 +24,35 @@ These are cheap: the tree is right and a document has not caught up. They are li
 `docs/` is the specification, and a specification that disagrees with the build is a bug in the
 specification — but nobody may quietly edit it into agreement.
 
-### 1 · Is `Node::KeyHints` one widget file or two?
+**All three that stood here are ruled and closed** — §1, §2 and §3, all amending
+[TEAM.md](TEAM.md). One new one has taken their place.
 
-`TEAM.md:76` gives `surface` both `help_grid.rs` and `keymap_footer.rs`, and `TEAM.md:124`
-names `keymap_footer.rs` again when explaining why `T034`/`T035` moved from `spine`. Neither file
-exists. The Window D seam pass created `key_hints.rs` instead, because `Node::KeyHints` is **one**
-node kind carrying a `Density` (`crates/phosphor-core/src/view/props.rs:496`), drawn at three
-densities: the float footer, the `SPC` leader grid, and the `:help` body.
+### 19 · Who owns `phosphor-ui/{interpret,frame}.rs`?
 
-`TEAM.md:122` states the rule that decides it: *"`phosphor-ui` is split per widget file. A new
-widget file needs `spine` to add its view-tree node kind first."* Spine added one kind.
+Found while making the §1 amendment, and it is the same shape. `TEAM.md`'s widget list splits
+`phosphor-ui` per file across four owners, and it names neither `interpret.rs` nor `frame.rs`.
+Both exist (`crates/phosphor-ui/src/`), and both are `T079`'s — *tree interpreter + frame cache* —
+which `TEAM.md` assigns to `spine`. So the crate that `surface` owns contains two files whose
+task belongs to `spine`, and the table does not say so either way.
 
-- **Amend `TEAM.md:76` and `:124` to `key_hints.rs`.** One kind, one file, one draw site — the same
-  principle `scripts/lint-one-escape-hatch.sh` enforces for `Node::Spans`.
-- **Or split the widget across two files**, which means two draw sites for one node kind, and
-  `T034`/`T086` become two agents rather than one.
+This is not a hypothetical: `interpret.rs` is where a new `Node` kind becomes pixels, so it is
+touched by every widget task, and `scripts/lint-one-escape-hatch.sh` already treats its single
+`Node::Spans` draw site as load-bearing.
 
-*Recommendation: amend TEAM.md.*
+- **Name them in `spine`'s row**, the way `T014` and `T027` were, on the same rule — the file
+  decides the task, and the interpreter is the view-tree protocol's other half rather than a
+  widget. `surface` keeps every file that draws one node kind.
+- **Or give them to `surface`** and move `T079` with them, which contradicts `TEAM.md`'s first
+  single-writer rule: *only `spine` edits the view-tree protocol.*
 
-### 2 · Who owns `T027`, the kitty keyboard protocol?
-
-`TEAM.md:76` lists `T027` under `surface`. `TEAM.md:199` states what that role is — *"`surface`
-draws, and never touches a terminal"* — and the `spine` section names kitty-protocol negotiation as
-part of the app layer. Both cannot hold. The negotiation already exists in `phosphor-term`
-(`T014`, `crates/phosphor-term/src/lib.rs`, `KeyboardProtocol::Kitty`), which is `spine`'s crate.
-
-This is the same move that sent `T014` itself to `spine` after `CP-1`: the file decides the task.
-`scripts/lint-no-app-layer-in-ui.sh` fails CI on a `crossterm::` reference from `phosphor-ui`, so
-the lint has already ruled and only the table disagrees.
-
-*Recommendation: confirm `spine`, amend the `surface` task list. Window D built it that way.*
-
-Related and separate: `TASKS.md:106` records that VHS's browser-based terminal does not implement
-the protocol, so `T027` is verifiable on hardware only. That is a verification limit, not an
-ownership question.
-
-### 3 · Window D's live-teammate count
-
-`TEAM.md`'s window table says Window D has **all five** teammates live. The `agent` role owns
-`T050`–`T070` and `T074`–`T077`, none of which fall in Window D. Four roles are live: `spine`,
-`surface`, `store`, `harness`.
-
-*Recommendation: correct the table to four and add a one-line note, the way `TEAM.md` already
-explains `harness` having no `T`/`V` tasks after Window D.*
+*Recommendation: `spine`, and add the row. The first option is the only one consistent with the
+rule that is already mechanical.*
 
 ---
 
 ## Scope questions
 
-### 4 · `V006` cannot meet its own acceptance criterion in Window D
-
-`TASKS.md:222` asks for a committed sample tree **plus seeded store state** — regions, seen-state,
-threads, a canned transcript — and its *done when* is *"`CP-5`'s tapes produce identical output on
-two machines."* The semantic store is `T041`, at S5, two windows away. The capability registry
-names the store verbs; nothing implements them.
-
-- **Split it, on the `T022` precedent** — `V006` closes on the fixture tree and the
-  `phosphor --eval` seeding mechanism; the seeded-store half becomes a criterion on the S5 task
-  that lands the store.
-- **Or leave it open until S5** — accurate, but it sits unticked across two windows with no record
-  of which half exists.
-
-*Recommendation: split it. This is the shape `CP-2` already ruled for `T022`, and for the same
-reason: a task whose mechanism is provable now and whose subject arrives later should not be a
-binary.*
-
-### 5 · `6b`'s footer promises `q close` on a surface whose body is a text input
-
-`q` types; `esc` closes (Design Language §9). Surfaced by `T022` and left as drawn, because it
-needed modes to be decidable — `T026` lands them in Window D.
-
-- **Make the footer mode-aware**, as an acceptance criterion on `T034`: the footer reads the live
-  keymap already, so "the footer tells the truth about what this key does *in this mode*" is nearly
-  free while that widget is being written and a rewrite afterwards.
-- **Or change the drawing** to say `esc close`.
-
-These are not exclusive, and probably both: `6b`'s frame is drawn mid-typing at the λ prompt, so
-its footer is wrong for that frame even once the build is mode-aware. Teej edits
-`TUI Mockups.dc.html` at claude.ai — **never edit the `.dc.html` here.**
-
-*Recommendation: both. Window D's `T034` was launched before this was raised, so the mode-aware
-half lands as a follow-up rather than an original criterion.*
+**§4 and §5 are ruled and closed** — `V006`'s split, and `6b`'s `q close` footer.
 
 ### 6 · Three editor-layer names `6b` types that nothing binds
 
@@ -128,17 +77,17 @@ A refused query surfaces as `#refused · Error: Generic: not built yet — T041 
 
 ### 9 · `door.rs::why` and `answer::why` phrase one enum two ways
 
-*"T041 builds this"* against *"not built yet — T041 builds it"*. Unifying them rewrites 624 parity
+*"T041 builds this"* against *"not built yet — T041 builds it"*. Unifying them rewrites 627 parity
 expectations.
 
 *Recommendation for both: one task, `spine`, scheduled in the S4 run.* They are the same defect —
 the door does not speak §6's voice — and they rewrite the same expectation set, so doing them
-separately means regenerating and reviewing 624 expectations twice.
+separately means regenerating and reviewing 627 expectations twice.
 
 > **Scope**
 > - Files: `crates/phosphor/src/door.rs`, `crates/phosphor-steel/src/answer.rs`,
 >   `crates/phosphor/tests/parity.rs`
-> - Named units: 1 enum (`Outcome`), 2 `why` implementations, ~624 parity expectations
+> - Named units: 1 enum (`Outcome`), 2 `why` implementations, ~627 parity expectations
 > - Verification: existing parity suite
 > - Risk: public API yes (one `Outcome` case) · data migration no · cross-module yes
 >   (`phosphor`, `phosphor-steel`) · reversible yes · external blocker no
@@ -177,20 +126,8 @@ land the frame once the literals exist. Nothing is gained by starting it in S3.*
 
 ## Raised by Window D's S3 run
 
-### 11 · `just fmt-fix` writes every file, so a file lock cannot hold
-
-Window D runs several agents concurrently in one worktree, each owning a named set of files. That
-discipline is what makes the run safe — and `just fmt-fix` is workspace-wide, so an agent running
-the recipe `CLAUDE.md` sanctions reformats files it does not own, mid-edit. Observed: `T029`'s
-agent reformatted `crates/phosphor/src/main.rs` while `spine` was writing it. Formatting only, and
-`just fmt` is what CI checks, so nothing broke — but the rule is unenforceable as written.
-
-- **Write it into `TEAM.md`'s concurrency rules**: in a concurrent window, run `just fmt` (check)
-  and fix only your own files.
-- **Or scope the recipe** — `cargo fmt -p <crate>`, which needs the agent to know its crates.
-
-*Recommendation: the `TEAM.md` rule. A per-crate recipe invites the `--all` reflex the hook
-already exists to block.*
+**§11, §16 and §18 are ruled and closed** — the file lock, the hand-rolled codec, and the eleven
+declared mutations with no creditor.
 
 ### 12 · Two mockups disagree with two other mockups
 
@@ -237,22 +174,6 @@ successes. `scripts/seed-fixtures.sh` checks the printed value instead.
 exit code, and "the editor declined" is arguably a `1`. Touches `T023`'s contract, so it is
 `spine`'s.*
 
-### 16 · Hand-rolled codec and XDG paths, or the crates `SPIKES.md` recommends?
-
-`SPIKES.md:307` recommends `postcard` for exactly `T030`'s append-only log, and `:304` recommends
-`etcetera` for the XDG paths. Neither is in `Cargo.toml`'s dependency table, and
-`crates/phosphor-core/Cargo.toml:9` says the crate is *"deliberately dependency-free at the
-floor"* — so `T030` hand-rolled both: a LEB128 + length-prefixed-UTF-8 codec, and
-`journal::state_home`.
-
-One consequence is already load-bearing: the state-dir key is a hand-rolled FNV-1a 64
-(`journal.rs:1261`) pinned by literal in a test, precisely because `std`'s `DefaultHasher` is
-documented-unstable across releases and would silently orphan every user's state on a toolchain
-bump. That reasoning is right whichever way this goes.
-
-*Reversible either way — one section and one function. `spine`'s call, because it owns
-`Cargo.toml`.*
-
 ### 17 · Does `CP-3` sign off without its VHS artifacts?
 
 `CP-3`'s "VHS produces" list names four captures: the leader popup (`3c`), folds collapsing and
@@ -274,49 +195,25 @@ close and open on `za`/`zR` (`:532`, wired at `crates/phosphor/src/main.rs:1911`
 INSERT-only whitespace marks are driven off `machine.mode()` every frame (`:903`). So the excuse
 for three of the four is gone.
 
-What is captured, against the tree this session: **none of them.** `tapes/` contains no `3c.tape`,
-no `8e.tape` and no fold tape, and `insert-whitespace-marks.tape`'s three artifacts — the two PNGs
-and the GIF — were **deleted** during this pass rather than recaptured, because the NORMAL and
-INSERT captures were byte-identical and `scripts/lint-repo-hygiene.sh` fails on an undocumented
-identical pair. Deleting them greens the lint and destroys the evidence; `tapes/README.md:684`
-still asserts the tape is *"captured"*. Recapturing (`just tape insert-whitespace-marks`) is the
-move that answers the original question, which was whether the capture pipeline duplicated a frame
-or the mode chip genuinely did not change.
+**All four are captured now.** `tapes/` carries `3c.tape`, `8e.tape`, `folds.tape` and
+`insert-whitespace-marks.tape`, with eleven committed artifacts between them — `3c` closed and
+open, `8e` silent and taught (the negative half `CP-3` asks for by name), `folds` closed, open and
+reopened, and the whitespace pair.
 
-*Revised recommendation: this is now four tapes against four live surfaces and a piece of `harness`
-standing work, not an artifact-of-nothing problem. It is still Teej's call whether `CP-3` signs off
-without them.*
+**And the recapture answered the question it was left open on.** The whitespace tape's two stills
+were byte-identical when this section was first written — the `NORMAL` and `INSERT` frames the same
+bytes, mode chip included, which is impossible if the second screenshot advanced. Recaptured, they
+**differ**, so it was the VHS capture pipeline duplicating a frame and not the surface failing to
+render. Deleting them the first time greened `scripts/lint-repo-hygiene.sh` without answering that;
+recapturing did, and the answer is that the build was right all along.
 
-### 18 · Eleven declared mutations that no task will ever close
+`tapes/artifacts/DUPLICATES.md` now exists for the pairs that *are* identical by construction, with
+each group stating whether it is a duplicate by definition or a gap — which is the honest
+resolution the first attempt skipped.
 
-`scripts/lint-action-arms.sh` exists now and found **13 gaps** where a ticked task declares a
-mutation the binary never applies. Two wait on a real task and clear themselves when it lands —
-`Jump` on `T042`'s anchoring, `SetVirtualTextVisible` on `T041`'s regions. **The other eleven have
-no creditor**: nothing in the task graph owns the work, so they will sit there until somebody
-decides.
-
-| verb | what is true today |
-|---|---|
-| `set-theme` · `reload-theme` | `:theme <slug>` is bound and **answers a refusal**. `--theme` works. |
-| `open-float` · `close-float` · `close-all-floats` | Steel and MCP cannot open or close a float. |
-| `load-runtime-file` · `reload-runtime` | The layer cannot be reloaded without restarting. |
-| `apply-edits` | The batch-edit shape an agent writes through. No caller until there is a session. |
-| `undo-to-checkpoint` | `UndoTree::goto` and `CheckpointId` exist; nothing routes an id to them. |
-| `compact-history` | Compaction is implemented and `SIGKILL`-proven; nothing triggers it, so a history only grows. |
-| `set-soft-wrap` | Soft wrap **works** via `--soft-wrap` and `host.flag`; the verb is not applied. |
-
-`set-theme` is the one worth a decision soonest: it is bound to an ex command a user will type, and
-it fails silently in the sense that matters — it answers, and the answer is no. The blocker is
-structural rather than lazy: the theme is an immutable local at `main.rs:794` baked into each
-`Editor` at construction, so runtime switching is a rebuild path, not an arm.
-
-- **Add a task for the rebuild path** and let the other ten stay recorded until their phase.
-- **Or unbind `:theme`** until it works, so nothing bound is a refusal.
-
-*Recommendation: add the task. An ex command that exists and declines is better than one that
-vanished, but only if something is going to close it.*
-
----
+*This question is answered, not by a ruling but by the work: it was never an artifact-of-nothing
+problem once the surfaces went live. What remains is the ordinary `harness` standing work of
+keeping them current.*
 
 ## Repair pass — queued work, not questions
 
@@ -371,12 +268,6 @@ would otherwise hit in the first minutes of editing.
   and expanding; unlike the other three this one has **no S3 task behind it at all**, so it is new
   work rather than wiring.
 
-- **R1 · The `Motion` vocabulary.** `f` `F` `t` `T` `;` `,` and `W` `B` `E` are not expressible
-  (`request.rs:588-631` is a payload-free `wire_choice!`), and there is no case-change capability,
-  so `~` `gu` `gU` cannot be bound. Both patterns already exist in the tree:
-  `SelectObject` carries `delimiter: Option<char>`, and `Role::Register` is already
-  "the next key names a literal". 9 new `Motion` tags, 2 `Role` arms, 1 capability — and the
-  vocabulary goes 208 → 209, which `docs/TASKS.md:22` states in prose.
 - **R2 · Wire undo into the host. The largest single gap in the window, and invisible from the
   test count.** `main.rs:1440-1455` still answers `HistoryAction::Undo/Redo` with the fork's
   `self.editor.apply(Undo)` and treats `CommitUndoGroup` as a no-op. `T029`'s tree and `T030`'s
@@ -455,6 +346,85 @@ would otherwise hit in the first minutes of editing.
 
 ## Closed
 
+Rulings of **2026-08-13** first, then what came before. Each says where the ruling now lives, so
+this section is a set of pointers and not a second copy of the answer.
+
+- **§1 · Is `Node::KeyHints` one widget file or two? RULED: one — `key_hints.rs`.** `spine` added
+  one node kind (`Node::KeyHints`, `crates/phosphor-core/src/view.rs:500`) carrying a `Density`
+  (`crates/phosphor-core/src/view/props.rs:496`), and `TEAM.md`'s own rule is that a widget file
+  exists because `spine` added a node kind. `help_grid.rs` and `keymap_footer.rs` never existed;
+  `crates/phosphor-ui/src/key_hints.rs` does. One kind, one file, one draw site — the same
+  principle `scripts/lint-one-escape-hatch.sh` enforces for `Node::Spans`. → the ownership table
+  and the per-widget rule in [TEAM.md](TEAM.md), both amended.
+
+- **§2 · Who owns `T027`, the kitty keyboard protocol? RULED: `spine`.** The file decides the
+  task, as it did for `T014`: the negotiation is in `phosphor-term`
+  (`KeyboardProtocol::Kitty`, `crates/phosphor-term/src/lib.rs:124`) and the arm that consumes it
+  is `machine.set_protocol(…)` in the binary — both `spine` crates — while `TEAM.md`'s line for
+  the other role is *"`surface` draws, and never touches a terminal."* → `T027` moved to `spine`'s
+  task list in [TEAM.md](TEAM.md); `surface` is 29 tasks, `spine` 26.
+
+- **§3 · Window D's live-teammate count. RULED: four, not five.** `agent` owns `T050`–`T070` and
+  `T074`–`T077`, and none of them falls in Window D. → the window table in [TEAM.md](TEAM.md),
+  with a note beside it in the style of the `harness` one.
+
+- **§4 · `V006` cannot meet its own acceptance criterion in Window D. RULED: split it, on the
+  `T022` precedent.** `V006` keeps the fixture tree and the `phosphor --eval` seeding mechanism —
+  the half whose mechanism is provable now — and the seeded store state becomes a criterion on
+  the S5 task that lands the store. → both halves written into [TASKS.md](TASKS.md), at `V006`
+  and at `T041`.
+
+- **§5 · `6b`'s footer promises `q close` on a surface whose body is a text input. RULED: the
+  build wins; the drawing is amended to `esc close`.** `q` types and `esc` closes (Design
+  Language §9), and this became decidable only when `T026` landed modes in Window D. Teej amends
+  `TUI Mockups.dc.html` at claude.ai — **never here.** → the amendment list in
+  [README.md](README.md) and §5's table in [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md); the
+  build's owed half (a mode-aware footer) is recorded on `T034` in [TASKS.md](TASKS.md).
+
+- **§11 · `just fmt-fix` writes every file, so a file lock cannot hold. RULED: the `TEAM.md`
+  rule, not a per-crate recipe.** In a concurrent window, run `just fmt` (check) and fix only
+  your own files by hand; a per-crate recipe would invite the `cargo fmt --all` reflex the hook
+  already exists to block. → rule 3 of *Concurrency — several agents, one worktree* in
+  [TEAM.md](TEAM.md), alongside the four other findings from the same two windows.
+
+- **§16 · Hand-rolled codec and XDG paths, or the crates `SPIKES.md` recommends? RULED: the
+  hand-rolled ones stay.** `phosphor-core` is deliberately dependency-free at the floor
+  (`crates/phosphor-core/Cargo.toml:9` says so), `T030`'s LEB128 + length-prefixed-UTF-8 codec is
+  `SIGKILL`-tested, and the FNV-1a 64 state-dir key is pinned by literal precisely because
+  `std`'s `DefaultHasher` is documented-unstable across releases and a toolchain bump would
+  silently orphan every user's state. **Do not add `postcard` or `etcetera`.** `SPIKES.md`'s two
+  recommendations are superseded on this point and nothing else. → no file changes; the ruling
+  is the record.
+
+- **§18 · Eleven declared mutations that no task will ever close. RULED: add the tasks.** An ex
+  command that exists and declines beats one that vanished, *but only if something will close
+  it* — so `:theme` stays bound and gets a task, and the rest are grouped rather than one task
+  per verb. Three of the thirteen gaps had a creditor already and became a line on that task's
+  *done when* (`jump` → `T042`, `set-virtual-text-visible` → `T041`, `apply-edits` → `T052`). →
+  `T092`–`T097` in the new *A · Arms owed* section of [TASKS.md](TASKS.md), assigned to `spine`
+  in [TEAM.md](TEAM.md), and still recorded in `scripts/lint-action-arms.sh`'s RECORDED table —
+  **which now needs its empty blocking-task fields filled in with the new ids**, a `scripts/`
+  edit this pass could not make.
+
+- **R1 · The `Motion` vocabulary. CLOSED AS BUILT, and the open half is ruled.** R1 said `f` `F`
+  `t` `T` `;` `,` and `W` `B` `E` were not expressible and that there was no case-change
+  capability. **All of that is false against the tree**, checked this session:
+  `wire_choice!(Motion …)` at `crates/phosphor-core/src/request.rs:669` carries
+  `FindCharForward`, `FindCharBackward`, `TillCharForward`, `TillCharBackward`, `RepeatFind`,
+  `RepeatFindReverse`, `BigWordForward`, `BigWordBackward` and `BigWordEnd`;
+  `runtime/keymaps.scm:420`–`431` binds all nine; and `SetCase` is a capability
+  (`crates/phosphor-core/src/action.rs:336`) bound at `keymaps.scm:463` (`gu`), `:464` (`gU`),
+  `:529` and `:556` (`~`). R1's arithmetic — *"the vocabulary goes 208 → 209"* — is the tell: it
+  already went, which is why `TASKS.md` reads 209.
+  **The design question R1 was really asking is ruled, 2026-08-13: the character does not ride
+  inside `Motion`.** A payload-carrying arm would make `ParamType::Choice` the wrong type for
+  `motion` and break the CLI's flag value and the MCP schema's enum in one edit — all three
+  doors at once. At the doors, find-char reaches the editor as `input/feed-keys`
+  (`action.rs:459`); inside the machine the character rides *beside* the motion, the way
+  `SelectObject`'s delimiter already does, and `gg`/`G` are the standing precedent for a
+  machine-resolved absolute `set-cursor` (`action.rs:359`). The tree already argues the same
+  thing in its own words at `request.rs:586`–`600`.
+
 - **§15 · `s` — the mark-seen operator, or vim's substitute? RULED 2026-08-12: `s` stays vim's
   substitute.** Vim habits carry; the drawing is what changes. Mark-seen moved to **`gs`**, which
   takes an object (`gsib`). Built and verified against the tree at the `CP-3` re-audit:
@@ -464,10 +434,11 @@ would otherwise hit in the first minutes of editing.
   `crates/phosphor-steel/tests/shipped_grammar.rs:297`
   `mark_seen_is_gs_and_s_is_still_substitute` asserts both halves against the shipped layer, and
   `crates/phosphor-core/tests/agent_objects.rs:149` drives `gsib` to a clean no-op.
-  **Consequence still owed to the design docs:** mockup `6d`'s *"`s` composes like an operator"*
-  is the sentence that loses, and `TUI Mockups.dc.html` is imported verbatim — Teej amends it at
-  claude.ai, and it belongs in `IMPLEMENTATION-PLAN.md` §5's amendment table as the eighth
-  amendment. Teej also noted vim-surround (`cs"'`) as the shape `s` should stay compatible with;
+  **The consequence owed to the design docs is now recorded.** Mockup `6d`'s *"`s` composes like
+  an operator"* is the sentence that loses, and `TUI Mockups.dc.html` is imported verbatim — Teej
+  amends it at claude.ai. It is tabled in [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) §5 as
+  a `CP-3` amendment and appears in [README.md](README.md)'s prose list, which is the one a
+  cold reader hits first. Teej also noted vim-surround (`cs"'`) as the shape `s` should stay compatible with;
   not built, not tasked, and a `v1.5` line rather than a task, since `cs` is `c` then a surround
   object over the operator machinery `T026` already has.
 - **Would `ratatui-textarea` need a third vendored fork?** `SPIKES.md:292-293` names it and

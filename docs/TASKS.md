@@ -4,7 +4,7 @@ Decomposed from [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md), which is itsel
 the four design docs in [design/](design/). The plan says *what each phase is for*; this file
 says *what to build, in what order, and where we stop and look at it*.
 
-**91 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
+**98 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
 Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids
 are stable and assigned in order of creation — reference them in commits. New tasks append
 rather than renumber, so `T078`+ sit inside earlier phases.
@@ -23,9 +23,9 @@ rulings came out of the manual half; three amend design docs and are tabled in
 capabilities generated from one table, the three doors are total functions over it, and the
 parity test walks all 627 door checks end to end. (`208`/`624` until `S3` added
 `Buffer::SetCase`; the count is `scripts/lint-one-registry.sh`'s, which reads the tables in
-`crates/phosphor-core/src/{action,query}.rs` — do not compute it by hand. Six prose citations of
-`208` are still stale outside this file: `docs/TEAM.md:297`, `crates/phosphor/src/door.rs:219`,
-`:402`, `:701`, `crates/phosphor/src/main.rs:57`, `crates/phosphor/tests/door.rs:149`.)
+`crates/phosphor-core/src/{action,query}.rs` — do not compute it by hand. All six prose citations
+of `208` are fixed, and `scripts/doc_claims.py` section 5 now recomputes both numbers and fails on
+a stale one, so this paragraph cannot go quietly wrong again.)
 `CP-2`'s **manual half is outstanding** — it is
 the checkpoint that asks whether the Steel layer is the editor or a config file with a Rust
 editor hiding behind it, and only Teej can answer that. Nothing in S3 starts until he does.
@@ -46,6 +46,12 @@ to that is still no.
 **`T084`–`T089` were added by the docs review.** Six widget/primitive tasks the design docs
 require and the first breakdown had no home for: the `Float` chrome primitive, undercurl, the
 `HelpGrid`, region tints, the pane manager, and `TabBar`. They are marked 📌 where they appear.
+
+**`T092`–`T098` were added by the `CP-3` audit**, and they are a different kind of addition from
+either of those: not a surface nobody had tasked, but **work nothing in the graph owned**. Ten
+declared mutations had no arm in the binary and no task that would ever give them one, and a `q`
+key that a vim user's hands reach for was unbound rather than deferred. They live in their own
+section, *A · Arms owed*, at the end of this file — because their point is to rot **visibly**.
 
 **`T090` was added by the first `CP-1` attempt**, which failed on it and nothing else: the widget
 layer was complete and green, and no task built an application around it, so `cargo run` drew
@@ -82,6 +88,39 @@ cannot.
 Tier 1 can pass while the real output is broken — wrong escape codes, a mis-wired sync wrapper,
 truecolor silently downsampled. Tier 2 catches exactly that gap. Neither can tell you whether
 the thing is worth using; that stays Tier 3.
+
+### The wording standard for a *done when*
+
+**A criterion that says "screen `3c` reproduces" is satisfied by a test that hand-builds the view
+tree and renders it.** That is not a bad test — it is exactly what Tier 1 is for, and every golden
+frame in this repo works that way on purpose. It is the *wording* that is the defect, and it has
+now cost this build four surfaces.
+
+`T016` is the worked example. Its criterion read *"screen `8e`'s fold and whitespace details
+reproduce"*, and `8e` reproduced: `crates/phosphor/tests/screen_8e.rs` builds a `Tree` by hand.
+The whitespace half was genuinely wired into the loop; the fold half never was — no `z` binding,
+no arm for `Action::View(SetFold)` — so `za` fell to `NotYetImplemented` and ran vim's plain `a`.
+It was ticked, and folds stayed unreachable for three windows, because every gate asked *does the
+snapshot match* and none asked *can you press the key*. The same shape then repeated at scale
+across Window D: the leader popup, the unknown-key hint and undo all shipped built, tested,
+ticked and uncomposed.
+
+So, the standard, in two lines:
+
+> **If a user reaches the surface by pressing a key, the criterion is that it reproduces
+> *from a keystroke*, and the proof is a loop-driven or pty test.** If a user cannot — a widget
+> whose data is a store query that does not exist yet, a degradation path with no live consumer —
+> the criterion says so, names what is missing, and a hand-built tree is the right and honest bar.
+
+`crates/phosphor/tests/loop_pty.rs` is the pattern for the first kind: it drives the shipping
+binary on a real pty and reads cells off the frame, so keystroke → keymap → machine → `Action` →
+arm → draw is all in the assertion. `crates/phosphor-ui/tests/virtual_text_node.rs` is the pattern
+for the second, and `T032`'s entry below states out loud why a hand-built tree is correct there.
+
+Two mechanical halves back this up, and neither replaces the wording:
+`scripts/lint-action-arms.sh` fails when a ticked task declares a mutation the binary never names,
+and the wiring-agent rule in [TEAM.md](TEAM.md#concurrency--several-agents-one-worktree) makes
+composition somebody's explicit job in the last phase of every window.
 
 **Tier 2 converts a lot of Tier 3 into asynchronous review.** Instead of driving the editor by
 hand to see the ask queue behave, you watch a ten-second clip. Instead of resizing a window to
@@ -179,6 +218,7 @@ can actually see each one is noted, since it isn't obvious:
 | S7 · Diffs + review + dirty + VCS | T063–T073 | **CP-8a/b/c** — one per `S7.1`/`S7.2`/`S7.3` |
 | S8 · Watches | T074–T077 | **CP-9** — ship check |
 | **V · Verification harness** | **V001–V009** | *cross-cutting — lands with S1, used from CP-1 on* |
+| **A · Arms owed** | **T092–T098** | *cross-cutting — debt the `CP-3` audit found; see the section at the end* |
 
 ---
 
@@ -228,7 +268,16 @@ lifetime: the harness outlives any single phase and gets extended at every check
   A committed sample tree plus **seeded store state** — regions, seen-state, threads, a canned
   transcript. Without this, every agent-surface tape is flaky, because the content varies run to
   run. Seed it through `phosphor --eval` (`T023`), not a test-only backdoor.
-  *Done when:* `CP-5`'s tapes produce identical output on two machines. *Needs:* V005, T023
+  *Done when:* the fixture tree is committed, and a seeding run drives every call through
+  `phosphor --eval` with no test-only backdoor. *Needs:* V005, T023
+
+  > **Split at the `CP-3` audit, on the `T022` precedent** — and the ruling is that a task whose
+  > *mechanism* is provable now and whose *subject* arrives two windows later should not be a
+  > binary. `V006` keeps the half that exists: the fixture tree and the seeding mechanism. **The
+  > seeded store state moves to `T041`**, the S5 task that lands the store, and `CP-5`'s sweep is
+  > where the original sentence — *"`CP-5`'s tapes produce identical output on two machines"* —
+  > is finally answered. Nothing is dropped; it is recorded where it can be closed instead of
+  > sitting unticked across two windows with no record of which half exists.
 
   > **CP-3 audit — partial, not ticked, and correctly so.** The buildable half landed:
   > `fixtures/` (14 source files), `fixtures/seed/plan.scm` (127 lines) and
@@ -460,7 +509,13 @@ First phase with anything to look at. Sized by CP-0.
 - [x] **T016 · Folds and whitespace marks**
   Fold rows render `▸ ⋯ n lines`. Insert-only trailing-whitespace marks. Folds come from the
   vendored crate's existing `VisualRow::FoldSeparator`.
-  *Done when:* screen `8e`'s fold and whitespace details reproduce. *Needs:* T015
+  *Done when:* screen `8e`'s fold and whitespace details reproduce **from a keystroke** — `za`
+  closes a fold in the running binary and `zR` opens it. *Needs:* T015
+
+  > **The wording was *"reproduce"* until the `CP-3` audit, and that is the whole story of this
+  > task.** See *The wording standard for a done when* above; `T016` is its worked example, and
+  > `driven::za_closes_the_fold_the_cursor_is_in` in `crates/phosphor/tests/loop_pty.rs` is what
+  > the new sentence asks for.
 
   > **CP-3 re-audit (repair pass) — the tick stands, and the fold half only became true this
   > pass.** `crates/phosphor-core/src/action.rs` declares `SetFold`/`FoldAll`/`UnfoldAll`
@@ -911,7 +966,8 @@ CP-0 settled the shape: **the input machine is ours.**
 - [x] **T034 · KeymapFooter / WhichKey**
   Same data, two densities. Reads the **live** keymap, so Steel rebinds appear with no extra
   wiring. Keyhints spell whole commands — `:reattach`, never `:ca`.
-  *Done when:* screen `3c` reproduces and a REPL rebind shows up in it. *Needs:* T033
+  *Done when:* screen `3c` reproduces **from a keystroke** — pressing `SPC` in the running binary
+  opens it — and a REPL rebind shows up in it. *Needs:* T033
 
   > **CP-3 re-audit (repair pass) — the tick is now earned by a key press.** At the first gate
   > this was `MET` on `crates/phosphor/tests/screen_3c.rs`, which hand-builds the view tree
@@ -926,9 +982,19 @@ CP-0 settled the shape: **the input machine is ours.**
   > `driven::a_repl_rebind_reaches_the_leader_popup` types `(keymap-set! "SPC z" … "zebra")` at
   > the live `:repl` prompt and finds `zebra` in the very next popup.
 
+  > **Owed follow-up, from the `6b` amendment — the footer is not mode-aware.** `6b` draws
+  > `q close` on a float whose body is a text input, where `q` types and `esc` closes (Design
+  > Language §9). The drawing is the thing that changes ([README](README.md)'s amendment list),
+  > and the build owes the other half: this widget already reads the **live** keymap, so making
+  > it read the live keymap *for the current mode* is a small change and the footer stops
+  > promising a key that does something else. It is recorded here rather than made a criterion
+  > because `T034` was launched before the question was raised and its own *done when* is met —
+  > whoever next writes `crates/phosphor-ui/src/key_hints.rs` closes this.
+
 - [x] **T035 · Unknown-key hint**
   One virtual-text line naming `SPC` and `:help`, once per session, never again.
-  *Done when:* screen `8e` reproduces. *Needs:* T032, T034
+  *Done when:* screen `8e` reproduces **from a keystroke** — an unbound key draws the hint once
+  in the running binary and never again. *Needs:* T032, T034
 
   > **CP-3 re-audit (repair pass) — same story as `T034`, same fix.** `App::ShowUnknownKeyHint`
   > has an arm in the host, the loop drains it into a session-owned latch, and it is drawn as a
@@ -949,8 +1015,9 @@ CP-0 settled the shape: **the input machine is ours.**
   Per the voice rule, entries spell whole commands — `:reattach`, never `:ca`.
   **The agent nouns render here but do not resolve until `T049`** (Q8) — `6d` displays `viu` /
   `sib` / `dih` and their grammar at S3; they bind to real regions at S5.
-  *Done when:* screen `6d` reproduces from the live keymap, and a REPL rebind shows up in it.
-  *Needs:* T084, T034
+  *Done when:* screen `6d` reproduces from the live keymap **from a keystroke** — typing
+  `:help agent-objects` in the running binary draws the grid — and a REPL rebind shows up in it.
+  *Needs:* T084, T034, T097
 
   > **CP-3 re-audit (repair pass) — still not ticked, and now for a bigger reason than
   > before.** `6d` is a composed frame that no key press can reach. `open-help` is declared at
@@ -1037,10 +1104,11 @@ is exact.
 - [ ] **T038 · Completion via the passive Float**
   Border `#2a3c2e`, **no footer** — the one documented exception to the float contract. The
   primitive itself is `T084`; this adds the third mood and the footer exception to it.
-  *Done when:* screen `7c`'s completion reproduces. *Needs:* T036, T084
+  *Done when:* screen `7c`'s completion reproduces **from a keystroke** — typing in insert mode
+  in the running binary raises the float. *Needs:* T036, T084
 
 - [ ] **T039 · Signature help + hover**
-  *Done when:* screen `7c` reproduces in full. *Needs:* T038
+  *Done when:* screen `7c` reproduces in full **from a keystroke**. *Needs:* T038
 
 - [ ] **T040 · Diagnostics → gutter + virtual text**
   Trouble priority in `GutterBar`; `■` rows via `VirtualText`; undercurl with underline
@@ -1081,12 +1149,30 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   `claude writes → unseen --s--> seen`, and `claude revises → unseen again`. Seen-state is the
   only mutable flag the user owns; everything else derives. **Your own edits never create
   regions.**
-  *Done when:* the state machine is exhaustively unit-tested, including revision-after-seen.
+  *Done when:* the state machine is exhaustively unit-tested, including revision-after-seen, and
+  **`V006`'s seeded store state is reachable through `phosphor --eval`** — regions, seen-state,
+  threads and a canned transcript — so `CP-5`'s tapes produce identical output on two machines.
   *Needs:* T019
+
+  > **The second criterion arrived from `V006` at the `CP-3` audit**, on the `T022` precedent.
+  > `V006` built the fixture tree and `scripts/seed-fixtures.sh`, and every capability its plan
+  > calls refuses today because none of `S5`–`S8` exists — so there is nothing to make a `CP-5`
+  > tape deterministic *with*. That half cannot be closed before this task and now sits on it.
+  >
+  > **It also owes an arm.** `set-virtual-text-visible` is declared and unapplied because
+  > collapsing a virtual-text rail addresses it by owning region, and regions are this task —
+  > recorded in `scripts/lint-action-arms.sh`'s RECORDED table against `T041`. Wire it here
+  > rather than leaving it to a later audit.
 
 - [ ] **T042 · Node anchoring**
   Anchors bind to tree-sitter nodes. Threads, seen-state, and watches survive rewrites.
-  *Done when:* a real refactor moves code and the anchors follow. *Needs:* T041
+  *Done when:* a real refactor moves code and the anchors follow, **and `jump` applies** — a
+  jumplist target is an anchor, so the arm lands with the anchors. *Needs:* T041
+
+  > **The `jump` half is an arm this task owes**, not a new task. `Jump` is declared and
+  > unapplied, recorded in `scripts/lint-action-arms.sh`'s RECORDED table against `T042` for
+  > exactly this reason. It is here rather than in the *Arms owed* section below because it has a
+  > creditor already.
 
 - [ ] **T043 · Line + content fallback anchoring**
   **The floor, not a degraded extra** — this is what makes unseen markers a store feature rather
@@ -1106,19 +1192,21 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
 
 - [ ] **T046 · Steel picker sources — unseen, files**
   `(define-picker-source …)`. Files carries unseen counts and activity columns.
-  *Done when:* screens `2a` and `3d` reproduce, and a source added from the REPL appears with no
+  *Done when:* screens `2a` and `3d` reproduce **from a keystroke** — the binding that opens the
+  picker opens it in the running binary — and a source added from the REPL appears with no
   restart. *Needs:* T045, T022
 
 - [ ] **T047 · Grep / symbols source**
   Tab cycles source. Results carry who-touched-them.
-  *Done when:* screen `8a` reproduces. *Needs:* T046
+  *Done when:* screen `8a` reproduces **from a keystroke**, tab included. *Needs:* T046
 
 - [ ] **T048 · `:arch` / ArchDiagram**
   A float body over a store query (Q11), **built entirely from the `spans` hatch** (T080) — no
   Rust primitive of its own. It is the proof that the escape hatch is sufficient for a real
   custom surface. Turns invariant 4 from a claim into something you can look at.
-  *Done when:* screen `6a` reproduces, reflects the *actual* store rather than a static drawing,
-  and adds zero lines to `phosphor-ui`. *Needs:* T041, T080, T084
+  *Done when:* typing `:arch` in the running binary reproduces screen `6a`, it reflects the
+  *actual* store rather than a static drawing, and it adds zero lines to `phosphor-ui`.
+  *Needs:* T041, T080, T084
 
 - [ ] **T049 · Agent nouns resolve**
   `viu` / `sib` / `dih` now bind to real regions (completes T028, per Q8).
@@ -1192,8 +1280,15 @@ Split at the internal checkpoint from Q10. Two checkpoints.
 
 - [ ] **T052 · MCP server from the registry**
   `rmcp`, generated from T020 so the vocabulary cannot drift.
-  *Done when:* Claude can call an editor tool and the same capability works from Steel and CLI.
-  *Needs:* T020, T050
+  *Done when:* Claude can call an editor tool and the same capability works from Steel and CLI,
+  **`apply-edits` among them** — a batch applied as one undo group, which is the shape an agent
+  writes through. *Needs:* T020, T050
+
+  > **The `apply-edits` half is an arm this task owes**, not a new task. It is declared and
+  > unapplied because there is no caller until there is a session — `T029`'s tree already
+  > supports it (`record_batch`) — and it is recorded in `scripts/lint-action-arms.sh`'s RECORDED
+  > table with that reason. This is the task where the caller appears, so the debt is filed here
+  > rather than in the *Arms owed* section below.
 
 - [ ] **T053 · `phosphor/declare-review-block`**
   The review-block signal as an MCP tool call carrying file+range list and per-group annotations
@@ -1224,7 +1319,8 @@ Split at the internal checkpoint from Q10. Two checkpoints.
 - [ ] **T054 · TranscriptPane**
   **A pane, not a float** — splits, holds focus, survives float churn. Turn list, prompt lines
   `❯`, prose, tool rows, seam markers. Folds by turn. Streams during Working.
-  *Done when:* screen `1b` reproduces. *Needs:* T050, T088
+  *Done when:* screen `1b` reproduces **from a keystroke** — the binding that opens the pane
+  opens it in the running binary. *Needs:* T050, T088
 
 - [ ] **T055 · Markdown prose behind the gate**
   Via the vendored fork (T004). **Plain-text path must stay readable with the gate off.**
@@ -1237,8 +1333,8 @@ Split at the internal checkpoint from Q10. Two checkpoints.
 - [ ] **T057 · Session lifecycle**
   Cold start (`7d`), attach/adopt/start (`5d`), drop and reattach (`7b`), opening mid-task
   (`2d`). **Editing never blocks on session trouble.**
-  *Done when:* all four screens reproduce and the editor stays usable through a mid-turn drop.
-  *Needs:* T051
+  *Done when:* all four screens reproduce in the running binary and the editor stays usable
+  through a mid-turn drop. *Needs:* T051
 
 ### ✋ CP-6 — Does the session hold?
 
@@ -1277,12 +1373,14 @@ live.
   The `:` line. `⚓` anchor chip when a selection rides along — visual-select, hit the prompt,
   file and range ride automatically. Routes to command parse or Claude message. Ex-style
   history.
-  *Done when:* screen `1c` reproduces. *Needs:* T050
+  *Done when:* screen `1c` reproduces **from a keystroke** — pressing `:` in the running binary
+  raises the line, anchor chip included. *Needs:* T050
 
 - [ ] **T059 · QuestionBody**
   Prose + amber digit options `[1]`–`[n]` + full-command footer. Digits answer only while
   focused.
-  *Done when:* screen `4a` reproduces. *Needs:* T057, T084
+  *Done when:* screen `4a` reproduces in the running binary and its digits answer while focused.
+  *Needs:* T057, T084
 
 - [ ] **T060 · The ask queue**
   Per Q9: a question arriving while another float holds focus **sets the statusline `!` and
@@ -1299,7 +1397,8 @@ live.
 - [ ] **T062 · Interrupt and steer**
   `esc` pauses at the next tool boundary → steer / resume / abort. The seam is recorded in the
   transcript.
-  *Done when:* screen `7e` reproduces. *Needs:* T057
+  *Done when:* screen `7e` reproduces **from a keystroke** — `esc` mid-turn in the running
+  binary reaches the next tool boundary. *Needs:* T057
 
 ### ✋ CP-7 — The directing loop
 
@@ -1473,6 +1572,119 @@ command and a scroll, not a day of driving the editor by hand.
   brief describes."
 
 **Fails if:** you wouldn't reach for it over your current editor.
+
+---
+
+## A · Arms owed — verbs the vocabulary declares and the binary never applies
+
+Cross-cutting, like the harness above, and for a related reason: these belong to no phase,
+because the work is not a surface — it is the arm behind one.
+
+`scripts/lint-action-arms.sh` was written at the `CP-3` audit and found **13** places where a
+ticked task declares a mutation the binary never names. Three have a creditor already and are
+recorded on the tasks that will close them: `jump` on `T042`, `set-virtual-text-visible` on
+`T041`, `apply-edits` on `T052` — each is a line on that task's *done when* above, not a task of
+its own, because the phase that supplies the caller is the phase that owes the arm. **The other
+ten had no creditor at all.** Nothing in the task graph owned the work, so they would have sat in
+that lint's RECORDED table until somebody decided. `T092`–`T097` are that decision; they exist so
+the debt can rot **visibly**.
+
+Read them beside *The wording standard for a done when* above — this is the same defect one layer
+down. There, a screen reproduces in a snapshot and not on a terminal. Here, a verb is declared,
+generated into all three doors, advertised in the help output, and does nothing when called.
+**Mostly this is not new feature work.** Soft wrap, compaction, checkpoint traversal and the
+float slot are all built and tested; what is missing is the arm between the door and them. Two
+are genuinely unbuilt — the theme rebuild path (`T092`) and reloading the layer (`T094`) — and
+each says so at the task.
+
+`T098` is the seventh and a slightly different animal — a *binding* that is missing rather than
+an arm — but it is the same failure to a user's hands, and it comes from the same ruling pass.
+
+- [ ] **T092 · Runtime theme switching — the rebuild path** 📌
+  `set-theme` and `reload-theme` are declared and unapplied; `runtime/keymaps.scm:965` binds
+  `:th[eme]` to `set-theme` and the ex command **answers a refusal**. The blocker is structural rather than
+  lazy: the theme is an immutable local at `crates/phosphor/src/main.rs:794` — `let theme =
+  builtin(&cli.theme)…` — baked into each `Editor` at construction, so runtime switching is a
+  **rebuild path, not an arm**. Every widget holds a `&Theme`, so they all have to be handed the
+  new one and the frame cache invalidated in the same beat. `--theme <slug>` works and is what
+  the theme tapes use. `reload-theme` needs one thing more — a user theme path — since that line
+  only ever calls `builtin()`.
+  **Teej's ruling, 2026-08-13: `:theme` stays bound.** An ex command that exists and declines
+  beats one that vanished, *but only if something is going to close it*, and this is that
+  something.
+  *Done when:* `:theme <slug>` in the running binary draws the next frame in the new theme with
+  no restart, and a pty test proves it. *Needs:* T012, T026
+
+- [ ] **T093 · Floats from the doors** 📌
+  `open-float`, `close-float` and `close-all-floats` are declared and unapplied, so **Steel and
+  MCP cannot open or close a float.** The slot exists — `FloatSlot::empty()` at
+  `crates/phosphor/src/main.rs:924`, and the boot report opens one — and `esc` closes a float
+  through the input machine rather than through this verb. So there is a live surface with no
+  door to it. This is load-bearing for more than convenience: Design Language §9's one-float rule
+  and [Q9](IMPLEMENTATION-PLAN.md#q9)'s ask queue are both *policy about which float is up*, and
+  policy belongs in the editor layer — which needs these three verbs to hold any.
+  *Done when:* a Steel call opens a float, a second replaces rather than stacks it,
+  `close-all-floats` clears the slot, and `phosphor --eval` and the REPL agree on all three.
+  *Needs:* T084, T026
+
+- [ ] **T094 · Reloading the editor layer** 📌
+  `load-runtime-file` and `reload-runtime` are declared and unapplied: **the layer cannot be
+  reloaded without restarting the editor.** `init.scm` reads the load order once at startup and
+  the REPL evaluates forms; neither of those is this. It matters more than the other five,
+  because invariant 1 is *"the editor layer is Steel in `runtime/*.scm`, **redefinable at
+  runtime**"* and `CP-2` is the checkpoint that asks whether that is true. A layer you restart to
+  reload is a config file with a longer reload cycle.
+  *Done when:* editing a `runtime/*.scm` file and calling `reload-runtime` takes effect on the
+  next frame with no restart; a broken file leaves the previous layer standing and reports the
+  error the way a broken `init.scm` already does; a pty test covers both. *Needs:* T021, T026
+
+- [ ] **T095 · History maintenance — compaction and checkpoints** 📌
+  Two declared, unapplied verbs over machinery that is already built and already proven.
+  **`compact-history`:** `journal.rs` implements compaction and proves it under a real `SIGKILL`,
+  and nothing triggers it — so a history only grows, and the first person to keep a long session
+  is the one who finds out. **`undo-to-checkpoint`:** `UndoTree::goto` and `CheckpointId` both
+  exist and `struct Timeline` (`crates/phosphor/src/main.rs:1481`) owns the tree; nothing routes
+  a checkpoint id to it. The second is what makes *an agent turn* a unit of undo, which is the
+  shape `T073`'s jj timeline reads.
+  *Done when:* a journal compacts on a policy the editor layer names rather than on nothing, a
+  checkpoint id round-trips through `undo-to-checkpoint` back to that state, and both survive a
+  restart. *Needs:* T030
+
+- [ ] **T096 · `set-soft-wrap` — the verb** 📌
+  The narrowest of the six and the clearest statement of the shape. **Soft wrap works.** `T081`
+  built it, `--soft-wrap` turns it on, and `host.flag("soft-wrap")` at
+  `crates/phosphor/src/main.rs:891` reads what `init.scm`'s `(set-option! …)` set. What does not
+  work is the verb: `set-soft-wrap` is declared, generated into all three doors, and never
+  applied — so it cannot be toggled at runtime from Steel, MCP or the CLI. A capability that the
+  doors advertise and that does nothing is worse than one that is absent.
+  *Done when:* `set-soft-wrap` toggles wrapping on the next frame from each of the three doors,
+  and the flag and the verb read one piece of state rather than two. *Needs:* T081, T026
+
+- [ ] **T097 · The `open-help` arm in the host** 📌
+  `open-help` is declared at `crates/phosphor-core/src/action.rs:1075` and
+  `runtime/keymaps.scm:959` binds `:h[elp]` to it — and **`OpenHelp` has no arm in
+  `crates/phosphor/src/main.rs`**, whose `ViewAction` arms are `Scroll`, `SetFold`, `FoldAll` and
+  `UnfoldAll` and nothing else. Typing `:help agent-objects` in the running binary today produces
+  a refusal rather than screen `6d`.
+  It is a task of its own rather than a line on `T086` because it is a different file and
+  therefore a different owner: `T086` draws the grid and is `surface`'s; the arm is in the binary
+  and is `spine`'s. `T086` cannot pass without it, which is why it sits on `T086`'s *Needs:*.
+  *Done when:* `:help` in the running binary opens the float, and a pty test types
+  `:help agent-objects` and reads the grid off the frame. *Needs:* T084, T026
+
+- [ ] **T098 · Honest refusals for the deliberately-deferred vim keys** 📌
+  `q` `@` `m` `/` `?` `n` `N` are unbound in `runtime/keymaps.scm` — macros, marks and search are
+  all deferred on purpose — so pressing one draws `T035`'s unknown-key hint the first time and
+  **nothing at all** every time after. To a vim user's hands `q` does not read as *deferred*, it
+  reads as *broken*, and `CP-3` asks exactly that question: where does muscle memory break.
+  **Teej's ruling, 2026-08-13: `T035`'s once-per-session design is unchanged.** The hint is
+  right — teaching `SPC` and `:help` twice is nagging, and the spent hint is not the defect. The
+  defect is that these keys are *unknown* when they should be **known and not built**. Bind each
+  to a refusal that names what it will be and which task builds it, the way the ex line already
+  declines the Claude and Search prompts by naming `T058`.
+  *Done when:* pressing `q` in the running binary answers with a refusal naming its task, the
+  once-per-session hint still fires exactly once on a key that is genuinely unknown, and a pty
+  test covers both halves. *Needs:* T033, T035
 
 ---
 

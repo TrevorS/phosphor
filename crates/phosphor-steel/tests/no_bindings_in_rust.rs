@@ -175,8 +175,11 @@ fn no_rust_source_binds_a_key() {
 /// only place the whole table is put through the real decoder.
 ///
 /// It *runs* a thunk binding, by construction — resolving one is running it.
-/// The shipped table has none today, and a layer that adds one is asking for it
-/// to be run when the key is pressed anyway.
+/// The shipped table has five, all `(key/deferred)`: `q` `@` `m` `'` and the
+/// backtick, bound by `T098` so a key we have deliberately not built resolves
+/// rather than reading as unknown — which is what keeps `T035`'s once-per-session
+/// hint from being spent on one. Running them is harmless and is the point: a
+/// layer that binds a thunk is asking for it to run when the key is pressed.
 #[test]
 fn every_shipped_binding_resolves() {
     let mut runtime = runtime();

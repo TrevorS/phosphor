@@ -550,6 +550,31 @@ fn matching_bracket(text: &dyn Text, from: Position) -> Option<Position> {
     }
 }
 
+/// `l` as an *operand*, which reaches one place `l` as a motion may not.
+///
+/// **The newline boundary is the limit here, and the last character is the
+/// limit in [`step`].** vim spells `x` as `dl` and `~` as `g~l` with
+/// `'notildeop'` off (`vim91/doc/change.txt:31-33`, `:315-318`), so `3x` on a
+/// three-character line has to delete three characters — and it cannot, if the
+/// operand stops where a normal-mode cursor stops. `l` is exclusive
+/// (`motion.txt:189`) and left-right motions "stop at the first column and at
+/// the end of the line" (`motion.txt:170-171`); for an operator, *the end of
+/// the line* is the boundary past the last character, not the character itself.
+///
+/// It stays on one line, which is vim's default `'whichwrap'`: `5x` at two
+/// characters from the end takes those two and does not join the next line.
+/// Fixing it here rather than per-key is what makes `x`, `X`, `s`, `~` and
+/// `d3l` agree — they are one rule wearing five spellings.
+fn char_right_operand(text: &dyn Text, from: Position, count: u32) -> Position {
+    Position {
+        column: from
+            .column
+            .saturating_add(count.max(1))
+            .min(width(text, from.line).saturating_add(1)),
+        ..from
+    }
+}
+
 /// The span an operator covers when `motion` is its operand.
 ///
 /// [`None`] when the motion has no span — a search with no search state, and
@@ -583,7 +608,11 @@ pub fn motion_span_with_target(
     ) {
         return None;
     }
-    let to = cursor_after_with_target(text, from, motion, count, target);
+    let to = if motion == Motion::CharRight {
+        char_right_operand(text, from, count)
+    } else {
+        cursor_after_with_target(text, from, motion, count, target)
+    };
     // A find that did not land is not a span of zero characters: `dfx` with no
     // `x` ahead of the cursor deletes nothing at all.
     if is_find(motion) && to == from {
@@ -607,6 +636,13 @@ pub fn motion_span_with_target(
     } else {
         end
     };
+    // A span of no characters is not an operand. `x` on an empty line, `X` and
+    // `d0` in column 1: vim beeps at each and changes nothing, and the
+    // alternative here is a `Delete` of nothing that still closes an undo group
+    // — an empty step in `T029`'s tree, and a `.` that repeats it.
+    if start == end {
+        return None;
+    }
     Some((Span { start, end }, SelectionKind::Char))
 }
 

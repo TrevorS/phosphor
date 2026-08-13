@@ -389,8 +389,10 @@ soft-wrap continuations are S1's, and are already passing by the time this step 
 > the nouns become functional at S5. See [Q8](#q8).
 
 **Scope**
-- Files: `phosphor-ui/{gutter,virtual_text,keymap_footer,help_grid}.rs`,
+- Files: `phosphor-ui/{gutter,virtual_text,key_hints,unknown_key}.rs`,
   `phosphor-buffer/undo.rs`, `phosphor/input.rs`, `runtime/{keymaps,leader}.scm`
+  (`keymap_footer.rs` and `help_grid.rs` in the first draft; the build made them one file,
+  because `Node::KeyHints` is one node kind at three densities — see [TEAM.md](TEAM.md))
 - Named units: 4 widgets, 4 agent text objects, 1 persistent-undo store, **1 input machine**
   (ours — modes, counts, named registers, operator-pending)
 - Verification: text-object unit tests against real source files; undo round-trip across a
@@ -703,7 +705,10 @@ why, and what cost the decision accepts.
 [Q7](#q7) and [Q9](#q9) — and each says so where it sits. The handoff asks that nothing in the
 design docs be relitigated without flagging it explicitly; each was flagged before being decided,
 and the amendment is recorded here rather than absorbed silently into the build. **Three more
-came out of `CP-1` and two out of `CP-2`**, tabled directly below the twelve.
+came out of `CP-1`, two out of `CP-2`, three out of `CP-3`, and two more from reading the design
+docs against the tree** — fourteen in all — tabled directly below the twelve.
+[README.md](README.md) carries the same fourteen in prose, each with a **Where** line naming every
+document it touches, for anyone reading the design docs cold.
 
 | | amends | what changes |
 |---|---|---|
@@ -731,6 +736,16 @@ window; the rule is unchanged — recorded here, edited in the Design project.
 |---|---|---|
 | `CP-2` | TUI Mockups `6b` | A persisted form goes to **the file that loads last**, and `6b`'s receipt reads `· persisted to persisted.scm`, not `init.scm`. Found by running it: `init.scm` runs to its last form *before* Rust reads the load order it declared, so a `(keymap-set! …)` appended there comes back on the next boot as a free-identifier fault in a float — `keymap-set!` is defined in `keymaps.scm`, which has not loaded yet. The layer names its own target (`phosphor/persist-file`); a one-file layer still gets `init.scm`, which is what `6b` drew and why. Regression test: `a_persisted_rebind_survives_the_next_boot`. |
 | `CP-2` | TUI Mockups `6b` | The λ prompt is **steel** `#9ec98c`, not claude green `#3ddc97`. Here the two drawings disagree with each other rather than with the build: Design Language's glyph lexicon draws `λ ◆` in steel and captions it *"steel prompt · steel surface"*, while `6b` draws the same glyph in claude green. Teej's ruling is that the lexicon governs — it is the drawing that is specifically about this glyph — so `6b` is the bug. The build already composed `Tone::Steel`, and did not fold either reading in while the question was open. |
+
+**Two more were settled at `CP-3`**, the checkpoint that put a vim user's hands on the build.
+Both are the design doc losing to muscle memory and to a mode model that did not exist when the
+drawing was made — which is the failure mode a "does it feel like an editor" checkpoint exists to
+find. Same rule: recorded here, edited in the Design project.
+
+| | amends | what changes |
+|---|---|---|
+| `CP-3` | TUI Mockups `6d` | **`s` is vim's substitute; mark-seen is `gs`.** `6d` says *"`s` composes like an operator"* and makes it mark-seen. Ruled 2026-08-12: vim habits carry and the drawing is what changes. `s` stays `(key/fused "change" "char-right")` in normal scope and `(key/operator "change")` in visual; the mark-seen operator moved to `gs`, so `6d`'s sentence is **`gsib`**. Asserted against the shipped layer by `shipped_grammar::mark_seen_is_gs_and_s_is_still_substitute` and driven to a clean no-op by `agent_objects.rs`. Full record at [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s *Closed* §15. Teej also noted vim-surround (`cs"'`) as the shape `s` should stay compatible with — a `v1.5` line, not a task, since `cs` is `c` then a surround object over the operator machinery `T026` already has. |
+| `CP-3` | TUI Mockups `6b` | **The footer says `esc close`, not `q close`.** `6b`'s float body is a text input, so `q` types and `esc` closes ([Design Language §9](design/Design%20Language.dc.html)) — the footer is wrong for the very frame it is drawn on, which is mid-typing at the λ prompt. Raised at `CP-2` and left as drawn because the answer depends on **mode**, and modes are `T026`; Window D landed them, so it is decidable now and the build wins. The other half is owed by the build: `KeymapFooter` reads the live keymap and should read it for the current mode, recorded as owed work on `T034` in [TASKS.md](TASKS.md). |
 
 <a id="q1"></a>
 ### Q1 · Seen-state lives out-of-tree, keyed on the workspace root path

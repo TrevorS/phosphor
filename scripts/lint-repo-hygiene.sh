@@ -21,6 +21,15 @@
 # Checks 1 and 2 carry allowlists, on the `just vendor-diff` principle:
 # divergence is allowed, undocumented divergence is not. A new offender fails;
 # a known one has a line saying why.
+#
+# Checks 1 and 2 also run over untracked-but-not-ignored files (`git ls-files
+# --others --exclude-standard`), not just `git ls-files`. That is not
+# hypothetical either: the six byte-identical captures in item 2 above passed
+# a `just gate` run clean *before* `git add` — `git ls-files` cannot see a
+# file that has not been staged, so a gate run on the working tree ahead of a
+# commit proved nothing about what the commit was about to contain, and
+# reddened the instant the files landed. The tracked-file checks below are
+# unchanged; each has an untracked-file counterpart alongside it.
 
 set -euo pipefail
 
@@ -50,12 +59,32 @@ while IFS= read -r file; do
     violations=$((violations + 1))
 done < <(git ls-files)
 
+# ── 1b · no oversized untracked-but-not-ignored files ───────────────────────
+# Same ceiling, same allowlist — the only difference from check 1 is the file
+# source, so a large file cannot dodge this by arriving one `git add` early.
+while IFS= read -r file; do
+    [ -f "$file" ] || continue
+    size=$(wc -c <"$file" | tr -d ' ')
+    [ "$size" -le "$MAX_TRACKED_BYTES" ] && continue
+    if [ -f "$ALLOW_LARGE" ] && grep -qxF "$file" "$ALLOW_LARGE"; then
+        continue
+    fi
+    printf '%s: %s bytes — over the %s-byte ceiling for a tracked file (untracked, not yet added)\n' \
+        "$file" "$size" "$MAX_TRACKED_BYTES"
+    echo "    Not tracked yet, but \`git add\` would make it so. If it belongs here, add its exact path to $ALLOW_LARGE; if not, delete it before it lands."
+    violations=$((violations + 1))
+done < <(git ls-files --others --exclude-standard)
+
 # ── 2 · no undocumented byte-identical reference captures ───────────────────
 # Scoped to the committed reference library: elsewhere identical files are
 # merely redundant, but here they are a reference that proves the wrong screen.
+# The hash corpus is tracked *and* untracked-but-not-ignored captures together
+# — a strict superset of the tracked-only corpus, so every duplicate this
+# caught before it still catches identically, and a duplicate one side of
+# which has not been `git add`ed yet is no longer invisible to it.
 if [ -d tapes/artifacts ]; then
     dupes="$(
-        git ls-files 'tapes/artifacts/*.png' |
+        { git ls-files 'tapes/artifacts/*.png'; git ls-files --others --exclude-standard 'tapes/artifacts/*.png'; } |
             while IFS= read -r f; do
                 [ -f "$f" ] || continue
                 printf '%s  %s\n' "$(git hash-object "$f")" "$f"
@@ -99,5 +128,5 @@ if [ "$violations" -gt 0 ]; then
     exit 1
 fi
 
-echo "lint-repo-hygiene: clean — no oversized files, no undocumented duplicate captures, no stray refs"
+echo "lint-repo-hygiene: clean — no oversized files (tracked or untracked), no undocumented duplicate captures (tracked or untracked), no stray refs"
 exit 0

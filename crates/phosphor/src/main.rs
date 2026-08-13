@@ -54,7 +54,7 @@
 //! # `T023` — the CLI door, alongside the host
 //!
 //! [`door`] is the other half of this file's job and does not touch the loop at
-//! all. `phosphor --eval '(…)'` and the 208 generated capability verbs return
+//! all. `phosphor --eval '(…)'` and the 209 generated capability verbs return
 //! **before** [`Term`] is constructed: no alternate screen, no raw mode, no
 //! frame. That is a requirement, not an accident — `V006` seeds tape fixtures
 //! through `--eval` with no test-only backdoor, which needs the door to work
@@ -150,13 +150,14 @@ use phosphor_core::action::{
     PromptAction, Receipt, Refusal, Request, RuntimeAction, ViewAction,
 };
 use phosphor_core::input::key::{Code, Key, Mods, Named};
-use phosphor_core::input::table::{Keymap, Layered, Resolution, Scope, Table};
+use phosphor_core::input::table::{Keymap, Layered, Resolution, Role, Scope, Table};
 use phosphor_core::input::text::{Text, Viewport};
 use phosphor_core::input::{Machine, key, text as motion};
 use phosphor_core::journal::{self, Log, undo as wire_undo};
 use phosphor_core::query::{Answer, Answers, Query, QueryError, Revision};
 use phosphor_core::request::{
     EditMode, FoldState, KeySeq, Position, PromptKind, RegisterName, SelectionKind, Span, Target,
+    TextObject,
 };
 use phosphor_core::value::Value;
 use phosphor_core::view::{Child, Density, Emphasis, KeyHint, Node, SessionState, Tone, Tree};
@@ -196,12 +197,17 @@ mod door;
     name = "phosphor",
     version,
     about = "phosphor — an agent-native terminal editor",
-    long_about = "Opens one file and draws it: BufferView + StatusLine, every frame inside a \
+    // Every sentence here is checked against the tree, because `--help` is a
+    // claim a keystroke can disprove. It said "BufferView + StatusLine" while
+    // no `StatusLine` widget was ever drawn, and promised `:q` "with the ex
+    // commands" two windows after they landed.
+    long_about = "Opens one file and draws it: the buffer, and whatever \
+                  runtime/statusline.scm composed on the last row — every frame inside a \
                   synchronized-output block.\n\nModes, counts, named registers, operators and \
                   text objects are the input machine's (T026); the keymap is asked of \
-                  runtime/keymaps.scm on every keystroke and falls back to the seed table \
-                  T033 replaces. `ZQ` or `ctrl-c` leaves — `:q` arrives with the ex \
-                  commands. There is no save path and no agent session yet."
+                  runtime/keymaps.scm on every keystroke and the seed table behind it is \
+                  empty (T033). `:write`, `:quit`, `:help` and `:repl` are ex commands; \
+                  `ZQ` or `ctrl-c` leaves. There is no agent session yet."
 )]
 struct Cli {
     /// File to open. Not needed with `--eval`, `--repl` or a capability verb.
@@ -209,8 +215,8 @@ struct Cli {
     path: Option<PathBuf>,
 
     /// Open the Steel REPL (`6b`) on the frame — the primary extension
-    /// workflow. `:` opens it from the editor, `esc` closes it, and a file is
-    /// optional because the REPL is a surface of its own.
+    /// workflow. `:repl` opens it from the editor, `esc` closes it, and a file
+    /// is optional because the REPL is a surface of its own.
     #[arg(long)]
     repl: bool,
 
@@ -228,8 +234,10 @@ struct Cli {
     #[arg(long, value_name = "MOOD", value_enum)]
     float: Option<FloatMood>,
 
-    /// SCAFFOLDING (T090): turn T081's soft wrap on. Off by default, as the
-    /// mockups specify; there is no Action to toggle it until T026.
+    /// Turn T081's soft wrap on. Off by default, as the mockups specify.
+    /// `init.scm`'s `(set-option! "soft-wrap" …)` sets the same thing;
+    /// `set-soft-wrap` is declared and not applied, so nothing toggles it at
+    /// runtime until T096.
     #[arg(long)]
     soft_wrap: bool,
 }
@@ -867,6 +875,15 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     let mut taught = UnknownKeyHint::new();
     let mut hint: Option<Node> = None;
 
+    // `T097`'s page, once `:help` has asked for one. Composed when the ask is
+    // drained rather than per frame: `Layer::entries` re-enters the VM and
+    // marks the frame stale, so a page rebuilt every frame would refill the
+    // statusline cache every frame for a screen that cannot change while it is
+    // up (nothing but `esc` and `q` reaches the loop while `Surface::Help` has
+    // it). Read at open is what makes the liveness claim true — a REPL rebind
+    // is in the next `:help`, with no wiring of its own.
+    let mut help_page: Option<phosphor_core::view::Float> = None;
+
     let mut term = Term::new()?;
     // `R10` — `T027`'s degradation, reachable at last. `phosphor-core`'s
     // `legacy_chord` fallback is built and tested and could never fire, because
@@ -919,6 +936,12 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // Over the buffer rather than instead of it: the root is empty and
             // the float dims what the widgets already painted (§9).
             (Surface::Boot, Some(boot)) => Some(Tree::new(Node::Empty {}).with_float(boot.clone())),
+            // `6d`, the same way: an empty root is a float over what the
+            // widgets painted, so the buffer and the statusline stay behind it
+            // and §9 dims them.
+            (Surface::Help, _) => help_page
+                .as_ref()
+                .map(|float| Tree::new(Node::Empty {}).with_float(float.clone())),
             _ => None,
         };
         let mut floats = FloatSlot::empty();
@@ -1099,6 +1122,22 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         if editing.prompt.take().is_some() {
             ex_line.clear();
             surface = Surface::Ex;
+        }
+        // `T097` — `:help`, composed from the live table. A topic that narrows
+        // to nothing says so on the statusline rather than opening an empty
+        // float: an empty grid is indistinguishable from a broken one.
+        if let Some(ask) = editing.help.take() {
+            match help_float(&mut layer, &ask) {
+                Some(float) => {
+                    help_page = Some(float);
+                    surface = Surface::Help;
+                }
+                None => notice = Some(no_help(&ask)),
+            }
+        }
+        // `T098` — a key that was refused says why, the way an ex line does.
+        if let Some(refusal) = editing.refused.take() {
+            notice = Some(phosphor_steel::answer::why(&refusal));
         }
         // `R18` — `T035`'s hint, on the unbound-key path. The latch is what
         // makes *"shown once"* on the row true: `teach` answers `Some` exactly
@@ -1703,6 +1742,18 @@ struct Editing {
     open: Option<PathBuf>,
     /// A prompt `open-prompt` asked for, drained the same way.
     prompt: Option<PromptKind>,
+    /// A `:help` `open-help` asked for (`T097`), drained the same way — the
+    /// page is composed from the live keymap and the keymap is the layer's.
+    help: Option<Help>,
+    /// What the last key's Actions were refused with, if they were.
+    ///
+    /// **`T098`'s enabling half.** A refusal from the ex line has always been
+    /// said out loud ([`submit_ex`]); a refusal from a *key* was dropped on the
+    /// floor, so a key bound to a capability the binary does not apply yet was
+    /// indistinguishable from a key bound to nothing. Recorded here and drained
+    /// into the notice by the loop, which is where "what the last thing you did
+    /// answered" already lives.
+    refused: Option<Refusal>,
     /// A key nothing was bound to (`T035`). Drained by the loop, because
     /// *"once per session, never again"* is session state and this struct is
     /// per buffer.
@@ -1762,6 +1813,8 @@ impl Editing {
             file,
             open: None,
             prompt: None,
+            help: None,
+            refused: None,
             unknown: None,
             registers: BTreeMap::new(),
             selection_kind: SelectionKind::Char,
@@ -1955,6 +2008,14 @@ impl Editing {
             // never again"* is the loop's latch, not this buffer's.
             Action::App(AppAction::ShowUnknownKeyHint { key }) => {
                 self.unknown = Some(key.clone());
+                done()
+            }
+            // `T097` — the arm `T086` could not pass without. Recorded, not
+            // composed: the grid is read off the *live* keymap and the keymap
+            // is behind the Steel barrier, which this struct is on the wrong
+            // side of.
+            Action::App(AppAction::OpenHelp { topic }) => {
+                self.help = Some(topic.clone().map_or(Help::Index, Help::Topic));
                 done()
             }
             // `T033`'s four file capabilities. The seed table's own note said
@@ -2540,7 +2601,16 @@ impl Session<'_> {
             };
             for action in emitted {
                 let Action::Input(input) = &action else {
-                    let _ = self.editing.apply(&action);
+                    // `T098`: **a refused key says why.** This was `let _ =`,
+                    // and that is why a deferred binding read as a broken one —
+                    // the ex line has always spoken its refusals and a keystroke
+                    // never did, so `q` bound to something unbuilt looked
+                    // exactly like `q` bound to nothing. Last refusal wins: one
+                    // key is one sentence, and the last Action is the one that
+                    // failed to finish what the key asked for.
+                    if let Outcome::Refused(refusal) = self.editing.apply(&action) {
+                        self.editing.refused = Some(refusal);
+                    }
                     continue;
                 };
                 self.machine.apply(input);
@@ -2637,7 +2707,15 @@ const fn is_press(key: KeyEvent) -> bool {
 /// ([`Surface`]). On the buffer, `esc` is the machine's — it is the key that
 /// leaves insert mode, which is the whole of modality.
 const fn closes_surface(key: KeyEvent, surface: Surface) -> bool {
-    matches!(key.code, KeyCode::Esc) && !matches!(surface, Surface::Buffer)
+    match surface {
+        Surface::Buffer => false,
+        // `6d` draws `q close` in the footer, and here — unlike `6b`, where
+        // the same footer was the `CP-3` amendment — it is honest: a keymap
+        // grid is not a text input, so `q` is not a character you are typing.
+        // `esc` still closes, because §9's `esc` always does.
+        Surface::Help => matches!(key.code, KeyCode::Esc | KeyCode::Char('q')),
+        _ => matches!(key.code, KeyCode::Esc),
+    }
 }
 
 /// A terminal key event as one [`Key`].
@@ -2768,6 +2846,22 @@ enum Surface {
     /// The ex line — `:write`, `:quit`, and every unique prefix of one
     /// (`T033`).
     Ex,
+    /// `6d` — `:help`, and `:help <topic>`. The float is [`Editing::help`]'s
+    /// ask, resolved against the live keymap by [`help_float`].
+    Help,
+}
+
+/// What `:help` asked for (`T097`).
+///
+/// Recorded by [`Editing::act`] and drained by the loop, for the same reason
+/// `open-file` and `open-prompt` are: composing the page needs the editor
+/// layer, and [`Editing`] is behind the barrier from it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Help {
+    /// `:help` — every binding the layer has.
+    Index,
+    /// `:help <topic>` — the same grid, narrowed. See [`about`].
+    Topic(String),
 }
 
 /// What a key did to the REPL.
@@ -2921,6 +3015,183 @@ fn fixture_float(mood: FloatMood) -> Float<'static> {
             footer,
         ),
     }
+}
+
+// ---------------------------------------------------------------------------
+// `T097` — `:help`
+// ---------------------------------------------------------------------------
+
+/// `6d`'s footer: *"every legal key, always visible"* (§4).
+///
+/// One key, because there is one: the grid takes no input, so `esc` and `q`
+/// both close it and the footer names the one `6d` draws.
+fn help_footer() -> Child {
+    Child::new(Node::KeyHints {
+        density: Density::Footer,
+        hints: vec![KeyHint {
+            key: KeySeq("q".to_owned()),
+            verb: "close".to_owned(),
+        }],
+    })
+}
+
+/// The topics `:help` offers, in the order the index lists them.
+///
+/// The five scopes first — *"what can I press right now"* is the question a
+/// person actually has — then the four families the grammar already has joints
+/// at. **The list is names only**: what each one *holds* is counted off the
+/// live table when the index is drawn, so a topic that binds nothing is left
+/// off rather than offered and empty.
+const TOPICS: &[(&str, &str)] = &[
+    ("normal", "normal mode"),
+    ("visual", "visual mode, and its two line kinds"),
+    ("operator-pending", "what an operator takes as its operand"),
+    ("object", "the nouns after i and a"),
+    ("insert", "insert mode, which is mostly text"),
+    ("motions", "every motion and line address"),
+    ("operators", "the operators, fused and not"),
+    ("objects", "every text object"),
+    (
+        "agent-objects",
+        "6d's four: unseen region, hunk, thread, review block",
+    ),
+];
+
+/// The `:help` page, read off the live keymap.
+///
+/// **Nothing here is a page of prose.** There is no help *text* in this editor
+/// and deliberately so — prose about a keymap is a second copy of the keymap,
+/// and it goes stale the first time somebody rebinds a key. A topic is a
+/// *narrowing of the same grid* ([`about`]), so every row is still the table's
+/// own words and still true after a `(keymap-set! …)` at the REPL.
+///
+/// `:help` with no topic is **the index** — `open-help`'s own wording, and the
+/// right answer for a table of 200-odd bindings that a float can show 25 of.
+/// Listing the whole table there would draw the motions and stop, and a help
+/// page that silently ends is worse than one that says where to look.
+///
+/// [`None`] when the narrowing keeps nothing: the caller says so on the
+/// statusline rather than opening an empty float.
+fn help_float(layer: &mut Layer, ask: &Help) -> Option<phosphor_core::view::Float> {
+    let entries = layer.entries();
+    let hints: Vec<KeyHint> = match ask {
+        Help::Index => index(&entries),
+        Help::Topic(topic) => {
+            let topic = topic.to_lowercase();
+            entries
+                .iter()
+                .filter(|entry| about(entry, &topic))
+                .map(keymap::Entry::hint)
+                .collect()
+        }
+    };
+    if hints.is_empty() {
+        return None;
+    }
+    Some(phosphor_core::view::Float {
+        // `6d`'s own header: the command that opened it, spelled in full (§6),
+        // and what to type next as the meta half.
+        header: Some(phosphor_core::view::FloatHeader {
+            left: spelled(ask),
+            right: matches!(ask, Help::Index).then(|| ":help <topic>".to_owned()),
+        }),
+        mood: phosphor_core::view::Mood::Informational,
+        body: Child::new(Node::KeyHints {
+            density: Density::Help,
+            hints,
+        }),
+        footer: Some(help_footer()),
+    })
+}
+
+/// The index: one row per topic that holds anything, with its own count.
+///
+/// The count is the point. It is the same filter the topic itself runs
+/// ([`about`]), so a row can never promise bindings the topic does not answer
+/// with — and a `(keymap-set! …)` at the REPL moves the number.
+fn index(entries: &[keymap::Entry]) -> Vec<KeyHint> {
+    TOPICS
+        .iter()
+        .filter_map(|(topic, what)| {
+            let bound = entries.iter().filter(|entry| about(entry, topic)).count();
+            // The topic alone in the key column. A `KeySeq` is spelled by the
+            // widget and a space in one is a *separator between keys*
+            // (`key_hints.rs`), so `:help normal` would draw as `:helpnormal`;
+            // the command that opens a row is the header's meta half instead.
+            (bound > 0).then(|| KeyHint {
+                key: KeySeq((*topic).to_owned()),
+                verb: format!("{what} — {bound} bound"),
+            })
+        })
+        .collect()
+}
+
+/// The command that opened a page, as `6d` draws it in the header.
+fn spelled(ask: &Help) -> String {
+    match ask {
+        Help::Index => ":help".to_owned(),
+        Help::Topic(topic) => format!(":help {topic}"),
+    }
+}
+
+/// What a topic nobody's bindings answer to gets told.
+fn no_help(ask: &Help) -> String {
+    match ask {
+        // Unreachable while any binding exists at all; honest if the layer is
+        // empty, which is what a broken `keymaps.scm` leaves behind.
+        Help::Index => "nothing is bound — :help has nothing to show".to_owned(),
+        Help::Topic(topic) => format!("no help for {topic} — nothing is bound under it"),
+    }
+}
+
+/// Whether a binding belongs on `:help <topic>`.
+///
+/// Three questions, asked of the table rather than of a list kept here, so a
+/// topic cannot name rows that no longer exist:
+///
+/// * **a scope** — `:help visual` is what visual mode can do;
+/// * **a role family** ([`family`]) — `:help operators`, `:help agent-objects`;
+/// * **the verb** — anything else is a substring of what the binding says it
+///   does, which is what makes `:help fold` and `:help claude` work with
+///   nothing written down for either.
+///
+/// `topic` is already lowercased by the caller.
+fn about(entry: &keymap::Entry, topic: &str) -> bool {
+    entry.scope.eq_ignore_ascii_case(topic)
+        || family(entry.role.as_ref(), topic)
+        || entry.verb.to_lowercase().contains(topic)
+}
+
+/// Whether a role is in the family `topic` names.
+///
+/// The four families are the grammar's own joints, not a taxonomy invented
+/// here: a key is an operator, an operand, an object, or none of the three.
+/// **`agent-objects` is `6d`'s topic** and is the one that is not merely a
+/// role — it is [`TextObject`]'s four agent-native nouns, which the vocabulary
+/// already separates from vim's (`request.rs`: *"`u` — the unseen region under
+/// the cursor (`6d`)"*).
+fn family(role: Option<&Role>, topic: &str) -> bool {
+    let Some(role) = role else {
+        return false;
+    };
+    match topic {
+        "motions" => matches!(role, Role::Motion(_) | Role::Goto(_)),
+        "operators" => matches!(role, Role::Operator(_) | Role::Fused { .. }),
+        "objects" => matches!(role, Role::Object { .. }),
+        "agent-objects" => {
+            matches!(role, Role::Object { object, .. } if is_agent_noun(*object))
+        }
+        _ => false,
+    }
+}
+
+/// The four nouns `6d` is about: *"u unseen region · h hunk · t thread · b
+/// review block"*.
+const fn is_agent_noun(object: TextObject) -> bool {
+    matches!(
+        object,
+        TextObject::UnseenRegion | TextObject::Hunk | TextObject::Thread | TextObject::Block
+    )
 }
 
 /// Extension → the vendored core's language name.
@@ -3613,10 +3884,19 @@ mod tests {
             resolved(&mut layer, "<C-c>"),
             Resolution::Role(Role::Run(_))
         ));
+        // `T098`: `q` is **known and not built**, so it does not spend `T035`'s
+        // one teaching row. It resolves to a thunk that does nothing, because
+        // the vocabulary has no macro verb to name — the truth is in its verb,
+        // which `:help` draws. `Q` is what genuinely nobody binds.
         assert_eq!(
             resolved(&mut layer, "q"),
+            Resolution::Ran,
+            "`q` is deferred on purpose, and a deferred key is bound"
+        );
+        assert_eq!(
+            resolved(&mut layer, "Q"),
             Resolution::Unbound,
-            "`q` is nobody's — the machine turns it into the unknown-key hint"
+            "`Q` is nobody's — the machine turns it into the unknown-key hint"
         );
     }
 

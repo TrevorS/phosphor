@@ -229,6 +229,107 @@ else:
                 f"found {', '.join(wrong)}; rust-toolchain.toml pins {pinned}",
             )
 
+# ── 5 · the capability and parity counts ──────────────────────────────────
+#
+# Six prose citations of `208` capabilities / `624` door checks survived the
+# window `S3` added `Buffer::SetCase` and pushed the true numbers to `209` /
+# `627` (`docs/TASKS.md:24` names them). Nothing above recomputes either
+# number or checks prose against them — sections 2 and 3 recompute *task*
+# counts from the dependency graph, but the capability vocabulary is a
+# different table in a different file, and nothing walked it.
+#
+# The capability count is read the way `scripts/lint-one-registry.sh` reads
+# it — the same `NAME = "kebab-name"` table shape in `action.rs`/`query.rs` —
+# so the two cannot drift from each other into disagreeing "true" counts. The
+# parity multiplier is read from `Door::ALL` in `registry.rs` rather than
+# assumed to be `3`: `crates/phosphor/tests/parity.rs` derives it the same
+# way (`Door::ALL.len()`, and asserts `== 3` as a fact about the *current*
+# build, not a constant baked into the test).
+
+CAPABILITY_NAME_RE = re.compile(r'^[ \t]+[A-Z][A-Za-z0-9]*[ \t]=[ \t]"([a-z0-9-]+)"', re.M)
+
+capability_names: set[str] = set()
+for path in (
+    "crates/phosphor-core/src/action.rs",
+    "crates/phosphor-core/src/query.rs",
+):
+    capability_names.update(CAPABILITY_NAME_RE.findall(read(path)))
+
+if not capability_names:
+    fail(
+        "crates/phosphor-core/src/{action,query}.rs: read no capability names",
+        "the `Name = \"kebab-name\"` table moved; scripts/lint-one-registry.sh "
+        "reads the same shape and would also be blind to this",
+    )
+
+capability_count = len(capability_names)
+
+REGISTRY = read("crates/phosphor-core/src/registry.rs")
+m = re.search(r"pub const ALL:\s*&'static \[Self\]\s*=\s*&\[(.*?)\];", REGISTRY, re.S)
+if not m:
+    fail("crates/phosphor-core/src/registry.rs: could not find `Door::ALL`", "regex found nothing")
+    door_count = 0
+else:
+    door_count = len(re.findall(r"Self::\w+", m.group(1)))
+    if door_count == 0:
+        fail(
+            "crates/phosphor-core/src/registry.rs: `Door::ALL` names no doors",
+            "regex matched the array but found no `Self::Variant` entries",
+        )
+
+parity_count = capability_count * door_count
+
+# A doc-comment continuation (`/// text\n/// more`) reads as one sentence to a
+# person but not to a line-scoped regex — this is exactly how `door.rs:219`
+# splits "208" from "subcommands" across two source lines. Flatten `///`/`//!`
+# continuations into their preceding line before matching; `.rs` files only,
+# markdown prose does not use a comment prefix.
+DOC_CONTINUATION_RE = re.compile(r"\n[ \t]*(?://[/!]|//)[ \t]?")
+
+
+def flatten_doc_comments(text: str) -> str:
+    return DOC_CONTINUATION_RE.sub(" ", text)
+
+
+# Each pattern's unit word has to sit directly against the number — no
+# whitespace-then-backtick, no arrow — which is what keeps a historical aside
+# from matching: "(`208`/`624` until `S3` added…" has a backtick, not a space,
+# right after the digits, and "vocabulary goes 208 → 209" has an arrow, not a
+# unit word. `~?` allows the scope-template spelling ("~624 parity
+# expectations", `docs/OPEN-QUESTIONS.md:141`). Plural only for
+# "capabilities": a singular "1 capability" is a proposal citing how many a
+# future task would add, not a claim about the vocabulary's size
+# (`docs/OPEN-QUESTIONS.md:378`).
+CAPABILITY_PATTERNS = [
+    re.compile(r"~?\b(\d+)\s+capabilities\b"),
+    re.compile(r"~?\b(\d+)\s+subcommands\b"),
+    re.compile(r"~?\b(\d+)\s+generated capability verbs\b"),
+]
+PARITY_PATTERNS = [
+    re.compile(r"~?\b(\d+)\s+door checks?\b"),
+    re.compile(r"~?\b(\d+)\s+(?:parity\s+)?expectations\b"),
+]
+
+count_files = sorted(pathlib.Path("docs").rglob("*.md")) + sorted(
+    pathlib.Path("crates").rglob("*.rs")
+)
+
+for path in count_files:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if path.suffix == ".rs":
+        text = flatten_doc_comments(text)
+    bad: list[str] = []
+    for pattern, expected, label in [
+        *((p, capability_count, "capabilities") for p in CAPABILITY_PATTERNS),
+        *((p, parity_count, "door checks") for p in PARITY_PATTERNS),
+    ]:
+        for match in pattern.finditer(text):
+            found = int(match.group(1))
+            if found != expected:
+                bad.append(f"{match.group(0).strip()!r} (expected {expected} {label})")
+    if bad:
+        fail(f"{path}: cites a stale capability/parity count", "; ".join(sorted(set(bad))))
+
 # ── report ───────────────────────────────────────────────────────────────────
 
 if FAILURES:
@@ -239,5 +340,7 @@ if FAILURES:
 
 print(
     f"lint-doc-claims: clean — {len(t_tasks)} tasks + {len(v_tasks)} harness, "
-    f"waves {computed_waves}, no dangling references, toolchain quoted consistently"
+    f"waves {computed_waves}, {capability_count} capabilities, "
+    f"{parity_count} parity door checks, no dangling references, "
+    f"toolchain quoted consistently"
 )

@@ -134,6 +134,7 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // ---------------------------------------------------------------------------
 // Codec
@@ -1294,16 +1295,33 @@ pub fn workspace_dir(root: &Path) -> Result<PathBuf, Error> {
 ///
 /// [`Error::Io`] if the root does not exist or the directory cannot be made,
 /// [`Error::RootCollision`] if another root already owns this bucket.
+///
+/// # Two openers of one root
+///
+/// **The claim is a `rename`, not a `write`, and an empty marker is not an
+/// occupant.** Both halves close one race, and the race is not hypothetical:
+/// `S3` left an intermittent `RootCollision { occupant: "" }` in the journal
+/// tests, and an empty occupant is a marker that was *read while it was being
+/// written* — `fs::write` is create-truncate-write, so between the truncate and
+/// the write the file exists and says nothing.
+///
+/// Two phosphor windows on one repository are exactly that reader and that
+/// writer, so this was a product bug that the tests happened to catch: the
+/// second window would refuse to open, naming a root that never existed. A
+/// `rename` on POSIX has no third outcome, so a reader now sees either no
+/// marker or the whole of one; treating an empty one as unclaimed is what
+/// clears a marker already torn on disk by an older build.
 pub fn workspace_dir_in(state_home: &Path, root: &Path) -> Result<PathBuf, Error> {
     let canonical = fs::canonicalize(root).map_err(|source| Error::io(root, source))?;
     let dir = state_home.join("phosphor").join(workspace_key(&canonical));
     fs::create_dir_all(&dir).map_err(|source| Error::io(&dir, source))?;
 
     let marker = dir.join(ROOT_MARKER);
+    let mine = canonical.to_string_lossy().to_string();
     match fs::read(&marker) {
-        Ok(bytes) => {
+        Ok(bytes) if !bytes.is_empty() => {
             let occupant = String::from_utf8_lossy(&bytes).to_string();
-            if occupant != canonical.to_string_lossy() {
+            if occupant != mine {
                 return Err(Error::RootCollision {
                     dir,
                     occupant: PathBuf::from(occupant),
@@ -1311,14 +1329,44 @@ pub fn workspace_dir_in(state_home: &Path, root: &Path) -> Result<PathBuf, Error
                 });
             }
         }
+        // An empty marker, or none: unclaimed either way.
+        Ok(_) => claim(&marker, mine.as_bytes())?,
         Err(source) if source.kind() == io::ErrorKind::NotFound => {
-            fs::write(&marker, canonical.to_string_lossy().as_bytes())
-                .map_err(|source| Error::io(&marker, source))?;
+            claim(&marker, mine.as_bytes())?;
         }
         Err(source) => return Err(Error::io(&marker, source)),
     }
 
     Ok(dir)
+}
+
+/// Distinguishes one claim's sibling from another's inside a process; the
+/// process id does it between processes.
+static CLAIM_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// Puts `root` in the marker so that no reader can see it half-written.
+///
+/// A sibling then a `rename`, which is [`Log::rewrite`]'s trick at a smaller
+/// scale and for the same reason. The sibling's name carries the process id and
+/// a counter, because two claimants renaming *the same* temporary file would
+/// leave the second one renaming a path that is no longer there.
+///
+/// Two claimants both landing a rename is fine and is the ordinary case: they
+/// write the same bytes. What stays best-effort is the collision check itself —
+/// two *different* roots claiming one bucket in the same instant can both
+/// succeed, as they could before. That needs a 64-bit FNV-1a collision and a
+/// coincidence of timing; the case this detects is the persistent one, a bucket
+/// already owned when the next session opens it.
+fn claim(marker: &Path, root: &[u8]) -> Result<(), Error> {
+    let sequence = CLAIM_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let mut name = marker
+        .file_name()
+        .map(std::ffi::OsStr::to_os_string)
+        .ok_or_else(|| Error::io(marker, io::Error::from(io::ErrorKind::InvalidInput)))?;
+    name.push(format!(".claiming.{}.{sequence}", std::process::id()));
+    let tmp = marker.with_file_name(name);
+    fs::write(&tmp, root).map_err(|source| Error::io(&tmp, source))?;
+    fs::rename(&tmp, marker).map_err(|source| Error::io(marker, source))
 }
 
 /// Where one file's undo history lives inside a workspace's state directory.
