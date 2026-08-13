@@ -287,6 +287,35 @@ or the mode chip genuinely did not change.
 standing work, not an artifact-of-nothing problem. It is still Teej's call whether `CP-3` signs off
 without them.*
 
+### 18 · Eleven declared mutations that no task will ever close
+
+`scripts/lint-action-arms.sh` exists now and found **13 gaps** where a ticked task declares a
+mutation the binary never applies. Two wait on a real task and clear themselves when it lands —
+`Jump` on `T042`'s anchoring, `SetVirtualTextVisible` on `T041`'s regions. **The other eleven have
+no creditor**: nothing in the task graph owns the work, so they will sit there until somebody
+decides.
+
+| verb | what is true today |
+|---|---|
+| `set-theme` · `reload-theme` | `:theme <slug>` is bound and **answers a refusal**. `--theme` works. |
+| `open-float` · `close-float` · `close-all-floats` | Steel and MCP cannot open or close a float. |
+| `load-runtime-file` · `reload-runtime` | The layer cannot be reloaded without restarting. |
+| `apply-edits` | The batch-edit shape an agent writes through. No caller until there is a session. |
+| `undo-to-checkpoint` | `UndoTree::goto` and `CheckpointId` exist; nothing routes an id to them. |
+| `compact-history` | Compaction is implemented and `SIGKILL`-proven; nothing triggers it, so a history only grows. |
+| `set-soft-wrap` | Soft wrap **works** via `--soft-wrap` and `host.flag`; the verb is not applied. |
+
+`set-theme` is the one worth a decision soonest: it is bound to an ex command a user will type, and
+it fails silently in the sense that matters — it answers, and the answer is no. The blocker is
+structural rather than lazy: the theme is an immutable local at `main.rs:794` baked into each
+`Editor` at construction, so runtime switching is a rebuild path, not an arm.
+
+- **Add a task for the rebuild path** and let the other ten stay recorded until their phase.
+- **Or unbind `:theme`** until it works, so nothing bound is a refusal.
+
+*Recommendation: add the task. An ex command that exists and declines is better than one that
+vanished, but only if something is going to close it.*
+
 ---
 
 ## Repair pass — queued work, not questions
