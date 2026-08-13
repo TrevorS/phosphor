@@ -140,6 +140,22 @@ tape id:
 install:
     cargo install --path crates/phosphor --locked
 
+# V007 — the pixel-diff runner. Captures fresh, compares against the
+# committed reference at git HEAD, and on a mismatch writes a legible
+# side-by-side diff image under tapes/artifacts/_diffs/ instead of failing
+# the process — see tapes/diff-tapes.sh's own header for the full contract
+# and tapes/README.md's V007 section for the worked proof. Deliberately
+# absent from `just gate`: Tier 2 is a change detector, not a build gate
+# (docs/TASKS.md; harness's own characteristic-failure guard, TEAM.md).
+
+# Diff every screen's fresh capture against its committed reference.
+tapes-diff:
+    @bash tapes/diff-tapes.sh
+
+# Diff exactly one screen — `just tape-diff 1a`.
+tape-diff id:
+    @bash tapes/diff-tapes.sh "{{ id }}"
+
 # Everything CI runs, in CI's order, as one command.
 #
 # CI runs these as five separate jobs and `vendor-diff` inside `lint`, so

@@ -1690,6 +1690,7 @@ dependencies = [
  "ratatui",
  "ratatui-code-editor",
  "ratatui-core",
+ "rustix",
 ]
 
 [[package]]
@@ -1967,7 +1968,6 @@ version = "0.0.6"
 dependencies = [
  "anyhow",
  "arboard",
- "crossterm",
  "ratatui-core",
  "ropey",
  "rust-embed",

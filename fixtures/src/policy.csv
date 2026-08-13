@@ -1,0 +1,5 @@
+attempt,delay_ms,jittered_ms,status
+1,50,61,retry
+2,100,87,retry
+3,200,153,retry
+4,400,381,ok

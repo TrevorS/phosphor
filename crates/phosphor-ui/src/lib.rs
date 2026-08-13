@@ -16,7 +16,11 @@
 pub mod buffer_view;
 pub mod float;
 pub mod frame;
+pub mod gutter;
 pub mod interpret;
+pub mod key_hints;
 pub mod soft_wrap;
 pub mod status_line;
 pub mod theme;
+pub mod unknown_key;
+pub mod virtual_text;

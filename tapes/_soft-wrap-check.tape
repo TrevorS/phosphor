@@ -23,7 +23,7 @@ Set Width 1028
 Set Height 700
 
 Hide
-Type "phosphor --soft-wrap /tmp/soft-wrap-fixture.rs"
+Type "PHOSPHOR_RUNTIME=../runtime phosphor --soft-wrap /tmp/soft-wrap-fixture.rs"
 Enter
 Show
 Wait+Screen@10s /(?m)^ (NORMAL|INSERT|VISUAL|PAUSED|N|I|V|P)\b/

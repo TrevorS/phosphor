@@ -1,6 +1,8 @@
 use crate::code::Code;
 // PHOSPHOR PATCH 6 — the wrap engine itself lives under `phosphor/`.
 use crate::phosphor::soft_wrap;
+// PHOSPHOR PATCH 8 — the placement rule behind `VisualRow::Virtual`.
+use crate::phosphor::virtual_text::{self, VirtualLine};
 use crate::diff;
 use crate::types::{RowSpan, VisualRow};
 
@@ -38,6 +40,14 @@ pub(crate) struct View {
     /// Held here rather than passed to [`View::rebuild`] so every existing
     /// call site keeps its signature.
     soft_wrap: Option<usize>,
+    /// PHOSPHOR PATCH 8 — the `┊` rows interleaved into the stream, in the
+    /// order they were installed. Held here for the same reason `soft_wrap`
+    /// is: every existing `rebuild` call site keeps its signature.
+    virtual_lines: Vec<VirtualLine>,
+    /// PHOSPHOR PATCH 8 — suppresses the rows without discarding them
+    /// (phosphor's `set-virtual-text-visible`). Stored inverted so `Default`
+    /// means shown, which is what upstream's derive gives us for free.
+    virtual_hidden: bool,
 }
 
 impl View {
@@ -70,6 +80,32 @@ impl View {
         let changed = width != self.soft_wrap;
         self.soft_wrap = width;
         changed
+    }
+
+    /// PHOSPHOR PATCH 8 — the `┊` rows currently installed.
+    pub(crate) fn virtual_lines(&self) -> &[VirtualLine] {
+        &self.virtual_lines
+    }
+
+    /// PHOSPHOR PATCH 8 — replaces the `┊` rows. Returns `true` when the list
+    /// actually changed, which is the caller's cue to rebuild.
+    pub(crate) fn set_virtual_lines(&mut self, lines: Vec<VirtualLine>) -> bool {
+        let changed = lines != self.virtual_lines;
+        self.virtual_lines = lines;
+        changed
+    }
+
+    /// PHOSPHOR PATCH 8 — shows or hides the installed rows without losing
+    /// them. Returns `true` when it changed.
+    pub(crate) fn set_virtual_visible(&mut self, visible: bool) -> bool {
+        let changed = self.virtual_hidden == visible;
+        self.virtual_hidden = !visible;
+        changed
+    }
+
+    /// PHOSPHOR PATCH 8 — whether the installed rows are drawn.
+    pub(crate) fn virtual_visible(&self) -> bool {
+        !self.virtual_hidden
     }
 
     pub(crate) fn clear(&mut self) {
@@ -145,6 +181,9 @@ impl View {
                 .collect();
             // PHOSPHOR PATCH 6
             self.rows = soft_wrap::apply(std::mem::take(&mut self.rows), code, self.soft_wrap);
+            // PHOSPHOR PATCH 8 — after the wrap, so a virtual row can pick the
+            // segment it hangs under rather than the line's first row.
+            self.interleave_virtual();
             return;
         }
 
@@ -174,6 +213,16 @@ impl View {
         };
         // PHOSPHOR PATCH 6
         self.rows = soft_wrap::apply(std::mem::take(&mut self.rows), code, self.soft_wrap);
+        // PHOSPHOR PATCH 8 — see the plain-mode branch above.
+        self.interleave_virtual();
+    }
+
+    /// PHOSPHOR PATCH 8 — the one place `┊` rows enter the stream.
+    fn interleave_virtual(&mut self) {
+        if self.virtual_hidden || self.virtual_lines.is_empty() {
+            return;
+        }
+        self.rows = virtual_text::apply(std::mem::take(&mut self.rows), &self.virtual_lines);
     }
 
     /// Filters out rows whose source lines fall inside any collapsed fold range.
@@ -194,6 +243,12 @@ impl View {
                 VisualRow::Wrapped { line_idx, .. } => !folds
                     .iter()
                     .any(|(start, end)| *line_idx > *start && *line_idx <= *end),
+                // PHOSPHOR PATCH 8 — virtual rows are interleaved after folds
+                // are applied, so this arm is unreachable today. It keeps them
+                // if the two ever swap order; a virtual line whose anchor is
+                // inside a collapsed fold is dropped by `virtual_text::apply`,
+                // which cannot find an anchor row for it.
+                VisualRow::Virtual { .. } => true,
             })
             .collect()
     }
@@ -316,6 +371,10 @@ impl View {
             VisualRow::FoldSeparator { .. } => None,
             // PHOSPHOR PATCH 6 — every segment maps back to its source line.
             VisualRow::Wrapped { line_idx, .. } => Some(*line_idx),
+            // PHOSPHOR PATCH 8 — a virtual row is not a line. `None` is what
+            // makes a click on one resolve to no cursor, and what keeps it out
+            // of every line-wise motion.
+            VisualRow::Virtual { .. } => None,
         })
     }
 
@@ -375,7 +434,12 @@ impl View {
                 wrapped: true,
                 is_last_segment: *end_col >= code.line_len(*line_idx),
             }),
-            VisualRow::FoldSeparator { .. } | VisualRow::GhostDeleted { .. } => None,
+            // PHOSPHOR PATCH 8 — `Virtual` joins the two rows that draw no
+            // slice of the buffer. It owns no char span, so no column resolves
+            // to it and it is never a cursor target.
+            VisualRow::FoldSeparator { .. }
+            | VisualRow::GhostDeleted { .. }
+            | VisualRow::Virtual { .. } => None,
         }
     }
 
@@ -423,6 +487,13 @@ impl View {
                         return Some(offset);
                     }
                 }
+                // PHOSPHOR PATCH 8 — a virtual row anchored to an early
+                // segment sits *between* the segments of its own line. It is
+                // not a row of this line and it does not end the run, so it is
+                // skipped rather than treated as the end of the wrap. Without
+                // this arm every column past the first virtual row resolves to
+                // the wrong segment, which is the desync `T081` warned about.
+                VisualRow::Virtual { .. } => {}
                 _ if offset > first => break,
                 _ => {}
             }

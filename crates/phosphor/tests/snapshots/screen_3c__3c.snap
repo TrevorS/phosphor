@@ -1,0 +1,115 @@
+---
+source: crates/phosphor/tests/screen_3c.rs
+expression: frame.to_text(&buf)
+---
+screen 3c · phosphor-dark · 120x24 cells
+  The six rows are read live from runtime/keymaps.scm through
+    keymap::entries — not a fixture. A REPL rebind moves this frame, which
+    is what a_repl_rebind_shows_up_in_the_leader_popup asserts.
+  3c draws the code behind the strip dimmed (#232823). Dimming is the float
+    primitive's, and §9 defines it as "behind a float"; the leader strip is
+    a row slot, not a float — it has no header, no internal rules and no
+    footer, which is the chrome Float would impose. Flagged, not folded in.
+  3c's statusline carries an amber `SPC pending` segment. No StatusVm field
+    says a leader sequence is half-typed, so the composed statusline cannot
+    draw one (T026 owns the machine that would know; the field is spine's).
+  The strip's height is computed in Rust: at Density::Grid the row count
+    depends on the width, and a Steel composer has no width. See the report.
+  No gutter markers and no session segment: both are store/session queries
+    (T041, T050), and 3c draws neither.
+
+text
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │   1  pub fn retry_with_backoff<T, E>(                                                                                  │
+  1 │   2      mut op: impl FnMut() -> Result<T, E>,                                                                         │
+  2 │   3      policy: &RetryPolicy,                                                                                         │
+  3 │   4  ) -> Result<T, E> {                                                                                               │
+  4 │   5      let mut delay = policy.base_delay;                                                                            │
+  5 │   6      for attempt in 0..policy.max_attempts {                                                                       │
+  6 │   7          match op() {                                                                                              │
+  7 │   8              Ok(v) => return Ok(v),                                                                                │
+  8 │   9              Err(e) => thread::sleep(jitter(delay)),                                                               │
+  9 │  10          }                                                                                                         │
+ 10 │  11          delay = (delay * 2).min(policy.max_delay);                                                                │
+ 11 │  12      }                                                                                                             │
+ 12 │  13      Err(last.unwrap())                                                                                            │
+ 13 │  14  }                                                                                                                 │
+ 14 │  15                                                                                                                    │
+ 15 │   ~                                                                                                                    │
+ 16 │   ~                                                                                                                    │
+ 17 │   ~                                                                                                                    │
+ 18 │   ~                                                                                                                    │
+ 19 │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+ 20 │  SPC ·                                                                                                                 │
+ 21 │  c  +claude  prompt · steer · interrupt   u  +unseen      next · list · mark seen   t  transcript                      │
+ 22 │  r  +disk    refresh · diff               j  jj timeline                            f  files                           │
+ 23 │ NORMAL  src/retry.rs                                                                                          4 unseen │
+
+fg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │..kk..bbbhbbhffffffffffffffffffhehhehh..................................................................................│
+  1 │..kk..hhhhbbbhhhhhbbbbheeeeehhhhhheeeeeehehhehh.........................................................................│
+  2 │..kk..hhhhhhhhhhhhbeeeeeeeeeeeh.........................................................................................│
+  3 │..kk..hhhhheeeeeehehhehhh...............................................................................................│
+  4 │..kk..hhhhbbbhbbbhhhhhhhhhhhhhhhhhhhhhhhhhhh............................................................................│
+  5 │..kk..hhhhbbbhhhhhhhhhbbhehhhhhhhhhhhhhhhhhhhhhhh.......................................................................│
+  6 │..kk..hhhhhhhhbbbbbhffhhhh..............................................................................................│
+  7 │..kk..hhhhhhhhhhhheehhhhhhhbbbbbbhffhhhh................................................................................│
+  8 │..kk..hhhhhhhhhhhheeehhhhhhhhhhhhhhhfffffhffffffhhhhhhhhh...............................................................│
+  9 │..kk..hhhhhhhhh.........................................................................................................│
+ 10 │..kk..hhhhhhhhhhhhhhhhhhhhhhhhhehhfffhhhhhhhhhhhhhhhhhhh................................................................│
+ 11 │..kk..hhhhh.............................................................................................................│
+ 12 │..kk..hhhhfffhhhhhhffffffhhh............................................................................................│
+ 13 │..kk..h.................................................................................................................│
+ 14 │..kk....................................................................................................................│
+ 15 │...k....................................................................................................................│
+ 16 │...k....................................................................................................................│
+ 17 │...k....................................................................................................................│
+ 18 │...k....................................................................................................................│
+ 19 │oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo│
+ 20 │hhjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 21 │hhahhhhhhhhhhhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhahhhhhhhhhhhhhhhjjjjjjjjjjjjjjjjjjjjjjjhhhahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 22 │hhahhhhhhhhhhhjjjjjjjjjjjjjjhhhhhhhhhhhhhhhahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 23 │gggggggg.hhhhhhhhhhhh..........................................................................................jjjjjjjj.│
+
+bg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  1 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  2 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  3 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  4 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  5 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  6 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  7 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  8 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  9 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 10 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 11 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 12 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 13 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 14 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 15 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 16 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 17 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 18 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 19 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 20 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 21 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 22 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 23 │aaaaaaaa................................................................................................................│
+
+legend
+  a  #3ddc97  actors.claude
+  b  #82aecd  actors.you = syntax.keyword
+  e  #cfa86a  actors.transient = syntax.ty = syntax.constant = syntax.string = syntax.number
+  f  #9ec98c  actors.steel = syntax.function
+  g  #0c0f0c  neutrals.ground = chrome.mode_chip_fg = chrome.tab_bar
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  k  #414b42  neutrals.line_numbers
+  o  #2a5c44  regions.anchor_undercurl = float.informational
+  x  #101410  float.body

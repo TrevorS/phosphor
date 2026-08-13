@@ -23,7 +23,6 @@
 ;; name that leaves the tree is refused.
 ;;
 ;; still to land, each with the task that writes it:
-;;   leader.scm       the leader tree behind which-key                (T033)
 ;;   pickers/         picker sources and their columns                (T045)
 ;;   permissions.scm  the rules an always-allow answer writes         (T061)
 ;;   inbox.scm        what the inbox groups by                        (T067)

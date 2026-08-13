@@ -210,8 +210,18 @@ if not m:
 else:
     pinned = m.group(1)
     for path in ("tapes/README.md", ".github/workflows/ci.yml"):
-        text = read(path)
-        quoted = set(re.findall(r"\b(1\.\d{2}\.\d)\b", text))
+        quoted: set[str] = set()
+        for line in read(path).splitlines():
+            # Scoped to lines that actually claim to be *about* the toolchain —
+            # an unscoped whole-file regex here once flagged `insta 1.48.0`
+            # (a crate version quoted in a CI comment, ci.yml:70) as a stale
+            # toolchain pin just because the digit shape matched. Every real
+            # toolchain quote in these two files sits next to the word
+            # "toolchain" or "channel" (ci.yml:34, tapes/README.md:59) — this
+            # narrows the scan to that, rather than any `1.NN.N`-shaped string.
+            if not re.search(r"toolchain|channel", line, re.IGNORECASE):
+                continue
+            quoted.update(re.findall(r"\b(1\.\d{2}\.\d)\b", line))
         wrong = sorted(v for v in quoted if v != pinned)
         if wrong:
             fail(

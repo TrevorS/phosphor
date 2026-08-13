@@ -43,6 +43,11 @@ Then:
   under-staffed, and the kickoff prompt. Each checkpoint splits what can be
   proven mechanically from what needs eyes on a real terminal, because most of this design
   language is perceptual and none of that half survives CI.
+- **[OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)** — what a checkpoint surfaced and nobody has ruled on
+  yet, each with the evidence at `file:line`, the options, and a recommendation. It is a register,
+  not a backlog: a ruling leaves this file for the decision log, `TASKS.md` or `TEAM.md`, and the
+  entry moves to *Closed* with a pointer. Read it before disagreeing with a doc — the disagreement
+  may already be recorded.
 - **[design/CLAUDE-CODE-HANDOFF.md](design/CLAUDE-CODE-HANDOFF.md)** — the brief that produced
   the plan. Useful as a summary of the five things most likely to be lost in translation.
 

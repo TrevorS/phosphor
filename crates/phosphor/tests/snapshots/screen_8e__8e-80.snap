@@ -1,0 +1,70 @@
+---
+source: crates/phosphor/tests/screen_8e.rs
+expression: frame.to_text(&buf)
+---
+screen 8e-80 · phosphor-dark · 80x7 cells
+  The hint is the once-per-session unknown-key line (T035). It is a
+    Node::VirtualText with no owner — `8e` sets it off from the code with
+    its own padding, so it is a strip above the statusline rather than a
+    row installed in the buffer's stream.
+  8e draws line 26 blank. The fixture declares there instead: line 28 is
+    indented, so it is inside a block, and a fold's hidden run is contiguous
+    from its header — nothing can both end the fold at 25 and leave 28 inside
+    the same function. See FETCH_RS.
+  8e wraps line 27 after `the continuation row`. Wrapping here is
+    width-driven (T081), so at 120 columns the comment fits on one row and
+    no `↪` is drawn; at 80 it wraps where the text column runs out.
+  8e's continuation row repeats `// `. A soft wrap is a wrap, not a re-emit:
+    the continuation carries the next words of the same comment and the `↪`
+    stands in for the line number (T081).
+  8e writes `← INSERT only` beside the whitespace marks. That is the mockup
+    annotating itself; the cells on screen are the two `··` marks, which are
+    drawn because the buffer is in INSERT (T016).
+  No gutter markers and no session counters: both are store queries (T041),
+    and 8e draws neither.
+
+text
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │  12  pub fn retry_with_backoff<T, E>( ▸⋯ 13 lines                              │
+  1 │  26  pub async fn decode(resp: Response) -> Result<Payload, FetchError> {      │
+  2 │  27  // long doc comment wraps softly and the continuation row carries no      │
+  3 │      ↪ line number — the gutter stays honest                                   │
+  4 │  28      resp.json().await.map_err(FetchError::Decode)··                       │
+  5 │      ┊ unknown key gq — SPC opens the keymap · :help agent-objects · shown once│
+  6 │ NORMAL  src/fetch.rs                                        ✻ claude idle 27:1 │
+
+fg
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │..kk..bbbhbbhffffffffffffffffffhehhehhjjjjjjjjjjjj..............................│
+  1 │..kk..bbbhbbbbbhbbhffffffhhhhhhheeeeeeeehhhhheeeeeeheeeeeeehheeeeeeeeeehhh......│
+  2 │..kk..jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj.....│
+  3 │..kk..kkjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj...................................│
+  4 │..kk..hhhhhhhhhffffhhhbbbbbhfffffffheeeeeeeeeehheeeeeehdd.......................│
+  5 │......jjjjjjjjjjjjjjccjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj│
+  6 │gggggggg.hhhhhhhhhhhh........................................aaaaaaaaaaaaa.jjjj.│
+
+bg
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  1 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  2 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  3 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  4 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggqqggggggggggggggggggggggg│
+  5 │................................................................................│
+  6 │aaaaaaaa........................................................................│
+
+legend
+  a  #3ddc97  actors.claude
+  b  #82aecd  actors.you = syntax.keyword
+  c  #e0a94e  actors.attention
+  d  #d97b6c  actors.trouble = regions.failure_undercurl
+  e  #cfa86a  actors.transient = syntax.ty = syntax.constant = syntax.string = syntax.number
+  f  #9ec98c  actors.steel = syntax.function
+  g  #0c0f0c  neutrals.ground = chrome.mode_chip_fg = chrome.tab_bar
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  k  #414b42  neutrals.line_numbers
+  q  #211114  regions.failure

@@ -6,10 +6,24 @@
 # S5) — a fixture would be a value nobody asked for, so this tape captures
 # what S1 actually has: layout, chrome, syntax highlighting.
 #
-# STATUS: passes. `T090` landed the S1 host, so the `fn main() {}` blocker
-# this header used to describe is gone (corrected during the CP-1 gate pass).
-# `phosphor` still has to be on `$PATH` for `Require phosphor` — see
-# tapes/README.md's "Running" section for the one-liner that does it.
+# STATUS: passes, with the `PHOSPHOR_RUNTIME` prefix below. `T090` landed
+# the S1 host, so the `fn main() {}` blocker this header used to describe is
+# gone (corrected during the CP-1 gate pass). `phosphor` still has to be on
+# `$PATH` for `Require phosphor` — see tapes/README.md's "Running" section
+# for the one-liner that does it.
+#
+# Harness finding, Window D: since S2 landed, `main.rs` composes the
+# statusline in Steel with no Rust fallback (CP-2's own finding — deleting
+# `runtime/statusline.scm` draws no statusline at all). `Runtime::root()`'s
+# third fallback is a bare `./runtime`, relative to the *process's* cwd —
+# and `just tape`/`just tapes` always run with cwd `tapes/`, where no
+# `runtime/` exists. Unprefixed, this tape now hangs to the `Wait+Screen`
+# timeout below: no runtime found, no statusline composed, the sentinel
+# never appears. Confirmed by running it both ways this session, not
+# inferred — see tapes/README.md's "V009" section for the fuller writeup.
+# `PHOSPHOR_RUNTIME=../runtime` points at the real, tracked tree; safe
+# un-copied (unlike `broken-init.tape`/`6b.tape`) because this tape never
+# types a `:` command or anything that calls `persist-form!`.
 #
 # Sentinel (V004): tapes/README.md's "Sentinel contract" section. Grounded in
 # `crates/phosphor-ui/src/status_line.rs` as landed (T017) — the mode chip is
@@ -25,7 +39,7 @@ Set Width 1228
 Set Height 700
 
 Hide
-Type "phosphor ../crates/phosphor-core/src/lib.rs"
+Type "PHOSPHOR_RUNTIME=../runtime phosphor ../crates/phosphor-core/src/lib.rs"
 Enter
 Show
 Wait+Screen@10s /(?m)^ (NORMAL|INSERT|VISUAL|PAUSED|N|I|V|P)\b/

@@ -1,0 +1,8 @@
+# fixtures/src/settings.yaml — YAML fixture (T037's first-class twelve).
+retry:
+  max_attempts: 4
+  base_delay_ms: 50
+  max_delay_ms: 2000
+fetch:
+  base_url: https://example.invalid
+  timeout_ms: 5000

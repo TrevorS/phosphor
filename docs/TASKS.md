@@ -225,7 +225,14 @@ lifetime: the harness outlives any single phase and gets extended at every check
   run. Seed it through `phosphor --eval` (`T023`), not a test-only backdoor.
   *Done when:* `CP-5`'s tapes produce identical output on two machines. *Needs:* V005, T023
 
-- [ ] **V007 · Pixel-diff runner**
+  > **CP-3 audit — partial, not ticked, and correctly so.** The buildable half landed:
+  > `fixtures/` (14 source files), `fixtures/seed/plan.scm` (127 lines) and
+  > `scripts/seed-fixtures.sh`. **Outstanding: the seeded store state, which is the point.**
+  > Every capability the plan calls refuses today because none of `S5`–`S8` exists, so there
+  > is nothing to make a `CP-5` tape deterministic *with*, and `CP-5`'s tapes do not exist to
+  > compare. This criterion cannot be met before `T041`.
+
+- [x] **V007 · Pixel-diff runner**
   Compare fresh captures against committed references; on mismatch, emit a side-by-side diff
   image and **fail soft with a request to look**, not a build break. Reference updates are an
   explicit, reviewed commit — never automatic.
@@ -237,11 +244,31 @@ lifetime: the harness outlives any single phase and gets extended at every check
   blocking. Keep them in separate CI jobs so a flaky renderer can never redden a correct build.
   *Done when:* a Tier-1 failure blocks merge and a Tier-2 diff does not. *Needs:* V007, T005
 
+  > **CP-3 audit — partial, not ticked.** The Tier-2 half is met by construction: the new
+  > `tapes-diff` job in `.github/workflows/ci.yml:145` carries job-level
+  > `continue-on-error: true` at `:148`, so it cannot redden a run. **Outstanding, two
+  > things.** (1) *Nothing blocks a merge.* `gh api repos/TrevorS/phosphor/branches/main/protection`
+  > answers `404 Branch not protected` (run this session), so no required status check exists
+  > and a red `test` job stops nothing — that is a repo-admin setting, not a file. (2) The
+  > `tapes-diff` job has never executed; its `ffmpeg` step installs whatever `apt` resolves
+  > and `tapes/check-versions.sh:16` pins `8.1.2`, so its first real run is expected to fail
+  > the version gate and produce no Tier-2 signal.
+  > It also currently reddens `just lint`: `ci.yml:70` quotes `insta 1.48.0`, and
+  > `scripts/doc_claims.py:214` reads any `1.NN.N` in that file as a stale toolchain quote.
+
 - [ ] **V009 · Degradation tapes**
   `Env TERM xterm-256color` and `Env NO_COLOR 1` variants of the core screens, exercising the
   fallback paths (`▎` markers, underline instead of undercurl, static `✻`).
   *Done when:* the degradation path is captured for `1a` and `2a` without touching a real
   terminal. *Needs:* V005
+
+  > **CP-3 audit — partial, not ticked.** `1a` has both variants captured —
+  > `tapes/1a-degraded-term.tape` and `tapes/1a-degraded-nocolor.tape`, artifacts present.
+  > **Outstanding, two things.** (1) `2a` cannot be captured: it is the unseen picker and
+  > `T046` is `S5`, unbuilt. (2) None of the three named fallback paths renders on `1a` today
+  > — the `▎` marker needs regions (`T041`), no undercurl consumer exists on that screen, and
+  > the spinner needs `T051` — so the `TERM` variant is a no-op capture and the `NO_COLOR`
+  > variant exercises `crossterm`'s own handling rather than ours.
 
 ---
 
@@ -693,7 +720,7 @@ rewrite, not a refactor.
 
 CP-0 settled the shape: **the input machine is ours.**
 
-- [ ] **T026 · The input machine**
+- [x] **T026 · The input machine**
   Modes, operator-pending, text objects, and — designed in from the start, not retrofitted —
   **numeric counts (`3dd`) and named registers (`"ayy`)**, which are exactly what the dropped
   crate could not express. Emits `Action`s; keymaps come from Steel (T033), so the resolver
@@ -719,7 +746,7 @@ CP-0 settled the shape: **the input machine is ours.**
   > owns the loop; make the rule structural — one place where "arbitrary scheme ran" is
   > recorded — and it becomes testable at the same time.
 
-- [ ] **T091 · Real VM invocations, measured in the binary** 📌
+- [x] **T091 · Real VM invocations, measured in the binary** 📌
   `T079`'s benchmark proves the frame cache with a *Rust* composer, because `phosphor-ui` may
   not depend on `phosphor-steel` — `scripts/lint-no-store-mutation.sh` check 2 allows it
   exactly one `phosphor-*` dependency. That makes the control arm a floor and not a lie, but
@@ -733,27 +760,61 @@ CP-0 settled the shape: **the input machine is ours.**
   *Done when:* `ctrl+shift+<key>` is distinguishable from `ctrl+<key>` on the primary terminal.
   *Needs:* T014, T026
 
+  > **CP-3 audit — partial, not ticked.** The kitty half meets the criterion:
+  > `crates/phosphor-core/tests/chords.rs:94` distinguishes the two chords and
+  > `crates/phosphor/src/main.rs:1964` decodes through `Key::new`, so it reaches the binary.
+  > **Outstanding:** the legacy fallback is unreachable in the shipping binary —
+  > `Machine::set_protocol` appears nowhere in `crates/phosphor/src/main.rs` (grepped), so
+  > `key::Protocol` is always the default and the retry path built in `chords.rs:158` never
+  > fires. One line after `Term::new()` closes it.
+
 - [ ] **T028 · Agent nouns as text objects**
   `viu`, `sib`, `dih`, `:'<,'>c` register in the grammar. **They parse here and resolve at
   S5** — there is no store to resolve against yet (Q8).
   *Done when:* the grammar accepts them and they no-op cleanly rather than erroring.
   *Needs:* T026
 
-- [ ] **T029 · Undo model in `phosphor-buffer`**
+  > **CP-3 audit — partial, not ticked.** Three of the four named forms are met:
+  > `crates/phosphor-core/tests/agent_objects.rs:126` (`viu`), `:147` (`sib`), `:173` (`dih`)
+  > all parse and no-op silently. **Outstanding: `:'<,'>c` errors.** `runtime/keymaps.scm:602`'s
+  > `phosphor/ex-split` takes a name and arguments only — there is no range grammar — so the
+  > lookup fails and `crates/phosphor/src/main.rs:2155` answers
+  > `no such command — :'<,'>c`, which is exactly what this criterion forbids.
+  > Also outstanding in the *shipped* keymap: `runtime/keymaps.scm` binds `s` to substitute
+  > (asserted by `agent_objects.rs:351`), so `sib` in the running editor substitutes a
+  > character and types `ib`.
+
+- [x] **T029 · Undo model in `phosphor-buffer`**
   Owns the undo tree and edit semantics (Q2).
   *Done when:* undo/redo across a scripted edit sequence is exact. *Needs:* T026
 
-- [ ] **T030 · Undo persistence in `phosphor-core`**
+  > **CP-3 audit — criterion met, host wiring outstanding.**
+  > `crates/phosphor-buffer/tests/undo.rs:128` walks six groups forward and back asserting text
+  > *and* caret at every step; 16 tests, all green. **The binary does not use it:**
+  > `crates/phosphor/src/main.rs:1440-1455` still answers `HistoryAction::Undo`/`Redo` with the
+  > fork's own `editor.apply(Undo)` and treats `CommitUndoGroup` as a no-op, and nothing outside
+  > `phosphor-buffer` imports `undo::` (grepped). So `u` in the running editor is the fork's
+  > truncate-on-divergence stack, not this tree.
+
+- [x] **T030 · Undo persistence in `phosphor-core`**
   Append-only log + compaction, **sharing its format and compaction path with seen-state**
   (T044). Design the format once, here.
   *Done when:* undo history survives a clean restart *and* a `kill -9`. *Needs:* T029
 
-- [ ] **T031 · GutterBar**
+  > **CP-3 audit — criterion met at the format layer, host wiring outstanding.**
+  > `crates/phosphor-core/tests/journal.rs:707` (clean restart), `:719` (kill -9 with a torn
+  > tail) and `:734` (kill -9 mid-append) spawn a real child process and assert
+  > `status.signal() == Some(9)`; 30 tests, all green. **Nothing in `crates/phosphor` opens a
+  > journal** — `journal`, `UndoLog` and `UndoTree` return no hits in
+  > `crates/phosphor/src/main.rs`. CP-3's *"quit, reopen, undo"* therefore has nothing to
+  > restore, and this task must not be read as having closed that checkpoint item.
+
+- [x] **T031 · GutterBar**
   1-cell state column, priority trouble > attention > claude-unseen > none, `▎` degradation.
   Renders from `Vec<RegionState>` — fixtures for now, real regions at S5.
   *Done when:* priority resolution unit-tested across all overlap combinations. *Needs:* T015
 
-- [ ] **T032 · VirtualText**
+- [x] **T032 · VirtualText**
   `┊`-prefixed rows owned by a region id, indented to the code column. Shared by threads,
   watches, diagnostics, hints.
   *Done when:* rows interleave correctly, never shift the buffer's own line numbering, **and land
@@ -765,12 +826,22 @@ CP-0 settled the shape: **the input machine is ours.**
   `SPC` leader, full ex commands, vim-style unique-prefix abbreviation.
   *Done when:* every binding lives in `runtime/`, none in Rust. *Needs:* T022, T026
 
-- [ ] **T034 · KeymapFooter / WhichKey**
+  > **CP-3 audit — partial, not ticked.** The leader tree, the ex table with vim's
+  > abbreviation rule, and >100 entries are in `runtime/keymaps.scm`; the binary seeds an
+  > empty table (`crates/phosphor/src/main.rs:791`, asserted at `:2705`); and
+  > `crates/phosphor-steel/tests/no_bindings_in_rust.rs` (6 tests) proves reachability and
+  > that no Rust source outside the seed binds a key. **Outstanding: bindings still exist in
+  > Rust.** `crates/phosphor-core/src/input/vim.rs` holds 38 `.bind(` calls and is still
+  > declared at `crates/phosphor-core/src/input.rs:101`; three test files call `vim::table()`.
+  > The criterion says *none in Rust*, so it is unmet until that file and its `pub mod` line
+  > are deleted and `crates/phosphor-core/tests/{input,agent_objects}.rs` are repointed.
+
+- [x] **T034 · KeymapFooter / WhichKey**
   Same data, two densities. Reads the **live** keymap, so Steel rebinds appear with no extra
   wiring. Keyhints spell whole commands — `:reattach`, never `:ca`.
   *Done when:* screen `3c` reproduces and a REPL rebind shows up in it. *Needs:* T033
 
-- [ ] **T035 · Unknown-key hint**
+- [x] **T035 · Unknown-key hint**
   One virtual-text line naming `SPC` and `:help`, once per session, never again.
   *Done when:* screen `8e` reproduces. *Needs:* T032, T034
 
@@ -784,6 +855,17 @@ CP-0 settled the shape: **the input machine is ours.**
   `sib` / `dih` and their grammar at S3; they bind to real regions at S5.
   *Done when:* screen `6d` reproduces from the live keymap, and a REPL rebind shows up in it.
   *Needs:* T084, T034
+
+  > **CP-3 audit — partial, not ticked.** The rebind half is met
+  > (`crates/phosphor/tests/screen_6d.rs`, `a_repl_rebind_shows_up_in_the_help_grid`), and the
+  > page is composed by role from the live table. **Outstanding: `6d` does not fully
+  > reproduce.** `crates/phosphor/tests/snapshots/screen_6d__6d.snap:9-20` records that four of
+  > the screen's grammar rows are absent because `runtime/keymaps.scm` binds none of them —
+  > `sib`, `]u`/`[u`, `:'<,'>c` / `:g/TODO/c`, `"ay ib` / `q:`. Those rows are `T033`'s and
+  > `T028`'s to bind before this screen is the screen. The snapshot also records two
+  > design-vs-tree deltas left unfolded: the verbs are the table's words rather than `6d`'s
+  > prose, and `6d` draws a full-width surface where this task and the Component Breakdown say
+  > `Float` body.
 
 ### ✋ CP-3 — Does it feel like an editor?
 

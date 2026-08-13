@@ -36,8 +36,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use phosphor_core::input::key::parse_seq;
+use phosphor_core::input::table::{Resolution, Scope};
 use phosphor_steel::host::{Detached, Host};
-use phosphor_steel::keymap::{Press, press};
+use phosphor_steel::keymap::resolve;
 use phosphor_steel::repl::{self, Repl};
 use phosphor_steel::runtime::Runtime;
 
@@ -131,7 +133,7 @@ fn the_rebind_is_live_on_the_very_next_key() {
     let mut runtime = runtime();
     let mut repl = Repl::new();
 
-    assert_eq!(press(&mut runtime, "]"), Press::Unbound);
+    assert_eq!(pressed(&mut runtime, "]"), Resolution::Unbound);
 
     for character in r#"(keymap-set! "]r" (lambda () (open-repl!)))"#.chars() {
         repl.insert(character);
@@ -151,8 +153,18 @@ fn the_rebind_is_live_on_the_very_next_key() {
     );
 
     // No reload, no second boot, nothing invalidated.
-    assert_eq!(press(&mut runtime, "]"), Press::Pending);
-    assert_eq!(press(&mut runtime, "r"), Press::Handled);
+    assert_eq!(pressed(&mut runtime, "]"), Resolution::Pending);
+    assert_eq!(pressed(&mut runtime, "]r"), Resolution::Ran);
+}
+
+/// One question for the live keymap, spelled the way a keymap is written.
+///
+/// `T033` made the layer stateless and the whole sequence the unit of a
+/// lookup — the machine holds the unfinished keys and hands them over, so a
+/// second copy on the scheme side could only disagree with it.
+fn pressed(runtime: &mut Runtime, keys: &str) -> Resolution {
+    let keys = parse_seq(keys).expect("a spelling this test wrote");
+    resolve(runtime, Scope::Normal, &keys)
 }
 
 #[test]

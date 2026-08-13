@@ -1,0 +1,115 @@
+---
+source: crates/phosphor/tests/screen_3c.rs
+expression: frame.to_text(&buf)
+---
+screen 3c-80 · phosphor-dark · 80x24 cells
+  The six rows are read live from runtime/keymaps.scm through
+    keymap::entries — not a fixture. A REPL rebind moves this frame, which
+    is what a_repl_rebind_shows_up_in_the_leader_popup asserts.
+  3c draws the code behind the strip dimmed (#232823). Dimming is the float
+    primitive's, and §9 defines it as "behind a float"; the leader strip is
+    a row slot, not a float — it has no header, no internal rules and no
+    footer, which is the chrome Float would impose. Flagged, not folded in.
+  3c's statusline carries an amber `SPC pending` segment. No StatusVm field
+    says a leader sequence is half-typed, so the composed statusline cannot
+    draw one (T026 owns the machine that would know; the field is spine's).
+  The strip's height is computed in Rust: at Density::Grid the row count
+    depends on the width, and a Steel composer has no width. See the report.
+  No gutter markers and no session segment: both are store/session queries
+    (T041, T050), and 3c draws neither.
+
+text
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │   1  pub fn retry_with_backoff<T, E>(                                          │
+  1 │   2      mut op: impl FnMut() -> Result<T, E>,                                 │
+  2 │   3      policy: &RetryPolicy,                                                 │
+  3 │   4  ) -> Result<T, E> {                                                       │
+  4 │   5      let mut delay = policy.base_delay;                                    │
+  5 │   6      for attempt in 0..policy.max_attempts {                               │
+  6 │   7          match op() {                                                      │
+  7 │   8              Ok(v) => return Ok(v),                                        │
+  8 │   9              Err(e) => thread::sleep(jitter(delay)),                       │
+  9 │  10          }                                                                 │
+ 10 │  11          delay = (delay * 2).min(policy.max_delay);                        │
+ 11 │  12      }                                                                     │
+ 12 │  13      Err(last.unwrap())                                                    │
+ 13 │  14  }                                                                         │
+ 14 │  15                                                                            │
+ 15 │────────────────────────────────────────────────────────────────────────────────│
+ 16 │  SPC ·                                                                         │
+ 17 │  c  +claude      prompt · steer · interrupt                                    │
+ 18 │  u  +unseen      next · list · mark seen                                       │
+ 19 │  t  transcript                                                                 │
+ 20 │  r  +disk        refresh · diff                                                │
+ 21 │  j  jj timeline                                                                │
+ 22 │  f  files                                                                      │
+ 23 │ NORMAL  src/retry.rs                                                  4 unseen │
+
+fg
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │..kk..bbbhbbhffffffffffffffffffhehhehh..........................................│
+  1 │..kk..hhhhbbbhhhhhbbbbheeeeehhhhhheeeeeehehhehh.................................│
+  2 │..kk..hhhhhhhhhhhhbeeeeeeeeeeeh.................................................│
+  3 │..kk..hhhhheeeeeehehhehhh.......................................................│
+  4 │..kk..hhhhbbbhbbbhhhhhhhhhhhhhhhhhhhhhhhhhhh....................................│
+  5 │..kk..hhhhbbbhhhhhhhhhbbhehhhhhhhhhhhhhhhhhhhhhhh...............................│
+  6 │..kk..hhhhhhhhbbbbbhffhhhh......................................................│
+  7 │..kk..hhhhhhhhhhhheehhhhhhhbbbbbbhffhhhh........................................│
+  8 │..kk..hhhhhhhhhhhheeehhhhhhhhhhhhhhhfffffhffffffhhhhhhhhh.......................│
+  9 │..kk..hhhhhhhhh.................................................................│
+ 10 │..kk..hhhhhhhhhhhhhhhhhhhhhhhhhehhfffhhhhhhhhhhhhhhhhhhh........................│
+ 11 │..kk..hhhhh.....................................................................│
+ 12 │..kk..hhhhfffhhhhhhffffffhhh....................................................│
+ 13 │..kk..h.........................................................................│
+ 14 │..kk............................................................................│
+ 15 │oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo│
+ 16 │hhjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 17 │hhahhhhhhhhhhhhhhhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 18 │hhahhhhhhhhhhhhhhhjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 19 │hhahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 20 │hhahhhhhhhhhhhhhhhjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 21 │hhahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 22 │hhahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 23 │gggggggg.hhhhhhhhhhhh..................................................jjjjjjjj.│
+
+bg
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  1 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  2 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  3 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  4 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  5 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  6 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  7 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  8 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  9 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 10 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 11 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 12 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 13 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 14 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 15 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 16 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 17 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 18 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 19 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 20 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 21 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 22 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 23 │aaaaaaaa........................................................................│
+
+legend
+  a  #3ddc97  actors.claude
+  b  #82aecd  actors.you = syntax.keyword
+  e  #cfa86a  actors.transient = syntax.ty = syntax.constant = syntax.string = syntax.number
+  f  #9ec98c  actors.steel = syntax.function
+  g  #0c0f0c  neutrals.ground = chrome.mode_chip_fg = chrome.tab_bar
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  k  #414b42  neutrals.line_numbers
+  o  #2a5c44  regions.anchor_undercurl = float.informational
+  x  #101410  float.body

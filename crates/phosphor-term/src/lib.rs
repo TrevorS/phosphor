@@ -53,6 +53,43 @@
 //! key event to expect. At S1 the temporary input path is the vendored crate's
 //! own `editor_crossterm` handler, which reads events itself — nothing here is
 //! coupled to it, and nothing here has to change when `T026` lands.
+//!
+//! # `T027` — what negotiating here costs the decoder there
+//!
+//! Two consequences of the flags pushed below, both of which land in
+//! `phosphor-core`'s input machine rather than here:
+//!
+//! * `REPORT_EVENT_TYPES` means every press is also reported as a release, so
+//!   a loop that acted on both would apply every keystroke twice. The loop
+//!   drops releases (`main.rs`'s `is_press`) and the *kind* deliberately never
+//!   reaches a key — `phosphor_core::input::key`'s header argues why.
+//! * `REPORT_ALTERNATE_KEYS` means crossterm reports a shifted chord as the
+//!   shifted character with the shift bit **cleared**
+//!   (`event/sys/unix/parse.rs:594-606` in crossterm 0.29). So
+//!   <kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>k</kbd> is `Char('K')` + `CTRL`
+//!   here and `Char('k')` + `CTRL | SHIFT` on a terminal without the flag;
+//!   `phosphor_core::input::key::Key::new` folds both into the one spelling a
+//!   keymap is written in.
+//!
+//! And the negotiated protocol is not just a report — the machine changes
+//! behaviour on it, because under the legacy encoding
+//! <kbd>ctrl</kbd>+<kbd>shift</kbd>+<kbd>k</kbd> and
+//! <kbd>ctrl</kbd>+<kbd>k</kbd> are the same byte. The host wires the two
+//! together in one line:
+//!
+//! ```text
+//! machine.set_protocol(match term.capabilities().keyboard {
+//!     KeyboardProtocol::Kitty => key::Protocol::Kitty,
+//!     KeyboardProtocol::Legacy => key::Protocol::Legacy,
+//! });
+//! ```
+//!
+//! **`$PHOSPHOR_KEYBOARD` is how the second half of that gets tested at all.**
+//! `CP-3` asks for modifier chords *"on the primary terminal, then on the
+//! degradation terminal"*, and the degradation terminal is the one nobody
+//! building this has open. `PHOSPHOR_KEYBOARD=legacy phosphor …` turns the
+//! good terminal into the bad one for the length of one run — the same escape
+//! hatch `PHOSPHOR_UNDERCURL` is for `T085`, for the same reason.
 
 mod raw;
 
@@ -89,6 +126,48 @@ pub enum KeyboardProtocol {
     /// Key events arrive in the traditional encoding.
     Legacy,
 }
+
+impl KeyboardProtocol {
+    /// What `$PHOSPHOR_KEYBOARD` forces, if it forces anything.
+    ///
+    /// A pure function of the value so every branch is testable without a
+    /// terminal; [`KeyboardProtocol::forced`] is the one caller that reads the
+    /// process. The vocabulary follows `PHOSPHOR_UNDERCURL`'s, which is the
+    /// same kind of escape hatch for the same kind of capability:
+    ///
+    /// * `legacy`, `0`, `off`, `false`, `none` → [`KeyboardProtocol::Legacy`].
+    ///   **The degradation terminal, on the hardware you have.** Negotiation is
+    ///   skipped entirely rather than pushed and ignored, so what the editor
+    ///   receives is what a terminal without the protocol would send.
+    /// * `kitty`, `1`, `on`, `true`, `force` → [`KeyboardProtocol::Kitty`]. For
+    ///   an emulator that supports the protocol but answers the *query* badly —
+    ///   a multiplexer in the middle is the usual reason. The flags are pushed
+    ///   without asking first.
+    /// * anything else, including unset and empty → [`None`], and the query
+    ///   decides. An unrecognised value is ignored rather than refused: this
+    ///   runs during terminal setup, where there is nowhere to report to yet.
+    ///
+    /// It overrides both the query and [`TermConfig`], which is what "escape
+    /// hatch" has to mean to be worth having.
+    #[must_use]
+    pub fn from_env_value(value: Option<&str>) -> Option<Self> {
+        let value = value?.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "legacy" | "0" | "off" | "false" | "none" => Some(Self::Legacy),
+            "kitty" | "1" | "on" | "true" | "force" => Some(Self::Kitty),
+            _ => None,
+        }
+    }
+
+    /// [`KeyboardProtocol::from_env_value`] against the real environment.
+    #[must_use]
+    pub fn forced() -> Option<Self> {
+        Self::from_env_value(std::env::var(KEYBOARD_ENV).ok().as_deref())
+    }
+}
+
+/// The override [`KeyboardProtocol::forced`] reads.
+pub const KEYBOARD_ENV: &str = "PHOSPHOR_KEYBOARD";
 
 /// What the terminal turned out to support, settled at setup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -314,34 +393,44 @@ impl Term {
         // (or is not a tty at all, as under a test harness) surfaces as an
         // error, and an error here means "no" — it must not stop the editor
         // from starting. Legacy is a supported path, not a failure.
-        let keyboard =
-            if config.keyboard_enhancement && supports_keyboard_enhancement().unwrap_or(false) {
-                execute!(
-                    out,
-                    PushKeyboardEnhancementFlags(
-                        // The three an editor needs, and no more.
-                        //   DISAMBIGUATE_ESCAPE_CODES — a bare `esc` stops being
-                        //     ambiguous with the start of a sequence, which is what
-                        //     makes a vim grammar's mode exit instant instead of
-                        //     timeout-driven.
-                        //   REPORT_EVENT_TYPES — press/repeat/release, so held keys
-                        //     can be distinguished from autorepeat.
-                        //   REPORT_ALTERNATE_KEYS — the base layout's key alongside
-                        //     the shifted one, for non-US layouts.
-                        // REPORT_ALL_KEYS_AS_ESCAPE_CODES is left off deliberately:
-                        // it routes plain text input through escape sequences too,
-                        // which buys nothing here and breaks IME and paste on some
-                        // emulators.
-                        KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                            | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-                            | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
-                    )
-                )?;
-                mark(KITTY);
-                KeyboardProtocol::Kitty
-            } else {
-                KeyboardProtocol::Legacy
-            };
+        //
+        // `$PHOSPHOR_KEYBOARD` short-circuits both directions (`T027`): forcing
+        // legacy skips the push, so the editor receives exactly what a terminal
+        // without the protocol sends, which is the only way to exercise the
+        // degradation path on hardware that has the protocol.
+        let forced = KeyboardProtocol::forced();
+        let negotiated = match forced {
+            Some(KeyboardProtocol::Legacy) => false,
+            Some(KeyboardProtocol::Kitty) => true,
+            None => config.keyboard_enhancement && supports_keyboard_enhancement().unwrap_or(false),
+        };
+        let keyboard = if negotiated {
+            execute!(
+                out,
+                PushKeyboardEnhancementFlags(
+                    // The three an editor needs, and no more.
+                    //   DISAMBIGUATE_ESCAPE_CODES — a bare `esc` stops being
+                    //     ambiguous with the start of a sequence, which is what
+                    //     makes a vim grammar's mode exit instant instead of
+                    //     timeout-driven.
+                    //   REPORT_EVENT_TYPES — press/repeat/release, so held keys
+                    //     can be distinguished from autorepeat.
+                    //   REPORT_ALTERNATE_KEYS — the base layout's key alongside
+                    //     the shifted one, for non-US layouts.
+                    // REPORT_ALL_KEYS_AS_ESCAPE_CODES is left off deliberately:
+                    // it routes plain text input through escape sequences too,
+                    // which buys nothing here and breaks IME and paste on some
+                    // emulators.
+                    KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                        | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+                        | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                )
+            )?;
+            mark(KITTY);
+            KeyboardProtocol::Kitty
+        } else {
+            KeyboardProtocol::Legacy
+        };
 
         let raw = raw::Raw::new(io::stdout())?;
 
@@ -426,8 +515,8 @@ impl Drop for Term {
 #[cfg(test)]
 mod tests {
     use super::{
-        ALT_SCREEN, Capabilities, ENTERED, KITTY, KeyboardProtocol, MOUSE, Ordering, RAW_MODE,
-        TermConfig, TermError, mark, restore_entered,
+        ALT_SCREEN, Capabilities, ENTERED, KEYBOARD_ENV, KITTY, KeyboardProtocol, MOUSE, Ordering,
+        RAW_MODE, TermConfig, TermError, mark, restore_entered,
     };
 
     /// The restore bookkeeping, exercised without a terminal.
@@ -501,6 +590,47 @@ mod tests {
             mouse: false,
         };
         assert_eq!(caps.keyboard, KeyboardProtocol::Legacy);
+    }
+
+    #[test]
+    fn the_override_forces_either_direction_and_ignores_the_rest() {
+        // `T027`. Forcing legacy is what makes `CP-3`'s *"then on the
+        // degradation terminal"* runnable on a machine with one good terminal;
+        // forcing kitty is for an emulator whose query answers badly.
+        for value in ["legacy", "LEGACY", " legacy ", "0", "off", "false", "none"] {
+            assert_eq!(
+                KeyboardProtocol::from_env_value(Some(value)),
+                Some(KeyboardProtocol::Legacy),
+                "{value:?}"
+            );
+        }
+        for value in ["kitty", "Kitty", "1", "on", "true", "force"] {
+            assert_eq!(
+                KeyboardProtocol::from_env_value(Some(value)),
+                Some(KeyboardProtocol::Kitty),
+                "{value:?}"
+            );
+        }
+        // Unset, empty and unrecognised all leave the query in charge. Setup is
+        // the wrong place to refuse: there is nowhere to report to yet, and a
+        // typo must not stop the editor from starting.
+        for value in [
+            None,
+            Some(""),
+            Some("  "),
+            Some("yes"),
+            Some("2"),
+            Some("k"),
+        ] {
+            assert_eq!(KeyboardProtocol::from_env_value(value), None, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn the_override_is_read_from_one_name() {
+        // Named in the crate docs and in `T027`'s report; a rename that missed
+        // one of them would be a documented variable nothing reads.
+        assert_eq!(KEYBOARD_ENV, "PHOSPHOR_KEYBOARD");
     }
 
     #[test]

@@ -33,20 +33,30 @@
 //! [`Report::deferred`], so an unbuilt surface is visible to the host instead of
 //! silently blank. The table, checked against `docs/TASKS.md` in this session:
 //!
-//! | node | widget | task |
-//! |---|---|---|
-//! | `tab-bar` | `TabBar` | `T089` |
-//! | `gutter` | `GutterBar` | `T031` |
-//! | `virtual-text` | `VirtualText` | `T032` |
-//! | `picker` | `Picker` | `T045` |
-//! | `diff` | `DiffBody` | `T063` |
-//! | `question` | `QuestionBody` | `T059` |
-//! | `transcript` | `TranscriptPane` | `T054` |
-//! | `prompt` | `PromptLine` | `T058` |
-//! | `key-hints` | `KeymapFooter` / `HelpGrid` | `T034` / `T086` |
-//! | `completion` | the passive float | `T038` |
-//! | `signature` | with completion at S4 | *no task id of its own* |
-//! | `watch` | `WatchOverlay` | `T076` |
+//! | node | widget | module | task |
+//! |---|---|---|---|
+//! | `tab-bar` | `TabBar` | — | `T089` |
+//! | `gutter` | `GutterBar` | [`crate::gutter`] | `T031` |
+//! | `virtual-text` | `VirtualText` | [`crate::virtual_text`] | `T032` |
+//! | `picker` | `Picker` | — | `T045` |
+//! | `diff` | `DiffBody` | — | `T063` |
+//! | `question` | `QuestionBody` | — | `T059` |
+//! | `transcript` | `TranscriptPane` | — | `T054` |
+//! | `prompt` | `PromptLine` | — | `T058` |
+//! | `key-hints` | `KeymapFooter` / `HelpGrid` | [`crate::key_hints`] | `T034` / `T086` |
+//! | `completion` | the passive float | [`crate::float`] | `T038` |
+//! | `signature` | with completion at S4 | [`crate::float`] | `T039` |
+//! | `watch` | `WatchOverlay` | — | `T076` |
+//!
+//! **The five kinds Window D builds have an arm of their own**, in this table's
+//! order, each still deferring — the seam exists so that five widget tasks land
+//! in five places instead of colliding in one shared arm. The seven with no
+//! module named yet stay grouped in a single arm, and split the same way when
+//! their phase arrives.
+//!
+//! `completion` and `signature` get no new module: the completion list *is* a
+//! float in the passive mood, which `T038` adds to [`crate::float`], and `T039`
+//! renders signature help through the same chrome.
 //!
 //! `key-hints` is the one that already half-exists: at
 //! [`Density::Footer`] inside a float it renders through
@@ -409,17 +419,109 @@ impl Ctx<'_> {
             }
 
             // -- not drawn yet; see the table in the module docs ---------------
+            //
+            // One arm per kind Window D builds, in the table's order. Every one
+            // of them defers exactly as the combined arm did — the split buys
+            // five separate places for five widget tasks to land, and nothing
+            // else. Whoever builds the widget replaces its own line here.
+
+            // `T031`, drawn by `crate::gutter`. The marks arrive already
+            // resolved, through the same `Resources` door `Node::Buffer` uses;
+            // the editor is asked for nothing but its viewport, so a host that
+            // has no editor behind the id still gets a column, from the top.
+            // §8's degraded form is not reachable from here — the tree carries
+            // no terminal capability, and adding a prop is `spine`'s call.
+            Node::Gutter { buffer } => {
+                let top_row = self
+                    .interp
+                    .resources
+                    .editor(*buffer)
+                    .map_or(0, |editor| crate::buffer_view::viewport_of(editor).top_row);
+                crate::gutter::GutterBar::new(self.interp.resources.state_marks(*buffer), theme)
+                    .top_row(top_row)
+                    .render(area, buf);
+            }
+
+            // `T032`, drawn by `crate::virtual_text`. The node carries an
+            // owner and its content and **no anchor**, so this is the
+            // standalone half of the primitive: a `┊` row in whatever area
+            // composition gave it. The half that hangs a row off a line lives
+            // in the buffer's own row stream (`virtual_text::install`), which
+            // is where `T081` legislated it has to be — a `Node::Buffer` draws
+            // those, and it draws the same rail.
+            Node::VirtualText { content, .. } => {
+                // Local to this arm on purpose: `interpret.rs` is `spine`'s
+                // file and `T032` owns exactly this arm of it. Flattens the
+                // content the way `footer_hints` flattens a footer — the tree
+                // says its colours in tones, and this is where they resolve.
+                fn runs(ctx: &Ctx<'_>, node: &Node, out: &mut Vec<crate::virtual_text::Run>) {
+                    match node {
+                        Node::Label {
+                            text,
+                            tone,
+                            emphasis,
+                        } => out.push(crate::virtual_text::Run::new(
+                            text.clone(),
+                            ctx.style(*tone, *emphasis),
+                        )),
+                        Node::Glyph { glyph, tone } => out.push(crate::virtual_text::Run::new(
+                            glyph_str(*glyph),
+                            Style::new().fg(ctx.colour(*tone)),
+                        )),
+                        Node::Spacer { cells } => out.push(crate::virtual_text::Run::new(
+                            " ".repeat(cells_to_u16(*cells) as usize),
+                            Style::new(),
+                        )),
+                        Node::Line { children } => {
+                            for child in children {
+                                runs(ctx, child.node(), out);
+                            }
+                        }
+                        // A `spans` row is already runs; several of them
+                        // flatten onto the one row a virtual row is.
+                        Node::Spans { rows } => {
+                            for row in rows {
+                                for run in &row.runs {
+                                    out.push(crate::virtual_text::Run::new(
+                                        run.text.clone(),
+                                        ctx.style(run.tone, run.emphasis),
+                                    ));
+                                }
+                            }
+                        }
+                        Node::Empty {} | Node::Spring {} => {}
+                        other => ctx.defer(other.tag()),
+                    }
+                }
+                let mut out = Vec::new();
+                runs(self, content.node(), &mut out);
+                crate::virtual_text::VirtualText::new(&out, theme).render(area, buf);
+            }
+
+            // `T034` / `T086`, drawn by `crate::key_hints`: one widget, three
+            // densities. `Density::Footer` *inside* a float still goes through
+            // `footer_hints` and the float's own chrome; this arm is the same
+            // hints anywhere else — a leader strip (`3c`), a `:help` body
+            // (`6d`), or a footer row in a surface that is not a float.
+            Node::KeyHints { density, hints } => {
+                crate::key_hints::KeyHints::new(hints, *density, theme).render(area, buf);
+            }
+
+            // `T038`, into `crate::float` — the passive mood, not a module of
+            // its own.
+            Node::Completion {} => self.defer(node.tag()),
+
+            // `T039`, into `crate::float` alongside the completion list.
+            Node::Signature {} => self.defer(node.tag()),
+
+            // Deferred past Window D. Grouped, and split one kind at a time the
+            // way the five above were, as each phase arrives.
             Node::TabBar { .. }
-            | Node::Gutter { .. }
-            | Node::VirtualText { .. }
             | Node::Picker { .. }
             | Node::Diff { .. }
             | Node::Question { .. }
             | Node::Transcript { .. }
             | Node::Prompt { .. }
-            | Node::KeyHints { .. }
-            | Node::Completion {}
-            | Node::Signature {}
             | Node::Watch { .. } => self.defer(node.tag()),
         }
     }
@@ -710,6 +812,16 @@ impl Ctx<'_> {
             // A buffer in a float body is the whole area it is given; the float
             // clamps this to the screen.
             Node::Buffer { .. } => u16::MAX,
+            // `T086`: the `:help` body is a keymap surface, so a float over one
+            // has to be able to ask how tall it is or it collapses to chrome.
+            // `natural_height` is the width-free answer this signature can take
+            // — exact at `Density::Help` and `Density::Footer`, whose row counts
+            // do not depend on width, and the widest packing at `Density::Grid`,
+            // which is composed into a sized slot rather than a float body
+            // (`key_hints.rs` records the seam).
+            Node::KeyHints { density, hints } => {
+                crate::key_hints::KeyHints::new(hints, *density, self.theme()).natural_height()
+            }
             _ => 0,
         }
     }

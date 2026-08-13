@@ -24,7 +24,7 @@ Set Width 1228
 Set Height 700
 
 Hide
-Type "phosphor --float informational ../crates/phosphor-core/src/lib.rs"
+Type "PHOSPHOR_RUNTIME=../runtime phosphor --float informational ../crates/phosphor-core/src/lib.rs"
 Enter
 Show
 Wait+Screen@10s /(?m)^ (NORMAL|INSERT|VISUAL|PAUSED|N|I|V|P)\b/

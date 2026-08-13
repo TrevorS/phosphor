@@ -10,3 +10,5 @@
 pub mod cell_style;
 // PHOSPHOR PATCH 6 — the wrap engine behind `VisualRow::Wrapped`.
 pub(crate) mod soft_wrap;
+// PHOSPHOR PATCH 8 — the placement rule behind `VisualRow::Virtual`.
+pub mod virtual_text;

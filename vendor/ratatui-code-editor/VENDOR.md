@@ -363,6 +363,69 @@ this crate renders exactly as it did.
 
 ---
 
+### 8 · Virtual text, as a variant of the row stream
+
+**Files:** `src/phosphor/virtual_text.rs` (**new**, the types and the placement rule),
+`src/phosphor/mod.rs` (one `mod`), `src/types.rs` (one `VisualRow` variant, one `is_changed`
+arm), `src/view.rs` (one `use`, two fields, four accessors, one private `interleave_virtual`,
+two one-line calls in `rebuild`, four match arms), `src/editor.rs` (one `use`, six methods, one
+loop inside `soft_wrap_row_step`), `src/render.rs` (one constant, one style, one match arm).
+**Upstreamable:** no. Virtual text is a phosphor concept end to end — the `┊` rail is Design
+Language §2's glyph and the owner tag is a `RegionId`. Local, permanently.
+
+`T032`'s primitive: `┊`-prefixed rows owned by a region id, indented to the code column, shared
+by threads (`3a`), watches (`4b`), diagnostics (`6b`) and `T035`'s once-per-session unknown-key
+hint (`8e`). Four consumers, one row type.
+
+**Patch 6 wrote this patch's instruction down before it existed** and it is followed literally:
+a virtual row is a variant *inside* `VisualRow`, never a layer above it, because row↔line
+mapping, cursor placement, click targeting and virtual-text placement all read `View::rows`.
+The arms that section named — `line_for_visual_row`, `visual_row_for_line`,
+`visual_row_for_position`, `row_span`, `prev_line`, `next_line`, `is_changed` and the renderer's
+match — are exactly the arms this patch adds.
+
+```rust
+VisualRow::Virtual { index, indent }
+```
+
+**It carries no `line_idx`, and that is the acceptance criterion.** A virtual row is not a line:
+it prints no number, `line_for_visual_row` and `row_span` answer `None` for it, and it owns no
+char span. So inserting one shifts nothing about the numbering of the rows below it, no column
+resolves to it, and a click on one produces no cursor. It occupies a **visual row**, which is
+why `Editor::virtual_line_at` exists — anything indexed by visual row (the state column,
+`T031`'s gutter) has to skip these, the same way it skips `↪` continuations.
+
+**The anchor is a position, not a line, and that is what makes wrapped lines work.** A
+`VirtualLine` names `(line_idx, col)`; `virtual_text::apply` runs *after* `soft_wrap::apply` and
+resolves the anchor by the same rule `View::visual_row_for_position` uses — the first segment
+whose `end_col` is past the column, or the line's last segment when the column is past its end.
+The `indent` the row inherits is that segment's own text start: 0 under a whole line or a first
+segment, `CONTINUATION_PREFIX` under a `↪` continuation, which is what Design Language §3's
+*"indents to code column"* means on a row whose code column moved.
+
+**One arm was load-bearing and would have been easy to miss.** A row anchored to an early
+segment sits *between* the segments of its own line, and `View::visual_row_for_position` walked
+the run with a `_ if offset > first => break`. Without a `Virtual` arm that skips instead, every
+column past the first virtual row resolved to the wrong segment — precisely the desync patch 6
+warned about, reachable only once a virtual row existed to trigger it. There is a test for it in
+`crates/phosphor-ui/src/virtual_text.rs`.
+
+**Anchors are not maintained here.** A line naming a position the stream does not show — inside
+a collapsed fold, or past the end of the buffer — is dropped rather than clamped: a thread that
+scrolled out of the code it hangs from is invisible, not mispositioned. Re-installing the list
+when anchors move is the host's job (`T042`/`T043`).
+
+**Styles arrive resolved.** A `VirtualRun` is `(String, Style)`; the fork has no palette and
+must not grow one. The single exception is the rail glyph itself, drawn from a `virtual_rail`
+theme key through the same `set_theme_key` seam patch 7 added, falling back to `DarkGray` so a
+standalone build still renders. `set_virtual_text_visible` hides the rows without discarding
+them, which is what phosphor's `set-virtual-text-visible` Action needs.
+
+**`soft_wrap_row_step` steps over them.** Vertical motion on a wrapped line with a thread under
+it would otherwise stall on a row that holds no cursor.
+
+---
+
 ## Known divergence between upstream and what we need — *not yet patched*
 
 Recorded here so the next person reading `vendor-diff` knows what is coming, from the `T008`
@@ -379,11 +442,10 @@ spike ([SPIKES.md](../../docs/SPIKES.md)):
   (`set_left_code_padding` plus an inset `Rect`, and phosphor overpaints the state bar and the
   `~` rows), but the line-number style and the digit floor are now theme-driven rather than
   literals.
-- **Virtual text is absent, but `VisualRow` is the hook** — the renderer iterates visual rows,
-  not source lines, and fold separators already insert non-source rows. An enum arm. Patch 6 is
-  the worked example of adding one: `line_for_visual_row`, `visual_row_for_line`,
-  `visual_row_for_position`, `row_span`, `prev_line`, `next_line`, `is_changed` and the
-  renderer's match are the arms `T032` will have to add too.
+- ~~**Virtual text is absent, but `VisualRow` is the hook**~~ — **closed by patch 8.**
+  `VisualRow::Virtual` is a variant of the row stream, and the arms patch 6 predicted
+  (`line_for_visual_row`, `visual_row_for_position`, `row_span`, `is_changed` and the renderer's
+  match) are the arms it added.
 - **`mod diff` is private and the diff is a mode of the `Editor`, not a component.** `DiffBody`
   (`T063`) is built on `similar` instead.
 - **Upstream's `Action` trait collides by name with phosphor's `Action` enum.** Cosmetic; worth

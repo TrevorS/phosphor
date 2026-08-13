@@ -73,6 +73,20 @@ pub(crate) enum VisualRow {
         is_added: bool,
         orig_line_idx: Option<usize>,
     },
+    /// PHOSPHOR PATCH 8 — a `┊` row hanging under the row that shows its
+    /// anchor. Threads, watches, diagnostics and hints all render as this.
+    ///
+    /// **It carries no `line_idx`, deliberately.** A virtual row is not a
+    /// line: it prints no line number, resolves to no source line, and owns
+    /// no char span, so inserting one shifts nothing about the numbering of
+    /// the rows below it. See `crate::phosphor::virtual_text`.
+    Virtual {
+        /// Which of the editor's virtual lines this row draws.
+        index: usize,
+        /// Cells of indent before the `┊`, inherited from the anchor row's
+        /// own text start: 0 under a whole line, 2 under a `↪` continuation.
+        indent: usize,
+    },
 }
 
 impl VisualRow {
@@ -83,6 +97,9 @@ impl VisualRow {
             VisualRow::GhostDeleted { .. } => true,
             // PHOSPHOR PATCH 6
             VisualRow::Wrapped { is_added, .. } => *is_added,
+            // PHOSPHOR PATCH 8 — a virtual row is not part of the buffer, so
+            // it is never a change to it. It must not pull diff context in.
+            VisualRow::Virtual { .. } => false,
         }
     }
 }

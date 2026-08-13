@@ -1,0 +1,11 @@
+{
+  "name": "retry-fixture",
+  "description": "V006 fixture: JSON (T037's first-class twelve).",
+  "policy": {
+    "maxAttempts": 4,
+    "baseDelayMs": 50,
+    "maxDelayMs": 2000
+  },
+  "files": ["src/retry.rs", "src/fetch.rs"],
+  "tags": ["backoff", "jitter", "review-block"]
+}

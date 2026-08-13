@@ -19,6 +19,11 @@ const FOLD_CLOSED: &str = "▸";
 const FOLD_ELIDED: &str = "⋯";
 const WHITESPACE_MARK: &str = "·";
 
+// PHOSPHOR PATCH 8 — §2's `┊` virtual-margin rail, plus the space after it.
+// Two cells, the same budget `↪ ` spends, so a virtual row and a continuation
+// row start their text in the same column.
+const VIRTUAL_RAIL: &str = "┊ ";
+
 /// Draws the main editor view in the provided area using the ratatui rendering buffer.
 ///
 /// Renders visible [`VisualRow`]s, including fold separators and deleted diff rows.
@@ -83,6 +88,13 @@ impl Widget for &Editor {
             .unwrap_or(Color::DarkGray));
         let trailing_whitespace_style = self.theme_style("trailing_whitespace");
 
+        // PHOSPHOR PATCH 8 — the `┊` rail. Its runs carry their own styles;
+        // only the rail glyph is the fork's to colour.
+        let virtual_rail_style = Style::default().fg(self
+            .theme_style("virtual_rail")
+            .fg
+            .unwrap_or(Color::DarkGray));
+
         // PHOSPHOR PATCH 5 — §3's undercurl, which marks cannot carry. Resolved
         // once per frame, not once per cell: the answer cannot change mid-frame.
         let styled_spans = self.styled_spans();
@@ -115,6 +127,46 @@ impl Widget for &Editor {
                 let visible_text = text.chars().take(width).collect::<String>();
                 if text_x < area.right() {
                     buf.set_string(text_x, draw_y, &visible_text, fold_separator_style);
+                }
+            } else if let VisualRow::Virtual { index, indent } = &row {
+                // PHOSPHOR PATCH 8 — a `┊` row: the line-number column stays
+                // blank because a virtual row is not a line, and the rail
+                // starts at the anchor row's own text column (Design Language
+                // §3, "virtual text indents to code column"), which on a `↪`
+                // continuation is `indent` cells further in.
+                if self.show_line_numbers {
+                    buf.set_string(
+                        area.left(),
+                        draw_y,
+                        &format!("{:>width$}", " ", width = line_number_digits),
+                        line_number_style,
+                    );
+                }
+                let mut x = area.left() + (line_number_width + indent) as u16;
+                if x < area.right() {
+                    let (next, _) = buf.set_stringn(
+                        x,
+                        draw_y,
+                        VIRTUAL_RAIL,
+                        (area.right() - x) as usize,
+                        virtual_rail_style,
+                    );
+                    x = next.min(area.right());
+                }
+                if let Some(line) = self.virtual_lines().get(*index) {
+                    for run in &line.runs {
+                        if x >= area.right() {
+                            break;
+                        }
+                        let (next, _) = buf.set_stringn(
+                            x,
+                            draw_y,
+                            &run.text,
+                            (area.right() - x) as usize,
+                            run.style,
+                        );
+                        x = next.min(area.right());
+                    }
                 }
             } else {
                 let (line_idx, is_added, is_ghost, partner_line_idx) = match &row {

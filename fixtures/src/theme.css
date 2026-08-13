@@ -1,0 +1,16 @@
+/* fixtures/src/theme.css — CSS fixture (T037's first-class twelve). */
+
+:root {
+    --claude: #3ddc97;
+    --ground: #0c0f0c;
+}
+
+body {
+    background: var(--ground);
+    color: #c6cec6;
+    font-family: "Menlo", monospace;
+}
+
+.unseen {
+    color: var(--claude);
+}

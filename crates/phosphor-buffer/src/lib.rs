@@ -5,3 +5,5 @@
 //! (Q2, SPIKES.md T008). `phosphor-core` persists what this crate records.
 //!
 //! Owned by `surface`.
+
+pub mod undo;

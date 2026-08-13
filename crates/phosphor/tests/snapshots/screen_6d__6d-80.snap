@@ -1,0 +1,126 @@
+---
+source: crates/phosphor/tests/screen_6d.rs
+expression: frame.to_text(&buf)
+---
+screen 6d-80 · phosphor-dark · 80x24 cells
+  Every row is composed from runtime/keymaps.scm by role — the head, `i`,
+    and the noun — so the keys are whatever plays those roles today and the
+    words are the table's own. 6d writes "select inner unseen region"; the
+    shipped verbs say "visual inside unseen region".
+  Four of 6d's grammar rows name keys the shipped table does not bind, so
+    they are absent rather than drawn:
+    `sib` — `s` is *substitute character* in normal; the mark-seen operator
+      is not bound (T044/T049 give it something to mark).
+    `]u` / `[u` — no bracket navigation is bound; the capability exists
+      (`goto-sequence`, which `SPC u n` names) and the binding is spine's.
+    `:'<,'>c`, `:g/TODO/c` — no `:c` ex command and no `:g` (T058, T062).
+    `"ay ib`, `q:` — register-into-prompt and command history (T058).
+  6d draws its noun letters in you-blue and the sequences in claude green;
+    view::KeyHint carries no distinction, so every key draws in the claude
+    hue, as 3c draws the namespace. Flagged, not folded in.
+  6d's `nouns  u unseen region  h hunk …` header line is four objects on one
+    row. The objects are here, in the verbs; an inline label + pairs row is a
+    composed Spans row rather than a keymap surface, and composition is
+    runtime/'s (spine).
+  6d draws this as a full-width surface with `q close` in the statusline;
+    TASKS.md T086 and the Component Breakdown both call HelpGrid a Float
+    body, so it is drawn as one — centered at 120, docked at 80 (§11).
+  At 80 the docked float covers the statusline: interpret.rs hands the float
+    the whole screen rect, while 8d (and T084's own tests) dock it above the
+    statusline because the host passes the body rect. The tree cannot say
+    where a float may land; that is spine's, and it is in the report.
+  The agent nouns render here and resolve at T049 (Q8), so pressing one of
+    these sequences selects nothing yet.
+
+text
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │                                                                                │
+  1 │                                                                                │
+  2 │                                                                                │
+  3 │                                                                                │
+  4 │                                                                                │
+  5 │                                                                                │
+  6 │                                                                                │
+  7 │                                                                                │
+  8 │                                                                                │
+  9 │────────────────────────────────────────────────────────────────────────────────│
+ 10 │  :help agent-objects                                                           │
+ 11 │────────────────────────────────────────────────────────────────────────────────│
+ 12 │                                                                                │
+ 13 │  viu  visual inside unseen region                                              │
+ 14 │  vih  visual inside hunk                                                       │
+ 15 │  vit  visual inside thread                                                     │
+ 16 │  vib  visual inside review block                                               │
+ 17 │  diu  delete inside unseen region                                              │
+ 18 │  dih  delete inside hunk                                                       │
+ 19 │  dit  delete inside thread                                                     │
+ 20 │  dib  delete inside review block                                               │
+ 21 │                                                                                │
+ 22 │────────────────────────────────────────────────────────────────────────────────│
+ 23 │  q close                                                                       │
+
+fg
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  1 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  2 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  3 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  4 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  5 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  6 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  7 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  8 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  9 │oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo│
+ 10 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 11 │CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC│
+ 12 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 13 │hhaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 14 │hhaaahhjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 15 │hhaaahhjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 16 │hhaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 17 │hhaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 18 │hhaaahhjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 19 │hhaaahhjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 20 │hhaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 21 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 22 │CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC│
+ 23 │hhjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+
+bg
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │................................................................................│
+  1 │................................................................................│
+  2 │................................................................................│
+  3 │................................................................................│
+  4 │................................................................................│
+  5 │................................................................................│
+  6 │................................................................................│
+  7 │................................................................................│
+  8 │................................................................................│
+  9 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 10 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 11 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 12 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 13 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 14 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 15 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 16 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 17 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 18 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 19 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 20 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 21 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 22 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+ 23 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+
+legend
+  a  #3ddc97  actors.claude
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  l  #232823  neutrals.dimmed_under_float
+  o  #2a5c44  regions.anchor_undercurl = float.informational
+  x  #101410  float.body
+  C  #242a24  chrome.divider

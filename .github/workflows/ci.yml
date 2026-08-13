@@ -8,8 +8,11 @@
 # Every job calls a `just` recipe rather than inlining cargo invocations, so
 # "does CI pass" and "does `just <recipe>` pass locally" never drift apart.
 #
-# NOTE: this repo has no git remote yet, so none of this has executed on a
-# runner. Verified locally instead — see this phase's report.
+# This has run for real on GitHub's runners since shortly after T005 landed
+# (`gh workflow view ci.yml` — nine runs as of this comment, mostly green).
+# The `tapes-diff` job below is the one addition nothing has executed on a
+# runner yet — see its own comment and this phase's report for exactly what
+# was and wasn't verified.
 
 name: CI
 
@@ -61,6 +64,12 @@ jobs:
   test:
     name: cargo nextest run
     runs-on: ubuntu-latest
+    # This is where Tier 1 (docs/TASKS.md's three-tier table — the committed
+    # cell-grid snapshots T018/T034/etc. add via `insta`) actually gates: no
+    # `continue-on-error`, and `insta` panics on a real mismatch by default
+    # (verified against insta 1.48.0's own source this session — see V008's
+    # report for the exact call site). Contrast `tapes-diff` below, Tier 2,
+    # which is `continue-on-error: true` by construction.
     steps:
       - uses: actions/checkout@v7
       # cargo-nextest: per-test process isolation (SPIKES.md's hygiene table) —
@@ -117,3 +126,125 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+
+  # V008 — Tier 2 (VHS pixel diff). docs/TASKS.md's three-tier table is
+  # explicit that only Tier 1 (the `test` job above, via T018's committed
+  # snapshots) gates CI; Tier 2 is a change detector — "harness"'s own
+  # characteristic failure (TEAM.md) is letting pixel comparison across font
+  # rendering and vhs versions redden a correct build. `continue-on-error:
+  # true` on the *job* is what makes that structural rather than a matter of
+  # remembering it on a step: even a full job failure — a missing tool, a
+  # `vhs` capture crash, an install step that can't reach an exact pin —
+  # reports as a passing check and cannot fail the workflow run, so this job
+  # is structurally incapable of blocking merge even if someone later adds
+  # its name to a branch-protection required-checks list by mistake.
+  #
+  # Deliberately its own job, not a step tacked onto `test`: a flaky
+  # renderer failing mid-job must never take a passing Tier-1 run down with
+  # it (docs/TASKS.md's V008 acceptance line).
+  tapes-diff:
+    name: Tier 2 — VHS pixel diff (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      # Single source of truth for the pinned versions: read them out of
+      # tapes/check-versions.sh (V001) instead of a second copy here that can
+      # drift out of sync with the script that actually enforces them — the
+      # exact failure mode CLAUDE.md's "the tree wins, the document is the
+      # bug" rule exists to catch.
+      - name: Read pinned tool versions (tapes/check-versions.sh)
+        id: pins
+        run: |
+          set -euo pipefail
+          vhs_v=$(grep -oP 'REQUIRED_VHS="\K[^"]+' tapes/check-versions.sh)
+          ttyd_v=$(grep -oP 'REQUIRED_TTYD="\K[^"]+' tapes/check-versions.sh)
+          echo "vhs=${vhs_v}" >> "$GITHUB_OUTPUT"
+          echo "ttyd=${ttyd_v}" >> "$GITHUB_OUTPUT"
+
+      # vhs and ttyd both publish an exact-version Linux x86_64 binary on
+      # their GitHub releases (confirmed against the v0.11.0 / 1.7.7 release
+      # asset lists), so both install byte-pinned, matching
+      # tapes/check-versions.sh exactly.
+      - name: Install vhs (pinned)
+        run: |
+          set -euo pipefail
+          v="${{ steps.pins.outputs.vhs }}"
+          curl -fsSL -o /tmp/vhs.tar.gz \
+            "https://github.com/charmbracelet/vhs/releases/download/v${v}/vhs_${v}_Linux_x86_64.tar.gz"
+          tar -xzf /tmp/vhs.tar.gz -C /tmp
+          install -m 0755 "/tmp/vhs_${v}_Linux_x86_64/vhs" /usr/local/bin/vhs
+
+      - name: Install ttyd (pinned)
+        run: |
+          set -euo pipefail
+          v="${{ steps.pins.outputs.ttyd }}"
+          curl -fsSL -o /usr/local/bin/ttyd \
+            "https://github.com/tsl0922/ttyd/releases/download/${v}/ttyd.x86_64"
+          chmod +x /usr/local/bin/ttyd
+
+      # ffmpeg is the one pin this step cannot guarantee: neither Ubuntu's
+      # apt repo nor a static-build mirror publishes an on-demand pin as
+      # specific as tapes/check-versions.sh's patch version, so this installs
+      # whatever `apt-get` resolves. `just tapes-diff` will then correctly
+      # refuse to run tapes against the wrong ffmpeg (V001's version gate,
+      # working as designed) — a hard error this job reports and, per
+      # `continue-on-error` above, never blocks on. See this phase's report
+      # for what that means for how much real Tier-2 signal to expect here
+      # until someone closes this gap.
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Build phosphor (release) and put it on PATH
+        run: |
+          set -euo pipefail
+          cargo build --release --bin phosphor
+          mkdir -p /tmp/phosphor-bin
+          ln -sf "$PWD/target/release/phosphor" /tmp/phosphor-bin/phosphor
+          echo "/tmp/phosphor-bin" >> "$GITHUB_PATH"
+        env:
+          RUST_BACKTRACE: "1"
+
+      # V007's diff-tapes.sh already exits 0 for any number of pixel
+      # mismatches — those are findings, not failures, printed with a
+      # pointer to the diff image (see tapes/README.md's V007 section). A
+      # nonzero exit here means a genuine tool failure (missing binary, a
+      # `vhs` capture crash, a version mismatch from the ffmpeg step above),
+      # which is real signal worth a failed step — `continue-on-error` on
+      # the job is what stops that from blocking merge, not silencing it
+      # here.
+      - name: just tapes-diff
+        run: just tapes-diff 2>&1 | tee /tmp/tapes-diff.log
+
+      - name: Post diff summary
+        if: always()
+        run: |
+          {
+            echo "## Tier 2 — VHS pixel diff (change detector, does not block merge)"
+            echo
+            echo '```'
+            cat /tmp/tapes-diff.log 2>/dev/null || echo "(no output captured — see the job log above)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Uploaded unconditionally: a hard failure above is exactly when the
+      # partial artifacts/log are most useful for diagnosing why, and
+      # `if-no-files-found: ignore` means an empty _diffs/ (the common case
+      # — most runs match) costs nothing.
+      - name: Upload diff artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tapes-diff-${{ github.sha }}
+          path: |
+            tapes/artifacts/_diffs/
+            /tmp/tapes-diff.log
+          if-no-files-found: ignore
+          retention-days: 14

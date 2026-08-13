@@ -7,6 +7,8 @@ use crate::selection::{Selection, SelectionSnap};
 use crate::types::{CodeFoldingOptions, DiffOptions, HightlightCache, Theme, VisualRow, LineDiffCache};
 // PHOSPHOR PATCH 6 — the row-stream contract, and PATCH 7's marker glyphs.
 use crate::types::RowSpan;
+// PHOSPHOR PATCH 8 — the `┊` rows interleaved into that stream.
+use crate::phosphor::virtual_text::VirtualLine;
 use crate::utils;
 use crate::view::{View, ViewMode};
 use anyhow::{Result, anyhow};
@@ -940,9 +942,20 @@ impl Editor {
     pub fn soft_wrap_row_step(&self, delta: isize) -> Option<usize> {
         self.soft_wrap_width()?;
         let from = self.visual_row_for_cursor()?;
-        let to = from.checked_add_signed(delta)?;
+        let mut to = from.checked_add_signed(delta)?;
         if to >= self.visual_len_lines() {
             return None;
+        }
+        // PHOSPHOR PATCH 8 — a virtual row holds no cursor, so vertical motion
+        // passes over it rather than stalling on it. Stepping in the direction
+        // of travel is what keeps `j` on a row with a thread under it from
+        // being a no-op.
+        let step: isize = if delta < 0 { -1 } else { 1 };
+        while self.virtual_row_indent(to).is_some() {
+            to = to.checked_add_signed(step)?;
+            if to >= self.visual_len_lines() {
+                return None;
+            }
         }
         let span = self.row_span(from)?;
         let (line, col) = self.code.point(self.cursor);
@@ -951,6 +964,66 @@ impl Editor {
             .char_col_to_visual(line, col)
             .saturating_sub(self.code.char_col_to_visual(span.line_idx, span.start_col));
         self.cursor_at_visual_row_col(to, visual_col)
+    }
+
+    // ------------------------------------------------------------------
+    // PHOSPHOR PATCH 8 — virtual text. Rows in the same stream, so the four
+    // subsystems above cannot disagree with them about where a row is.
+    // ------------------------------------------------------------------
+
+    /// Replaces the `┊` rows hanging from this buffer, in draw order.
+    ///
+    /// Rebuilds the row stream when the list changes, and nothing else: it
+    /// does not move the viewport and does not touch the cursor. A row whose
+    /// anchor the stream does not show — inside a collapsed fold, or past the
+    /// end of the buffer — is simply not drawn.
+    pub fn set_virtual_lines(&mut self, lines: Vec<VirtualLine>) {
+        if self.view.set_virtual_lines(lines) {
+            self.rebuild_view();
+        }
+    }
+
+    /// Removes every `┊` row.
+    pub fn clear_virtual_lines(&mut self) {
+        self.set_virtual_lines(Vec::new());
+    }
+
+    /// The `┊` rows currently installed, drawn or not.
+    pub fn virtual_lines(&self) -> &[VirtualLine] {
+        self.view.virtual_lines()
+    }
+
+    /// Shows or hides every `┊` row without discarding the list.
+    pub fn set_virtual_text_visible(&mut self, visible: bool) {
+        if self.view.set_virtual_visible(visible) {
+            self.rebuild_view();
+        }
+    }
+
+    /// Whether the `┊` rows are drawn.
+    pub fn virtual_text_visible(&self) -> bool {
+        self.view.virtual_visible()
+    }
+
+    /// The virtual line a visual row draws, or `None` when the row is buffer
+    /// text. **The predicate every row-indexed column needs**: a state bar or
+    /// a gutter built per visual row has to leave these rows alone, because a
+    /// virtual row is not a line and marking one would be a lie about how many
+    /// there are.
+    pub fn virtual_line_at(&self, visual_row: usize) -> Option<&VirtualLine> {
+        match self.visual_row(visual_row)? {
+            VisualRow::Virtual { index, .. } => self.virtual_lines().get(index),
+            _ => None,
+        }
+    }
+
+    /// Cells of indent before the `┊` on a virtual row — 0 under a whole line,
+    /// 2 under a `↪` continuation. `None` when the row is not a virtual one.
+    pub fn virtual_row_indent(&self, visual_row: usize) -> Option<usize> {
+        match self.visual_row(visual_row)? {
+            VisualRow::Virtual { indent, .. } => Some(indent),
+            _ => None,
+        }
     }
 
     /// PHOSPHOR PATCH 7 — how many lines the collapsed fold starting on

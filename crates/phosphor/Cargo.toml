@@ -19,28 +19,19 @@ phosphor-term.workspace = true
 phosphor-ui.workspace = true
 phosphor-vcs.workspace = true
 ratatui.workspace = true
-# T090, and the whole reason this line exists: `editor_crossterm` — the
-# vendored core's own key/mouse handler, which S1 rides as its temporary input
-# path (TASKS.md's S1 preamble) — is behind the fork's `crossterm` feature, and
-# every other consumer takes the crate with `default-features = false`. So the
-# handler was never compiled, which is also why `toggle_fold_at_mouse` warned
-# dead in every build.
+# T026 turned the fork's `crossterm` feature back off. It was on for exactly one
+# reason — `editor_crossterm`, the vendored core's own key/mouse handler, which
+# `T090` rode as S1's temporary input path — and the input machine replaced it
+# outright rather than wrapping it (TASKS.md's T026 note; `main.rs`'s header).
+# Nothing in this binary reads an event through the fork any more, and the build
+# is what proves it: with the feature off, a surviving `Editor::input` call does
+# not compile.
 #
-# The feature is turned on HERE rather than in `phosphor-ui`'s manifest for two
-# reasons: that manifest is `surface`'s, and a widget crate has no business
-# reading events. Cargo unions features per build, so this edge is what puts
-# `Editor::input` / `Editor::mouse` on the type the whole workspace shares —
-# the binary is the only crate that calls them.
-#
-# It costs one already-present dependency and nothing else: the `crossterm`
-# feature is `dep:crossterm` alone (vendor/ratatui-code-editor/Cargo.toml), so
-# `arboard` stays out and `T003`'s headless-build guarantee is untouched.
-# `just vendor-build-headless` proves it.
-#
-# **This dependency is scaffolding.** `T026` replaces the handler with the real
-# input machine; deleting that task's predecessor means deleting these three
-# lines too.
-ratatui-code-editor = { workspace = true, features = ["crossterm"] }
+# The dependency itself stays, for two names the binary still uses: the fork's
+# `Undo`/`Redo` (`T029` takes them) and `Selection`, which `SelectRange` sets.
+# Both are default-features-off code, so this is the same edge every other
+# consumer has.
+ratatui-code-editor.workspace = true
 
 # `tests/screen_6b.rs` — the Tier-1 golden frame for `6b`, which needs
 # `phosphor-steel` (composes the tree) and `phosphor-ui` (draws it) at once.
@@ -55,6 +46,28 @@ ratatui-code-editor = { workspace = true, features = ["crossterm"] }
 [dev-dependencies]
 insta = { version = "1.48.0", default-features = false }
 ratatui-core.workspace = true
+
+# `benches/vm_invocations.rs` (T091) drives the shipping binary on a
+# pseudoterminal, which needs `openpt`/`grantpt`/`unlockpt`/`ptsname` and a
+# `TIOCSWINSZ`. `rustix` is the safe wrapper for all five and is already in the
+# tree — `crossterm` builds on it — so this turns two of its features on rather
+# than adding a crate. Safe matters here: the workspace denies `unsafe_code`
+# and a benchmark is not a reason to make an exception.
+#
+# Target-gated because a pty is a unix object; the bench's non-unix `main`
+# prints that it was skipped. Not in the workspace table: nothing else needs it
+# and `[workspace.dependencies]` is the shared floor, not a dumping ground.
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { version = "1.1.4", features = ["pty", "termios"] }
+
+# T091's measurement, alongside T079's. Same shape as that one — `harness =
+# false`, no libtest, no criterion, it prints the numbers it asserts — and the
+# same standing rule: `just bench` runs it, `just gate` does not, because a
+# number that moves with the machine has no business failing a build. What it
+# asserts is the structural half (flat versus climbing), which does not.
+[[bench]]
+harness = false
+name = "vm_invocations"
 
 [lints]
 workspace = true

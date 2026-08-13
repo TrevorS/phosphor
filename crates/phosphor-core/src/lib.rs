@@ -38,6 +38,8 @@
 //!    enumerates.
 
 pub mod action;
+pub mod input;
+pub mod journal;
 pub mod query;
 pub mod registry;
 pub mod request;
