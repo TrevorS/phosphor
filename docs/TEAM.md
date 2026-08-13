@@ -342,10 +342,10 @@ built on an unverified foundation.
 > `CP-3`'s mechanical half is green. **`CP-3`'s manual half is outstanding**, and `S4` does not
 > start until it passes.
 >
-> One bookkeeping gap, recorded rather than resolved: `TASKS.md`'s `CP-2` section carries no
-> **PASSED** mark and `TASKS.md:29` still reads *"`CP-2`'s manual half is outstanding"*, while
-> Window D demonstrably ran past it. Either the verdict was given and never written down or the
-> window started early; only Teej knows which, and a doc may not guess. **A checkpoint verdict is
+> That bookkeeping gap is closed. `TASKS.md` now carries `CP-2 · **PASSED**` and dates the verdict
+> to 2026-08-12, where it belonged all along: the manual half was run and answered in conversation,
+> and never written down, so this file and `TASKS.md` disagreed with the build for a whole window.
+> The rule the gap produced is worth more than the entry it fixed — **a checkpoint verdict is
 > written where the checkpoint is, or it did not happen.**
 >
 > `CP-1`'s manual half produced four rulings, three of which amend design docs. That is the

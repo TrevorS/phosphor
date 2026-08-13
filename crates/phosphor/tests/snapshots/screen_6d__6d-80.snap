@@ -7,14 +7,19 @@ screen 6d-80 · phosphor-dark · 80x24 cells
     and the noun — so the keys are whatever plays those roles today and the
     words are the table's own. 6d writes "select inner unseen region"; the
     shipped verbs say "visual inside unseen region".
-  Four of 6d's grammar rows name keys the shipped table does not bind, so
-    they are absent rather than drawn:
-    `sib` — `s` is *substitute character* in normal; the mark-seen operator
-      is not bound (T044/T049 give it something to mark).
-    `]u` / `[u` — no bracket navigation is bound; the capability exists
-      (`goto-sequence`, which `SPC u n` names) and the binding is spine's.
-    `:'<,'>c`, `:g/TODO/c` — no `:c` ex command and no `:g` (T058, T062).
-    `"ay ib`, `q:` — register-into-prompt and command history (T058).
+  Three of 6d's grammar rows are drawn now and were not when this frame was
+    first written; the notes below are what is true against the tree today,
+    not when the snapshot was first accepted:
+    `sib` is `gsib`. Teej ruled on 2026-08-12 that `s` stays vim's substitute
+      and mark-seen moves to `gs` (runtime/keymaps.scm binds it as an
+      operator), so 6d's own sentence is the thing that is wrong — recorded
+      as an amendment in docs/README.md, not folded into the .dc.html.
+    `]u` / `[u` are bound, to `goto-sequence` over unseen regions. They
+      resolve and decline by name until the store lands (T041/T049).
+    `:'<,'>c` parses: the ex line grew a range grammar, so the selection
+      range is read rather than swallowed into a command name. There is
+      still no `:c` command and no `:g` (T058, T062), so it declines.
+    `"ay ib`, `q:` — register-into-prompt and command history, still T058.
   6d draws its noun letters in you-blue and the sequences in claude green;
     view::KeyHint carries no distinction, so every key draws in the claude
     hue, as 3c draws the namespace. Flagged, not folded in.

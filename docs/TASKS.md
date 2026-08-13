@@ -26,9 +26,12 @@ parity test walks all 627 door checks end to end. (`208`/`624` until `S3` added
 `crates/phosphor-core/src/{action,query}.rs` — do not compute it by hand. All six prose citations
 of `208` are fixed, and `scripts/doc_claims.py` section 5 now recomputes both numbers and fails on
 a stale one, so this paragraph cannot go quietly wrong again.)
-`CP-2`'s **manual half is outstanding** — it is
-the checkpoint that asks whether the Steel layer is the editor or a config file with a Rust
-editor hiding behind it, and only Teej can answer that. Nothing in S3 starts until he does.
+`CP-2`'s **manual half passed** on 2026-08-12 — Teej ran the editor, exercised the REPL and the
+live rebind, and gave the verdict, which is what unblocked S3. It is the checkpoint that asks
+whether the Steel layer is the editor or a config file with a Rust editor hiding behind it.
+Recorded here late: the verdict was given in conversation and never written down, and Window D ran
+past a checkpoint this file still called outstanding. **A checkpoint verdict is written where the
+checkpoint is, or it did not happen** — that rule is the finding, not the verdict.
 
 The gate failed on its first run and the three findings are worth keeping, because none was on
 its own criterion list: no Tier-1 snapshot for `6b`; `T079`'s frame cache exercised by a
@@ -769,7 +772,7 @@ care here rather than at S5.
   > on two planted violations. What cannot be met until S5 is the criterion as written: `:arch`
   > is `T048`, and there is no store to query. `T048` ticks this.
 
-### ✋ CP-2 — Is the editor live?
+### ✋ CP-2 — Is the editor live? · **PASSED**
 
 **Run:** `cargo run` then `:steel` (or however the REPL is bound at this point)
 
@@ -1042,7 +1045,7 @@ CP-0 settled the shape: **the input machine is ours.**
   > `runtime/keymaps.scm:475` (`gs`), `:602`–`:608` (`]u` `[u` `]b` `[b`), `:1003`
   > (`c[omment]`). The frame did not move, so `insta` passed it. The notes are the bug.
 
-### ✋ CP-3 — Does it feel like an editor?
+### ✋ CP-3 — Does it feel like an editor? · **mechanical half green · manual half OUTSTANDING**
 
 The first checkpoint that is mostly about feel, and the only one where muscle memory is the
 instrument.
@@ -1660,7 +1663,7 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   *Done when:* `set-soft-wrap` toggles wrapping on the next frame from each of the three doors,
   and the flag and the verb read one piece of state rather than two. *Needs:* T081, T026
 
-- [ ] **T097 · The `open-help` arm in the host** 📌
+- [x] **T097 · The `open-help` arm in the host** 📌
   `open-help` is declared at `crates/phosphor-core/src/action.rs:1075` and
   `runtime/keymaps.scm:959` binds `:h[elp]` to it — and **`OpenHelp` has no arm in
   `crates/phosphor/src/main.rs`**, whose `ViewAction` arms are `Scroll`, `SetFold`, `FoldAll` and
@@ -1671,6 +1674,17 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   and is `spine`'s. `T086` cannot pass without it, which is why it sits on `T086`'s *Needs:*.
   *Done when:* `:help` in the running binary opens the float, and a pty test types
   `:help agent-objects` and reads the grid off the frame. *Needs:* T084, T026
+
+  > **Met.** `crates/phosphor/tests/loop_pty.rs` drives the real binary:
+  > `help_opens_the_grid_and_closes_on_q`, `help_narrows_to_the_agent_objects_topic`, and
+  > `a_repl_rebind_shows_up_in_the_help_grid` — the last one types a rebind at the REPL and reads
+  > it back out of the grid, which is what makes "from the live keymap" a claim rather than a
+  > hope. `:help <topic>` narrows three ways, all asked of the live table: a scope name, a role
+  > family, else a substring.
+  >
+  > **One limit, owed to `T086` rather than here:** a `Density::Help` body is clamped to the
+  > float's height and nothing scrolls one, so `:help normal` has more rows than it can show and
+  > stops. The bare `:help` draws an index for that reason.
 
 - [ ] **T098 · Honest refusals for the deliberately-deferred vim keys** 📌
   `q` `@` `m` `/` `?` `n` `N` are unbound in `runtime/keymaps.scm` — macros, marks and search are
