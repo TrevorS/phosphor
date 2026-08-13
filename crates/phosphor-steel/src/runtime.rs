@@ -65,6 +65,37 @@ impl core::fmt::Debug for Runtime {
     }
 }
 
+/// Create Steel's home directory before the VM asks for it.
+///
+/// `steel-core`'s `Engine::new` wants a home directory and **writes to stderr**
+/// when it cannot make one — `Unable to create steel home directory …`. That is
+/// not a fault it returns; it is a line on the terminal, and this program takes
+/// the terminal over. Design Language §8 makes a torn frame a P0, and
+/// `[workspace.lints.clippy] print_stderr = "warn"` exists so *our* code cannot
+/// do this; a dependency doing it during boot is the same defect arriving from
+/// outside.
+///
+/// It was found by CI rather than by us, which is the part worth recording: a
+/// GitHub runner has no `~/.local/share`, so `Engine::new` warned, and
+/// `the_door_prints_without_a_terminal` — whose entire point is that the CLI
+/// door writes nothing to stderr — failed on Linux while every local run on
+/// macOS passed, because macOS ships that directory.
+///
+/// The failure is ignored on purpose. If the directory cannot be created we are
+/// exactly where we were: `steel-core` warns, and nothing else breaks.
+fn ensure_steel_home() {
+    let home = std::env::var_os("STEEL_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("XDG_DATA_HOME").map(|data| PathBuf::from(data).join("steel")))
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share/steel"))
+        });
+
+    if let Some(home) = home {
+        let _ = std::fs::create_dir_all(home);
+    }
+}
+
 impl Runtime {
     /// Builds a VM, installs every capability, and runs the boot sequence.
     ///
@@ -74,6 +105,7 @@ impl Runtime {
     /// fault.
     #[must_use]
     pub fn boot(root: Option<&Path>, host: Arc<dyn Host>) -> Self {
+        ensure_steel_home();
         let mut engine = Engine::new();
         let receipts = ReceiptLog::new();
         install(&mut engine, &host, &receipts);

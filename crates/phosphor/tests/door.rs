@@ -44,6 +44,49 @@ fn scratch(name: &str) -> PathBuf {
     path
 }
 
+/// The door stays quiet on a machine that has never run anything.
+///
+/// This is [`the_door_prints_without_a_terminal`] with the one variable that
+/// test cannot see: a `HOME` with no `.local/share` in it. `steel-core`'s
+/// `Engine::new` wants a home directory and writes `Unable to create steel home
+/// directory …` **to stderr** when it cannot make one, and it cannot make one
+/// when the parent is missing too.
+///
+/// It reached CI before it reached us, which is the whole reason this test
+/// exists: macOS ships `~/.local/share`, so every local run passed, and a
+/// GitHub runner does not, so `the_door_prints_without_a_terminal` failed on
+/// Linux only. A test whose result depends on which developer ran it is not a
+/// test — so this one brings its own `HOME` and gets the same answer anywhere.
+///
+/// `XDG_DATA_HOME` and `STEEL_HOME` are cleared as well as `HOME` set, because
+/// either would send Steel somewhere that already exists and the probe would
+/// pass without proving anything.
+#[test]
+fn the_door_stays_quiet_on_a_home_that_has_never_run_anything() {
+    let home = scratch("empty-home");
+    let _ = fs::remove_dir_all(&home);
+    fs::create_dir_all(&home).expect("a fresh home");
+
+    let printed = phosphor()
+        .args(["--eval", "(+ 1 2)"])
+        .stdin(Stdio::null())
+        .env_remove("XDG_DATA_HOME")
+        .env_remove("STEEL_HOME")
+        .env("HOME", &home)
+        .output()
+        .expect("the binary runs");
+
+    let diagnostics = String::from_utf8_lossy(&printed.stderr).into_owned();
+    let _ = fs::remove_dir_all(&home);
+
+    assert!(
+        diagnostics.is_empty(),
+        "a fresh HOME made the door talk to stderr, which in the TUI is a torn \
+         frame (Design Language §8): {diagnostics:?}"
+    );
+    assert_eq!(String::from_utf8_lossy(&printed.stdout).trim(), "3");
+}
+
 #[test]
 fn the_door_prints_without_a_terminal() {
     // stdout is a file, stdin is closed, and nothing here is a tty. If the door
