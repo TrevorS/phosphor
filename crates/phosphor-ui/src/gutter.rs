@@ -250,8 +250,11 @@ pub enum Fill {
 ///
 /// **The one place a [`StateMark`] becomes something drawable**, both forms
 /// through the same match. Public because the column is drawn in two places —
-/// here and inside [`crate::buffer_view::BufferView`] — and one of them
-/// currently has a private copy of the hue lookup; see this task's report.
+/// here and inside [`crate::buffer_view::BufferView`], whose render calls this
+/// for its own column 1. It had a private copy of the hue lookup until `R9`
+/// (`docs/OPEN-QUESTIONS.md`) collapsed the two; the priority ladder that
+/// resolves a row's region set down to one [`StateMark`] stays here and was
+/// never duplicated.
 #[must_use]
 pub fn state_cell(mark: StateMark, theme: &Theme, fill: Fill) -> (&'static str, Style) {
     let ground = theme.neutrals.ground;
@@ -746,10 +749,12 @@ mod tests {
 
     /// The two paints agree, cell for cell.
     ///
-    /// [`crate::buffer_view::BufferView`] keeps a private hue lookup of its
-    /// own — a `StateMark` becomes a colour in two files today, which is one
-    /// too many. Until they are collapsed (see this task's report), this test
-    /// is what stops them drifting: change either and it fails.
+    /// **Kept after the collapse that made it unnecessary.** Both columns now
+    /// go through [`state_cell`], so agreement is structural rather than
+    /// something this test enforces — what it still catches is the next
+    /// divergence: a `BufferView` that starts styling column 1 itself, or a
+    /// second `Fill` chosen on one side only. It fails on either, and it costs
+    /// one buffer.
     #[test]
     fn the_column_agrees_with_the_one_inside_the_buffer_view() {
         let theme = theme();

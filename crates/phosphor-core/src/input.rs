@@ -81,32 +81,45 @@
 //!   [`key::Protocol::Legacy`] terminal needs, and [`Machine::legacy_chord`]
 //!   is the whole of it.
 //! * **`T028` — agent nouns.** The four nouns parse and no-op — silently, and
-//!   [`Machine::object_operand`] argues why against the alternative. `sib`
+//!   [`Machine::object_operand`] argues why against the alternative. `gsib`
 //!   needed one thing more than a noun: `6d`'s *"`s` composes like an
 //!   operator"* makes marking-seen an [`Operator`], which is what lets it take
-//!   an object at all. `T049` resolves the nouns by giving `text::Text` a
+//!   an object at all — on `gs`, not `s`, by Teej's ruling of 2026-08-12, since
+//!   `s` is vim's substitute and that habit carries. `T049` resolves the nouns
+//!   by giving `text::Text` a
 //!   neighbour that can answer a region query — the seam is
 //!   [`text::object_span`]'s signature, not this file.
 //! * **`T033` — the keymap in scheme.** Taken: `runtime/keymaps.scm` is the
 //!   whole keymap and the binary seeds an empty [`table::Table`].
 //!   [`table::Role`] is the vocabulary a scheme binding names and
-//!   [`table::Scope::name`] is the word it spells the scope with; `vim::table`
-//!   is transcribed, unwired, and waits to be deleted.
+//!   [`table::Scope::name`] is the word it spells the scope with. The seed
+//!   table that used to live in `input/vim.rs` was transcribed there and is
+//!   **deleted**: two keymaps, one of which the binary never loaded, is how a
+//!   test comes to prove a table nobody presses.
+//!
+//! # The next key is data, not a binding
+//!
+//! Three keys are followed by a keystroke the keymap must not see: `"` names a
+//! register, `f`/`F`/`t`/`T` name a character to find, and `r` names the
+//! character to write. That is one state ([`Awaiting`]) and one branch at the
+//! top of [`Machine::step`], and it is why [`crate::request::Motion`] stays a
+//! payload-free choice — **the character rides with the machine, not on the
+//! tag**, so the CLI's `--motion` flag and the MCP schema's enum are still a
+//! fixed set of names.
 //!
 //! Owned by `spine`.
 
 pub mod key;
 pub mod table;
 pub mod text;
-pub mod vim;
 
 use crate::action::{
     Action, AppAction, BufferAction, HistoryAction, InputAction, MotionAction, RegionAction,
     ViewAction,
 };
 use crate::request::{
-    EditMode, KeySeq, Motion, PaneRef, Position, RegisterName, ScrollRequest, SelectionKind, Span,
-    Target, TextObject,
+    CaseChange, EditMode, KeySeq, Motion, PaneRef, Position, RegisterName, ScrollRequest,
+    SelectionKind, Span, Target, TextObject,
 };
 
 use key::{Key, Mods, Protocol};
@@ -160,8 +173,12 @@ pub struct Machine {
     pending: Pending,
     /// `Some(inner)` between `i`/`a` and the object key — [`Scope::Object`].
     object: Option<bool>,
-    /// Set by `"`, cleared by the key that names the register.
-    awaiting_register: bool,
+    /// What the next key is data for, if it is data — set by `"`, `f` or `r`
+    /// and cleared by the key that answers.
+    awaiting: Option<Awaiting>,
+    /// The last `f`/`F`/`t`/`T` and the character it looked for, which is all
+    /// `;` and `,` are.
+    last_find: Option<(Motion, char)>,
     /// Where a visual selection started.
     anchor: Option<Position>,
     /// Keys of the command being typed, for `.`.
@@ -170,6 +187,23 @@ pub struct Machine {
     record_changed: bool,
     /// The last command that changed the buffer.
     last_change: Option<Vec<Key>>,
+}
+
+/// What the next keystroke means, when it does not mean a binding.
+///
+/// One state for the three keys that take a literal, so the branch that reads
+/// it is one branch. Every arm is left by exactly one keystroke: the key either
+/// types a character, or it does not and the pending command is cancelled —
+/// which is what makes `<esc>` after `f` do the obvious thing without an arm of
+/// its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Awaiting {
+    /// `"` — the next key names a register.
+    Register,
+    /// `f`, `F`, `t`, `T` — the next key is the character to find.
+    FindTarget(Motion),
+    /// `r` — the next key is the character to write.
+    ReplaceChar,
 }
 
 /// [`EditMode`] with a [`Default`], which the wire enum has no business having.
@@ -246,7 +280,16 @@ impl Machine {
         // A command is over when the machine is back in normal mode with
         // nothing pending. Only then is it worth repeating — and a command that
         // changed nothing is not a change to repeat.
-        if self.mode.get() == EditMode::Normal && self.pending.is_clear() && self.object.is_none() {
+        //
+        // **A key that is waiting for its literal is not "nothing pending"**,
+        // even though the count and the operator are clear: after the `r` of
+        // `ra` the mode is still normal, and finishing the command there would
+        // record `a` alone as the last change.
+        if self.mode.get() == EditMode::Normal
+            && self.pending.is_clear()
+            && self.object.is_none()
+            && self.awaiting.is_none()
+        {
             if self.record_changed {
                 self.last_change = Some(core::mem::take(&mut self.record));
             } else {
@@ -272,7 +315,7 @@ impl Machine {
             InputAction::CancelPending {} => {
                 self.pending = Pending::default();
                 self.object = None;
-                self.awaiting_register = false;
+                self.awaiting = None;
             }
             // Both are re-entries the host drives: it reads `last_change` or the
             // Action's own keys and feeds them back through `feed`.
@@ -296,15 +339,28 @@ impl Machine {
         text: &dyn Text,
         out: &mut Vec<Action>,
     ) {
-        if self.awaiting_register {
-            self.awaiting_register = false;
-            match pressed.typed() {
-                Some(name) => {
-                    let register = RegisterName(name.to_string());
+        if let Some(awaiting) = self.awaiting.take() {
+            let Some(character) = pressed.typed() else {
+                // A key that types nothing — `<esc>`, an arrow, a chord — is
+                // not a literal, and the half-typed command goes with it.
+                self.cancel(out);
+                return;
+            };
+            match awaiting {
+                Awaiting::Register => {
+                    let register = RegisterName(character.to_string());
                     self.pending.register = Some(register.clone());
                     out.push(Action::Input(InputAction::SelectRegister { register }));
                 }
-                None => self.cancel(out),
+                Awaiting::FindTarget(motion) => {
+                    // `;` and `,` are this state, remembered. The character is
+                    // stored before the motion runs, so a find that lands on
+                    // nothing is still repeatable.
+                    self.last_find = Some((motion, character));
+                    let count = self.pending.count();
+                    self.motion(motion, count, Some(character), text, out);
+                }
+                Awaiting::ReplaceChar => self.replace_char(character, text, out),
             }
             return;
         }
@@ -434,12 +490,38 @@ impl Machine {
     fn role(&mut self, role: Role, text: &dyn Text, out: &mut Vec<Action>) {
         let count = self.pending.count();
         match role {
-            Role::Motion(motion) => self.motion(motion, count, text, out),
+            // `f`, `F`, `t`, `T` — the destination is not known until the next
+            // key, so nothing is emitted and nothing is cleared: the count
+            // typed before the `f` still applies to `3fx`.
+            Role::Motion(motion) if text::is_find(motion) => {
+                self.awaiting = Some(Awaiting::FindTarget(motion));
+            }
+            // `;` and `,` — the last find, and the same find the other way.
+            Role::Motion(motion @ (Motion::RepeatFind | Motion::RepeatFindReverse)) => {
+                match self.last_find {
+                    Some((last, character)) => {
+                        let repeated = if motion == Motion::RepeatFindReverse {
+                            reversed(last)
+                        } else {
+                            last
+                        };
+                        self.motion(repeated, count, Some(character), text, out);
+                    }
+                    // Nothing to repeat. vim beeps; the pending command is
+                    // dropped, which is what the statusline needs to hear.
+                    None => self.cancel(out),
+                }
+            }
+            Role::Motion(motion) => self.motion(motion, count, None, text, out),
             Role::Goto(goto) => self.goto(goto, text, out),
             Role::Operator(operator) => self.operator(operator, text, out),
             Role::Fused { operator, motion } => {
                 self.pending.operator = Some(operator);
-                self.motion(motion, count, text, out);
+                if text::is_find(motion) {
+                    self.awaiting = Some(Awaiting::FindTarget(motion));
+                } else {
+                    self.motion(motion, count, None, text, out);
+                }
             }
             Role::Object { object, delimiter } => self.object_operand(object, delimiter, text, out),
             Role::Inner => self.object = Some(true),
@@ -477,7 +559,8 @@ impl Machine {
                 self.clear(out);
             }
             Role::Escape => self.escape(out),
-            Role::Register => self.awaiting_register = true,
+            Role::Register => self.awaiting = Some(Awaiting::Register),
+            Role::ReplaceChar => self.awaiting = Some(Awaiting::ReplaceChar),
             Role::Run(actions) => {
                 out.extend(actions);
                 self.clear(out);
@@ -487,14 +570,36 @@ impl Machine {
 
     /// A motion: the operand of a pending operator, an extension of a live
     /// selection, or a cursor move — in that order of precedence.
-    fn motion(&mut self, motion: Motion, count: u32, text: &dyn Text, out: &mut Vec<Action>) {
+    ///
+    /// `target` is the character `f`, `F`, `t` and `T` were given, and [`None`]
+    /// for every other motion.
+    fn motion(
+        &mut self,
+        motion: Motion,
+        count: u32,
+        target: Option<char>,
+        text: &dyn Text,
+        out: &mut Vec<Action>,
+    ) {
         if let Some(operator) = self.pending.operator {
-            match text::motion_span(text, text.cursor(), motion, count) {
+            match text::motion_span_with_target(text, text.cursor(), motion, count, target) {
                 Some((span, kind)) => self.operate(operator, span, kind, out),
-                // A motion with no span (a search with no search state) leaves
-                // the operator waiting rather than deleting something else.
+                // A motion with no span — a search with no search state, an
+                // `f` that found nothing — leaves the operator waiting rather
+                // than deleting something else.
                 None => self.cancel(out),
             }
+            return;
+        }
+        // **A find resolves here rather than at the applier.** `MoveCursor`
+        // carries a `Motion` and a count and no character, so a find would
+        // arrive at the host without the one thing it needs; the machine knows
+        // the destination already, and an absolute `SetCursor` is how it says
+        // so — the same path `gg` and `G` take, for the same reason.
+        if target.is_some() {
+            let position =
+                text::cursor_after_with_target(text, text.cursor(), motion, count, target);
+            self.jump(position, text, out);
             return;
         }
         if self.anchor.is_some() {
@@ -529,6 +634,17 @@ impl Machine {
             return;
         }
         let position = text::first_non_blank(text, line.clamp(1, text.lines().max(1)));
+        self.jump(position, text, out);
+    }
+
+    /// A move to a position the machine worked out itself.
+    ///
+    /// Two callers, and they are the two motions whose destination the *host*
+    /// cannot recompute from the Action alone: `gg`/`G`, whose count names a
+    /// line rather than a repetition, and the finds, whose character does not
+    /// ride on the tag. A live selection is extended in the same breath,
+    /// because `ExtendSelection` has the same missing argument.
+    fn jump(&mut self, position: Position, text: &dyn Text, out: &mut Vec<Action>) {
         if let Some(anchor) = self.anchor {
             out.push(Action::Motion(MotionAction::SelectRange {
                 span: span_between(anchor, position, text),
@@ -539,6 +655,35 @@ impl Machine {
             position,
             buffer: None,
         }));
+        self.clear(out);
+    }
+
+    /// `r{char}` — `count` characters under the cursor become one character.
+    ///
+    /// Refuses rather than truncates when the line is too short, which is
+    /// vim's rule: `5rx` at three characters from the end changes nothing at
+    /// all, and a partial replace would be an edit nobody asked for.
+    fn replace_char(&mut self, character: char, text: &dyn Text, out: &mut Vec<Action>) {
+        let count = self.pending.count();
+        let cursor = text.cursor();
+        let width = text
+            .line(cursor.line)
+            .map_or(0, |row| u32::try_from(row.chars().count()).unwrap_or(0));
+        if cursor.column.saturating_add(count) > width.saturating_add(1) {
+            self.cancel(out);
+            return;
+        }
+        out.push(Action::Buffer(BufferAction::Replace {
+            span: Span {
+                start: cursor,
+                end: Position {
+                    column: cursor.column + count,
+                    ..cursor
+                },
+            },
+            text: character.to_string().repeat(count as usize),
+        }));
+        out.push(Action::History(HistoryAction::CommitUndoGroup {}));
         self.clear(out);
     }
 
@@ -658,6 +803,18 @@ impl Machine {
             Operator::ToggleComment => out.push(Action::Buffer(BufferAction::ToggleComment {
                 target: Target::Selection {},
             })),
+            // `gU`, `gu`, `g~` — and `~`, which is the same operator fused with
+            // `l`. One capability, three words (`request::CaseChange`).
+            Operator::Upper | Operator::Lower | Operator::ToggleCase => {
+                out.push(Action::Buffer(BufferAction::SetCase {
+                    target: Target::Selection {},
+                    case: match operator {
+                        Operator::Upper => CaseChange::Upper,
+                        Operator::Lower => CaseChange::Lower,
+                        _ => CaseChange::Toggle,
+                    },
+                }));
+            }
             // `sib`, and `s` over any other operand. Nothing is yanked and
             // nothing is deleted: seen-state is not the buffer.
             Operator::MarkSeen => out.push(Action::Region(RegionAction::MarkSeen {
@@ -827,7 +984,7 @@ impl Machine {
             // Nothing to leave and nothing pending: vim beeps, and a stream
             // with an Action in it for that would be noise.
             EditMode::Normal => {
-                if !self.pending.is_clear() || self.object.is_some() {
+                if !self.pending.is_clear() || self.object.is_some() || self.awaiting.is_some() {
                     self.cancel(out);
                 }
             }
@@ -839,7 +996,7 @@ impl Machine {
         out.push(Action::Input(InputAction::CancelPending {}));
         self.pending = Pending::default();
         self.object = None;
-        self.awaiting_register = false;
+        self.awaiting = None;
         if self.mode.get() == EditMode::OperatorPending {
             self.set_mode(EditMode::Normal, out);
         }
@@ -954,7 +1111,19 @@ fn is_edit(action: &Action) -> bool {
                 | BufferAction::Indent { .. }
                 | BufferAction::JoinLines { .. }
                 | BufferAction::ToggleComment { .. }
+                | BufferAction::SetCase { .. }
                 | BufferAction::ApplyEdits { .. }
         )
     )
+}
+
+/// A find in the other direction — the whole of what `,` means.
+const fn reversed(motion: Motion) -> Motion {
+    match motion {
+        Motion::FindCharForward => Motion::FindCharBackward,
+        Motion::FindCharBackward => Motion::FindCharForward,
+        Motion::TillCharForward => Motion::TillCharBackward,
+        Motion::TillCharBackward => Motion::TillCharForward,
+        other => other,
+    }
 }

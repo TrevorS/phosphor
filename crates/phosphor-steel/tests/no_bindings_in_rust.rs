@@ -20,6 +20,10 @@
 //!    layer's canonicaliser and has to come back unchanged, and every row of
 //!    the shipped table has to already be in that form — otherwise a binding is
 //!    written that no keystroke can reach, and nothing else would notice.
+//!    Driven from the keys, that check only ever sees the canonical spelling,
+//!    so a fourth drives it from the **spellings a person writes**: `<C-K>`,
+//!    `<S-C-k>` and `<c-k>` are one chord, and the fold onto the one the
+//!    machine asks with is what makes all three reachable.
 //! 4. **Every ex command names a capability that exists.** `:write` that
 //!    decodes to nothing is worse than no `:write`.
 //!
@@ -30,28 +34,23 @@
 //! rule, and the adapter over the VM. What none of them may contain is an
 //! entry.
 //!
-//! # The one exception, and its demolition order
+//! # The exception that is gone
 //!
-//! `crates/phosphor-core/src/input/vim.rs` is `T026`'s seed table, and its own
-//! header says `T033` *"transcribes it into `runtime/keymaps.scm` … then
-//! deletes this file"*. It is transcribed. It is not deleted, because deleting
-//! it is an edit to `phosphor-core`'s input module, which this task does not
-//! own — so it is named here, and the test asserts the thing that matters
-//! instead: **nothing outside test code reaches it.** The binary seeds an empty
-//! [`Table`](phosphor_core::input::table::Table). When the file goes, so does
-//! the exception, and the check gets stricter by subtraction.
+//! This file used to exempt `crates/phosphor-core/src/input/vim.rs` by name —
+//! `T026`'s seed table, transcribed into `runtime/keymaps.scm` and unwired, but
+//! not deleted, because deleting it was an edit `T033` did not own. It is
+//! deleted now, so the exemption is gone with it and the scan is stricter by
+//! subtraction: there is no path in the tree that may bind a key in Rust.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use phosphor_core::input::key::{Code, Key, Mods, Named};
+use phosphor_core::input::key::{Code, Key, Mods, Named, notation_of, parse_seq};
 use phosphor_core::input::table::{Resolution, Scope};
+use phosphor_core::request::KeySeq;
 use phosphor_steel::host::{Detached, Host};
 use phosphor_steel::keymap::{self, Ex};
 use phosphor_steel::runtime::Runtime;
-
-/// The seed table, transcribed and unwired. See the module docs.
-const SEED: &str = "crates/phosphor-core/src/input/vim.rs";
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -140,7 +139,6 @@ fn outside_tests(path: &Path) -> Vec<(usize, String)> {
 fn no_rust_source_binds_a_key() {
     let repo = repo();
     let mut offences = Vec::new();
-    let mut seed_seen = false;
 
     for path in sources() {
         let relative = path
@@ -148,8 +146,6 @@ fn no_rust_source_binds_a_key() {
             .unwrap_or(&path)
             .display()
             .to_string();
-        let exempt = relative == SEED;
-        seed_seen |= exempt;
 
         for (line, text) in outside_tests(&path) {
             let trimmed = text.trim_start();
@@ -157,9 +153,6 @@ fn no_rust_source_binds_a_key() {
                 continue;
             }
             if !(text.contains(".bind(") || text.contains(".unbind(")) {
-                continue;
-            }
-            if exempt {
                 continue;
             }
             offences.push(format!("{relative}:{line}: {}", trimmed.trim_end()));
@@ -173,42 +166,6 @@ fn no_rust_source_binds_a_key() {
          it and which-key can read it.\n{}",
         offences.join("\n")
     );
-
-    // The exemption is only sound while it is unreachable. If the seed comes
-    // back, this is what says so.
-    assert!(
-        repo.join(SEED).is_file() == seed_seen,
-        "{SEED} moved — update this test's exemption or drop it"
-    );
-    if seed_seen {
-        let mut wired = Vec::new();
-        for path in sources() {
-            let relative = path
-                .strip_prefix(&repo)
-                .unwrap_or(&path)
-                .display()
-                .to_string();
-            if relative == SEED {
-                continue;
-            }
-            for (line, text) in outside_tests(&path) {
-                let trimmed = text.trim_start();
-                if trimmed.starts_with("//") || trimmed.starts_with("pub mod ") {
-                    continue;
-                }
-                if text.contains("vim::") {
-                    wired.push(format!("{relative}:{line}: {}", trimmed.trim_end()));
-                }
-            }
-        }
-        assert!(
-            wired.is_empty(),
-            "the seed table is wired back in. It is exempt from the scan above \
-             only because nothing reaches it; a caller makes it a Rust keymap \
-             again.\n{}",
-            wired.join("\n")
-        );
-    }
 }
 
 /// Every shipped binding resolves to something the machine can act on.
@@ -307,7 +264,7 @@ fn the_layer_spells_every_key_the_machine_can_produce() {
         let spelled = key.notation();
         assert_eq!(
             keymap::canonical(&mut runtime, &spelled),
-            Some(phosphor_core::request::KeySeq(spelled.clone())),
+            Some(KeySeq(spelled.clone())),
             "the layer does not spell {spelled:?} the way the machine does, so \
              a binding on it could never be reached"
         );
@@ -330,6 +287,107 @@ fn every_shipped_binding_is_spelled_the_way_a_keystroke_arrives() {
             entry.keys.0
         );
     }
+}
+
+/// **R12.** Every spelling of one chord folds onto the one the machine asks
+/// with.
+///
+/// The test above drives from the keys the decoder produces, so it can only
+/// ever see the *canonical* spelling — which is why it could not catch this:
+/// the layer copied a bracketed key verbatim, so `<C-K>`, `<S-C-k>` and
+/// `<c-k>` were three bindings, and `T027` made the machine always ask with
+/// `<C-S-k>`. Three keys nothing could ever press, and nothing red.
+///
+/// So this drives from the *spellings a person writes*. The right-hand side is
+/// never a string this test invented: it is a [`Key`] spelled by the machine's
+/// own [`notation_of`], which is the exact text `keymap::resolve` asks with.
+#[test]
+fn every_spelling_of_a_chord_folds_onto_the_one_the_machine_asks_with() {
+    let mut runtime = runtime();
+
+    let equivalents: &[(&[&str], Key)] = &[
+        // `T027`'s chord, in the five ways it gets written.
+        (
+            &["<C-S-k>", "<C-K>", "<S-C-k>", "<c-s-k>", "<c-K>"],
+            Key::new(Code::Char('k'), Mods::CTRL.with(Mods::SHIFT)),
+        ),
+        // …and the one it must stay distinguishable from.
+        (&["<C-k>", "<c-k>"], Key::new(Code::Char('k'), Mods::CTRL)),
+        // Order, on a key that was never a character. `M-` is vim's other
+        // spelling of alt.
+        (
+            &["<A-S-left>", "<S-A-left>", "<M-S-left>"],
+            Key::new(Code::Named(Named::Left), Mods::ALT.with(Mods::SHIFT)),
+        ),
+        // A named key's aliases and its case.
+        (
+            &["<esc>", "<Esc>", "<ESC>", "<escape>"],
+            Key::named(Named::Esc),
+        ),
+        (
+            &["<cr>", "<CR>", "<enter>", "<return>"],
+            Key::named(Named::Enter),
+        ),
+        (&["<f5>", "<F5>"], Key::named(Named::Function(5))),
+        // Shift folds into a plain character, so neither of these is bracketed
+        // once it has been read.
+        (&["<S-a>", "<s-a>", "a"], Key::char('a')),
+        (&["<S-A>", "A"], Key::char('A')),
+        (&["<lt>", "<LT>"], Key::char('<')),
+        (&["<w>", "w"], Key::char('w')),
+        // The leader, both ways `3c` and the machine spell it.
+        (&["SPC", "<space>", "<Space>"], Key::char(' ')),
+    ];
+
+    for (spellings, key) in equivalents {
+        let asked = notation_of(&[*key]);
+        for spelled in *spellings {
+            assert_eq!(
+                keymap::canonical(&mut runtime, spelled).as_ref(),
+                Some(&asked),
+                "the layer spells {spelled:?} differently from the machine, so \
+                 a binding written that way could never be reached"
+            );
+        }
+    }
+
+    // A bracketed word that names no key is **not** folded, and that is right
+    // rather than a gap: rust reads `<nope>` as the six characters it is, so
+    // verbatim already is the spelling the machine asks with.
+    let literal = parse_seq("<nope>").expect("a spelling this test wrote");
+    assert_eq!(literal.len(), 6);
+    assert_eq!(
+        keymap::canonical(&mut runtime, "<nope>"),
+        Some(notation_of(&literal))
+    );
+}
+
+/// A rebind written the way a person writes it reaches the key they pressed.
+///
+/// The consequence of the fold, at the REPL — which is where a spelling that
+/// is not the canonical one actually gets typed (`6b`).
+#[test]
+fn a_rebind_written_in_any_spelling_is_reachable() {
+    let mut runtime = runtime();
+    let chord = Key::new(Code::Char('k'), Mods::CTRL.with(Mods::SHIFT));
+    let asked = KeySeq(notation_of(&[chord]).0);
+
+    assert_eq!(
+        keymap::resolve_seq(&mut runtime, Scope::Normal, &asked),
+        Resolution::Unbound
+    );
+    let outcome = runtime.evaluate(r#"(keymap-set! "<C-K>" (key/motion "line-down") "down")"#);
+    assert!(
+        matches!(outcome, phosphor_core::action::Outcome::Done(_)),
+        "{outcome:?}"
+    );
+    assert!(
+        matches!(
+            keymap::resolve_seq(&mut runtime, Scope::Normal, &asked),
+            Resolution::Role(_)
+        ),
+        "a binding written `<C-K>` answers the `<C-S-k>` the machine asks with"
+    );
 }
 
 /// Every ex command names a capability that exists, with arguments it accepts.
@@ -389,11 +447,7 @@ fn the_leader_tree_is_the_six_rows_3c_draws() {
 
     // A group waits for its leaf; a leaf does not.
     assert_eq!(
-        keymap::resolve_seq(
-            &mut runtime,
-            Scope::Normal,
-            &phosphor_core::request::KeySeq("SPC c".to_owned())
-        ),
+        keymap::resolve_seq(&mut runtime, Scope::Normal, &KeySeq("SPC c".to_owned())),
         Resolution::Pending
     );
 }

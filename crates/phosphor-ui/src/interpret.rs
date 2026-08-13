@@ -25,43 +25,49 @@
 //! anything you could edit through: the host resolves ids to editors and hands
 //! them over by shared reference.
 //!
-//! # Primitives that do not exist yet
+//! # Which primitives exist, and which defer
 //!
 //! A node kind is a *protocol* commitment, made in one edit at `T078`; the
 //! widget behind it lands with its own phase. Rather than half-draw them, an
 //! arm with no widget draws **nothing** and records its tag in
 //! [`Report::deferred`], so an unbuilt surface is visible to the host instead of
-//! silently blank. The table, checked against `docs/TASKS.md` in this session:
+//! silently blank.
 //!
-//! | node | widget | module | task |
-//! |---|---|---|---|
-//! | `tab-bar` | `TabBar` | — | `T089` |
-//! | `gutter` | `GutterBar` | [`crate::gutter`] | `T031` |
-//! | `virtual-text` | `VirtualText` | [`crate::virtual_text`] | `T032` |
-//! | `picker` | `Picker` | — | `T045` |
-//! | `diff` | `DiffBody` | — | `T063` |
-//! | `question` | `QuestionBody` | — | `T059` |
-//! | `transcript` | `TranscriptPane` | — | `T054` |
-//! | `prompt` | `PromptLine` | — | `T058` |
-//! | `key-hints` | `KeymapFooter` / `HelpGrid` | [`crate::key_hints`] | `T034` / `T086` |
-//! | `completion` | the passive float | [`crate::float`] | `T038` |
-//! | `signature` | with completion at S4 | [`crate::float`] | `T039` |
-//! | `watch` | `WatchOverlay` | — | `T076` |
+//! **This list is checked by a test, because the last one was not.** It used to
+//! carry all twelve kinds with a *still deferring* sentence under it, and it
+//! kept saying that about `gutter`, `virtual-text` and `key-hints` for a whole
+//! window after their arms started drawing. What holds it to the tree now is
+//! `tests::the_deferred_set_is_exactly_the_kinds_named_here`, which draws one
+//! node of every row below and asserts the tags that come back, and draws the
+//! kinds that are *not* below and asserts none do. A widget that starts drawing
+//! reddens it, and the fix is to delete a row — one edit, next to the code.
 //!
-//! **The five kinds Window D builds have an arm of their own**, in this table's
-//! order, each still deferring — the seam exists so that five widget tasks land
-//! in five places instead of colliding in one shared arm. The seven with no
-//! module named yet stay grouped in a single arm, and split the same way when
-//! their phase arrives.
+//! | still deferred | widget | task |
+//! |---|---|---|
+//! | `tab-bar` | `TabBar` | `T089` |
+//! | `picker` | `Picker` | `T045` |
+//! | `diff` | `DiffBody` | `T063` |
+//! | `question` | `QuestionBody` | `T059` |
+//! | `transcript` | `TranscriptPane` | `T054` |
+//! | `prompt` | `PromptLine` | `T058` |
+//! | `completion` | the passive float, in [`crate::float`] | `T038` |
+//! | `signature` | with completion at S4, in [`crate::float`] | `T039` |
+//! | `watch` | `WatchOverlay` | `T076` |
+//!
+//! Every other kind draws. The three that arrived most recently are `gutter`
+//! ([`crate::gutter`], `T031`), `virtual-text` ([`crate::virtual_text`],
+//! `T032`) and `key-hints` ([`crate::key_hints`], `T034` / `T086`) — each in an
+//! arm of its own, which is what the split below bought: five widget tasks
+//! landing in five places instead of colliding in one shared arm. The rest stay
+//! grouped in a single arm and split the same way when their phase arrives.
 //!
 //! `completion` and `signature` get no new module: the completion list *is* a
 //! float in the passive mood, which `T038` adds to [`crate::float`], and `T039`
 //! renders signature help through the same chrome.
 //!
-//! `key-hints` is the one that already half-exists: at
-//! [`Density::Footer`] inside a float it renders through
-//! [`crate::float::FloatFooter`], which is built, so only the grid and help
-//! densities defer.
+//! [`Density::Footer`] *inside a float* is not this table's business either
+//! way — it renders through [`crate::float::FloatFooter`] and the float's own
+//! chrome, and always did.
 //!
 //! # Known gap, flagged not folded in
 //!
@@ -418,12 +424,13 @@ impl Ctx<'_> {
                     .render(area, buf);
             }
 
-            // -- not drawn yet; see the table in the module docs ---------------
+            // -- the five Window D kinds, one arm each -------------------------
             //
-            // One arm per kind Window D builds, in the table's order. Every one
-            // of them defers exactly as the combined arm did — the split buys
-            // five separate places for five widget tasks to land, and nothing
-            // else. Whoever builds the widget replaces its own line here.
+            // The split bought five separate places for five widget tasks to
+            // land instead of one shared arm they would collide in. Three have
+            // landed and draw; `completion` and `signature` still defer, and
+            // whoever builds one replaces its own line here and deletes its row
+            // from the module docs' table — which is a test, so it will say so.
 
             // `T031`, drawn by `crate::gutter`. The marks arrive already
             // resolved, through the same `Resources` door `Node::Buffer` uses;
@@ -1110,10 +1117,12 @@ mod tests {
     use crate::frame::FrameCache;
     use crate::theme::Theme;
     use phosphor_core::query::Revision;
-    use phosphor_core::request::{BufferId, PaneId, PaneKind};
+    use phosphor_core::request::{
+        AskId, BufferId, DiffMode, Grouping, PaneId, PaneKind, PromptKind, SourceId, WatchId,
+    };
     use phosphor_core::view::{
-        Axis, Child, Constraint, Emphasis, Float, FloatHeader, Glyph, Millis, Mood, Node, Run,
-        SessionState, Slot, SpanRow, Tone, Tree,
+        Axis, Child, Constraint, Density, DiffSource, Emphasis, Float, FloatHeader, Glyph, Millis,
+        Mood, Node, Run, SessionState, Slot, SpanRow, Tone, Tree,
     };
     use ratatui_core::buffer::Buffer;
     use ratatui_core::layout::Rect;
@@ -1517,7 +1526,7 @@ mod tests {
                 }],
             }),
             footer: Some(Child::new(Node::KeyHints {
-                density: phosphor_core::view::Density::Footer,
+                density: Density::Footer,
                 hints: vec![phosphor_core::view::KeyHint {
                     key: phosphor_core::request::KeySeq("↵".to_owned()),
                     verb: "open".to_owned(),
@@ -1545,6 +1554,81 @@ mod tests {
 
     // -- deferred primitives -------------------------------------------------
 
+    /// **The module docs' table, executed.**
+    ///
+    /// Two directions, because the stale version of that table was wrong in
+    /// only one of them: every kind it lists defers *and* every kind it does
+    /// not list draws. Land a widget and the second half fails; add a node kind
+    /// with no arm and the first half fails. Either way the fix is one row.
+    #[test]
+    fn the_deferred_set_is_exactly_the_kinds_named_here() {
+        // Payloads are the emptiest legal ones — this test is about which arm
+        // runs, and every one of these arms ignores its props entirely.
+        let deferred = [
+            Node::TabBar { tabs: Vec::new() },
+            Node::Picker {
+                source: SourceId("files".to_owned()),
+                filter: String::new(),
+                columns: Vec::new(),
+                preview: false,
+            },
+            Node::Diff {
+                source: DiffSource::Disk {
+                    buffer: BufferId(1),
+                },
+                mode: DiffMode::Unified,
+                grouping: Grouping::Flat,
+            },
+            Node::Question { ask: AskId(8) },
+            Node::Transcript {
+                follow: false,
+                folded: Vec::new(),
+            },
+            Node::Prompt {
+                prompt: PromptKind::Ex,
+                text: String::new(),
+                anchor: None,
+            },
+            Node::Completion {},
+            Node::Signature {},
+            Node::Watch { watch: WatchId(5) },
+        ];
+        for node in deferred {
+            let tag = node.tag();
+            let (_, report) = draw(&Tree::new(node));
+            assert_eq!(
+                report.deferred,
+                vec![tag],
+                "`{tag}` is in the module docs' table, so it must defer"
+            );
+        }
+
+        // The other half. `NoResources` hands back no editor and no marks, so
+        // these draw an empty column, an empty rail and an empty strip — which
+        // is drawing, and is what `deferred` distinguishes from it.
+        let drawn = [
+            Node::Gutter {
+                buffer: BufferId(1),
+            },
+            Node::VirtualText {
+                owner: None,
+                content: Child::new(label("hint", Tone::Meta)),
+            },
+            Node::KeyHints {
+                density: Density::Footer,
+                hints: Vec::new(),
+            },
+        ];
+        for node in drawn {
+            let tag = node.tag();
+            let (_, report) = draw(&Tree::new(node));
+            assert!(
+                report.deferred.is_empty(),
+                "`{tag}` draws, so the module docs' table must not list it: {report:?}"
+            );
+        }
+    }
+
     #[test]
     fn an_unbuilt_primitive_is_reported_not_silently_blank() {
         let tree = Tree::new(Node::split(
@@ -1565,7 +1649,7 @@ mod tests {
                 Slot::new(
                     Constraint::Cells { cells: 1 },
                     Node::Picker {
-                        source: phosphor_core::request::SourceId("files".to_owned()),
+                        source: SourceId("files".to_owned()),
                         filter: String::new(),
                         columns: Vec::new(),
                         preview: false,

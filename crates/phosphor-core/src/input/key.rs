@@ -415,9 +415,20 @@ pub fn parse(text: &str) -> Option<Key> {
 /// * anything else — one character.
 ///
 /// A run of ASCII spaces separates tokens and is never itself a key; `<space>`
-/// is. Answers [`None`] on an unclosed bracket or an unknown bracketed word,
-/// because a keymap entry nobody can press is a typo worth reporting rather
-/// than a binding worth keeping.
+/// is.
+///
+/// # `<` is a key, and this is what it cost to say so
+///
+/// A `<` that does not open a bracketed key **is the character** — `"<<"` is
+/// dedent twice, and `"<w"` is dedent a word. This module used to answer
+/// [`None`] to both, on the grounds that an unclosed bracket is a typo worth
+/// refusing, and the cost was not in keymaps at all: `Machine::last_change`
+/// round-trips the recorded keys through [`notation_of`] and back through here,
+/// so **`.` silently did nothing after any command starting with `<`**. A key
+/// that cannot be spelled is a worse defect than a typo that parses, so the
+/// bracketed reading is *attempted* and the character is what is left when it
+/// fails. `parse("<nope>")` is still [`None`] — six keys are not one — so a
+/// single-key spelling still refuses a word that names nothing.
 #[must_use]
 pub fn parse_seq(text: &str) -> Option<Vec<Key>> {
     let chars: Vec<char> = text.chars().collect();
@@ -427,10 +438,24 @@ pub fn parse_seq(text: &str) -> Option<Vec<Key>> {
         match chars[at] {
             ' ' => at += 1,
             '<' => {
-                let close = chars[at..].iter().position(|&c| c == '>')? + at;
-                let inside: String = chars[at + 1..close].iter().collect();
-                keys.push(parse_bracketed(&inside)?);
-                at = close + 1;
+                let bracketed = chars[at..]
+                    .iter()
+                    .position(|&c| c == '>')
+                    .map(|offset| offset + at)
+                    .and_then(|close| {
+                        let inside: String = chars[at + 1..close].iter().collect();
+                        Some((parse_bracketed(&inside)?, close))
+                    });
+                match bracketed {
+                    Some((key, close)) => {
+                        keys.push(key);
+                        at = close + 1;
+                    }
+                    None => {
+                        keys.push(Key::char('<'));
+                        at += 1;
+                    }
+                }
             }
             _ if chars[at..].starts_with(&['S', 'P', 'C']) => {
                 keys.push(Key::char(' '));
@@ -452,9 +477,47 @@ pub fn parse_key_seq(seq: &KeySeq) -> Option<Vec<Key>> {
 }
 
 /// The sequence back as one [`KeySeq`], for a receipt or a which-key row.
+///
+/// **The inverse of [`parse_seq`], and it checks that it is.** Concatenating
+/// what each key spells is right for every sequence but one: three keys that
+/// spell `S`, `P` and `C` concatenate to the leader, so `SPC<esc>` — which is
+/// what typing `S`, `P`, `C`, `<esc>` records — read back as two keys and `.`
+/// replayed the wrong command. So each key is appended, the accumulation is
+/// read back, and a key that would be misread is respelled in bracketed form
+/// (`<C>`), which cannot be: a bracket is consumed whole.
+///
+/// The check costs one parse per key of a sequence that is a handful of keys
+/// long, and it is what makes the round trip a property rather than a habit.
 #[must_use]
 pub fn notation_of(keys: &[Key]) -> KeySeq {
-    KeySeq(keys.iter().map(|key| key.notation()).collect())
+    let mut spelled = String::new();
+    for (at, key) in keys.iter().enumerate() {
+        let plain = key.notation();
+        spelled.push_str(&plain);
+        if parse_seq(&spelled).as_deref() != Some(&keys[..=at]) {
+            spelled.truncate(spelled.len() - plain.len());
+            spelled.push_str(&unambiguous(*key));
+        }
+    }
+    KeySeq(spelled)
+}
+
+/// A key spelled so that nothing before or after it can change its reading.
+///
+/// Everything with a modifier is already bracketed; a bare character is
+/// wrapped, and `<` gets vim's own name for itself.
+fn unambiguous(key: Key) -> String {
+    match key.code {
+        Code::Char('<') if key.mods.is_empty() => "<lt>".to_owned(),
+        _ => {
+            let plain = key.notation();
+            if plain.starts_with('<') {
+                plain
+            } else {
+                format!("<{plain}>")
+            }
+        }
+    }
 }
 
 /// The inside of a `<…>` token.
@@ -540,9 +603,116 @@ mod tests {
             parse_seq("<C-w>v"),
             Some(vec![Key::new(Code::Char('w'), Mods::CTRL), Key::char('v')])
         );
-        // Unclosed and unknown are refused rather than silently dropped.
-        assert_eq!(parse_seq("<C-w"), None);
-        assert_eq!(parse_seq("<nope>"), None);
+        // A `<` that opens nothing is the character — `<<` is dedent twice, and
+        // `.` after it has to be able to say so.
+        assert_eq!(parse_seq("<<"), Some(vec![Key::char('<'), Key::char('<')]));
+        assert_eq!(parse_seq("<w"), Some(vec![Key::char('<'), Key::char('w')]));
+        assert_eq!(parse_seq("<lt>"), Some(vec![Key::char('<')]));
+        // A single key is still refused when the word names nothing: six keys
+        // are not one, so a keymap typo is caught where one key was asked for.
+        assert_eq!(parse("<nope>"), None);
+        assert_eq!(parse("<C-w"), None);
+    }
+
+    /// **R4.** Every key the machine can spell survives `notation` → `parse`,
+    /// alone and in a sequence.
+    ///
+    /// Driven from the keys rather than from a list of spellings, because the
+    /// defect this replaces was a spelling nobody thought to write down:
+    /// `Machine::last_change` hands `notation_of` whatever was typed, and `.`
+    /// is `parse_seq` of that. One key that cannot make the trip is one command
+    /// `.` silently forgets.
+    #[test]
+    fn every_key_the_machine_can_spell_round_trips() {
+        let mut keys: Vec<Key> = (0x20_u8..0x7f)
+            .map(|byte| Key::char(char::from(byte)))
+            .collect();
+        keys.extend(['é', 'Ä', '€'].map(Key::char));
+        for named in [
+            Named::Esc,
+            Named::Enter,
+            Named::Tab,
+            Named::Backspace,
+            Named::Delete,
+            Named::Insert,
+            Named::Left,
+            Named::Right,
+            Named::Up,
+            Named::Down,
+            Named::Home,
+            Named::End,
+            Named::PageUp,
+            Named::PageDown,
+            Named::Function(1),
+            Named::Function(12),
+        ] {
+            keys.push(Key::named(named));
+        }
+        for mods in [
+            Mods::CTRL,
+            Mods::ALT,
+            Mods::SUPER,
+            Mods::CTRL.with(Mods::SHIFT),
+            Mods::CTRL.with(Mods::ALT),
+        ] {
+            keys.push(Key::new(Code::Char('k'), mods));
+            keys.push(Key::new(Code::Char('<'), mods));
+            keys.push(Key::new(Code::Named(Named::Left), mods));
+            keys.push(Key::new(Code::Named(Named::Tab), mods));
+        }
+
+        for key in &keys {
+            let spelled = key.notation();
+            assert_eq!(parse(&spelled), Some(*key), "one key: {spelled}");
+        }
+
+        // In a sequence, against every neighbour: this is where `SPC` and `<`
+        // bite, and neither shows up one key at a time.
+        for first in &keys {
+            for second in &keys {
+                let pair = [*first, *second];
+                let spelled = notation_of(&pair);
+                assert_eq!(
+                    parse_seq(&spelled.0).as_deref(),
+                    Some(&pair[..]),
+                    "pair: {spelled:?} from {first:?} {second:?}"
+                );
+            }
+        }
+        // `S`, `P`, `C` typed as three keys is the leader when it is spelled
+        // naively — `S` is substitute-line, so it is a command someone types.
+        let spc = [
+            Key::char('S'),
+            Key::char('P'),
+            Key::char('C'),
+            Key::named(Named::Esc),
+        ];
+        assert_eq!(
+            parse_seq(&notation_of(&spc).0).as_deref(),
+            Some(&spc[..]),
+            "typing S P C is not the leader"
+        );
+        // And `<<`, the dedent that `.` could not repeat.
+        let dedent = [Key::char('<'), Key::char('<')];
+        assert_eq!(notation_of(&dedent).0, "<<");
+        assert_eq!(parse_seq("<<").as_deref(), Some(&dedent[..]));
+    }
+
+    #[test]
+    fn the_spelling_a_binding_is_keyed_by_does_not_move() {
+        // `notation_of` is what `keymap::resolve` asks the editor layer with
+        // (`phosphor-steel/src/keymap.rs`), so these spellings are the shipped
+        // keymap's own keys. Changing one silently unbinds a key.
+        for (keys, spelled) in [
+            (vec![Key::char('<')], "<"),
+            (vec![Key::char('<'), Key::char('<')], "<<"),
+            (vec![Key::char('>')], ">"),
+            (vec![Key::char('g'), Key::char('g')], "gg"),
+            (vec![Key::char(' '), Key::char('f')], "<space>f"),
+            (vec![Key::new(Code::Char('r'), Mods::CTRL)], "<C-r>"),
+        ] {
+            assert_eq!(notation_of(&keys).0, spelled);
+        }
     }
 
     #[test]

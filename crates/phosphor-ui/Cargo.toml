@@ -17,24 +17,34 @@ ratatui-core.workspace = true
 # dependency may be `phosphor-core` — `scripts/lint-no-store-mutation.sh` check 2
 # — and this is a third-party widget crate, not a mutation path.
 #
-# `default-features = false` here asks for no grammars, no `crossterm` and no
-# `arboard` — and asking is all a manifest can do. **Cargo unifies features per
-# crate across the graph**, so once `T090`'s host turned on this fork's
-# `crossterm` feature to ride its `editor_crossterm` handler, the feature is on
-# for this dependent too; there is one instance of the crate in the build.
-# `cargo tree --workspace -e features` shows it. An earlier version of this
-# comment claimed the opposite and was simply wrong.
+# The workspace entry (root `Cargo.toml`) carries `default-features = false`,
+# so what this crate asks for is the fork with no grammars, no `crossterm` and
+# no `arboard` — and asking is all a manifest can do. **Cargo unifies features
+# per crate across the graph**: there is one instance of the crate in the build,
+# so any dependent turning a feature on turns it on here too.
 #
-# What still holds, and how:
-#   * `arboard` really is absent from the default graph — it sits behind a
-#     separate feature nobody enables (`just vendor-build-headless` proves both
-#     directions), so `T003`'s headless guarantee is intact.
-#   * The rule that a widget cannot reach the app layer is enforced at the
-#     source by `scripts/lint-no-app-layer-in-ui.sh`, because Cargo has no way
-#     to scope a feature to one dependent. Same shape as the store rule: the
-#     type system can't say it, so a lint does.
-# `T026` deletes the temporary input path and the `crossterm` feature with it,
-# at which point the manifest means what it says again on its own.
+# It asks and it gets, as of this session. `T090`'s host did turn `crossterm`
+# on, to ride the fork's `editor_crossterm` handler as S1's temporary input
+# path, and this paragraph used to record that; `T026` replaced that path with
+# the input machine and turned the feature back off
+# (`crates/phosphor/Cargo.toml:22-33`). Verify it rather than trusting this
+# comment — the manifest cannot state it and no lint checks it:
+#
+#     cargo tree --workspace -e features,dev,build,normal \
+#       | grep 'ratatui-code-editor feature'
+#
+# Neither `"crossterm"` nor `"clipboard"` appears there today, and `arboard` is
+# absent from the graph entirely.
+#
+# What holds either way, so that a dependent turning `crossterm` back on is a
+# regression to fix and not a breach of an invariant:
+#   * `T003`'s headless guarantee does not rest on this. `arboard` sits behind
+#     its own feature nobody enables, and `just vendor-build-headless` proves
+#     both directions.
+#   * "A widget cannot reach the app layer" is enforced at the source by
+#     `scripts/lint-no-app-layer-in-ui.sh`, which fails on `editor_crossterm`
+#     by name, because Cargo has no way to scope a feature to one dependent.
+#     Same shape as the store rule: the type system can't say it, so a lint does.
 ratatui-code-editor.workspace = true
 # The vendored markdown renderer (T004), for the transcript's prose body at S6.
 # OPTIONAL AND OFF BY DEFAULT, for two reasons:

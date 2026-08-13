@@ -332,6 +332,7 @@ fn role(value: &Value) -> Option<Role> {
         "repeat" => Role::Repeat,
         "escape" => Role::Escape,
         "register" => Role::Register,
+        "replace-char" => Role::ReplaceChar,
         "run" => Role::Run(rest.iter().map(call).collect::<Option<Vec<_>>>()?),
         _ => return None,
     };
@@ -361,6 +362,14 @@ fn operator(value: &Value) -> Option<Operator> {
         "indent" => Operator::Indent,
         "dedent" => Operator::Dedent,
         "toggle-comment" => Operator::ToggleComment,
+        "upper" => Operator::Upper,
+        "lower" => Operator::Lower,
+        "toggle-case" => Operator::ToggleCase,
+        // `gs`, not `s` — Teej's ruling of 2026-08-12, recorded on
+        // [`Operator::MarkSeen`] itself. Without this arm the row decodes to
+        // nothing and the key is dead, which is the failure mode this whole
+        // function is total to avoid.
+        "mark-seen" => Operator::MarkSeen,
         _ => return None,
     };
     Some(operator)

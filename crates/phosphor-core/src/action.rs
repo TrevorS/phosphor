@@ -91,11 +91,11 @@
 
 use crate::registry::{McpPolicy, Param, Since};
 use crate::request::{
-    AcceptHow, Actor, AskOption, Binding, ChangeId, CheckpointId, Diagnostic, DiffMode, Direction,
-    DiskExit, Edit, FileEdits, FileGroup, FoldState, GrantScope, Grouping, KeySeq, LanguageId,
-    LanguageSpec, Motion, PaneKind, PaneRef, Position, PromptKind, RegionSpec, RegisterName,
-    ScrollRequest, Seek, SelectionKind, Sequence, Severity, SourceId, Span, Target, TextObject,
-    ThemeSlug, WatchId,
+    AcceptHow, Actor, AskOption, Binding, CaseChange, ChangeId, CheckpointId, Diagnostic, DiffMode,
+    Direction, DiskExit, Edit, FileEdits, FileGroup, FoldState, GrantScope, Grouping, KeySeq,
+    LanguageId, LanguageSpec, Motion, PaneKind, PaneRef, Position, PromptKind, RegionSpec,
+    RegisterName, ScrollRequest, Seek, SelectionKind, Sequence, Severity, SourceId, Span, Target,
+    TextObject, ThemeSlug, WatchId,
 };
 use crate::value::{Args, Call, Value, Wire, WireError};
 
@@ -332,6 +332,11 @@ actions! {
         JoinLines = "join-lines" [S3 / "T026" / Allow]
             "joins the lines of a target onto one" {
             target: Target = "what to join",
+        }
+        SetCase = "set-case" [S3 / "T026" / Allow]
+            "upper-cases, lower-cases or toggles the letters of a target — gU, gu, ~" {
+            target: Target = "whose letters",
+            case: CaseChange = "upper, lower or toggle",
         }
         ToggleComment = "toggle-comment" [S4 / "T037" / Allow]
             "comments or uncomments a target, using the language's own prefix" {

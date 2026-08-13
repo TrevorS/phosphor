@@ -584,6 +584,22 @@ wire_choice!(EditMode {
 });
 
 /// A cursor motion. Counts ride on the Action, not here.
+///
+/// # The four that need a character, and why it does not ride here
+///
+/// `f`, `F`, `t` and `T` each take the character to search for, and this stays
+/// a payload-free [`wire_choice`] anyway. A payload-carrying arm would make
+/// [`crate::registry::ParamType::Choice`] the wrong type for `motion` and break
+/// the CLI's flag value and the MCP schema's enum in the same edit — so the
+/// character rides the way `SelectObject`'s delimiter already does: **beside**
+/// the motion, not inside it. The input machine holds it between the `f` and
+/// the key that names it ([`super::input::Machine`]), which is the same shape
+/// as `"` naming a register.
+///
+/// A find motion asked of [`super::input::text::cursor_after`] with no
+/// character stays where it started, exactly as [`Motion::SearchNext`] does
+/// with no search state: a motion that invented a destination would be worse
+/// than one that does not move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Motion {
     /// One character left.
@@ -600,6 +616,24 @@ pub enum Motion {
     WordBackward,
     /// End of the current word.
     WordEnd,
+    /// `W` — start of the next blank-separated word.
+    BigWordForward,
+    /// `B` — start of the previous blank-separated word.
+    BigWordBackward,
+    /// `E` — end of the current blank-separated word.
+    BigWordEnd,
+    /// `f` — forward to the next occurrence of a character, landing on it.
+    FindCharForward,
+    /// `F` — back to the previous occurrence, landing on it.
+    FindCharBackward,
+    /// `t` — forward to just *before* the next occurrence.
+    TillCharForward,
+    /// `T` — back to just *after* the previous occurrence.
+    TillCharBackward,
+    /// `;` — the last find again, in the direction it was made.
+    RepeatFind,
+    /// `,` — the last find again, the other way.
+    RepeatFindReverse,
     /// First column.
     LineStart,
     /// First non-blank column.
@@ -640,6 +674,15 @@ wire_choice!(Motion {
     WordForward => "word-forward",
     WordBackward => "word-backward",
     WordEnd => "word-end",
+    BigWordForward => "big-word-forward",
+    BigWordBackward => "big-word-backward",
+    BigWordEnd => "big-word-end",
+    FindCharForward => "find-char-forward",
+    FindCharBackward => "find-char-backward",
+    TillCharForward => "till-char-forward",
+    TillCharBackward => "till-char-backward",
+    RepeatFind => "repeat-find",
+    RepeatFindReverse => "repeat-find-reverse",
     LineStart => "line-start",
     FirstNonBlank => "first-non-blank",
     LineEnd => "line-end",
@@ -715,6 +758,28 @@ wire_choice!(SelectionKind {
     Char => "char",
     Line => "line",
     Block => "block",
+});
+
+/// What a case change does to the letters it covers — `gU`, `gu`, `~`.
+///
+/// A payload rather than three capabilities: the three differ in one word and a
+/// door that had to pick between `upper-case` and `toggle-case` by name would
+/// be three schemas for one edit. It is a *buffer* mutation and not a
+/// [`Motion`] — `gu` takes a motion as its operand, the way `d` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaseChange {
+    /// `gU` — every letter upper-cased.
+    Upper,
+    /// `gu` — every letter lower-cased.
+    Lower,
+    /// `g~` and `~` — each letter to its other case.
+    Toggle,
+}
+
+wire_choice!(CaseChange {
+    Upper => "upper",
+    Lower => "lower",
+    Toggle => "toggle",
 });
 
 // ---------------------------------------------------------------------------

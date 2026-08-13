@@ -61,9 +61,28 @@
 //! offsets bit-identical, and a scan of this file's own source that fails if a
 //! second call site to the vendored core's viewport mutators ever appears.
 //!
-//! `Action` does not exist yet (`T019`, `spine`, Window C). [`ScrollRequest`]
-//! is deliberately shaped as the payload one variant of it will carry, not as
-//! a local substitute for it: it names *what was asked for* and holds no state.
+//! # The one duplicated type, and why it is still two
+//!
+//! [`ScrollRequest`] was written before `Action` existed, deliberately shaped
+//! as the payload one variant of it would carry. `T019` carried it:
+//! `phosphor_core::request::ScrollRequest` is the same seven arms, and
+//! `request.rs`'s own header calls this file's copy out by name and asks
+//! `surface` to collapse them.
+//!
+//! **No lint stands in the way.** `scripts/lint-no-action-in-ui.sh` lists
+//! `phosphor_core::request` as ALLOWED in as many words — *"Position, Span,
+//! ScrollRequest, EditMode … naming a place is not asking for it to change"* —
+//! and `scripts/lint-no-store-mutation.sh` forbids only `::store`. That is why
+//! [`soft_wrap::EditMode`] collapsed to a re-export in the same pass and this
+//! did not: the two definitions differ in *coordinates*, not in shape. The
+//! vocabulary counts visual rows from 1 in `u32` because a person types them;
+//! this counts from 0 in `usize` because it indexes them. Collapsing moves that
+//! conversion from the host into [`Viewport::scrolled`]'s `ToRow` and
+//! `RevealRow` arms, and deletes `scroll_request()` at
+//! `crates/phosphor/src/main.rs:1886` — a file this crate's owner does not
+//! hold. Raised as a contract request rather than half-done here.
+//!
+//! [`soft_wrap::EditMode`]: crate::soft_wrap::EditMode
 //!
 //! # Not here
 //!
@@ -85,6 +104,7 @@ use ratatui_core::widgets::Widget;
 
 pub use ratatui_code_editor::editor::Editor;
 
+use crate::gutter::Fill;
 use crate::theme::{SyntaxMap, Theme};
 
 // ---------------------------------------------------------------------------
@@ -112,11 +132,13 @@ pub const MIN_LINE_NUMBER_DIGITS: usize = 2;
 
 /// What the 1-cell state bar shows for one row, already resolved.
 ///
-/// **Resolution is not here.** Design Language §3's priority — *trouble >
-/// attention > claude* — over a row's whole region set is `T031`'s
-/// (`GutterBar`), together with the `▎` fallback for terminals that cannot do
-/// a background colour. This type is that decision's output, which is what the
-/// column contract needs and no more.
+/// **Resolution is not here, and neither is the colour.** Design Language §3's
+/// priority — *trouble > attention > claude* — over a row's whole region set is
+/// `T031`'s (`GutterBar`), together with the `▎` fallback for terminals that
+/// cannot do a background colour. This type is that decision's output, which is
+/// what the column contract needs and no more; turning one into a drawable cell
+/// is [`crate::gutter::state_cell`], which this widget's render calls for its
+/// own column so that the two paints cannot differ.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum StateMark {
     /// Nothing to say about this row: the bar renders as ground.
@@ -128,19 +150,6 @@ pub enum StateMark {
     Attention,
     /// A diagnostic or a failure (§1). Highest priority.
     Trouble,
-}
-
-impl StateMark {
-    /// The one place a [`StateMark`] becomes a colour. §1's actor hues, and
-    /// ground for "nothing" so the bar is invisible rather than absent.
-    fn colour(self, theme: &Theme) -> Color {
-        match self {
-            Self::None => theme.neutrals.ground,
-            Self::ClaudeUnseen => theme.actors.claude,
-            Self::Attention => theme.actors.attention,
-            Self::Trouble => theme.actors.trouble,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -174,8 +183,9 @@ pub struct ViewportBounds {
 /// The only thing that can move a viewport.
 ///
 /// Every variant is a caller saying what it wants; none of them is a side
-/// effect of drawing. This is the shape `spine` is asked to carry inside
-/// `Action` at `T019` — see this task's report.
+/// effect of drawing. `T019` carried this shape into the vocabulary as
+/// `phosphor_core::request::ScrollRequest`; the host converts between them in
+/// one place, and the module header says what collapsing the two would take.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ScrollRequest {
     /// Relative, in rows. Negative scrolls towards the top of the buffer.
@@ -540,8 +550,13 @@ impl Widget for BufferView<'_> {
             // Column 1, and the cell of air behind it. Written explicitly
             // rather than left to the ground fill so a stale symbol from a
             // widget drawn underneath cannot survive in the gutter.
-            let bar = self.mark_at(visual_row).colour(self.theme);
-            set_cell(buf, area, area.x, y, " ", Style::default().bg(bar));
+            //
+            // Through `gutter::state_cell` rather than a hue lookup of its own:
+            // this column is drawn in two widgets and a `StateMark` becomes a
+            // cell in exactly one place (`R9` in `docs/OPEN-QUESTIONS.md`).
+            let (symbol, style) =
+                crate::gutter::state_cell(self.mark_at(visual_row), self.theme, Fill::Block);
+            set_cell(buf, area, area.x, y, symbol, style);
             set_cell(
                 buf,
                 area,

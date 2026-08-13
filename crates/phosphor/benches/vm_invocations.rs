@@ -283,6 +283,12 @@ mod measured {
         let mut child = Command::new(binary)
             .arg(&fixture)
             .env("PHOSPHOR_RUNTIME", &runtime)
+            // The wiring pass gave the loop an undo journal, keyed on the
+            // workspace and the file (`main.rs`'s `Timeline`). A measurement
+            // must not leave state in the user's real `$XDG_STATE_HOME`, so it
+            // goes in the scratch that removes itself — and the journal's
+            // per-keystroke cost is then measured rather than skipped.
+            .env("XDG_STATE_HOME", scratch.path.join("state"))
             .env("TERM", "xterm-256color")
             .stdin(Stdio::from(slave.try_clone().expect("the slave clones")))
             .stdout(Stdio::from(slave.try_clone().expect("the slave clones")))

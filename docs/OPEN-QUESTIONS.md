@@ -237,23 +237,6 @@ successes. `scripts/seed-fixtures.sh` checks the printed value instead.
 exit code, and "the editor declined" is arguably a `1`. Touches `T023`'s contract, so it is
 `spine`'s.*
 
-### 15 · `s` — the mark-seen operator, or vim's substitute?
-
-`TUI Mockups.dc.html`'s screen `6d` says *"`s` composes like an operator"* and makes it mark-seen.
-Vim's `s` is substitute, and `CP-3`'s criterion is *"vim habits should carry without thinking about
-it."* `action.rs:665` implies `S` goes the same way.
-
-`T028` built `Operator::MarkSeen` into the `Role` vocabulary and **deliberately did not change the
-keymap**, so `sib` today substitutes a character and types `ib`. `runtime/keymaps.scm:365` and
-`:391` are the two rows, paired with one arm at `phosphor-steel/src/keymap.rs:356-364` — without
-the arm the row decodes to nothing and the key goes dead.
-
-- **Take `6d`'s `s`.** `cl` still substitutes, and seen-state is the more phosphor-shaped key.
-- **Keep vim's `s`** and give mark-seen another key, amending `6d`.
-
-*No recommendation — this is a taste call about muscle memory, which is the one thing a checkpoint
-measures and an agent cannot. It wants deciding before `T044`/`T049` build on it.*
-
 ### 16 · Hand-rolled codec and XDG paths, or the crates `SPIKES.md` recommends?
 
 `SPIKES.md:307` recommends `postcard` for exactly `T030`'s append-only log, and `:304` recommends
@@ -284,6 +267,26 @@ exist.
 *Recommendation: sign off on the two that have surfaces (`3c`, `8e`) and record the other two
 against the task that builds them, rather than holding the checkpoint for artifacts of nothing.*
 
+**Updated at the `CP-3` re-audit (repair pass) — the reasoning above no longer holds, and the
+position is worse, not better.** All four surfaces now exist in the shipping binary: `3c` opens on
+`SPC` (`crates/phosphor/tests/loop_pty.rs:417`), `8e` fires once on an unbound key (`:487`), folds
+close and open on `za`/`zR` (`:532`, wired at `crates/phosphor/src/main.rs:1911`-`1922`), and the
+INSERT-only whitespace marks are driven off `machine.mode()` every frame (`:903`). So the excuse
+for three of the four is gone.
+
+What is captured, against the tree this session: **none of them.** `tapes/` contains no `3c.tape`,
+no `8e.tape` and no fold tape, and `insert-whitespace-marks.tape`'s three artifacts — the two PNGs
+and the GIF — were **deleted** during this pass rather than recaptured, because the NORMAL and
+INSERT captures were byte-identical and `scripts/lint-repo-hygiene.sh` fails on an undocumented
+identical pair. Deleting them greens the lint and destroys the evidence; `tapes/README.md:684`
+still asserts the tape is *"captured"*. Recapturing (`just tape insert-whitespace-marks`) is the
+move that answers the original question, which was whether the capture pipeline duplicated a frame
+or the mode chip genuinely did not change.
+
+*Revised recommendation: this is now four tapes against four live surfaces and a piece of `harness`
+standing work, not an artifact-of-nothing problem. It is still Teej's call whether `CP-3` signs off
+without them.*
+
 ---
 
 ## Repair pass — queued work, not questions
@@ -308,6 +311,20 @@ would otherwise hit in the first minutes of editing.
 > host to a wiring agent in the last phase of every window from now on, whose whole job is that
 > nothing shipped this window is unreachable from a keystroke.
 
+- **R20 · `tapes/insert-whitespace-marks.tape` needs recapturing, and its artifacts are gone.**
+  The two stills it produced — `-normal.png` and `-insert.png` — were **byte-identical**, 51,293
+  bytes each, and were committed in `aa00473`. The tape is written correctly: it waits for the
+  `NORMAL` chip, screenshots, types `i`, waits for the `INSERT` chip, screenshots again. **The
+  mode chip alone should differ between those two frames**, so byte-identical output means the
+  second screenshot never advanced — which points at the VHS capture pipeline rather than at
+  whitespace marks. The same session recorded VHS answering "no frames" 10/10 times on a
+  known-good sibling tape, so sandbox flakiness is the leading explanation. Not asserted: recapture
+  is what settles it.
+  Two lessons, both cheap and both already paid for. `scripts/lint-repo-hygiene.sh:51` walks
+  `git ls-files`, so an untracked duplicate is invisible — **a green `just gate` before a commit
+  does not survive the commit**, and the gate must be re-run after staging. And an agent's claim to
+  have "verified by a real capture" is only as good as the capture: this one said it saw `··` in
+  INSERT and not in NORMAL, from two files that are the same bytes.
 - **R17 · The `SPC` leader popup does nothing.** `main.rs` never composes `Node::KeyHints` when the
   machine is `SPC`-pending; there is no leader variant in `Surface` (`main.rs:2040-2052`) or
   `Intent` (`main.rs:227`). Proven empirically rather than by reading: a real VHS capture of a
@@ -409,6 +426,21 @@ would otherwise hit in the first minutes of editing.
 
 ## Closed
 
+- **§15 · `s` — the mark-seen operator, or vim's substitute? RULED 2026-08-12: `s` stays vim's
+  substitute.** Vim habits carry; the drawing is what changes. Mark-seen moved to **`gs`**, which
+  takes an object (`gsib`). Built and verified against the tree at the `CP-3` re-audit:
+  `runtime/keymaps.scm:525` binds `s` to `(key/fused "change" "char-right")` in normal and `:555`
+  to `(key/operator "change")` in visual — unchanged — while `:475` adds
+  `(key/operator "mark-seen")` on `gs`, decoded by a new arm in `crates/phosphor-steel/src/keymap.rs`.
+  `crates/phosphor-steel/tests/shipped_grammar.rs:297`
+  `mark_seen_is_gs_and_s_is_still_substitute` asserts both halves against the shipped layer, and
+  `crates/phosphor-core/tests/agent_objects.rs:149` drives `gsib` to a clean no-op.
+  **Consequence still owed to the design docs:** mockup `6d`'s *"`s` composes like an operator"*
+  is the sentence that loses, and `TUI Mockups.dc.html` is imported verbatim — Teej amends it at
+  claude.ai, and it belongs in `IMPLEMENTATION-PLAN.md` §5's amendment table as the eighth
+  amendment. Teej also noted vim-surround (`cs"'`) as the shape `s` should stay compatible with;
+  not built, not tasked, and a `v1.5` line rather than a task, since `cs` is `c` then a surround
+  object over the operator machinery `T026` already has.
 - **Would `ratatui-textarea` need a third vendored fork?** `SPIKES.md:292-293` names it and
   `nucleo` for `T045`'s Picker, neither is in `Cargo.toml`'s dependency table, and its predecessor
   `tui-textarea` is the crate whose ratatui-0.29 pin turned `ratatui-markdown` into a fork. Checked

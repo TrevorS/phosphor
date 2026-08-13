@@ -91,9 +91,22 @@ pub enum Operator {
     Dedent,
     /// `gc` (`T037` builds it; the grammar carries it now).
     ToggleComment,
-    /// `s` — marks its operand seen, which is what makes `sib` a sentence
+    /// `gU` — upper-cases its operand.
+    Upper,
+    /// `gu` — lower-cases it.
+    Lower,
+    /// `g~`, and `~` fused with `l`. **Not a motion**: it changes text, so it
+    /// opens an undo group and composes exactly the way `d` does
+    /// (`gUiw`, `gu2j`).
+    ToggleCase,
+    /// `gs` — marks its operand seen, which is what makes `gsib` a sentence
     /// (`T028`, screen `6d`: *"mark inner block seen — `s` composes like an
     /// operator"*).
+    ///
+    /// **`gs`, not `s`** — Teej's ruling of 2026-08-12. `6d` draws the operator
+    /// as `s`, and `s` is vim's substitute; `CP-3` is *"vim habits should carry
+    /// without thinking about it"*, so the mockup is the thing that changed.
+    /// `g` bound only `gg` and `gc`, so `gs` displaced nothing.
     ///
     /// **The one operator that is not an edit.** It changes no text, so it
     /// opens no undo group and fills no register; what it moves is seen-state,
@@ -185,6 +198,15 @@ pub enum Role {
     Escape,
     /// `"` — the next key names a register.
     Register,
+    /// `r` — the next key names a *literal*, and `count` characters under the
+    /// cursor become it.
+    ///
+    /// A sibling of [`Role::Register`] rather than new machinery: both are
+    /// *"the next key is data, not a binding"*, which is a state the machine
+    /// holds for exactly one keystroke. It is not [`Role::Enter`] with
+    /// `Entry::Replace` — that is `R`, which stays in replace mode until
+    /// `<esc>`.
+    ReplaceChar,
     /// A binding that is just capabilities, in order. **This is what a scheme
     /// `(keymap-set! "…" (capability …))` becomes**; the count and register do
     /// not reach it, because a named capability already carries its arguments.
@@ -216,9 +238,11 @@ pub trait Keymap {
 
 /// A keymap that is data.
 ///
-/// The seed table (`super::vim`) is one of these, the tests build their own,
-/// and `T033` deletes the seed rather than this type — a scheme layer that
-/// wants a Rust-side table for speed can still fill one.
+/// The binary seeds an **empty** one and the whole keymap comes from the
+/// layer; the tests in `crates/phosphor-core/tests` fill one from a
+/// transcription of `runtime/keymaps.scm`. `T033` deleted the seed table
+/// (`input/vim.rs`) rather than this type — a scheme layer that wants a
+/// Rust-side table for speed can still fill one.
 #[derive(Debug, Clone, Default)]
 pub struct Table {
     entries: BTreeMap<(Scope, Vec<Key>), Role>,
@@ -237,9 +261,10 @@ impl Table {
     /// `"<C-r>"`, `"SPC f"`.
     ///
     /// A spelling this cannot parse binds nothing. It is not an error type
-    /// because both callers are literal tables checked by their own tests
-    /// (`vim::the_seed_binds_what_cp3_asks_for`), and a `Result` here would be
-    /// unwrapped at every one of eighty call sites.
+    /// because every caller is a literal table checked by its own test
+    /// (`tests/support`'s `every_binding_in_the_fixture_answers_with_a_role`),
+    /// and a `Result` here would be unwrapped at every one of eighty call
+    /// sites.
     pub fn bind(&mut self, scope: Scope, keys: &str, role: Role) {
         if let Some(parsed) = parse_seq(keys) {
             self.entries.insert((scope, parsed), role);

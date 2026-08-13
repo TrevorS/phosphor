@@ -133,7 +133,10 @@ fn the_rebind_is_live_on_the_very_next_key() {
     let mut runtime = runtime();
     let mut repl = Repl::new();
 
-    assert_eq!(pressed(&mut runtime, "]"), Resolution::Unbound);
+    // `]` itself is a prefix in the shipped table — `]u` walks the unseen
+    // regions (`6d`) — so the key this proves the rebind on is the whole
+    // sequence `6b` types, which nothing binds until the form runs.
+    assert_eq!(pressed(&mut runtime, "]r"), Resolution::Unbound);
 
     for character in r#"(keymap-set! "]r" (lambda () (open-repl!)))"#.chars() {
         repl.insert(character);

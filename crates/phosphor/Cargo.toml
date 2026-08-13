@@ -27,10 +27,11 @@ ratatui.workspace = true
 # is what proves it: with the feature off, a surviving `Editor::input` call does
 # not compile.
 #
-# The dependency itself stays, for two names the binary still uses: the fork's
-# `Undo`/`Redo` (`T029` takes them) and `Selection`, which `SelectRange` sets.
-# Both are default-features-off code, so this is the same edge every other
-# consumer has.
+# The dependency itself stays, for **one** name the binary still uses:
+# `Selection`, which `SelectRange` sets. The fork's `Undo`/`Redo` were the other
+# one and the wiring pass took them — `T029`'s tree is the history now, and two
+# live histories cannot both be it (`main.rs`'s `Timeline`). Default-features-off
+# code, so this is the same edge every other consumer has.
 ratatui-code-editor.workspace = true
 
 # `tests/screen_6b.rs` — the Tier-1 golden frame for `6b`, which needs

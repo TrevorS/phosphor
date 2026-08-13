@@ -19,9 +19,14 @@ never executed and says so at the task.
 rulings came out of the manual half; three amend design docs and are tabled in
 [§5](IMPLEMENTATION-PLAN.md#5-decisions).
 
-**Window C is built and its mechanical half is green.** The `Action` vocabulary is 208
+**Window C is built and its mechanical half is green.** The `Action` vocabulary is 209
 capabilities generated from one table, the three doors are total functions over it, and the
-parity test walks all 624 door checks end to end. `CP-2`'s **manual half is outstanding** — it is
+parity test walks all 627 door checks end to end. (`208`/`624` until `S3` added
+`Buffer::SetCase`; the count is `scripts/lint-one-registry.sh`'s, which reads the tables in
+`crates/phosphor-core/src/{action,query}.rs` — do not compute it by hand. Six prose citations of
+`208` are still stale outside this file: `docs/TEAM.md:297`, `crates/phosphor/src/door.rs:219`,
+`:402`, `:701`, `crates/phosphor/src/main.rs:57`, `crates/phosphor/tests/door.rs:149`.)
+`CP-2`'s **manual half is outstanding** — it is
 the checkpoint that asks whether the Steel layer is the editor or a config file with a Rust
 editor hiding behind it, and only Teej can answer that. Nothing in S3 starts until he does.
 
@@ -255,6 +260,11 @@ lifetime: the harness outlives any single phase and gets extended at every check
   > the version gate and produce no Tier-2 signal.
   > It also currently reddens `just lint`: `ci.yml:70` quotes `insta 1.48.0`, and
   > `scripts/doc_claims.py:214` reads any `1.NN.N` in that file as a stale toolchain quote.
+  >
+  > **CP-3 re-audit (repair pass) — unchanged, and item (1) re-checked.**
+  > `gh api repos/TrevorS/phosphor/branches/main/protection` still answers
+  > `404 Branch not protected`, run again this session. Nothing blocks a merge. The `just lint`
+  > half is fixed — `lint-doc-claims` reports clean on this tree.
 
 - [ ] **V009 · Degradation tapes**
   `Env TERM xterm-256color` and `Env NO_COLOR 1` variants of the core screens, exercising the
@@ -451,6 +461,27 @@ First phase with anything to look at. Sized by CP-0.
   Fold rows render `▸ ⋯ n lines`. Insert-only trailing-whitespace marks. Folds come from the
   vendored crate's existing `VisualRow::FoldSeparator`.
   *Done when:* screen `8e`'s fold and whitespace details reproduce. *Needs:* T015
+
+  > **CP-3 re-audit (repair pass) — the tick stands, and the fold half only became true this
+  > pass.** `crates/phosphor-core/src/action.rs` declares `SetFold`/`FoldAll`/`UnfoldAll`
+  > against `"T016"`, and until the repair pass nothing in the host had an arm for any of
+  > them — the widget drew folds nobody could close. `crates/phosphor/src/main.rs:1911`,
+  > `:1918` and `:1922` are the three arms; `runtime/keymaps.scm:586`–`593` are `za zc zo zM
+  > zR`; `crates/phosphor/tests/loop_pty.rs:532`
+  > `driven::za_closes_the_fold_the_cursor_is_in` presses `za` on a real `.rs` file and watches
+  > the fold body leave the frame, then `zR` and watches it come back.
+  >
+  > **The whitespace half lost its only live evidence in the same pass.**
+  > `tapes/artifacts/insert-whitespace-marks-{normal,insert}.png` were byte-identical — the
+  > NORMAL and INSERT captures showed the same bytes, so even the mode chip had not changed
+  > between them — and `scripts/lint-repo-hygiene.sh` fails on an undocumented identical pair.
+  > They were **deleted** (with the `.gif`) rather than recaptured or entered in
+  > `tapes/artifacts/DUPLICATES.md`, which greens the lint and removes the artifact. The
+  > wiring is real (`crates/phosphor/src/main.rs:903` calls `soft_wrap::set_mode` with
+  > `machine.mode()` every frame), but nothing on a shipping screen shows it: there is no pty
+  > test for the marks and no capture. `tapes/README.md:684` still says
+  > *"`insert-whitespace-marks.tape` — captured"*, which is false against the tree.
+  > `just tape insert-whitespace-marks` is the thing that answers it.
 
 - [x] **T081 · Soft-wrap** ⚠️ *unbudgeted — surfaced by the T008 spike*
   **The vendored crate has none.** `↪` continuations carry no line number. Build it as a
@@ -755,59 +786,82 @@ CP-0 settled the shape: **the input machine is ours.**
   *Done when:* a measurement in `crates/phosphor` shows real Steel invocations flat while
   frames climb, on the loop that ships. *Needs:* T026, T079
 
-- [ ] **T027 · Kitty keyboard protocol**
+- [x] **T027 · Kitty keyboard protocol**
   Real modifier chords, with graceful fallback where unsupported.
   *Done when:* `ctrl+shift+<key>` is distinguishable from `ctrl+<key>` on the primary terminal.
   *Needs:* T014, T026
 
-  > **CP-3 audit — partial, not ticked.** The kitty half meets the criterion:
-  > `crates/phosphor-core/tests/chords.rs:94` distinguishes the two chords and
-  > `crates/phosphor/src/main.rs:1964` decodes through `Key::new`, so it reaches the binary.
-  > **Outstanding:** the legacy fallback is unreachable in the shipping binary —
-  > `Machine::set_protocol` appears nowhere in `crates/phosphor/src/main.rs` (grepped), so
-  > `key::Protocol` is always the default and the retry path built in `chords.rs:158` never
-  > fires. One line after `Term::new()` closes it.
+  > **CP-3 re-audit (repair pass) — ticked.** The gap the first audit named is closed:
+  > `crates/phosphor/src/main.rs:876` calls `machine.set_protocol(…)` off
+  > `term.capabilities().keyboard`, so `key::Protocol` is now the negotiated one and the retry
+  > path in `chords.rs` can fire. Proven through the shipping loop, not around it —
+  > `crates/phosphor/tests/loop_pty.rs:706`
+  > `driven::the_legacy_chord_fallback_is_reachable_on_a_legacy_terminal` binds `<C-S-k>` at the
+  > live REPL, presses `<C-k>` on a real pty, and asserts the leaf appears under
+  > `PHOSPHOR_KEYBOARD=legacy` and does **not** under `=kitty`. Both sides in one test.
+  > **Still Teej's, not Claude's:** the criterion says *on the primary terminal*, and
+  > `TASKS.md:106` records that VHS's terminal does not implement the protocol. The hardware
+  > confirmation is `CP-3`'s manual half.
 
-- [ ] **T028 · Agent nouns as text objects**
+- [x] **T028 · Agent nouns as text objects**
   `viu`, `sib`, `dih`, `:'<,'>c` register in the grammar. **They parse here and resolve at
   S5** — there is no store to resolve against yet (Q8).
   *Done when:* the grammar accepts them and they no-op cleanly rather than erroring.
   *Needs:* T026
 
-  > **CP-3 audit — partial, not ticked.** Three of the four named forms are met:
-  > `crates/phosphor-core/tests/agent_objects.rs:126` (`viu`), `:147` (`sib`), `:173` (`dih`)
-  > all parse and no-op silently. **Outstanding: `:'<,'>c` errors.** `runtime/keymaps.scm:602`'s
-  > `phosphor/ex-split` takes a name and arguments only — there is no range grammar — so the
-  > lookup fails and `crates/phosphor/src/main.rs:2155` answers
-  > `no such command — :'<,'>c`, which is exactly what this criterion forbids.
-  > Also outstanding in the *shipped* keymap: `runtime/keymaps.scm` binds `s` to substitute
-  > (asserted by `agent_objects.rs:351`), so `sib` in the running editor substitutes a
-  > character and types `ib`.
+  > **CP-3 re-audit (repair pass) — ticked, with the sentence amended.** All four forms now
+  > parse and no-op cleanly. `crates/phosphor-core/tests/agent_objects.rs:128` (`viu`), `:149`
+  > (`gsib`), `:175` (`dih`) drive the machine against a fixture that checks itself against
+  > `runtime/keymaps.scm`; `crates/phosphor-steel/tests/shipped_grammar.rs:420`
+  > `a_visual_range_is_read_as_a_range` asks the **shipped** layer and gets
+  > `Ex::Run(StartThread { anchor: Selection, … })` rather than `Ex::Unknown`, because
+  > `runtime/keymaps.scm:1003` now declares `c[omment]` and a range grammar reads `'<,'>` off
+  > the front of the line.
+  >
+  > **The sentence is `gsib`, not `sib` — Teej's ruling of 2026-08-12.** `s` stays vim's
+  > substitute (`runtime/keymaps.scm:525` normal, `:555` visual) and mark-seen is the `gs`
+  > operator (`:475`), decoded by an arm in `crates/phosphor-steel/src/keymap.rs`. Mockup `6d`
+  > says *"`s` composes like an operator"* and is the thing that changes; see
+  > [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s *Closed* §15. The `.dc.html` is imported verbatim
+  > and is Teej's to amend at claude.ai.
+  >
+  > **Not claimed:** nothing here is proven on the pty. Resolution is `T049` (Q8), so the
+  > observable behaviour of all four is *silence*, and silence on a real terminal is
+  > indistinguishable from a dead key. That is the correct bar for this task and the wrong bar
+  > for `T086`, which draws them.
 
 - [x] **T029 · Undo model in `phosphor-buffer`**
   Owns the undo tree and edit semantics (Q2).
   *Done when:* undo/redo across a scripted edit sequence is exact. *Needs:* T026
 
-  > **CP-3 audit — criterion met, host wiring outstanding.**
-  > `crates/phosphor-buffer/tests/undo.rs:128` walks six groups forward and back asserting text
-  > *and* caret at every step; 16 tests, all green. **The binary does not use it:**
-  > `crates/phosphor/src/main.rs:1440-1455` still answers `HistoryAction::Undo`/`Redo` with the
-  > fork's own `editor.apply(Undo)` and treats `CommitUndoGroup` as a no-op, and nothing outside
-  > `phosphor-buffer` imports `undo::` (grepped). So `u` in the running editor is the fork's
-  > truncate-on-divergence stack, not this tree.
+  > **CP-3 re-audit (repair pass) — host wiring closed.** The binary uses the tree now:
+  > `crates/phosphor/src/main.rs:147` imports `phosphor_buffer::undo::{…, UndoTree}` and
+  > `:1481` is `struct Timeline`. The fork's path is deleted, not demoted —
+  > `ratatui_code_editor::actions::{Undo, Redo}` no longer appears in `crates/phosphor/src/`
+  > and the only surviving `apply(Undo)` is a comment at `:1462`.
+  > `crates/phosphor/tests/loop_pty.rs:649`
+  > `driven::undo_and_redo_walk_the_tree_through_the_loop` presses `i A <esc> i B <esc> u u`
+  > and then `<C-r> <C-r>` on a real pty and reads the file back off disk, so the group
+  > boundary (`<esc>`, not per-character) and the divergent branch are both proven in the
+  > shipping binary rather than in `phosphor-buffer`'s own suite.
 
 - [x] **T030 · Undo persistence in `phosphor-core`**
   Append-only log + compaction, **sharing its format and compaction path with seen-state**
   (T044). Design the format once, here.
   *Done when:* undo history survives a clean restart *and* a `kill -9`. *Needs:* T029
 
-  > **CP-3 audit — criterion met at the format layer, host wiring outstanding.**
-  > `crates/phosphor-core/tests/journal.rs:707` (clean restart), `:719` (kill -9 with a torn
-  > tail) and `:734` (kill -9 mid-append) spawn a real child process and assert
-  > `status.signal() == Some(9)`; 30 tests, all green. **Nothing in `crates/phosphor` opens a
-  > journal** — `journal`, `UndoLog` and `UndoTree` return no hits in
-  > `crates/phosphor/src/main.rs`. CP-3's *"quit, reopen, undo"* therefore has nothing to
-  > restore, and this task must not be read as having closed that checkpoint item.
+  > **CP-3 re-audit (repair pass) — host wiring closed, and this now *does* answer the
+  > checkpoint item.** The binary opens a journal before its first frame, keyed on cwd + the
+  > canonical file path (Q1). Two pty tests, two child processes, one journal:
+  > `crates/phosphor/tests/loop_pty.rs:572` `driven::undo_survives_quitting_and_reopening`
+  > (edit → `:w` → quit → reopen → `u` → the original bytes are on disk) and `:612`
+  > `driven::undo_survives_a_kill_9` (SIGKILL, no destructor, no `fsync`, and the next session
+  > undoes into what `write_all` left behind).
+  >
+  > **One consequence Teej will meet at the manual half:** an undo group the machine never
+  > closes is never journalled, by design. Typing in INSERT and quitting *without* `<esc>`
+  > restores nothing next session; `<esc>` then quit restores. Both pty tests press `<esc>`
+  > for exactly this reason.
 
 - [x] **T031 · GutterBar**
   1-cell state column, priority trouble > attention > claude-unseen > none, `▎` degradation.
@@ -822,28 +876,70 @@ CP-0 settled the shape: **the input machine is ours.**
   here because this is the first phase where there is a virtual-text row to place.
   *Needs:* T015, T081
 
-- [ ] **T033 · Keymaps + leader tree in Steel**
+  > **CP-3 re-audit (repair pass) — met, and honestly at the widget level.**
+  > `crates/phosphor-ui/tests/virtual_text_node.rs:176`
+  > `a_row_lands_on_the_right_segment_of_a_wrapped_line` builds a line that wraps three ways,
+  > anchors a row mid-*middle*-segment, and asserts it hangs under that segment;
+  > `a_row_never_shifts_a_line_number` is the other half. Both pass.
+  >
+  > Those hand-build a tree, and that is the right bar **here** and only here: the rows a
+  > buffer's own regions produce are a store query (`T041`, `S5`), so no key press can put one
+  > on screen and the host's state column is deliberately empty
+  > (`crates/phosphor/src/main.rs:1284-1286` says so). The one `Node::VirtualText` the shipping
+  > host draws today is `T035`'s unknown-key row, and that one *is* proven on a pty.
+
+- [x] **T033 · Keymaps + leader tree in Steel**
   `SPC` leader, full ex commands, vim-style unique-prefix abbreviation.
   *Done when:* every binding lives in `runtime/`, none in Rust. *Needs:* T022, T026
 
-  > **CP-3 audit — partial, not ticked.** The leader tree, the ex table with vim's
-  > abbreviation rule, and >100 entries are in `runtime/keymaps.scm`; the binary seeds an
-  > empty table (`crates/phosphor/src/main.rs:791`, asserted at `:2705`); and
-  > `crates/phosphor-steel/tests/no_bindings_in_rust.rs` (6 tests) proves reachability and
-  > that no Rust source outside the seed binds a key. **Outstanding: bindings still exist in
-  > Rust.** `crates/phosphor-core/src/input/vim.rs` holds 38 `.bind(` calls and is still
-  > declared at `crates/phosphor-core/src/input.rs:101`; three test files call `vim::table()`.
-  > The criterion says *none in Rust*, so it is unmet until that file and its `pub mod` line
-  > are deleted and `crates/phosphor-core/tests/{input,agent_objects}.rs` are repointed.
+  > **CP-3 re-audit (repair pass) — ticked.** `crates/phosphor-core/src/input/vim.rs` is
+  > deleted, `mod vim` returns no hits anywhere in `crates/*/src`, and the only eight `.bind(`
+  > call sites left in the tree are inside `crates/phosphor-core/src/input/table.rs`'s own
+  > `#[cfg(test)]` module (`:384` opens it, the calls are `:395`–`:457`). The by-name
+  > exemption `no_bindings_in_rust.rs` used to carry for that file is gone with it, so the
+  > scan is now unconditional — stricter by subtraction. Its callers were repointed to a
+  > shared fixture, `crates/phosphor-core/tests/support/mod.rs`, which checks *itself* against
+  > the scheme file (`support::the_fixture_is_the_shipped_keymap`).
+  >
+  > **One piece of slack, worth knowing about:** that fixture carries a `NOT_YET_SHIPPED`
+  > allowance at `crates/phosphor-core/tests/support/mod.rs:169` listing fourteen tags the
+  > keymap had not bound yet. All fourteen are bound now (`runtime/keymaps.scm:420`–`431`,
+  > `:463`–`465`, `:475`, `:530`), so every one of them short-circuits the self-check instead
+  > of being verified. Deleting the list makes the fixture strictly stronger; nothing fails
+  > today either way.
 
 - [x] **T034 · KeymapFooter / WhichKey**
   Same data, two densities. Reads the **live** keymap, so Steel rebinds appear with no extra
   wiring. Keyhints spell whole commands — `:reattach`, never `:ca`.
   *Done when:* screen `3c` reproduces and a REPL rebind shows up in it. *Needs:* T033
 
+  > **CP-3 re-audit (repair pass) — the tick is now earned by a key press.** At the first gate
+  > this was `MET` on `crates/phosphor/tests/screen_3c.rs`, which hand-builds the view tree
+  > (its own module docs say so) — while pressing `SPC` in the binary drew nothing, because
+  > `KeyHints` appeared nowhere in `crates/phosphor/src/main.rs`. The host composes it now:
+  > `main.rs:1359` `fn under(layer, machine)` reads `Layer::entries` filtered to one parsed key
+  > past what is half-typed, and `:1300` renders it as a row taken off the bottom of the body.
+  > It is not `SPC`-only — it opens for any half-typed prefix, which is which-key's actual
+  > question. `crates/phosphor/tests/loop_pty.rs:417`
+  > `driven::pressing_space_opens_the_leader_popup` presses Space on a real pty and asserts
+  > `SPC` and `+claude` are on the frame and gone after `<esc>`; `:460`
+  > `driven::a_repl_rebind_reaches_the_leader_popup` types `(keymap-set! "SPC z" … "zebra")` at
+  > the live `:repl` prompt and finds `zebra` in the very next popup.
+
 - [x] **T035 · Unknown-key hint**
   One virtual-text line naming `SPC` and `:help`, once per session, never again.
   *Done when:* screen `8e` reproduces. *Needs:* T032, T034
+
+  > **CP-3 re-audit (repair pass) — same story as `T034`, same fix.** `App::ShowUnknownKeyHint`
+  > has an arm in the host, the loop drains it into a session-owned latch, and it is drawn as a
+  > one-row strip above the statusline through `phosphor_ui::unknown_key::strip`
+  > (`crates/phosphor/src/main.rs:1293`) — a real `Node::VirtualText`
+  > (`crates/phosphor-ui/src/unknown_key.rs:151`), which is what `T035` asks for.
+  > `crates/phosphor/tests/loop_pty.rs:487`
+  > `driven::an_unbound_key_teaches_once_and_never_again` presses `Q` on a real pty, asserts
+  > `unknown key` and `shown once` are drawn, presses `Q` again and asserts nothing is.
+  > (Small inaccuracy in that test's own comment: it says *"a different one"* and presses the
+  > same key. The latch is per session, so the assertion is right either way.)
 
 - [ ] **T086 · `HelpGrid` — the `:help` float body** 📌
   Screen `6d` (`:help agent-objects`) is an S3 acceptance target in the plan with no task behind
@@ -856,16 +952,28 @@ CP-0 settled the shape: **the input machine is ours.**
   *Done when:* screen `6d` reproduces from the live keymap, and a REPL rebind shows up in it.
   *Needs:* T084, T034
 
-  > **CP-3 audit — partial, not ticked.** The rebind half is met
-  > (`crates/phosphor/tests/screen_6d.rs`, `a_repl_rebind_shows_up_in_the_help_grid`), and the
-  > page is composed by role from the live table. **Outstanding: `6d` does not fully
-  > reproduce.** `crates/phosphor/tests/snapshots/screen_6d__6d.snap:9-20` records that four of
-  > the screen's grammar rows are absent because `runtime/keymaps.scm` binds none of them —
-  > `sib`, `]u`/`[u`, `:'<,'>c` / `:g/TODO/c`, `"ay ib` / `q:`. Those rows are `T033`'s and
-  > `T028`'s to bind before this screen is the screen. The snapshot also records two
-  > design-vs-tree deltas left unfolded: the verbs are the table's words rather than `6d`'s
-  > prose, and `6d` draws a full-width surface where this task and the Component Breakdown say
-  > `Float` body.
+  > **CP-3 re-audit (repair pass) — still not ticked, and now for a bigger reason than
+  > before.** `6d` is a composed frame that no key press can reach. `open-help` is declared at
+  > `crates/phosphor-core/src/action.rs:1075` and `runtime/keymaps.scm:959` binds `:h[elp]` to
+  > it, but **`OpenHelp` has no arm in `crates/phosphor/src/main.rs`** — grep it; the host's
+  > `ViewAction::` arms are `Scroll`, `SetFold`, `FoldAll`, `UnfoldAll` and nothing else. So
+  > typing `:help agent-objects` in the running binary produces a refusal, not this screen.
+  > This is exactly the `T034`/`3c` failure mode that this repair pass existed to close, and it
+  > is the one surface where it was not closed. **Wanted:** an arm in the host and one pty test
+  > that types `:help agent-objects` and reads the grid off the frame.
+  >
+  > **Second, smaller, outstanding item.** The page composes from the **first** `Select` and
+  > the **first** `Operator` bound in normal scope — `crates/phosphor/tests/screen_6d.rs:129-132`
+  > — which is `v` and `d`, so it has no slot for a third head and cannot draw `gsib` however
+  > the keymap is written. One line in that file makes `MarkSeen` a head.
+  >
+  > **Third: the snapshot's own prose is now false in three places, and no lint sees it.**
+  > `crates/phosphor/tests/screen_6d.rs:213-217` (baked into
+  > `crates/phosphor/tests/snapshots/screen_6d__6d.snap:11-16`) says the mark-seen operator is
+  > not bound, no bracket navigation is bound, and there is no `:c` ex command. All three were
+  > true at the first gate and all three are false against the tree now —
+  > `runtime/keymaps.scm:475` (`gs`), `:602`–`:608` (`]u` `[u` `]b` `[b`), `:1003`
+  > (`c[omment]`). The frame did not move, so `insta` passed it. The notes are the bug.
 
 ### ✋ CP-3 — Does it feel like an editor?
 

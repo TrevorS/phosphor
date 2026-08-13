@@ -84,19 +84,18 @@ pub const MIN_WRAP_WIDTH: u16 = 8;
 
 /// Which editor mode the buffer is in, for the details that depend on it.
 ///
+/// **The input machine's enum, re-exported — not a second one.** This module
+/// carried a two-value copy while `T026` did not exist, and said so; `T026`
+/// landed, and a widget may name [`phosphor_core::request`] (that is what
+/// `scripts/lint-no-action-in-ui.sh` allows and `scripts/lint-no-store-mutation.sh`
+/// does not forbid), so the copy is gone and the host's boundary conversion has
+/// nothing left to convert.
+///
 /// Only INSERT differs today — `8e`'s whitespace marks are annotated "INSERT
-/// only" — but the argument is a mode rather than a bool so the call site
-/// reads as the mode it is, and so NORMAL/VISUAL can differ later without a
-/// signature change. The real mode enum is `spine`'s and does not exist yet
-/// (`T026`); this is deliberately not it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum EditMode {
-    /// Anything that is not insertion. Whitespace marks are off.
-    #[default]
-    Normal,
-    /// Typing. Trailing whitespace is marked, so you can see what you left.
-    Insert,
-}
+/// only" — but the argument is a mode rather than a bool so the call site reads
+/// as the mode it is, and so the six others can differ later without a
+/// signature change.
+pub use phosphor_core::request::EditMode;
 
 /// Installs the `8e` text details on an [`Editor`].
 ///

@@ -13,7 +13,6 @@ What lands here, and when:
 | `statusline.scm` | the whole statusline: which segments, in what order, joined how, and the shed ladder | T025 |
 | `repl.scm` | which forms the REPL persists, and where | T022 |
 | `persisted.scm` | what the REPL wrote down; loads last | T022 |
-| `leader.scm` | the leader tree behind which-key | T033 |
 | `pickers/` | picker sources and columns | `store` |
 | `permissions.scm`, `inbox.scm`, `watch.scm` | the directing surfaces | `agent` |
 
@@ -66,14 +65,27 @@ the line it opened on.
 ## The keymap is live because it is only here
 
 `keymaps.scm` holds the table and the dispatcher; **Rust holds no copy of either**. On
-every keystroke the host encodes the key in vim notation and calls
-`(phosphor/press "…")`, which answers `'handled`, `'pending` or `'unbound` — so a
-`(keymap-set! …)` typed at `:repl` is in force on the next key with no reload step and no
-invalidation to forget. That is `T022`'s liveness claim, and it is a property of where the
-table lives rather than a feature that had to be built.
+every keystroke the host spells the whole unfinished sequence in vim notation and calls
+`(phosphor/resolve scope keys)`, which answers a **role** — `(motion "word-forward")`, the
+data the input machine composes with — or `'ran` for a thunk it ran itself, or `'pending`,
+or `'unbound`. So a `(keymap-set! …)` typed at `:repl` is in force on the next key with no
+reload step and no invalidation to forget. That is `T022`'s liveness claim, and it is a
+property of where the table lives rather than a feature that had to be built.
 
-Unfinished sequences are the layer's too: `]` is `'pending` while `]r` is bound, and the
-host only learns whether a binding ran.
+The dispatcher is **stateless**: the machine already holds the half-typed sequence and
+hands the whole of it over, so `]` answers `'pending` while `]u` is bound without the layer
+remembering anything. `T022`'s `phosphor/press` — which answered `'handled` and kept its own
+copy of the pending keys — is gone; two copies of one sequence could only disagree.
+
+Two parsers meet here and neither may drift: `phosphor/keys` folds what a *person* wrote
+into the canonical spelling, and `Key::notation` spells what a *terminal* sent. `<C-K>`,
+`<S-C-k>` and `<c-k>` are one chord and one binding, spelled `<C-S-k>`, because the machine
+only ever asks with that one — `crates/phosphor-steel/tests/no_bindings_in_rust.rs` drives
+the fold from both ends.
+
+The ex line is scheme all the way down, including its **range**: `:'<,'>c` is the command
+`c` over the selection, and `:12,20c` selects those lines before it acts. `phosphor/ex`
+reads the range off the front and a command asks for it with `(ex-range)`.
 
 ## The statusline is composed here, not drawn here
 

@@ -6,7 +6,7 @@
 //!
 //! ```text
 //!   viu        select inner unseen region
-//!   sib        mark inner block seen — s composes like an operator
+//!   gsib       mark inner block seen — gs composes like an operator
 //!   dih        delete inner hunk — revert claude's edit, plain vim delete
 //! ```
 //!
@@ -27,11 +27,13 @@
 //! Owned by `spine`.
 
 use phosphor_core::action::{Action, MotionAction, RegionAction};
+use phosphor_core::input::Machine;
 use phosphor_core::input::key::parse_seq;
 use phosphor_core::input::table::{Keymap, Operator, Role, Scope, Table};
 use phosphor_core::input::text::{Text, Viewport};
-use phosphor_core::input::{Machine, vim};
 use phosphor_core::request::{EditMode, Position, SelectionKind, Target, TextObject};
+
+mod support;
 
 /// A buffer that is only ever read: nothing below is allowed to edit it, and
 /// the assertion that nothing did is that this type has no mutation at all.
@@ -67,20 +69,20 @@ impl Text for Source {
     }
 }
 
-/// The transcribed grammar, plus the one binding `6d` describes and the shipped
-/// keymap does not carry yet: **`s` as an operator.**
+/// The keymap, with mark-seen where **Teej ruled it goes: `gs`**.
 ///
-/// `runtime/keymaps.scm` binds `s` to `(key/fused "change" "char-right")` —
-/// vim's substitute — so `sib` there is *substitute, then type `ib`*. Making
-/// `6d`'s sentence real is two rows in that file and one arm in the layer's
-/// decoder; this table is what those rows have to say, held here so the half
-/// `phosphor-core` owns is proven either way.
+/// `6d` draws the operator as `s`, and `s` is vim's substitute — a habit that
+/// carries, which `CP-3` is explicitly about. So the mockup is the thing that
+/// changed (2026-08-12): mark-seen is `gs`, it still takes an object, and
+/// `gsib` is the sentence. `g` bound only `gg` and `gc` before this, so
+/// nothing moved out of the way for it.
+///
+/// The rows live in [`support::table`] with the rest of the keymap; what is
+/// *not* yet true is the shipped half — `runtime/keymaps.scm` has no `gs` row
+/// and `phosphor-steel/src/keymap.rs`'s decoder has no name for `mark-seen`
+/// (read this session, `keymap.rs:356-364`). Both are named in `R1`'s report.
 fn table() -> Table {
-    let mut table = vim::table();
-    for scope in [Scope::Normal, Scope::Visual, Scope::OperatorPending] {
-        table.bind(scope, "s", Role::Operator(Operator::MarkSeen));
-    }
-    table
+    support::table()
 }
 
 /// Types a sequence and answers the whole Action stream. Nothing is applied:
@@ -144,11 +146,11 @@ fn viu_selects_an_inner_unseen_region_and_selects_nothing_yet() {
 }
 
 #[test]
-fn sib_marks_an_inner_block_seen_and_marks_nothing_yet() {
+fn gsib_marks_an_inner_block_seen_and_marks_nothing_yet() {
     let mut machine = Machine::new();
     let mut keymap = table();
 
-    let stream = drive(&mut machine, &mut keymap, "sib");
+    let stream = drive(&mut machine, &mut keymap, "gsib");
 
     assert_eq!(
         names(&stream),
@@ -235,7 +237,7 @@ fn every_agent_noun_is_bound_in_both_moods() {
         ("vih", TextObject::Hunk),
         ("vit", TextObject::Thread),
         ("vib", TextObject::Block),
-        ("sib", TextObject::Block),
+        ("gsib", TextObject::Block),
         ("yiu", TextObject::UnseenRegion),
     ] {
         let stream = drive(&mut machine, &mut keymap, keys);
@@ -250,19 +252,19 @@ fn every_agent_noun_is_bound_in_both_moods() {
 }
 
 // ---------------------------------------------------------------------------
-// `s` as an operator — the half of `6d` that is grammar rather than store
+// `gs` as an operator — the half of `6d` that is grammar rather than store
 // ---------------------------------------------------------------------------
 
 #[test]
-fn s_composes_like_an_operator_over_an_object_that_does_resolve() {
-    // The composition itself, proven against a noun that exists today: `siw`
+fn gs_composes_like_an_operator_over_an_object_that_does_resolve() {
+    // The composition itself, proven against a noun that exists today: `gsiw`
     // selects the word and marks it. `T041` builds `mark-seen`, so what a door
     // answers today is "`T041` builds this" — a refusal, which the vocabulary
     // is explicit is a normal state and not an error.
     let mut machine = Machine::new();
     let mut keymap = table();
 
-    let stream = drive(&mut machine, &mut keymap, "siw");
+    let stream = drive(&mut machine, &mut keymap, "gsiw");
 
     assert_eq!(
         names(&stream),
@@ -296,12 +298,12 @@ fn s_composes_like_an_operator_over_an_object_that_does_resolve() {
 #[test]
 fn marking_seen_opens_no_undo_group_and_is_not_a_change_to_repeat() {
     // Two consequences of "it is not an edit", both of which would be felt
-    // immediately at `CP-3`: `u` after `sib` must undo the edit *before* it,
+    // immediately at `CP-3`: `u` after `gsib` must undo the edit *before* it,
     // and `.` must repeat that edit rather than a mark.
     let mut machine = Machine::new();
     let mut keymap = table();
 
-    let stream = drive(&mut machine, &mut keymap, "siw");
+    let stream = drive(&mut machine, &mut keymap, "gsiw");
     assert!(
         !stream.iter().any(|action| matches!(
             action,
@@ -318,12 +320,12 @@ fn marking_seen_opens_no_undo_group_and_is_not_a_change_to_repeat() {
 
 #[test]
 fn the_doubled_operator_marks_the_line_seen() {
-    // `dd`, `yy`, `cc` — and `ss`, because the doubling rule is a lookup in the
+    // `dd`, `yy`, `cc` — and `gsgs`, because the doubling rule is a lookup in the
     // machine rather than a special case per operator.
     let mut machine = Machine::new();
     let mut keymap = table();
 
-    let stream = drive(&mut machine, &mut keymap, "ss");
+    let stream = drive(&mut machine, &mut keymap, "gsgs");
 
     assert_eq!(
         names(&stream),
@@ -359,7 +361,7 @@ fn the_transcribed_table_still_spells_s_as_substitute() {
     //
     // Asserted rather than written down, so the day the seed's row changes
     // this test fails and asks whether the other two changed with it.
-    let mut seed = vim::table();
+    let mut seed = support::table();
     assert_eq!(
         seed.resolve(
             Scope::Normal,
@@ -383,7 +385,7 @@ fn the_grammar_asks_the_store_for_nothing() {
     let mut machine = Machine::new();
     let mut keymap = table();
 
-    for keys in ["viu", "dih", "sib", "dit", "dau"] {
+    for keys in ["viu", "dih", "gsib", "dit", "dau"] {
         for action in drive(&mut machine, &mut keymap, keys) {
             assert!(
                 matches!(action, Action::Motion(_) | Action::Input(_)),

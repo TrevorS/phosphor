@@ -60,17 +60,144 @@
 ;;
 ;; `no_bindings_in_rust.rs` checks this against `Key::notation` for every
 ;; spelling the shipped table uses, so the two parsers cannot drift.
+
+;; ---------------------------------------------------------------------------
+;; folding a bracketed key — R12
+;; ---------------------------------------------------------------------------
+;;
+;; **a bracketed key is not copied, it is folded.** `<C-K>`, `<S-C-k>` and
+;; `<c-k>` are all one chord and the machine asks with exactly one spelling of
+;; it, `<C-S-k>` — so a table that copied what was written held bindings no
+;; keystroke could ever reach. the rules are `phosphor-core`'s
+;; (`input/key.rs`), and they are three:
+;;
+;;   1. **order.** modifiers are spelled `C-` `A-` `S-` `D-`, in that order,
+;;      whatever order they were written in (`Key::notation`).
+;;   2. **case, on the character.** a capital under ctrl, alt or super is shift
+;;      plus the base letter, because a terminal reporting alternate keys sends
+;;      the shifted character *instead of* the shift bit (`Key::new`). ascii
+;;      only: the shifted form of `Ä` is layout-dependent and not recoverable.
+;;   3. **shift folds into a plain character.** `<S-a>` is `a` and `<S-A>` is
+;;      `A`, because there the character already carries it
+;;      (`Mods::normalised`) — and a key with no modifiers left is not
+;;      bracketed at all.
+;;
+;; a word that names no key — `<nope>` — is **left exactly as written**, which
+;; is not a concession: rust reads it as the six characters it is, so verbatim
+;; is already the form the machine asks with.
+;;
+;; one place this is deliberately more forgiving than rust: the modifier
+;; prefixes are read in either case, so `<c-k>` reaches ctrl+k rather than
+;; binding five characters nobody types. that only ever turns a dead spelling
+;; into a live one.
+
+;; the modifier a two-character prefix names, or #false.
+;;
+;; shift is `held` and super is `cmd` here for one flat reason: `shift` and
+;; `super` are both bound in steel's own prelude, and a `let` over either is a
+;; macro-expansion failure at boot rather than a shadowing.
+(define (phosphor/modifier prefix)
+  (let ([upper (string-upcase prefix)])
+    (cond
+      [(equal? upper "C-") 'ctrl]
+      [(or (equal? upper "A-") (equal? upper "M-")) 'alt]
+      [(equal? upper "S-") 'held]
+      [(equal? upper "D-") 'cmd]
+      [else #f])))
+
+;; the modifiers at the front of a bracketed key, and what is left of it.
+;; answers `(ctrl alt held cmd bare)`.
+(define (phosphor/split-mods inside)
+  (let loop ([at 0] [ctrl #f] [alt #f] [held #f] [cmd #f])
+    (let ([named (if (<= (+ at 2) (string-length inside))
+                     (phosphor/modifier (substring inside at (+ at 2)))
+                     #f)])
+      (cond
+        [(equal? named 'ctrl) (loop (+ at 2) #t alt held cmd)]
+        [(equal? named 'alt) (loop (+ at 2) ctrl #t held cmd)]
+        [(equal? named 'held) (loop (+ at 2) ctrl alt #t cmd)]
+        [(equal? named 'cmd) (loop (+ at 2) ctrl alt held #t)]
+        [else (list ctrl alt held cmd (substring inside at (string-length inside)))]))))
+
+;; the words a non-character key answers to, and the one it is spelled back
+;; with — `Named::from_word` and `Named::word`, which is why `<escape>` and
+;; `<Esc>` are both `<esc>`.
+(define phosphor/named-keys
+  (hash "esc" "esc" "escape" "esc"
+        "cr" "cr" "enter" "cr" "return" "cr"
+        "tab" "tab"
+        "bs" "bs" "backspace" "bs"
+        "del" "del" "delete" "del"
+        "ins" "ins" "insert" "ins"
+        "left" "left" "right" "right" "up" "up" "down" "down"
+        "home" "home" "end" "end"
+        "pageup" "pageup" "pagedown" "pagedown"
+        "f1" "f1" "f2" "f2" "f3" "f3" "f4" "f4" "f5" "f5" "f6" "f6"
+        "f7" "f7" "f8" "f8" "f9" "f9" "f10" "f10" "f11" "f11" "f12" "f12"))
+
+;; the four bracketed words that name a *character* rather than a named key.
+(define phosphor/bracket-chars (hash "space" " " "lt" "<" "gt" ">" "bslash" "\\"))
+
+;; is this one ascii capital? the boundary rule 2 stops at.
+(define (phosphor/ascii-upper? character)
+  (and (equal? (string-length character) 1)
+       (string-contains? "ABCDEFGHIJKLMNOPQRSTUVWXYZ" character)))
+
+;; one bracketed key, spelled the way a keystroke arrives — or #false when the
+;; word inside names no key at all.
+(define (phosphor/canon-bracket inside)
+  (let* ([parts (phosphor/split-mods inside)]
+         [ctrl (list-ref parts 0)]
+         [alt (list-ref parts 1)]
+         [written (list-ref parts 2)]
+         [cmd (list-ref parts 3)]
+         [bare (list-ref parts 4)]
+         [lowered (string-downcase bare)]
+         [character (or (hash-try-get phosphor/bracket-chars lowered)
+                        (if (equal? (string-length bare) 1) bare #f))]
+         [named (if character #f (hash-try-get phosphor/named-keys lowered))]
+         [commanding (or ctrl alt cmd)]
+         ;; rule 2, then rule 3.
+         [shifted-letter (and character commanding (phosphor/ascii-upper? character))]
+         [code (if shifted-letter (string-downcase character) character)]
+         [held (cond
+                  [shifted-letter #t]
+                  [(and character (not commanding)) #f]
+                  [else written])]
+         [word (cond
+                 [(equal? code " ") "space"]
+                 [code code]
+                 [else named])])
+    (cond
+      [(not word) #f]
+      ;; a character holding nothing is the character: `<lt>` is `<`, `<w>` is
+      ;; `w`, and neither is bracketed once it has been read.
+      [(and code (not (equal? code " ")) (not ctrl) (not alt) (not held) (not cmd)) code]
+      [else
+       (string-append "<"
+                      (if ctrl "C-" "")
+                      (if alt "A-" "")
+                      (if held "S-" "")
+                      (if cmd "D-" "")
+                      word
+                      ">")])))
+
 (define (phosphor/keys spelled)
   (let loop ([at 0] [out ""])
     (cond
       [(>= at (string-length spelled)) out]
-      ;; a bracketed key is copied whole: `<C-r>`, `<esc>`.
+      ;; a bracketed key is folded to the one spelling the machine asks with.
       [(equal? (substring spelled at (+ at 1)) "<")
        (let scan ([to (+ at 1)])
          (cond
+           ;; no `>` before the end of the spelling: the `<` is the character,
+           ;; exactly as rust reads `<<` (dedent twice) and `<w`.
            [(>= to (string-length spelled)) (string-append out (substring spelled at to))]
            [(equal? (substring spelled to (+ to 1)) ">")
-            (loop (+ to 1) (string-append out (substring spelled at (+ to 1))))]
+            (loop (+ to 1)
+                  (string-append out
+                                 (or (phosphor/canon-bracket (substring spelled (+ at 1) to))
+                                     (substring spelled at (+ to 1)))))]
            [else (scan (+ to 1))]))]
       ;; the leader, as 3c and the Design Language spell it.
       [(and (<= (+ at 3) (string-length spelled))
@@ -208,6 +335,11 @@
 (define (key/escape) (list 'escape))
 (define (key/register) (list 'register))
 
+;; `r` — the next keystroke is a *literal*, not a binding, and `count`
+;; characters under the cursor become it. a sibling of `key/register` rather
+;; than a mode: `R` is the mode, and it stays in one until `<esc>`.
+(define (key/replace-char) (list 'replace-char))
+
 ;; a capability call, as data — the name the three doors share, and its
 ;; arguments by name. `(key/cmd "quit" "force" #true)`.
 (define (key/cmd name . pairs) (list name (apply hash pairs)))
@@ -284,6 +416,19 @@
    (list "w" (key/motion "word-forward") "next word")
    (list "b" (key/motion "word-backward") "previous word")
    (list "e" (key/motion "word-end") "end of word")
+   ;; the blank-separated words. same three moves, no punctuation boundaries.
+   (list "W" (key/motion "big-word-forward") "next blank-separated word")
+   (list "B" (key/motion "big-word-backward") "previous blank-separated word")
+   (list "E" (key/motion "big-word-end") "end of blank-separated word")
+   ;; the finds. the character is not part of the binding — the machine takes
+   ;; the next keystroke as a literal, the way `"` takes a register name — so
+   ;; the table names the motion and nothing here spells a target character.
+   (list "f" (key/motion "find-char-forward") "find a character forward")
+   (list "F" (key/motion "find-char-backward") "find a character back")
+   (list "t" (key/motion "till-char-forward") "till before a character")
+   (list "T" (key/motion "till-char-backward") "till after a character back")
+   (list ";" (key/motion "repeat-find") "repeat the last find")
+   (list "," (key/motion "repeat-find-reverse") "repeat the last find, back")
    (list "0" (key/motion "line-start") "start of line")
    (list "^" (key/motion "first-non-blank") "first non-blank")
    (list "<home>" (key/motion "first-non-blank") "first non-blank")
@@ -312,7 +457,22 @@
    (list "y" (key/operator "yank") "yank")
    (list ">" (key/operator "indent") "indent")
    (list "<" (key/operator "dedent") "dedent")
-   (list "gc" (key/operator "toggle-comment") "toggle comment")))
+   (list "gc" (key/operator "toggle-comment") "toggle comment")
+   ;; the case operators. they take an operand exactly the way `d` does —
+   ;; `gUiw`, `gu2j` — which is why they are operators and not motions.
+   (list "gu" (key/operator "lower") "lower case")
+   (list "gU" (key/operator "upper") "upper case")
+   (list "g~" (key/operator "toggle-case") "toggle case")
+   ;; **`gs`, not `s`** — Teej's ruling of 2026-08-12. mockup 6d draws the
+   ;; mark-seen operator as `s`; `s` is vim's substitute and `CP-3` asks that
+   ;; vim habits carry, so the drawing is what changed. `g` bound only `gg` and
+   ;; `gc`, so this displaced nothing, and `gsib` — *mark inner block seen* —
+   ;; is the sentence 6d is about.
+   ;;
+   ;; the one operator that is not an edit: it opens no undo group and fills no
+   ;; register, because seen-state is not the buffer. `Region::MarkSeen` lands
+   ;; at T041, and until then the door answers with the task that builds it.
+   (list "gs" (key/operator "mark-seen") "mark seen")))
 
 (keymap-set-rows! phosphor/motion-scopes phosphor/operators)
 
@@ -364,6 +524,10 @@
   (list "C" (key/fused "change" "line-end") "change to end of line")
   (list "s" (key/fused "change" "char-right") "substitute character")
   (list "Y" (key/fused "yank" "line-end") "yank to end of line")
+  ;; `~` is the case operator fused with `l`, which is exactly what vim's is:
+  ;; it changes the character under the cursor and moves on.
+  (list "~" (key/fused "toggle-case" "char-right") "toggle the case of a character")
+  (list "r" (key/replace-char) "replace a character")
   (list "i" (key/enter "before") "insert")
   (list "a" (key/enter "after") "insert after")
   (list "I" (key/enter "line-start") "insert at first non-blank")
@@ -389,6 +553,7 @@
  (list
   (list "x" (key/operator "delete") "delete the selection")
   (list "s" (key/operator "change") "change the selection")
+  (list "~" (key/operator "toggle-case") "toggle the case of the selection")
   (list "v" (key/select "char") "leave visual")
   (list "V" (key/select "line") "visual line")
   (list "<C-v>" (key/select "block") "visual block")
@@ -405,6 +570,43 @@
   (list "<C-y>" (key/scroll (key/rows -1)) "scroll up a line")
   (list "<C-f>" (key/scroll (key/pages 1)) "scroll down a page")
   (list "<C-b>" (key/scroll (key/pages -1)) "scroll up a page")))
+
+;; folds — vim's `z` tree, narrowed to the three that matter and the two
+;; one-way spellings of the first. nothing here is a mode: a fold is a property
+;; of a place in the buffer, so every one of these names a target rather than
+;; toggling a state the editor holds.
+;;
+;; `zM` folds *to a depth*, and it is vim's `foldlevel` arithmetic: a fold
+;; closes when its level is **greater than** the argument, and the outermost
+;; fold is level 1 — so `0` is *everything closed*, which is what `zM` means.
+;; `zR` takes no argument at all, because "everything open" has no degrees.
+(keymap-set-rows!
+ '("normal" "visual")
+ (list
+  (list "za" (key/run (key/cmd "set-fold" "target" (key/at-cursor) "state" "toggle"))
+        "toggle the fold here")
+  (list "zc" (key/run (key/cmd "set-fold" "target" (key/at-cursor) "state" "folded"))
+        "close the fold here")
+  (list "zo" (key/run (key/cmd "set-fold" "target" (key/at-cursor) "state" "unfolded"))
+        "open the fold here")
+  (list "zM" (key/run (key/cmd "fold-all" "level" 0)) "fold everything")
+  (list "zR" (key/run (key/cmd "unfold-all")) "unfold everything")))
+
+;; the sequence keys — 6d's `]u  [u  · ]b block-wise`. one capability
+;; (`goto-sequence`) walks every sequence the store knows, so this is the same
+;; row four times with a different noun, and `SPC u n` is the leader's spelling
+;; of the first of them.
+(keymap-set-rows!
+ '("normal" "visual")
+ (list
+  (list "]u" (key/run (key/cmd "goto-sequence" "sequence" "unseen-region" "seek" "next"))
+        "next unseen region")
+  (list "[u" (key/run (key/cmd "goto-sequence" "sequence" "unseen-region" "seek" "prev"))
+        "previous unseen region")
+  (list "]b" (key/run (key/cmd "goto-sequence" "sequence" "block-file" "seek" "next"))
+        "next file in the review block")
+  (list "[b" (key/run (key/cmd "goto-sequence" "sequence" "block-file" "seek" "prev"))
+        "previous file in the review block")))
 
 ;; leaving. `<C-c>` is the safety valve — raw mode means the terminal will not
 ;; deliver SIGINT, so an editor with no binding for it is one you cannot get
@@ -607,6 +809,91 @@
        (list (substring line 0 at) (trim (substring line at (string-length line))))]
       [else (loop (+ at 1))])))
 
+;; ---------------------------------------------------------------------------
+;; ranges — `:'<,'>c`, `:12,20c`
+;; ---------------------------------------------------------------------------
+;;
+;; 6d: *"anchored message over a range — ranges, like ex intended"*. a range is
+;; read off the **front** of the line, before the name — which is the whole of
+;; why `:'<,'>c` used to answer *no such command*: the name it looked up was
+;; `'<,'>c`.
+;;
+;; the range is **data**, and the command lowers it, because what a range means
+;; is the command's business:
+;;
+;;   #false                 nothing was typed before the name
+;;   (selection)            `'<,'>` — the live visual selection
+;;   (lines from to)        `12` or `12,20` — 1-based and inclusive
+;;
+;; **what is deliberately not read.** `%`, `.` and `$` name the buffer, the
+;; cursor's line and the last line, and each needs a *query* answered before it
+;; is a range at all — so they are not ranges here, a line starting with one is
+;; read as a name, and the answer is what it was before. adding them means
+;; running a query on the ex path, which is a decision about the ex line's cost
+;; rather than about its grammar.
+
+;; how far the digits at `at` run.
+(define (phosphor/ex-digits line at)
+  (let loop ([to at])
+    (if (and (< to (string-length line))
+             (string-contains? "0123456789" (substring line to (+ to 1))))
+        (loop (+ to 1))
+        to)))
+
+;; the range at the front of `line`, and the line with it removed.
+;; answers `(range rest)`; `range` is #false when there is none.
+(define (phosphor/ex-range-at line)
+  (cond
+    [(starts-with? line "'<,'>")
+     (list (list 'selection) (substring line 5 (string-length line)))]
+    [else
+     (let ([one (phosphor/ex-digits line 0)])
+       (cond
+         [(equal? one 0) (list #f line)]
+         [(and (< one (string-length line))
+               (equal? (substring line one (+ one 1)) ","))
+          (let ([two (phosphor/ex-digits line (+ one 1))])
+            (if (equal? two (+ one 1))
+                ;; `12,` names no second address; it is not a range, so the
+                ;; whole line goes to the lookup and answers for itself.
+                (list #f line)
+                (list (list 'lines
+                            (string->number (substring line 0 one))
+                            (string->number (substring line (+ one 1) two)))
+                      (substring line two (string-length line)))))]
+         [else
+          (list (list 'lines
+                      (string->number (substring line 0 one))
+                      (string->number (substring line 0 one)))
+                (substring line one (string-length line)))]))]))
+
+;; the range the line **being run right now** carries. set by `phosphor/ex`
+;; around the command's own procedure and cleared after it, so `ex-set!` keeps
+;; the two-argument shape it documents and a command that has no use for a
+;; range never learns that ranges exist.
+(define phosphor/ex-current-range #f)
+
+(define (ex-range) phosphor/ex-current-range)
+
+;; the range as a `Target`. both spellings answer the selection, because a line
+;; range is *selected first* (`ex-preamble`) — one arm in a command rather than
+;; three, and it is also what ex does: a range is where the command acts.
+(define (ex-anchor)
+  (if (ex-range) (key/at-selection) (key/at-cursor)))
+
+;; the calls that make `(ex-anchor)` true, to run before the command's own.
+;; a linewise span is half-open, so `12,20` ends at the first column of line 21
+;; — and it is *linewise*, because an ex address names a line and never a
+;; column.
+(define (ex-preamble)
+  (let ([range (ex-range)])
+    (if (and range (equal? (car range) 'lines))
+        (list (key/cmd "select-range"
+                       "span" (hash "start" (hash "line" (list-ref range 1) "column" 1)
+                                    "end" (hash "line" (+ (list-ref range 2) 1) "column" 1))
+                       "kind" "line"))
+        '())))
+
 ;; run one ex line. `:` is not part of it — the prompt owns that.
 ;;
 ;;   'unbound     no command answers to what was typed
@@ -614,7 +901,9 @@
 ;;   'ran         the command did the work itself
 ;;   a role       the actions the binary should apply
 (define (phosphor/ex line)
-  (let* ([parts (phosphor/ex-split (trim line))]
+  (let* ([ranged (phosphor/ex-range-at (trim line))]
+         [range (list-ref ranged 0)]
+         [parts (phosphor/ex-split (trim (list-ref ranged 1)))]
          [head (list-ref parts 0)]
          [rest (list-ref parts 1)]
          [banged (and (> (string-length head) 0)
@@ -626,7 +915,12 @@
     (cond
       [(equal? typed "") 'unbound]
       [(equal? command 'ambiguous) 'ambiguous]
-      [command ((phosphor/ex-run-of command) rest banged)]
+      [command
+       (begin
+         (set! phosphor/ex-current-range range)
+         (let ([answered ((phosphor/ex-run-of command) rest banged)])
+           (set! phosphor/ex-current-range #f)
+           answered))]
       [else 'unbound])))
 
 ;; the commands themselves, spelled the way vim spells them. every one answers
@@ -691,6 +985,28 @@
 
 (ex-set! "reat[tach]" "reattach to a running session"
          (lambda (rest bang) (key/run (key/cmd "reattach-session"))))
+
+;; 6d's `:'<,'>c msg` — *"anchored message over a range — ranges, like ex
+;; intended"*. the only command that reads a range today, and the reason the
+;; grammar above exists: a thread is anchored to a **span**, so the range is
+;; not decoration on this one, it is the argument.
+;;
+;; `:c` with no range anchors at the cursor, which is the same sentence with
+;; the smallest range there is. the thread itself lands at T068 and the door
+;; says so until then, which is the design's own rule — unimplemented is a
+;; value, not an absence — and is why this answers a role rather than erroring.
+;;
+;; **not built:** `:g/TODO/c`, 6d's other range form. `broadcast-thread` is
+;; declared for it (`action.rs`, *"one message against every match of a
+;; pattern"*) and a `/pattern/` grammar is a second parser; no done-when asks
+;; for it, so it is named here rather than half-written.
+(ex-set! "c[omment]" "an anchored message over a range — 6d's :'<,'>c"
+         (lambda (rest bang)
+           (apply key/run
+                  (append (ex-preamble)
+                          (list (key/cmd "start-thread"
+                                         "anchor" (ex-anchor)
+                                         "body" rest))))))
 
 ;; ---------------------------------------------------------------------------
 ;; the prompt key

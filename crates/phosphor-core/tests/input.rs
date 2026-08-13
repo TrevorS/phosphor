@@ -20,13 +20,15 @@
 use std::collections::BTreeMap;
 
 use phosphor_core::action::{Action, BufferAction, InputAction, MotionAction};
+use phosphor_core::input::Machine;
 use phosphor_core::input::key::parse_seq;
 use phosphor_core::input::table::{Keymap, Role, Scope, Table};
 use phosphor_core::input::text::{Text, Viewport};
-use phosphor_core::input::{Machine, vim};
 use phosphor_core::request::{
-    EditMode, Motion, Position, RegisterName, SelectionKind, Span, Target,
+    CaseChange, EditMode, Motion, Position, RegisterName, SelectionKind, Span, Target,
 };
+
+mod support;
 
 // ---------------------------------------------------------------------------
 // The miniature editor
@@ -195,6 +197,19 @@ fn apply(buffer: &mut Buffer, action: &Action) {
                 buffer.insert(at, &text);
             }
         }
+        // `gu`, `gU`, `~`. The host does the same thing with the same helper,
+        // so "what toggle means" has one definition (`text::cased`).
+        Action::Buffer(BufferAction::SetCase { target, case }) => {
+            let span = match target {
+                Target::Selection {} => buffer.selection.map(|(span, _)| span),
+                _ => None,
+            };
+            if let Some(span) = span {
+                let cased = phosphor_core::input::text::cased(&buffer.slice(span), *case);
+                buffer.remove(span);
+                buffer.insert(span.start, &cased);
+            }
+        }
         Action::Motion(MotionAction::MoveCursor { motion, count }) => {
             buffer.cursor =
                 phosphor_core::input::text::cursor_after(buffer, buffer.cursor, *motion, *count);
@@ -246,7 +261,7 @@ fn names(stream: &[Action]) -> Vec<&'static str> {
 #[test]
 fn a_count_folds_into_the_operand_and_3dd_is_one_delete() {
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("one\ntwo\nthree\nfour\nfive");
     buffer.at(2, 1);
 
@@ -284,7 +299,7 @@ fn a_count_folds_into_the_operand_and_3dd_is_one_delete() {
 #[test]
 fn a_named_register_is_state_the_yank_reads() {
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("alpha\nbeta");
     buffer.at(1, 1);
 
@@ -327,7 +342,7 @@ fn the_two_counts_multiply() {
     // vim's rule: `2d3w` is six words. The machine holds both halves because
     // the second one arrives after the operator.
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("a b c d e f g h");
     buffer.at(1, 1);
 
@@ -342,7 +357,7 @@ fn the_two_counts_multiply() {
 #[test]
 fn an_operator_over_a_text_object_selects_then_acts() {
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("call(alpha, beta);");
     buffer.at(1, 8);
 
@@ -377,7 +392,7 @@ fn an_operator_over_a_text_object_selects_then_acts() {
 #[test]
 fn an_operator_over_a_motion_takes_the_motions_span() {
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("alpha beta gamma");
     buffer.at(1, 1);
 
@@ -391,7 +406,7 @@ fn an_operator_over_a_motion_takes_the_motions_span() {
 #[test]
 fn insert_mode_types_text_and_esc_closes_the_undo_group() {
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("bc");
     buffer.at(1, 1);
 
@@ -414,7 +429,7 @@ fn insert_mode_types_text_and_esc_closes_the_undo_group() {
 #[test]
 fn o_opens_a_line_below_and_keeps_the_indent() {
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("    let x = 1;\nnext");
     buffer.at(1, 5);
 
@@ -425,7 +440,7 @@ fn o_opens_a_line_below_and_keeps_the_indent() {
 #[test]
 fn visual_mode_extends_a_selection_and_the_operator_takes_it() {
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("one\ntwo\nthree");
     buffer.at(1, 1);
 
@@ -452,7 +467,7 @@ fn visual_mode_extends_a_selection_and_the_operator_takes_it() {
 #[test]
 fn x_is_a_fused_operator_and_p_puts_it_back() {
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("abc");
     buffer.at(1, 1);
 
@@ -465,7 +480,7 @@ fn x_is_a_fused_operator_and_p_puts_it_back() {
 #[test]
 fn a_line_address_is_a_count_and_not_a_repeat() {
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("one\ntwo\nthree\nfour");
     buffer.at(1, 1);
 
@@ -491,7 +506,7 @@ fn repeat_is_a_re_entry_the_host_drives() {
     // `feed` one at a time. Replaying the Actions would delete the same
     // absolute span twice.
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("abcdef");
     buffer.at(1, 1);
 
@@ -509,10 +524,12 @@ fn repeat_is_a_re_entry_the_host_drives() {
 #[test]
 fn an_unbound_key_asks_for_the_hint_rather_than_going_quiet() {
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("text");
 
-    let stream = drive(&mut machine, &mut keymap, &mut buffer, "~");
+    // `&` — vim's repeat-substitute, which this editor has no search to repeat
+    // and so does not bind. (`~` used to stand here and is a case change now.)
+    let stream = drive(&mut machine, &mut keymap, &mut buffer, "&");
     assert_eq!(names(&stream), ["show-unknown-key-hint", "cancel-pending"]);
 }
 
@@ -522,7 +539,7 @@ fn the_table_changes_at_runtime_and_the_next_key_sees_it() {
     // machine holds a `Keymap`, not a table, so a binding added between two
     // keystrokes is in force on the second one.
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("abc");
 
     let before = drive(&mut machine, &mut keymap, &mut buffer, "Q");
@@ -567,7 +584,7 @@ fn the_agent_nouns_parse_and_no_op() {
     // exists: `diu` is accepted, records what was asked for, and deletes
     // nothing — there is no store to resolve `u` against until `T049`.
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("one\ntwo");
     buffer.at(1, 1);
 
@@ -584,7 +601,7 @@ fn the_agent_nouns_parse_and_no_op() {
 #[test]
 fn esc_drops_a_half_typed_command() {
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("one two");
     buffer.at(1, 1);
 
@@ -602,7 +619,7 @@ fn a_scroll_is_the_only_key_that_moves_a_viewport() {
     // Invariant 3, from the input side: the count scales the request rather
     // than emitting three of them.
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("a\nb\nc\nd\ne\nf");
 
     let stream = drive(&mut machine, &mut keymap, &mut buffer, "3<C-e>");
@@ -628,7 +645,7 @@ fn a_door_moves_the_machine_the_same_way_a_key_does() {
     machine.apply(&InputAction::SetCount { count: 4 });
     assert_eq!(machine.pending().count(), 4);
 
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("one\ntwo\nthree\nfour\nfive");
     buffer.at(1, 1);
     drive(&mut machine, &mut keymap, &mut buffer, "yy");
@@ -642,7 +659,7 @@ fn a_door_moves_the_machine_the_same_way_a_key_does() {
 #[test]
 fn quitting_is_an_action_like_everything_else() {
     let mut machine = Machine::new();
-    let mut keymap = vim::table();
+    let mut keymap = support::table();
     let mut buffer = Buffer::new("text");
     let stream = drive(&mut machine, &mut keymap, &mut buffer, "ZQ");
     assert_eq!(names(&stream), ["quit"]);
@@ -650,10 +667,10 @@ fn quitting_is_an_action_like_everything_else() {
 }
 
 #[test]
-fn every_seed_binding_answers_with_a_role() {
-    // The seed is data and `Table::bind` drops a spelling it cannot parse, so
-    // this is what makes a typo in `vim.rs` loud rather than silent.
-    let mut table: Table = vim::table();
+fn every_binding_in_the_fixture_answers_with_a_role() {
+    // `Table::bind` drops a spelling it cannot parse, so a typo in the
+    // transcription would bind nothing at all. This is what makes it loud.
+    let mut table: Table = support::table();
     for scope in [
         Scope::Normal,
         Scope::Insert,
@@ -671,4 +688,350 @@ fn every_seed_binding_answers_with_a_role() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// R1 — the motions a vim user reaches for next
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_scheme_keymap_can_name_every_new_motion() {
+    // **The half of "the keymap is in Steel" that this crate can prove.**
+    // `phosphor-steel/src/keymap.rs:297` decodes `(key/motion "…")` as
+    // `Motion::from_value` of the tag and nothing else, so a tag that round
+    // trips here is a tag `runtime/keymaps.scm` can write with no Rust change
+    // at all. The four new *roles* are not like this — `replace-char` and the
+    // three case operators need an arm in that file, which `R1`'s report asks
+    // for by name.
+    use phosphor_core::value::{Value, Wire};
+
+    for (motion, tag) in [
+        (Motion::FindCharForward, "find-char-forward"),
+        (Motion::FindCharBackward, "find-char-backward"),
+        (Motion::TillCharForward, "till-char-forward"),
+        (Motion::TillCharBackward, "till-char-backward"),
+        (Motion::RepeatFind, "repeat-find"),
+        (Motion::RepeatFindReverse, "repeat-find-reverse"),
+        (Motion::BigWordForward, "big-word-forward"),
+        (Motion::BigWordBackward, "big-word-backward"),
+        (Motion::BigWordEnd, "big-word-end"),
+    ] {
+        assert_eq!(motion.to_value(), Value::Text(tag.to_owned()));
+        assert_eq!(
+            Motion::from_value(&Value::Text(tag.to_owned())).ok(),
+            Some(motion),
+            "the layer cannot name {tag}"
+        );
+    }
+    for (case, tag) in [
+        (CaseChange::Upper, "upper"),
+        (CaseChange::Lower, "lower"),
+        (CaseChange::Toggle, "toggle"),
+    ] {
+        assert_eq!(case.to_value(), Value::Text(tag.to_owned()));
+        assert_eq!(
+            CaseChange::from_value(&Value::Text(tag.to_owned())).ok(),
+            Some(case)
+        );
+    }
+}
+
+#[test]
+fn find_and_till_differ_by_one_character_in_both_directions() {
+    // **The off-by-one this vocabulary exists to get right.** Four keys, one
+    // line, four different columns.
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+    let mut buffer = Buffer::new("alpha, beta, gamma");
+
+    // `f,` lands *on* the comma; `t,` stops one short of it.
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "f,");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 6 });
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "t,");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 5 });
+
+    // Backwards, `F,` lands on it and `T,` stops one *after* it.
+    buffer.at(1, 18);
+    drive(&mut machine, &mut keymap, &mut buffer, "F,");
+    assert_eq!(
+        buffer.cursor(),
+        Position {
+            line: 1,
+            column: 12
+        }
+    );
+    buffer.at(1, 18);
+    drive(&mut machine, &mut keymap, &mut buffer, "T,");
+    assert_eq!(
+        buffer.cursor(),
+        Position {
+            line: 1,
+            column: 13
+        }
+    );
+
+    // A count picks the nth, and the till stops one short of *that* one rather
+    // than stalling on the first.
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "2f,");
+    assert_eq!(
+        buffer.cursor(),
+        Position {
+            line: 1,
+            column: 12
+        }
+    );
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "2t,");
+    assert_eq!(
+        buffer.cursor(),
+        Position {
+            line: 1,
+            column: 11
+        }
+    );
+
+    // A find that cannot land does not move — and never leaves the line.
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "fz");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 1 });
+}
+
+#[test]
+fn an_operator_over_a_find_is_inclusive_forward_and_exclusive_back() {
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+
+    // `df,` swallows the character it lands on…
+    let mut buffer = Buffer::new("alpha, beta");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "df,");
+    assert_eq!(buffer.content(), " beta");
+
+    // …`dt,` stops one short of it.
+    let mut buffer = Buffer::new("alpha, beta");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "dt,");
+    assert_eq!(buffer.content(), ", beta");
+
+    // Backwards is exclusive: the character under the cursor stays.
+    let mut buffer = Buffer::new("alpha, beta");
+    buffer.at(1, 8);
+    drive(&mut machine, &mut keymap, &mut buffer, "dF,");
+    assert_eq!(buffer.content(), "alphabeta");
+
+    // A find with nothing to find cancels the operator rather than deleting
+    // something else.
+    let mut buffer = Buffer::new("alpha, beta");
+    buffer.at(1, 1);
+    let stream = drive(&mut machine, &mut keymap, &mut buffer, "dfz");
+    assert_eq!(buffer.content(), "alpha, beta");
+    assert_eq!(names(&stream), ["set-mode", "cancel-pending", "set-mode"]);
+    assert_eq!(machine.mode(), EditMode::Normal);
+}
+
+#[test]
+fn semicolon_repeats_the_find_and_comma_reverses_it() {
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+    let mut buffer = Buffer::new("a,b,c,d");
+    buffer.at(1, 1);
+
+    drive(&mut machine, &mut keymap, &mut buffer, "f,");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 2 });
+    drive(&mut machine, &mut keymap, &mut buffer, ";");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 4 });
+    drive(&mut machine, &mut keymap, &mut buffer, ";");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 6 });
+    drive(&mut machine, &mut keymap, &mut buffer, ",");
+    assert_eq!(
+        buffer.cursor(),
+        Position { line: 1, column: 4 },
+        "`,` is the same find the other way"
+    );
+    // `,` does not become the find that `;` repeats.
+    drive(&mut machine, &mut keymap, &mut buffer, ";");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 6 });
+
+    // And it composes with an operator, on the remembered character — with the
+    // inclusiveness of the find it repeats, so `d;` here is `df,`.
+    drive(&mut machine, &mut keymap, &mut buffer, "0d;");
+    assert_eq!(buffer.content(), "b,c,d");
+
+    // With nothing found yet, `;` drops the pending command rather than
+    // guessing a character.
+    let mut fresh = Machine::new();
+    let stream = drive(&mut fresh, &mut keymap, &mut buffer, ";");
+    assert_eq!(names(&stream), ["cancel-pending"]);
+}
+
+#[test]
+fn a_big_word_is_everything_that_is_not_blank() {
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+    let mut buffer = Buffer::new("foo_bar(1); next");
+
+    // `w` stops at the punctuation run; `W` steps over the whole token.
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "w");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 8 });
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "W");
+    assert_eq!(
+        buffer.cursor(),
+        Position {
+            line: 1,
+            column: 13
+        }
+    );
+
+    buffer.at(1, 13);
+    drive(&mut machine, &mut keymap, &mut buffer, "B");
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 1 });
+
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "E");
+    assert_eq!(
+        buffer.cursor(),
+        Position {
+            line: 1,
+            column: 11
+        },
+        "E ends on the `;`, which `e` would have stopped before"
+    );
+
+    // `dW` takes the punctuation with it, which is the whole reason `W` exists.
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "dW");
+    assert_eq!(buffer.content(), "next");
+}
+
+#[test]
+fn r_replaces_under_the_cursor_and_repeats() {
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+    let mut buffer = Buffer::new("abcd");
+    buffer.at(1, 1);
+
+    let stream = drive(&mut machine, &mut keymap, &mut buffer, "rx");
+    assert_eq!(names(&stream), ["replace", "commit-undo-group"]);
+    assert_eq!(buffer.content(), "xbcd");
+    assert_eq!(machine.mode(), EditMode::Normal, "r is not R");
+
+    // The count replaces that many, and refuses when the line is too short —
+    // vim's rule, and the reason a partial replace is not a thing.
+    buffer.at(1, 2);
+    drive(&mut machine, &mut keymap, &mut buffer, "2ry");
+    assert_eq!(buffer.content(), "xyyd");
+    buffer.at(1, 3);
+    let stream = drive(&mut machine, &mut keymap, &mut buffer, "9rz");
+    assert_eq!(names(&stream), ["set-count", "cancel-pending"]);
+    assert_eq!(
+        buffer.content(),
+        "xyyd",
+        "9rz with two characters left refuses"
+    );
+
+    // `.` repeats it: the keys round-trip through the notation and back.
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "rq");
+    let keys = machine.last_change().expect("r is a change");
+    assert_eq!(keys.0, "rq");
+    buffer.at(1, 2);
+    drive(&mut machine, &mut keymap, &mut buffer, &keys.0);
+    assert_eq!(buffer.content(), "qqyd");
+
+    // A key that types nothing is not a literal: `<esc>` after `r` cancels.
+    buffer.at(1, 1);
+    let stream = drive(&mut machine, &mut keymap, &mut buffer, "r<esc>");
+    assert_eq!(names(&stream), ["cancel-pending"]);
+    assert_eq!(buffer.content(), "qqyd");
+}
+
+#[test]
+fn case_change_is_an_operator_and_tilde_is_the_fused_form() {
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+
+    // `gUiw` — an operator over an object, and the stream says so.
+    let mut buffer = Buffer::new("alpha beta");
+    buffer.at(1, 1);
+    let stream = drive(&mut machine, &mut keymap, &mut buffer, "gUiw");
+    assert_eq!(
+        names(&stream),
+        [
+            "set-mode",
+            "select-object",
+            "select-range",
+            "set-case",
+            "clear-selection",
+            "set-mode",
+            "commit-undo-group",
+        ],
+        "{stream:#?}"
+    );
+    assert_eq!(buffer.content(), "ALPHA beta");
+    assert!(
+        stream.iter().any(|action| matches!(
+            action,
+            Action::Buffer(BufferAction::SetCase {
+                case: CaseChange::Upper,
+                ..
+            })
+        )),
+        "{stream:#?}"
+    );
+
+    // The doubled form is linewise, by the same rule as `dd`.
+    let mut buffer = Buffer::new("ALPHA BETA\nNEXT");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "gugu");
+    assert_eq!(buffer.content(), "alpha beta\nNEXT");
+
+    // `~` is `g~l` in one key, and a count takes that many characters.
+    //
+    // The line is longer than the count on purpose: `3~` on a three-character
+    // line changes two, because `char-right` clamps to the last character and
+    // the span is exclusive of it. That is `3x`'s behaviour too and it predates
+    // this task — `R1`'s report names it rather than folding a fix for `x`,
+    // `~` and `d3l` into a vocabulary change.
+    let mut buffer = Buffer::new("abcdef");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "~");
+    assert_eq!(buffer.content(), "Abcdef");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "3~");
+    assert_eq!(buffer.content(), "aBCdef");
+}
+
+#[test]
+fn a_find_extends_a_live_selection() {
+    // `MoveCursor` and `ExtendSelection` cannot carry the character, so the
+    // machine resolves the destination and asks for it absolutely — the path
+    // `gg` already takes. What has to be true either way is that visual mode
+    // selects up to where the find landed.
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+    let mut buffer = Buffer::new("alpha, beta");
+    buffer.at(1, 1);
+
+    let stream = drive(&mut machine, &mut keymap, &mut buffer, "vf,");
+    assert_eq!(
+        names(&stream),
+        ["set-mode", "select-range", "select-range", "set-cursor"],
+        "{stream:#?}"
+    );
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 6 });
+    let (span, _) = buffer.selection.expect("visual mode selects");
+    assert_eq!(span.start, Position { line: 1, column: 1 });
+    assert_eq!(
+        span.end,
+        Position { line: 1, column: 7 },
+        "the selection includes the character the find landed on"
+    );
+
+    drive(&mut machine, &mut keymap, &mut buffer, "d");
+    assert_eq!(buffer.content(), " beta");
 }

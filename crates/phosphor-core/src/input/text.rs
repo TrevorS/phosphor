@@ -33,7 +33,7 @@
 //! handing out a borrow — makes the trait unimplementable over a rope that
 //! stores lines in pieces (`ropey`'s `RopeSlice` is not `&str`).
 
-use crate::request::{Motion, Position, SelectionKind, Span, TextObject};
+use crate::request::{CaseChange, Motion, Position, SelectionKind, Span, TextObject};
 
 /// One buffer, read-only, as the input machine sees it.
 ///
@@ -183,9 +183,37 @@ pub fn first_non_blank(text: &dyn Text, line: u32) -> Position {
 /// applying `MoveCursor` and the machine building an operator's span. Total —
 /// an unresolvable motion answers where it started rather than erroring, so a
 /// keystroke never becomes a fault.
+///
+/// The four find motions need a character, which this form does not have; they
+/// stay put here and answer through [`cursor_after_with_target`] instead. See
+/// [`Motion`]'s own header for why the character does not ride on the tag.
 #[must_use]
 pub fn cursor_after(text: &dyn Text, from: Position, motion: Motion, count: u32) -> Position {
+    cursor_after_with_target(text, from, motion, count, None)
+}
+
+/// [`cursor_after`], with the character `f`, `F`, `t` and `T` search for.
+///
+/// The machine holds that character between the `f` and the key that names it
+/// and passes it here; every other motion ignores it.
+#[must_use]
+pub fn cursor_after_with_target(
+    text: &dyn Text,
+    from: Position,
+    motion: Motion,
+    count: u32,
+    target: Option<char>,
+) -> Position {
     let count = count.max(1);
+    if is_find(motion) {
+        // Counted as a whole rather than stepped: `3ta` is *the third* `a`,
+        // then one back — stepping a till motion would stall on the character
+        // it already stopped before.
+        return match target {
+            Some(character) => find_char(text, from, motion, character, count),
+            None => from,
+        };
+    }
     let mut position = from;
     for _ in 0..count {
         position = step(text, position, motion);
@@ -196,6 +224,90 @@ pub fn cursor_after(text: &dyn Text, from: Position, motion: Motion, count: u32)
             clamp(text, position)
         }
         _ => position,
+    }
+}
+
+/// Whether this motion is one of the four that need a character.
+///
+/// `;` and `,` are not among them: the machine resolves them to the find they
+/// repeat *before* asking, because the last find is state the machine holds and
+/// this module is a view of one buffer with no memory.
+#[must_use]
+pub const fn is_find(motion: Motion) -> bool {
+    matches!(
+        motion,
+        Motion::FindCharForward
+            | Motion::FindCharBackward
+            | Motion::TillCharForward
+            | Motion::TillCharBackward
+    )
+}
+
+/// `text` with its letters upper-cased, lower-cased or toggled.
+///
+/// **One definition of what `~` means**, so the host applying
+/// `Buffer::SetCase` and any test driving it cannot differ. Non-letters are
+/// untouched, and a letter with no other case is itself.
+#[must_use]
+pub fn cased(text: &str, case: CaseChange) -> String {
+    text.chars()
+        .flat_map(|character| {
+            let cased: Box<dyn Iterator<Item = char>> = match case {
+                CaseChange::Upper => Box::new(character.to_uppercase()),
+                CaseChange::Lower => Box::new(character.to_lowercase()),
+                CaseChange::Toggle if character.is_lowercase() => {
+                    Box::new(character.to_uppercase())
+                }
+                CaseChange::Toggle if character.is_uppercase() => {
+                    Box::new(character.to_lowercase())
+                }
+                CaseChange::Toggle => Box::new(core::iter::once(character)),
+            };
+            cased
+        })
+        .collect()
+}
+
+/// `f`, `F`, `t`, `T` — the one place the off-by-one that separates them lives.
+///
+/// **On this line only**, which is vim's rule and the reason `dt)` is safe at
+/// the end of a line. A count that cannot be met leaves the cursor where it
+/// started: the whole motion fails, rather than stopping at the second of three
+/// asked-for occurrences.
+fn find_char(
+    text: &dyn Text,
+    from: Position,
+    motion: Motion,
+    target: char,
+    count: u32,
+) -> Position {
+    let row: Vec<char> = match text.line(from.line) {
+        Some(row) => row.chars().collect(),
+        None => return from,
+    };
+    let forwards = matches!(motion, Motion::FindCharForward | Motion::TillCharForward);
+    // 0-based, so the arithmetic below is the same in both directions.
+    let mut at = (from.column as usize).saturating_sub(1);
+    for _ in 0..count.max(1) {
+        let found = if forwards {
+            (at + 1..row.len()).find(|index| row[*index] == target)
+        } else {
+            (0..at).rev().find(|index| row[*index] == target)
+        };
+        match found {
+            Some(index) => at = index,
+            None => return from,
+        }
+    }
+    // `t` stops one short of what `f` lands on, in whichever direction it ran.
+    let column = match motion {
+        Motion::TillCharForward => at,
+        Motion::TillCharBackward => at + 2,
+        _ => at + 1,
+    };
+    Position {
+        line: from.line,
+        column: u32::try_from(column).unwrap_or(1).max(1),
     }
 }
 
@@ -224,9 +336,12 @@ fn step(text: &dyn Text, from: Position, motion: Motion) -> Position {
             line: (from.line + 1).min(lines),
             ..from
         },
-        Motion::WordForward => word_forward(text, from),
-        Motion::WordBackward => word_backward(text, from),
-        Motion::WordEnd => word_end(text, from),
+        Motion::WordForward => word_forward(text, from, false),
+        Motion::WordBackward => word_backward(text, from, false),
+        Motion::WordEnd => word_end(text, from, false),
+        Motion::BigWordForward => word_forward(text, from, true),
+        Motion::BigWordBackward => word_backward(text, from, true),
+        Motion::BigWordEnd => word_end(text, from, true),
         Motion::LineStart => Position { column: 1, ..from },
         Motion::FirstNonBlank => first_non_blank(text, from.line),
         Motion::LineEnd => Position {
@@ -255,17 +370,38 @@ fn step(text: &dyn Text, from: Position, motion: Motion) -> Position {
         // No search prompt until `T033`'s ex commands, and a motion that
         // invented a destination would be worse than one that stays put.
         Motion::SearchNext | Motion::SearchPrev => from,
+        // Reached only through a door: the machine resolves a find to its
+        // character before it asks, and `;` to the find it repeats.
+        Motion::FindCharForward
+        | Motion::FindCharBackward
+        | Motion::TillCharForward
+        | Motion::TillCharBackward
+        | Motion::RepeatFind
+        | Motion::RepeatFindReverse => from,
     }
 }
 
-fn word_forward(text: &dyn Text, from: Position) -> Position {
+/// What a character counts as, with `W`'s coarser reading as an option.
+///
+/// **The one difference between `w` and `W`**, and it is a classifier rather
+/// than a second walk: a big word is *anything not blank*, so punctuation stops
+/// being a run of its own. [`word_object`] already read the buffer this way for
+/// `iW`; the motions now share the rule instead of restating it.
+fn classify(character: char, big: bool) -> Class {
+    match class(character) {
+        Class::Punct if big => Class::Word,
+        other => other,
+    }
+}
+
+fn word_forward(text: &dyn Text, from: Position, big: bool) -> Position {
     let mut position = from;
     if let Some(start) = at(text, position)
-        && class(start) != Class::Blank
+        && classify(start, big) != Class::Blank
     {
-        let start = class(start);
+        let start = classify(start, big);
         while let Some(next) = forward(text, position) {
-            if at(text, next).map(class) == Some(start) {
+            if at(text, next).map(|c| classify(c, big)) == Some(start) {
                 position = next;
             } else {
                 position = next;
@@ -273,7 +409,7 @@ fn word_forward(text: &dyn Text, from: Position) -> Position {
             }
         }
     }
-    while at(text, position).map(class) == Some(Class::Blank) {
+    while at(text, position).map(|c| classify(c, big)) == Some(Class::Blank) {
         match forward(text, position) {
             Some(next) => position = next,
             None => break,
@@ -282,19 +418,19 @@ fn word_forward(text: &dyn Text, from: Position) -> Position {
     position
 }
 
-fn word_backward(text: &dyn Text, from: Position) -> Position {
+fn word_backward(text: &dyn Text, from: Position, big: bool) -> Position {
     let Some(mut position) = backward(text, from) else {
         return from;
     };
-    while at(text, position).map(class) == Some(Class::Blank) {
+    while at(text, position).map(|c| classify(c, big)) == Some(Class::Blank) {
         match backward(text, position) {
             Some(previous) => position = previous,
             None => return position,
         }
     }
-    let run = at(text, position).map(class);
+    let run = at(text, position).map(|c| classify(c, big));
     while let Some(previous) = backward(text, position) {
-        if at(text, previous).map(class) == run {
+        if at(text, previous).map(|c| classify(c, big)) == run {
             position = previous;
         } else {
             break;
@@ -303,19 +439,19 @@ fn word_backward(text: &dyn Text, from: Position) -> Position {
     position
 }
 
-fn word_end(text: &dyn Text, from: Position) -> Position {
+fn word_end(text: &dyn Text, from: Position, big: bool) -> Position {
     let Some(mut position) = forward(text, from) else {
         return from;
     };
-    while at(text, position).map(class) == Some(Class::Blank) {
+    while at(text, position).map(|c| classify(c, big)) == Some(Class::Blank) {
         match forward(text, position) {
             Some(next) => position = next,
             None => return position,
         }
     }
-    let run = at(text, position).map(class);
+    let run = at(text, position).map(|c| classify(c, big));
     while let Some(next) = forward(text, position) {
-        if at(text, next).map(class) == run {
+        if at(text, next).map(|c| classify(c, big)) == run {
             position = next;
         } else {
             break;
@@ -425,10 +561,34 @@ pub fn motion_span(
     motion: Motion,
     count: u32,
 ) -> Option<(Span, SelectionKind)> {
-    if matches!(motion, Motion::SearchNext | Motion::SearchPrev) {
+    motion_span_with_target(text, from, motion, count, None)
+}
+
+/// [`motion_span`], with the character `f`, `F`, `t` and `T` search for.
+///
+/// [`None`] when the find does not land — `dfx` with no `x` on the line leaves
+/// the operator's operand unresolved, which the machine turns into a cancelled
+/// `d` rather than a delete of something else.
+#[must_use]
+pub fn motion_span_with_target(
+    text: &dyn Text,
+    from: Position,
+    motion: Motion,
+    count: u32,
+    target: Option<char>,
+) -> Option<(Span, SelectionKind)> {
+    if matches!(
+        motion,
+        Motion::SearchNext | Motion::SearchPrev | Motion::RepeatFind | Motion::RepeatFindReverse
+    ) {
         return None;
     }
-    let to = cursor_after(text, from, motion, count);
+    let to = cursor_after_with_target(text, from, motion, count, target);
+    // A find that did not land is not a span of zero characters: `dfx` with no
+    // `x` ahead of the cursor deletes nothing at all.
+    if is_find(motion) && to == from {
+        return None;
+    }
     let kind = linewise(motion);
     if kind == SelectionKind::Line {
         let (first, last) = (from.line.min(to.line), from.line.max(to.line));
@@ -490,10 +650,20 @@ const fn linewise(motion: Motion) -> SelectionKind {
     }
 }
 
+/// Whether an operator takes the character its motion lands on.
+///
+/// The forward finds are inclusive and the backward ones are not, which is
+/// vim's rule and is what makes `dfx` swallow the `x` while `dFx` deletes back
+/// *to* it and leaves the character under the cursor alone.
 const fn inclusive(motion: Motion) -> bool {
     matches!(
         motion,
-        Motion::WordEnd | Motion::LineEnd | Motion::MatchingBracket
+        Motion::WordEnd
+            | Motion::BigWordEnd
+            | Motion::LineEnd
+            | Motion::MatchingBracket
+            | Motion::FindCharForward
+            | Motion::TillCharForward
     )
 }
 
@@ -532,28 +702,18 @@ fn word_object(
     inner: bool,
     big: bool,
 ) -> Option<(Span, SelectionKind)> {
-    let classify = |character: char| {
-        if big {
-            if character.is_whitespace() {
-                Class::Blank
-            } else {
-                Class::Word
-            }
-        } else {
-            class(character)
-        }
-    };
-    let run = classify(at(text, from)?);
+    let run = classify(at(text, from)?, big);
     let mut start = from;
     while let Some(previous) = backward(text, start) {
-        if previous.line != start.line || at(text, previous).map(classify) != Some(run) {
+        if previous.line != start.line || at(text, previous).map(|c| classify(c, big)) != Some(run)
+        {
             break;
         }
         start = previous;
     }
     let mut end = from;
     while let Some(next) = forward(text, end) {
-        if next.line != end.line || at(text, next).map(classify) != Some(run) {
+        if next.line != end.line || at(text, next).map(|c| classify(c, big)) != Some(run) {
             break;
         }
         end = next;

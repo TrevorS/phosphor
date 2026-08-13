@@ -85,7 +85,35 @@
 //!    key's Actions before feeding the next, because a replay computed against
 //!    a buffer that has not moved yet edits the wrong span.
 //! 4. **Dirty is per buffer and comes from the edit stream**, not from a save
-//!    path — see [`dirty_flag`].
+//!    path — see [`dirty_flag`]. Undo is the one thing that overrides it, and
+//!    it does so with node identity rather than a second flag
+//!    ([`Editing::walk`]).
+//!
+//! # The wiring pass — what a keystroke reaches, and what it did not
+//!
+//! `S3` shipped four surfaces that were built, tested, green, and unreachable:
+//! the `SPC` popup, the unknown-key hint, folds and undo all worked and no key
+//! opened any of them. That was this file's fault — it went to one agent in one
+//! phase, so nothing built afterwards could be wired — and the rule it produced
+//! is that **a task that produces something a user reaches by pressing a key
+//! includes the key**. Five items, and the proof for every one of them is
+//! `tests/loop_pty.rs`, which presses the key on a real terminal:
+//!
+//! * **Undo is `T029`'s tree and `T030`'s journal** ([`Timeline`]). The fork's
+//!   own history is not a fallback, it is gone: two live histories cannot both
+//!   be the history, and the fork's truncates on divergence. The journal opens
+//!   before the first frame, so *"quit, reopen, undo"* walks the previous
+//!   session's history.
+//! * **The leader popup is composed here** ([`under`], [`Overlay`]), out of the
+//!   live keymap on the frame that draws it — so a `(keymap-set! …)` typed at
+//!   the REPL is in the next popup with nothing else to wire.
+//! * **An unbound key teaches once** — `App::ShowUnknownKeyHint` reaches
+//!   [`Editing::act`], and the latch that spends the session's one hint is the
+//!   loop's, because *"once per session"* is not a fact about a buffer.
+//! * **Folds have arms** ([`Editing::set_fold`] and its two neighbours) over
+//!   the fork's own `fold_ranges`, which are the language's `folds.scm`.
+//! * **The machine is told which keyboard protocol was negotiated**, which is
+//!   what makes `T027`'s legacy-chord fallback able to fire at all.
 //!
 //! # The two flags that are not in a mockup
 //!
@@ -116,6 +144,7 @@ use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
 };
+use phosphor_buffer::undo::{Caret, CharRange, Edit as TreeEdit, NodeId, Step, UndoTree};
 use phosphor_core::action::{
     Action, AppAction, BufferAction, FileAction, HistoryAction, InputAction, MotionAction, Outcome,
     PromptAction, Receipt, Refusal, Request, RuntimeAction, ViewAction,
@@ -124,30 +153,35 @@ use phosphor_core::input::key::{Code, Key, Mods, Named};
 use phosphor_core::input::table::{Keymap, Layered, Resolution, Scope, Table};
 use phosphor_core::input::text::{Text, Viewport};
 use phosphor_core::input::{Machine, key, text as motion};
+use phosphor_core::journal::{self, Log, undo as wire_undo};
 use phosphor_core::query::{Answer, Answers, Query, QueryError, Revision};
 use phosphor_core::request::{
-    EditMode, Position, PromptKind, RegisterName, SelectionKind, Span, Target,
+    EditMode, FoldState, KeySeq, Position, PromptKind, RegisterName, SelectionKind, Span, Target,
 };
 use phosphor_core::value::Value;
-use phosphor_core::view::{Child, Emphasis, Node, SessionState, Tone, Tree};
+use phosphor_core::view::{Child, Density, Emphasis, KeyHint, Node, SessionState, Tone, Tree};
 use phosphor_steel::host::Host;
 use phosphor_steel::keymap::{self, Ex};
 use phosphor_steel::repl::Repl;
 use phosphor_steel::runtime::Runtime;
 use phosphor_steel::status::{self, ComposeError, StatusFile, StatusVm};
-use phosphor_term::{Frame, Term};
+use phosphor_term::{Frame, KeyboardProtocol, Term};
 use phosphor_ui::buffer_view::{self, BufferView, Editor, editor_area};
 use phosphor_ui::float::{Float, FloatFooter, FloatHeader, FloatSlot, FooterHint, TextBody};
 use phosphor_ui::frame::FrameCache;
 use phosphor_ui::interpret::{Interpreter, NoResources};
+use phosphor_ui::key_hints::KeyHints;
 use phosphor_ui::soft_wrap;
 use phosphor_ui::theme::{BUILTIN_SLUGS, Theme, builtin};
+use phosphor_ui::unknown_key::{self, UnknownKeyHint};
 use ratatui::layout::Rect;
 // The widget layer's re-export, not the fork's own path: after `T026` this file
 // no longer talks to the vendored *handler* at all, only to the editor value
-// `BufferView` draws. The two fork imports that remain are undo (`T029` takes
-// them) and the selection type `SelectRange` sets.
-use ratatui_code_editor::actions::{Redo, Undo};
+// `BufferView` draws. **The fork's `Undo`/`Redo` are gone with `R2`** — two live
+// histories cannot both be the history, and the fork's truncates on divergence
+// (`vendor/ratatui-code-editor/src/history.rs:19-22`), which is the behaviour
+// `T029`'s tree exists not to have. One fork import is left: the selection type
+// `SelectRange` sets.
 use ratatui_code_editor::selection::Selection;
 
 mod door;
@@ -459,7 +493,7 @@ fn declined(reason: &str) -> Outcome {
 /// in `runtime/keymaps.scm`'s own vocabulary here, so there is one table and
 /// one writer of it.
 fn bind_form(
-    keys: &phosphor_core::request::KeySeq,
+    keys: &KeySeq,
     binding: &phosphor_core::request::Binding,
     mode: Option<&EditMode>,
 ) -> String {
@@ -569,6 +603,26 @@ impl Layer {
         let answered = keymap::resolve(&mut self.runtime, scope, keys);
         self.ran |= answered == Resolution::Ran;
         answered
+    }
+
+    /// Every binding the layer declares, in reading order — what a keymap
+    /// surface draws.
+    ///
+    /// **Read live, on the frame that needs it, and never cached** (`T034`).
+    /// The `SPC` popup is composed out of this call, so a `(keymap-set! …)`
+    /// typed at the REPL is in the next popup with no invalidation of its own —
+    /// which is what `a_repl_rebind_reaches_the_leader_popup` drives through
+    /// the loop.
+    ///
+    /// Sets the flag, unlike [`Layer::resolve`]: `keymap-entries` is a scheme
+    /// function the layer defines and may redefine, so the argument that
+    /// `phosphor/resolve` only reads the table does not carry over to a name a
+    /// user owns. It is only called while a sequence is half-typed, so the cost
+    /// is one composition per keystroke of an open popup rather than one per
+    /// frame.
+    fn entries(&mut self) -> Vec<keymap::Entry> {
+        self.ran = true;
+        keymap::entries(&mut self.runtime)
     }
 
     /// Runs an ex line — `T033`'s command table, which is scheme all the way
@@ -789,7 +843,15 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // `dw`. Filling it from Rust is what `no_bindings_in_rust.rs` fails on.
     let mut machine = Machine::new();
     let mut seed = Table::new();
-    let mut editing = Editing::new(editor, path, Rc::clone(&dirty));
+
+    // `R2` — `T030`'s journal, opened before the first frame so *"quit, reopen,
+    // undo"* restores rather than starting over. A scratch buffer has no file to
+    // key one on and gets a tree with nowhere to write itself.
+    let (timeline, restore_note) = match path.as_deref() {
+        Some(file) => Timeline::opened(file),
+        None => (Timeline::detached(), None),
+    };
+    let mut editing = Editing::with_timeline(editor, path, Rc::clone(&dirty), timeline);
 
     // `T033`'s ex line, and the one line of chrome that answers it. Both live
     // here rather than in a widget: `view::Node::Prompt` is the vocabulary's
@@ -797,9 +859,24 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // is the primitives — a row of labels where the statusline goes, which is
     // where vim puts it too.
     let mut ex_line = String::new();
-    let mut notice: Option<String> = None;
+    let mut notice: Option<String> = restore_note;
+
+    // `T035`'s latch, and the row it produced. The latch is per *session*,
+    // which is what makes it the loop's and not the buffer's; the row lives
+    // until the next keystroke acknowledges it, the way a notice does.
+    let mut taught = UnknownKeyHint::new();
+    let mut hint: Option<Node> = None;
 
     let mut term = Term::new()?;
+    // `R10` — `T027`'s degradation, reachable at last. `phosphor-core`'s
+    // `legacy_chord` fallback is built and tested and could never fire, because
+    // nothing ever told the machine which protocol was negotiated. The snippet
+    // is `phosphor-term`'s own header, and `$PHOSPHOR_KEYBOARD=legacy|kitty`
+    // forces either side of it without different hardware.
+    machine.set_protocol(match term.capabilities().keyboard {
+        KeyboardProtocol::Kitty => key::Protocol::Kitty,
+        KeyboardProtocol::Legacy => key::Protocol::Legacy,
+    });
     loop {
         // The size the *next* frame will be laid out at. `draw` re-splits
         // `frame.area()` itself, so this is only for what needs `&mut editor`
@@ -818,18 +895,12 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // `8e`'s whitespace marks are INSERT-only, and the mode is the
         // machine's — the first thing in this loop that is not hardcoded.
         //
-        // Converted at the boundary: `soft_wrap::EditMode` is two values and
-        // says of itself *"the real mode enum is `spine`'s and does not exist
-        // yet (`T026`)"*. It does now, and collapsing the two deletes a
-        // `surface`-owned type — a request, not an edit `spine` makes here.
-        soft_wrap::set_mode(
-            &mut editing.editor,
-            if machine.mode() == EditMode::Insert {
-                soft_wrap::EditMode::Insert
-            } else {
-                soft_wrap::EditMode::Normal
-            },
-        );
+        // **The boundary conversion is gone.** It existed because
+        // `soft_wrap::EditMode` was a two-value copy that said of itself *"the
+        // real mode enum is `spine`'s and does not exist yet (`T026`)"*; the
+        // widget re-exports `phosphor_core::request::EditMode` now, so there is
+        // one enum and nothing to convert.
+        soft_wrap::set_mode(&mut editing.editor, machine.mode());
 
         // **The one place the frame cache learns that arbitrary scheme ran.**
         // Not per call site, not by remembering: `Layer` is the only way into
@@ -915,6 +986,22 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             notice.as_deref().map(|text| Chrome { text, caret: false })
         };
 
+        // `R17` — which-key. **Composed here, from the live table**, which is
+        // the whole of `T034`'s liveness claim: `Layer::entries` asks the VM on
+        // the frame that draws the popup, so a `(keymap-set! …)` typed at the
+        // REPL is in the next one with nothing else to wire. The popup is not
+        // `SPC`'s alone — it opens for whatever prefix is half-typed, because
+        // *what is bound under what I have typed* is which-key's whole question
+        // and `SPC` is one prefix among them.
+        let leader = matches!(surface, Surface::Buffer)
+            .then(|| under(&mut layer, &machine))
+            .unwrap_or_default();
+
+        let overlay = Overlay {
+            chrome,
+            leader: &leader,
+            hint: hint.as_ref(),
+        };
         term.draw(|frame| {
             draw(
                 frame,
@@ -923,15 +1010,18 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 status_tree,
                 &floats,
                 tree.as_ref(),
-                chrome,
+                &overlay,
             );
         })?;
 
         let event = event::read()?;
         // A notice says what the last ex line did, and the next key is the
-        // acknowledgement — there is no dismiss and nothing to remember.
+        // acknowledgement — there is no dismiss and nothing to remember. `8e`'s
+        // hint is acknowledged the same way: it has been on screen for a frame,
+        // and the session's one hint is already spent.
         if matches!(event, Event::Key(_)) {
             notice = None;
+            hint = None;
         }
         match event {
             Event::Key(key) if !is_press(key) => {}
@@ -996,6 +1086,10 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 Ok(text) => {
                     editing.editor = buffer(language_of(&file), &text, &theme)?;
                     track_dirty(&mut editing.editor, &dirty);
+                    let (timeline, note) = Timeline::opened(&file);
+                    editing.timeline = timeline;
+                    editing.depth = 0;
+                    notice = note;
                     editing.file = Some(file);
                     surface = Surface::Buffer;
                 }
@@ -1005,6 +1099,13 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         if editing.prompt.take().is_some() {
             ex_line.clear();
             surface = Surface::Ex;
+        }
+        // `R18` — `T035`'s hint, on the unbound-key path. The latch is what
+        // makes *"shown once"* on the row true: `teach` answers `Some` exactly
+        // once in the life of a session and `None` for every unknown key after,
+        // so a caller cannot draw a second one.
+        if let Some(key) = editing.unknown.take() {
+            hint = taught.teach(&key);
         }
 
         // What Steel asked for while that key was being handled. Draining here
@@ -1105,11 +1206,52 @@ fn split(area: Rect) -> (Rect, Rect) {
     (body, status)
 }
 
-/// One frame: buffer, then the float over it, then the statusline.
+/// Takes `rows` off the bottom of `body` for a strip, or [`None`] if they will
+/// not fit.
+///
+/// §11's *"narrow terminals drop, never squeeze"*, applied to height: a strip
+/// that cannot have its rows without leaving the buffer at least one is not
+/// drawn at all, rather than drawn shorter than it needs.
+fn take_rows(body: &mut Rect, rows: u16) -> Option<Rect> {
+    if rows == 0 || body.height <= rows {
+        return None;
+    }
+    body.height -= rows;
+    Some(Rect {
+        y: body.y + body.height,
+        height: rows,
+        ..*body
+    })
+}
+
+/// What rides over the buffer on this frame, and takes rows from it.
+///
+/// One struct rather than three parameters, so [`draw`] stays inside
+/// `clippy::too_many_arguments` — and because they compose in one place: the
+/// two strips come off the bottom of the body in `8e`'s order, and the ex line
+/// and the notice take the statusline's row.
+#[derive(Debug, Clone, Copy)]
+struct Overlay<'a> {
+    /// The ex line, or a notice, where the statusline goes.
+    chrome: Option<Chrome<'a>>,
+    /// `3c`'s which-key grid, for whatever prefix is half-typed. Empty when
+    /// nothing is.
+    leader: &'a [KeyHint],
+    /// `8e`'s once-per-session unknown-key row, on the frame it was taught.
+    hint: Option<&'a Node>,
+}
+
+/// One frame: buffer, the strips over it, then the statusline.
 ///
 /// The order is `8d`'s — [`FloatSlot::render`] dims what is behind it, so it
 /// runs after the buffer and over the buffer's area only. The statusline never
 /// dims: §9's dim means "behind", and chrome is not behind anything.
+///
+/// **The two strips take rows from the buffer rather than covering it**, which
+/// is what `3c` and `8e` draw: the leader grid is a row slot above the
+/// statusline and the hint is a one-row strip set off from the code. Neither is
+/// a float — a float would impose a border, a header and a footer, and neither
+/// drawing has any of the three.
 fn draw(
     frame: &mut Frame<'_>,
     editor: &Editor,
@@ -1117,10 +1259,10 @@ fn draw(
     status: Option<&Tree>,
     floats: &FloatSlot<'_>,
     tree: Option<&Tree>,
-    chrome: Option<Chrome<'_>>,
+    overlay: &Overlay<'_>,
 ) {
     let area = frame.area();
-    let (body, status_area) = split(area);
+    let (mut body, status_area) = split(area);
 
     // A surface composed as a view tree owns the whole frame — `6b` draws its
     // own statusline, so the widgets below would be drawing it twice.
@@ -1129,16 +1271,45 @@ fn draw(
         return;
     }
 
+    // The strips, bottom-up: the leader grid sits directly above the
+    // statusline, the hint between it and the code.
+    let grid = (!overlay.leader.is_empty())
+        .then(|| {
+            let rows =
+                KeyHints::new(overlay.leader, Density::Grid, theme).desired_height(body.width);
+            take_rows(&mut body, rows)
+        })
+        .flatten();
+    let hint_row = overlay
+        .hint
+        .and_then(|_| take_rows(&mut body, 1))
+        .zip(overlay.hint);
+
     // The state column is empty on purpose: §3's marks are a store query
     // (`T041`, S5) and there is no store. The column is still reserved, which
     // is the half of the 3-column contract S1 can be held to.
     frame.render_widget(BufferView::new(editor, theme), body);
+    if let Some((row, hint)) = hint_row {
+        let strip = Tree::new(unknown_key::strip(
+            hint.clone(),
+            buffer_view::gutter_width(editor),
+        ));
+        Interpreter::new(theme, &NoResources).render(&strip, row, frame.buffer_mut());
+    }
+    if let Some(row) = grid {
+        let strip = Tree::new(Node::KeyHints {
+            density: Density::Grid,
+            hints: overlay.leader.to_vec(),
+        });
+        Interpreter::new(theme, &NoResources).render(&strip, row, frame.buffer_mut());
+    }
     // A tree with an empty root is a float over what the widgets painted —
     // `T021`'s boot report, today.
     if let Some(tree) = tree {
         Interpreter::new(theme, &NoResources).render(tree, body, frame.buffer_mut());
     }
     floats.render(body, frame.buffer_mut(), theme);
+    let chrome = overlay.chrome;
     // `T025`: the statusline is whatever `runtime/statusline.scm` composed, and
     // a layer that composes none draws none. There is deliberately no widget
     // fallback here — a Rust statusline behind a Steel one is the *"config file
@@ -1184,6 +1355,40 @@ fn draw(
             }
         }
     }
+}
+
+/// What is bound one key past what has been typed — which-key's whole question
+/// (`R17`, `3c`).
+///
+/// Empty when nothing is half-typed, which is what makes the popup appear on
+/// `SPC` and vanish on the key after it: [`Machine`] clears
+/// `Pending::keys` on every resolution that is not [`Resolution::Pending`].
+///
+/// **The prefix is asked in the machine's own spelling.** `key::notation_of` is
+/// what `Layer::resolve` asks the layer with, and `keymap-entries` answers in
+/// the same canonical notation, so `SPC c` and `<space>c` are one prefix here
+/// for the same reason they are one binding there. The remainder is parsed
+/// rather than counted, so `<C-w>` under a prefix is one key and not four.
+fn under(layer: &mut Layer, machine: &Machine) -> Vec<KeyHint> {
+    let typed = &machine.pending().keys;
+    if typed.is_empty() {
+        return Vec::new();
+    }
+    let prefix = key::notation_of(typed).0;
+    let scope = Scope::of(machine.mode());
+    layer
+        .entries()
+        .iter()
+        .filter(|entry| entry.scope == scope.name())
+        .filter(|entry| {
+            entry
+                .keys
+                .0
+                .strip_prefix(&prefix)
+                .is_some_and(|rest| key::parse_seq(rest).is_some_and(|keys| keys.len() == 1))
+        })
+        .map(keymap::Entry::hint)
+        .collect()
 }
 
 /// One row of text where the statusline goes.
@@ -1247,6 +1452,239 @@ struct Register {
     linewise: bool,
 }
 
+// ---------------------------------------------------------------------------
+// `R2` — the undo tree, its journal, and the conversion between them
+// ---------------------------------------------------------------------------
+
+/// `T029`'s tree and `T030`'s journal, held together.
+///
+/// **The fork's history is not a fallback here, it is gone.** `T090` answered
+/// `History::Undo` with `editor.apply(Undo)` and the fork's own stack, which
+/// *"truncates on divergence"* (`vendor/ratatui-code-editor/src/history.rs:19-22`)
+/// — undo one edit, type anything, and the undone edit is destroyed. That is
+/// the exact failure `crates/phosphor-buffer/src/undo.rs:12-22` exists not to
+/// have, and two live histories cannot both be the history. Nothing in this
+/// binary reads the fork's stack any more; it still fills, because `Code::commit`
+/// pushes to it and there is no public way to say no, but it is write-only and
+/// the build proves it (the `Undo`/`Redo` imports are gone).
+///
+/// # The seam, and why the conversion is here
+///
+/// `phosphor-core` may not depend on `phosphor-buffer` — that crate carries the
+/// vendored fork, `ropey` and `tree-sitter`, and taking it in the floor crate
+/// would put all three in `phosphor-ui`'s graph
+/// (`crates/phosphor-core/src/journal.rs:107-117`). So [`wire_undo::History`]
+/// mirrors [`UndoTree`]'s nodes field for field and hands back exactly the
+/// `(nodes, current, saved)` triple [`UndoTree::from_parts`] takes, and **the
+/// copy lives in the binary**, which is the one crate holding both. That is
+/// [`restored`] and [`journalled`] below, and they are the whole of it.
+struct Timeline {
+    tree: UndoTree,
+    /// The on-disk log, when this buffer has a file to key one on. `None` for
+    /// a scratch buffer and for a workspace with no state directory — a
+    /// session that cannot persist still undoes.
+    log: Option<Log<wire_undo::History>>,
+}
+
+impl std::fmt::Debug for Timeline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Timeline")
+            .field("nodes", &self.tree.node_count())
+            .field("current", &self.tree.current())
+            .field(
+                "journal",
+                &self.log.as_ref().map(|log| log.journal().path()),
+            )
+            .finish()
+    }
+}
+
+impl Timeline {
+    /// A history with nowhere to write itself.
+    fn detached() -> Self {
+        Self {
+            tree: UndoTree::new(),
+            log: None,
+        }
+    }
+
+    /// The history for `file`, restored from disk if a journal survived.
+    ///
+    /// Every failure is soft and named: a state directory that cannot be made,
+    /// a torn log, a hash collision on the file's own journal, a tree that
+    /// fails [`UndoTree::from_parts`]'s four invariants. The editor opens with
+    /// an empty history and a notice rather than refusing the file, because a
+    /// history is not the file.
+    fn opened(file: &Path) -> (Self, Option<String>) {
+        match Self::open_at(file) {
+            Ok(timeline) => (timeline, None),
+            Err(reason) => (Self::detached(), Some(reason)),
+        }
+    }
+
+    fn open_at(file: &Path) -> Result<Self, String> {
+        let canonical = std::fs::canonicalize(file).map_err(|error| error.to_string())?;
+        // The workspace is the directory the editor was started in. `T071` is
+        // what makes it the repository root; keying on the cwd is Q1's rule
+        // ("keyed on the path and never on VCS identity") with the honest root
+        // S3 has.
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let dir = journal::workspace_dir(&root).map_err(|error| error.to_string())?;
+        let path = journal::undo_path(&dir, &canonical);
+        // `Recovery` is discarded on purpose: `Log::open` has already truncated
+        // the torn tail and the tree it folded is complete without it. What a
+        // crash cost is one undo step, and there is nothing the editor could
+        // do about it that reopening the file does not already do.
+        let (log, _recovery) =
+            Log::<wire_undo::History>::open(&path).map_err(|error| error.to_string())?;
+
+        let origin = canonical.to_string_lossy().to_string();
+        if log.state().origin().is_some_and(|owner| owner != origin) {
+            return Err(format!(
+                "{}: an undo journal for another file lives here",
+                path.display()
+            ));
+        }
+        let mut timeline = Self {
+            tree: restored(log.state().clone())?,
+            log: Some(log),
+        };
+        if timeline
+            .log
+            .as_ref()
+            .is_some_and(|log| log.state().origin().is_none())
+        {
+            timeline.append(wire_undo::Record::Origin { path: origin });
+        }
+        // **The text on disk is at `saved`, not at `current`.** A session that
+        // ended dirty left the tree ahead of the file, so the tree's cursor is
+        // moved back to the node the file matches *without* applying the steps
+        // — the text is already there. A tree that matches disk nowhere is not
+        // a history of this file at all, and is dropped.
+        let saved = timeline.tree.saved();
+        match saved {
+            Some(node) if node != timeline.tree.current() => {
+                let _ = timeline.tree.goto(node);
+                timeline.append(wire_undo::Record::Cursor { to: node.0 });
+            }
+            Some(_) => {}
+            None => return Ok(Self::detached()),
+        }
+        Ok(timeline)
+    }
+
+    /// Appends a record, and drops the log if the write fails.
+    ///
+    /// A journal that cannot be written is not a reason to stop editing, and it
+    /// is a reason to stop pretending: the in-memory tree keeps working and
+    /// nothing tries the same failing write once per keystroke.
+    fn append(&mut self, record: wire_undo::Record) {
+        let failed = self
+            .log
+            .as_mut()
+            .is_some_and(|log| log.append(record).is_err());
+        if failed {
+            self.log = None;
+        }
+    }
+
+    /// Closes the open group, if there is one, and writes the node it became.
+    ///
+    /// **The group boundary is the machine's** — `History::CommitUndoGroup`,
+    /// emitted at exactly the three places vim closes one — so this is called
+    /// from that Action's arm and from the two places that must not walk a tree
+    /// with a half-typed insert in it (`undo`, `redo`).
+    fn close(&mut self, after: Caret) {
+        let Some(id) = self.tree.commit(after) else {
+            return;
+        };
+        let Some(change) = self
+            .tree
+            .node(id)
+            .and_then(|node| node.change.as_ref())
+            .cloned()
+        else {
+            return;
+        };
+        let parent = self
+            .tree
+            .node(id)
+            .and_then(|node| node.parent)
+            .unwrap_or(NodeId::ROOT);
+        self.append(journalled(id, parent, &change));
+    }
+}
+
+/// A committed node as the record that reproduces it.
+fn journalled(
+    id: NodeId,
+    parent: NodeId,
+    change: &phosphor_buffer::undo::Change,
+) -> wire_undo::Record {
+    wire_undo::Record::Node {
+        id: id.0,
+        parent: parent.0,
+        edits: change
+            .edits
+            .iter()
+            .map(|edit| wire_undo::Edit {
+                at: edit.at,
+                removed: edit.removed.clone(),
+                inserted: edit.inserted.clone(),
+            })
+            .collect(),
+        before: caret_out(change.before),
+        after: caret_out(change.after),
+    }
+}
+
+fn caret_out(caret: Caret) -> wire_undo::Caret {
+    wire_undo::Caret {
+        offset: caret.offset,
+        selection: caret.selection.map(|range| wire_undo::CharRange {
+            start: range.start,
+            end: range.end,
+        }),
+    }
+}
+
+fn caret_in(caret: wire_undo::Caret) -> Caret {
+    Caret {
+        offset: caret.offset,
+        selection: caret
+            .selection
+            .map(|range| CharRange::new(range.start, range.end)),
+    }
+}
+
+/// The journal's folded state as a live tree — the field copy the seam names.
+fn restored(history: wire_undo::History) -> Result<UndoTree, String> {
+    let (nodes, current, saved) = history.into_parts();
+    let nodes = nodes
+        .into_iter()
+        .map(|node| phosphor_buffer::undo::Node {
+            parent: node.parent.map(NodeId),
+            children: Vec::new(),
+            redo_child: node.redo_child.map(NodeId),
+            change: node.change.map(|change| phosphor_buffer::undo::Change {
+                edits: change
+                    .edits
+                    .into_iter()
+                    .map(|edit| TreeEdit {
+                        at: edit.at,
+                        removed: edit.removed,
+                        inserted: edit.inserted,
+                    })
+                    .collect(),
+                before: caret_in(change.before),
+                after: caret_in(change.after),
+            }),
+        })
+        .collect();
+    UndoTree::from_parts(nodes, NodeId(current), saved.map(NodeId))
+        .map_err(|error| error.to_string())
+}
+
 /// The buffer, the registers, and **the only thing in this program that
 /// mutates either**.
 ///
@@ -1265,10 +1703,20 @@ struct Editing {
     open: Option<PathBuf>,
     /// A prompt `open-prompt` asked for, drained the same way.
     prompt: Option<PromptKind>,
+    /// A key nothing was bound to (`T035`). Drained by the loop, because
+    /// *"once per session, never again"* is session state and this struct is
+    /// per buffer.
+    unknown: Option<KeySeq>,
     /// The unnamed register is `"`; `"a` is `a` (`request::RegisterName`).
     registers: BTreeMap<String, Register>,
     /// What the last `SelectRange` said, so a yank knows whether it is linewise.
     selection_kind: SelectionKind,
+    /// `T029`'s tree and `T030`'s journal.
+    timeline: Timeline,
+    /// How many nested [`Editing::begin`] calls are open. An Action that edits
+    /// more than once — `Replace`, `J`, `>` over a range — is one edit as far
+    /// as the fork's batch and the undo tree are concerned.
+    depth: u32,
     dirty: Rc<Cell<bool>>,
     /// Set by `App::Quit`; the loop reads it once per turn.
     quit: bool,
@@ -1286,21 +1734,39 @@ impl std::fmt::Debug for Editing {
             .field("area", &self.area)
             .field("registers", &self.registers)
             .field("selection_kind", &self.selection_kind)
+            .field("timeline", &self.timeline)
             .field("quit", &self.quit)
             .finish_non_exhaustive()
     }
 }
 
 impl Editing {
+    /// A buffer with a history that goes nowhere. Test-only: the loop always
+    /// has a file to key a journal on, or knows it has none
+    /// ([`Timeline::detached`]), and a second constructor on the shipping path
+    /// would be a second answer to *"where does undo go"*.
+    #[cfg(test)]
     fn new(editor: Editor, file: Option<PathBuf>, dirty: Rc<Cell<bool>>) -> Self {
+        Self::with_timeline(editor, file, dirty, Timeline::detached())
+    }
+
+    fn with_timeline(
+        editor: Editor,
+        file: Option<PathBuf>,
+        dirty: Rc<Cell<bool>>,
+        timeline: Timeline,
+    ) -> Self {
         Self {
             editor,
             area: Rect::ZERO,
             file,
             open: None,
             prompt: None,
+            unknown: None,
             registers: BTreeMap::new(),
             selection_kind: SelectionKind::Char,
+            timeline,
+            depth: 0,
             dirty,
             quit: false,
         }
@@ -1430,29 +1896,67 @@ impl Editing {
             // `SelectRange` behind it, when this side can resolve it at all —
             // the four agent nouns cannot until `T049`.
             Action::Motion(MotionAction::SelectObject { .. }) => done(),
+            Action::Buffer(BufferAction::SetCase { target, case }) => {
+                self.set_case(target, *case);
+                done()
+            }
             Action::View(ViewAction::Scroll { request, .. }) => {
                 buffer_view::apply_scroll(&mut self.editor, scroll_request(*request), self.area);
                 done()
             }
-            // `T029` owns the undo model and takes both of these with it; until
-            // then the fork's own history is the honest answer, and it is
-            // already keyed on the edit batches this file commits.
-            Action::History(HistoryAction::Undo { count }) => {
-                for _ in 0..(*count).max(1) {
-                    self.editor.apply(Undo);
+            // `R19` — folds. `T016`'s whitespace half shipped with `8e`; this is
+            // the half that never had a call site, and the machinery is the
+            // fork's (`code.rs`'s `fold_query` / `fold_ranges`, read out of
+            // `langs/<lang>/folds.scm`).
+            Action::View(ViewAction::SetFold { target, state }) => {
+                if self.set_fold(target, *state) {
+                    done()
+                } else {
+                    declined("no fold here — the language's folds.scm names none at the cursor")
                 }
+            }
+            Action::View(ViewAction::FoldAll { level }) => {
+                self.fold_all(*level);
+                done()
+            }
+            Action::View(ViewAction::UnfoldAll {}) => {
+                self.unfold_all();
+                done()
+            }
+            // `R2` — `T029`'s tree, on the shipping path. The count is one
+            // argument rather than a loop: `UndoTree::undo` walks `count` nodes
+            // towards the root and hands back the steps that make the text
+            // agree, which is one route rather than `count` of them.
+            Action::History(HistoryAction::Undo { count }) => {
+                let after = self.caret();
+                self.timeline.close(after);
+                let steps = self.timeline.tree.undo((*count).max(1));
+                self.walk(&steps);
                 done()
             }
             Action::History(HistoryAction::Redo { count }) => {
-                for _ in 0..(*count).max(1) {
-                    self.editor.apply(Redo);
-                }
+                let after = self.caret();
+                self.timeline.close(after);
+                let steps = self.timeline.tree.redo((*count).max(1));
+                self.walk(&steps);
                 done()
             }
-            // The group boundary the machine marks. `T029` is what makes it do
-            // something; the fork commits a batch per edit already, so honouring
-            // it here would *narrow* undo rather than widen it.
-            Action::History(HistoryAction::CommitUndoGroup {}) => done(),
+            // The group boundary the machine marks, and now the only thing that
+            // closes one. `input.rs` emits it at exactly the three places vim
+            // closes a group — leaving insert or replace mode, finishing a
+            // non-`c` operator, finishing a paste — so an insert session is one
+            // `u` rather than one per character.
+            Action::History(HistoryAction::CommitUndoGroup {}) => {
+                let after = self.caret();
+                self.timeline.close(after);
+                done()
+            }
+            // `T035`'s hint. Recorded rather than shown: *"once per session,
+            // never again"* is the loop's latch, not this buffer's.
+            Action::App(AppAction::ShowUnknownKeyHint { key }) => {
+                self.unknown = Some(key.clone());
+                done()
+            }
             // `T033`'s four file capabilities. The seed table's own note said
             // *"there is no save path until `T033`"*; this is it.
             Action::File(FileAction::SaveBuffer { path, .. }) => {
@@ -1510,8 +2014,10 @@ impl Editing {
 
     /// Writes the buffer out, to `path` or to where it came from.
     ///
-    /// The whole rope, not a diff: `T029` owns the undo model and `T030` the
-    /// on-disk log, and neither exists to write incrementally against yet.
+    /// The whole rope, not a diff. **The tree learns where disk is**, which is
+    /// what makes `[+]` mean *"different from the file"* rather than
+    /// *"touched"*: undoing back past a write makes the buffer clean again,
+    /// because [`UndoTree::is_modified`] is node identity and not a flag.
     fn write(&mut self, path: Option<&Path>) -> Result<(), String> {
         let target = path
             .map(Path::to_path_buf)
@@ -1520,9 +2026,59 @@ impl Editing {
         let code = self.editor.code_ref();
         let text = code.slice(0, code.len_chars());
         std::fs::write(&target, text).map_err(|error| format!("{}: {error}", target.display()))?;
+        self.timeline.tree.mark_saved();
+        let node = self.timeline.tree.saved().map(|node| node.0);
+        self.timeline.append(wire_undo::Record::Saved { node });
+        // `fsync` at a quiet point, which a write to disk is — `Log::append`
+        // deliberately does not (`journal.rs`'s two-tier durability).
+        if let Some(log) = self.timeline.log.as_ref() {
+            let _ = log.sync();
+        }
         self.dirty.set(false);
         self.file = Some(target);
         Ok(())
+    }
+
+    // -- `R2` — the undo tree ------------------------------------------------
+
+    /// Where the cursor and selection are, as the tree records them.
+    fn caret(&mut self) -> Caret {
+        let offset = self.editor.get_cursor();
+        let selection = self
+            .editor
+            .get_selection()
+            .map(|selection| CharRange::new(selection.start, selection.end));
+        Caret { offset, selection }
+    }
+
+    /// Applies a route through the tree to the text.
+    ///
+    /// [`Step::to_batch`] and `Editor::apply_batch` rather than
+    /// [`Step::apply`]: the fork's `Code` drives the tree-sitter `InputEdit`
+    /// from `insert`/`remove`, so a step written straight to a rope would keep
+    /// the text and lose the parse (`undo.rs:88-104`). The cursor is the host's
+    /// — `apply_batch` does not move it.
+    fn walk(&mut self, steps: &[Step]) {
+        if steps.is_empty() {
+            return;
+        }
+        for step in steps {
+            self.editor.apply_batch(&step.to_batch());
+            self.editor.set_cursor(step.caret.offset);
+            match step.caret.selection {
+                Some(range) => self
+                    .editor
+                    .set_selection(Some(Selection::new(range.start, range.end))),
+                None => self.editor.clear_selection(),
+            }
+        }
+        self.editor.reset_highlight_cache();
+        let to = self.timeline.tree.current().0;
+        self.timeline.append(wire_undo::Record::Cursor { to });
+        // Node identity, not the edit stream: `apply_batch` fires the change
+        // callback that sets the flag, and an undo back to the saved node is
+        // not a modification.
+        self.dirty.set(self.timeline.tree.is_modified());
     }
 
     // -- the buffer ---------------------------------------------------------
@@ -1544,9 +2100,25 @@ impl Editing {
     }
 
     /// Opens an edit batch, recording where the cursor was.
+    ///
+    /// **Re-entrant** ([`Editing::depth`]): an Action that edits more than once
+    /// — `Replace`, `J`, `>` over a range, `gU` — opens one batch and closes
+    /// one, so it is one entry in the fork's batch and one span in the undo
+    /// group rather than several.
+    ///
+    /// The undo *group* is not opened here and is deliberately wider than a
+    /// batch: [`UndoTree::begin`] is idempotent and first-wins, so an insert
+    /// session's `before` caret is where the `i` was pressed, and the group
+    /// closes when the machine says so (`History::CommitUndoGroup`).
     fn begin(&mut self) {
+        self.depth += 1;
+        if self.depth > 1 {
+            return;
+        }
         let cursor = self.editor.get_cursor();
         let selection = self.editor.get_selection();
+        let before = self.caret();
+        self.timeline.tree.begin(before);
         let code = self.editor.code_mut();
         code.tx();
         code.set_state_before(cursor, selection);
@@ -1555,6 +2127,10 @@ impl Editing {
     /// Closes it, recording where the cursor ended up — which is what undo
     /// restores.
     fn commit(&mut self) {
+        self.depth = self.depth.saturating_sub(1);
+        if self.depth > 0 {
+            return;
+        }
         let cursor = self.editor.get_cursor();
         let selection = self.editor.get_selection();
         let code = self.editor.code_mut();
@@ -1565,20 +2141,48 @@ impl Editing {
 
     fn insert(&mut self, at: Position, text: &str) {
         let offset = self.offset(at);
-        self.begin();
-        self.editor.code_mut().insert(offset, text);
-        self.editor.set_cursor(offset + text.chars().count());
-        self.commit();
+        self.splice(offset, offset, text);
     }
 
     fn remove(&mut self, span: Span) {
         let (from, to) = self.range(span);
-        if from == to {
+        self.splice(from, to, "");
+    }
+
+    /// The one mutation in this program: `from..to` becomes `text`.
+    ///
+    /// Insert, delete and replace are the same edit with one side empty, which
+    /// is also how [`TreeEdit`] carries it — so the undo tree learns every
+    /// change through one call and there is no path that edits the rope without
+    /// telling it.
+    fn splice(&mut self, from: usize, to: usize, text: &str) {
+        let removed = if to > from {
+            self.editor.code_ref().slice(from, to)
+        } else {
+            String::new()
+        };
+        if removed.is_empty() && text.is_empty() {
             return;
         }
         self.begin();
-        self.editor.code_mut().remove(from, to);
-        self.editor.set_cursor(from);
+        let before = self.caret();
+        self.timeline.tree.record(
+            before,
+            TreeEdit {
+                at: from,
+                removed: removed.clone(),
+                inserted: text.to_owned(),
+            },
+        );
+        if !removed.is_empty() {
+            self.editor.code_mut().remove(from, to);
+        }
+        if text.is_empty() {
+            self.editor.set_cursor(from);
+        } else {
+            self.editor.code_mut().insert(from, text);
+            self.editor.set_cursor(from + text.chars().count());
+        }
         self.commit();
     }
 
@@ -1658,6 +2262,9 @@ impl Editing {
     }
 
     /// Shifts whole lines by one indent level, as `>` and `<` mean it.
+    ///
+    /// One batch for the whole range ([`Editing::begin`] is re-entrant), so
+    /// `>` over ten lines is one undo step rather than ten.
     fn indent(&mut self, target: &Target, delta: i64) {
         let Some((from, to)) = self.target_range(target) else {
             return;
@@ -1668,12 +2275,11 @@ impl Editing {
             .editor
             .code_ref()
             .char_to_line(to.saturating_sub(1).max(from));
+        self.begin();
         for line in first..=last {
             let start = self.editor.code_ref().line_to_char(line);
             if delta > 0 {
-                self.begin();
-                self.editor.code_mut().insert(start, &unit);
-                self.commit();
+                self.splice(start, start, &unit);
             } else {
                 let width = self
                     .editor
@@ -1684,12 +2290,121 @@ impl Editing {
                     .take_while(|character| character.is_whitespace() && *character != '\n')
                     .count();
                 if width > 0 {
-                    self.begin();
-                    self.editor.code_mut().remove(start, start + width);
-                    self.commit();
+                    self.splice(start, start + width, "");
                 }
             }
         }
+        self.commit();
+    }
+
+    // -- `R19` — folds -------------------------------------------------------
+
+    /// The line a fold covering `target` starts on, innermost first.
+    ///
+    /// `za` from anywhere inside a fold closes it, which is vim's rule and not
+    /// the fork's: `Editor::toggle_fold_at_line` needs the line the fold
+    /// *starts* on, so this walks `Code::fold_ranges` — the ranges the
+    /// language's own `folds.scm` produced — and takes the narrowest one that
+    /// contains the cursor.
+    fn fold_start(&mut self, target: &Target) -> Option<usize> {
+        let (from, _) = self.target_range(target)?;
+        let line = self.editor.code_ref().char_to_line(from);
+        self.editor
+            .code_ref()
+            .fold_ranges()
+            .iter()
+            .filter(|range| range.start_line <= line && line <= range.end_line)
+            .min_by_key(|range| range.end_line - range.start_line)
+            .map(|range| range.start_line)
+    }
+
+    /// `za` / `zc` / `zo` — the fold at a target, in the state asked for.
+    fn set_fold(&mut self, target: &Target, state: FoldState) -> bool {
+        let Some(start) = self.fold_start(target) else {
+            return false;
+        };
+        let folded = self.editor.fold_hidden_lines(start).is_some();
+        let wanted = match state {
+            FoldState::Folded => true,
+            FoldState::Unfolded => false,
+            FoldState::Toggle => !folded,
+        };
+        if wanted == folded {
+            return true;
+        }
+        self.editor.toggle_fold_at_line(start)
+    }
+
+    /// `zM` — every fold deeper than `level` closed.
+    ///
+    /// Vim's `foldlevel`, and its arithmetic: a fold's level is one plus the
+    /// number of folds that contain it, and a fold closes when its level is
+    /// **greater than** `level`. So `FoldAll { level: 0 }` closes everything,
+    /// which is what `zM` means.
+    fn fold_all(&mut self, level: u32) {
+        let ranges: Vec<(usize, usize)> = self
+            .editor
+            .code_ref()
+            .fold_ranges()
+            .iter()
+            .map(|range| (range.start_line, range.end_line))
+            .collect();
+        for range in &ranges {
+            let depth = ranges
+                .iter()
+                .filter(|other| *other != range && other.0 <= range.0 && range.1 <= other.1)
+                .count();
+            let deep = u32::try_from(depth).unwrap_or(u32::MAX).saturating_add(1) > level;
+            if deep && self.editor.fold_hidden_lines(range.0).is_none() {
+                self.editor.toggle_fold_at_line(range.0);
+            }
+        }
+    }
+
+    /// `zR` — every collapsed fold opened.
+    fn unfold_all(&mut self) {
+        let starts: Vec<usize> = self
+            .editor
+            .code_ref()
+            .fold_ranges()
+            .iter()
+            .map(|range| range.start_line)
+            .collect();
+        for start in starts {
+            if self.editor.fold_hidden_lines(start).is_some() {
+                self.editor.toggle_fold_at_line(start);
+            }
+        }
+    }
+
+    /// `~`, `gu`, `gU` — the letters a target covers, recased.
+    ///
+    /// `phosphor_core::input::text::cased` is the one definition of what each
+    /// of the three means, so a door sending `set-case` and a keystroke cannot
+    /// differ.
+    ///
+    /// **The cursor ends where the change ends**, which is [`Editing::splice`]'s
+    /// own rule and not a decision made here. That is exactly vim for `~` —
+    /// the case operator fused with `l`, so `~~~` walks a word — and one cell
+    /// off for `gUiw`, where vim leaves the cursor at the *start* of what it
+    /// changed. The difference between the two is fused-versus-operator and
+    /// lives in the machine, which emits no cursor move for either; closing it
+    /// means an Action that says where the cursor goes, which is a vocabulary
+    /// change rather than an edit here. **Flagged, not folded in.**
+    fn set_case(&mut self, target: &Target, case: phosphor_core::request::CaseChange) {
+        let Some((from, to)) = self.target_range(target) else {
+            return;
+        };
+        let end = to.min(self.editor.code_ref().len_chars());
+        if end <= from {
+            return;
+        }
+        let text = self.editor.code_ref().slice(from, end);
+        let cased = motion::cased(&text, case);
+        if cased == text {
+            return;
+        }
+        self.splice(from, end, &cased);
     }
 
     /// `J` — the newline and the next line's indent become one space.
@@ -1702,10 +2417,13 @@ impl Editing {
         let last = code
             .char_to_line(to.saturating_sub(1).max(from))
             .max(first + 1);
+        // One batch: `J` over a range is one undo step, and each join is two
+        // edits (the newline out, the space in).
+        self.begin();
         for _ in first..last {
             let text = self.text();
             let Some(next) = text.line(u32::try_from(first).unwrap_or(0) + 2) else {
-                return;
+                break;
             };
             let head = motion::end_of_line(&text, u32::try_from(first).unwrap_or(0) + 1);
             let blanks = next.chars().take_while(|c| c.is_whitespace()).count();
@@ -1719,6 +2437,7 @@ impl Editing {
             self.remove(span);
             self.insert(head, " ");
         }
+        self.commit();
     }
 }
 
@@ -2497,6 +3216,189 @@ mod tests {
         }
         assert_eq!(editing.editor.get_content(), "abc");
         assert_eq!(machine.mode(), phosphor_core::request::EditMode::Normal);
+    }
+
+    /// One buffer and one session, so a test can type a sequence and look at
+    /// what it did. Everything here is the shipping path: the shipped keymap
+    /// answers first on every key, and `Editing` applies what comes out.
+    struct Typed {
+        editing: Editing,
+        machine: Machine,
+        seed: Table,
+        layer: Layer,
+    }
+
+    impl Typed {
+        fn on(text: &str) -> Self {
+            let theme = super::builtin("phosphor-dark").expect("a shipped theme");
+            let mut editing = Editing::new(
+                buffer("text", text, &theme).expect("a buffer"),
+                None,
+                std::rc::Rc::new(std::cell::Cell::new(false)),
+            );
+            editing.area = Rect::new(0, 0, 80, 24);
+            let (layer, _host) = booted();
+            Self {
+                editing,
+                machine: Machine::new(),
+                seed: Table::new(),
+                layer,
+            }
+        }
+
+        /// Types a sequence in the notation `runtime/keymaps.scm` is written
+        /// in, through the same decode-and-feed the loop does.
+        fn keys(&mut self, spelled: &str) -> &mut Self {
+            for key in parse_seq(spelled).expect("a spelling these tests wrote") {
+                Session {
+                    machine: &mut self.machine,
+                    layer: &mut self.layer,
+                    seed: &mut self.seed,
+                    editing: &mut self.editing,
+                }
+                .key(key);
+            }
+            self
+        }
+
+        fn content(&self) -> String {
+            self.editing.editor.get_content()
+        }
+    }
+
+    #[test]
+    fn the_case_keys_edit_through_the_shipped_keymap() {
+        // `R2`'s sibling: the vocabulary agent added `Buffer::SetCase` and the
+        // machine emits it for `~`, `gu` and `gU`; without an arm here all
+        // three fall to `NotYetImplemented` and the keys do nothing.
+        assert_eq!(
+            Typed::on("hello world").keys("gUw").content(),
+            "HELLO world"
+        );
+        assert_eq!(
+            Typed::on("HELLO world").keys("guw").content(),
+            "hello world"
+        );
+        // `~` is fused with a right motion, so it recases one character and
+        // steps — which is what makes `~~~` walk a word.
+        assert_eq!(Typed::on("abc").keys("~~").content(), "ABc");
+    }
+
+    #[test]
+    fn the_undone_branch_survives_a_divergent_edit() {
+        // **The whole reason `T029` exists.** The fork's history truncates on
+        // divergence (`vendor/ratatui-code-editor/src/history.rs:19-22`), so
+        // under it this sequence destroys the `A` permanently. The tree keeps
+        // it: node 1 is still there, and `redo` follows the branch just taken
+        // rather than the abandoned one.
+        let mut typed = Typed::on("base");
+        typed.keys("iA<esc>");
+        assert_eq!(typed.content(), "Abase");
+        typed.keys("u");
+        assert_eq!(typed.content(), "base");
+        typed.keys("iB<esc>");
+        assert_eq!(typed.content(), "Bbase");
+
+        // Three states reachable, not two: root, the `A` branch, the `B`
+        // branch. A stack would have three nodes only if nothing was thrown
+        // away.
+        assert_eq!(
+            typed.editing.timeline.tree.node_count(),
+            3,
+            "the undone branch is still in the tree"
+        );
+        typed.keys("u");
+        assert_eq!(typed.content(), "base");
+        typed.keys("<C-r>");
+        assert_eq!(
+            typed.content(),
+            "Bbase",
+            "redo takes the branch last walked, which is the divergent one"
+        );
+    }
+
+    #[test]
+    fn an_insert_session_is_one_undo_step_and_esc_is_the_boundary() {
+        // The machine's rule, honoured here: `History::CommitUndoGroup` is
+        // emitted on leaving insert mode and is the only thing that closes a
+        // group, so `u` after typing three characters takes all three.
+        let mut typed = Typed::on("");
+        typed.keys("iabc<esc>");
+        assert_eq!(typed.content(), "abc");
+        typed.keys("u");
+        assert_eq!(
+            typed.content(),
+            "",
+            "one `<esc>`, one group, one undo — not one per character"
+        );
+    }
+
+    #[test]
+    fn a_fold_closes_and_opens_at_the_cursor() {
+        // The `View` arms, over a real tree-sitter fold. The ranges are the
+        // language's own — `langs/rust/folds.scm`, read by the fork's
+        // `fold_query` — so an empty range list here is a grammar problem and
+        // not a wiring one, which is why the assertion says so.
+        let theme = super::builtin("phosphor-dark").expect("a shipped theme");
+        let mut editing = Editing::new(
+            buffer(
+                "rust",
+                "fn outer() {\n    let a = 1;\n    let b = 2;\n}\n",
+                &theme,
+            )
+            .expect("a buffer"),
+            None,
+            std::rc::Rc::new(std::cell::Cell::new(false)),
+        );
+        editing.area = Rect::new(0, 0, 80, 24);
+        assert!(
+            !editing.editor.code_ref().fold_ranges().is_empty(),
+            "the bundled rust grammar produces fold ranges"
+        );
+
+        let at_cursor = phosphor_core::request::Target::Cursor {};
+        let outcome = editing.apply(&Action::View(super::ViewAction::SetFold {
+            target: at_cursor,
+            state: phosphor_core::request::FoldState::Toggle,
+        }));
+        assert!(matches!(outcome, Outcome::Done(_)));
+        assert!(
+            editing.editor.fold_hidden_lines(0).is_some(),
+            "za closes the fold the cursor is in"
+        );
+
+        let outcome = editing.apply(&Action::View(super::ViewAction::UnfoldAll {}));
+        assert!(matches!(outcome, Outcome::Done(_)));
+        assert!(
+            editing.editor.fold_hidden_lines(0).is_none(),
+            "zR opens everything"
+        );
+    }
+
+    #[test]
+    fn which_key_answers_for_whatever_prefix_is_half_typed() {
+        // `R17`, at the seam the loop draws from. The pty test presses the key;
+        // this one holds the composition still and asks what it answered, so a
+        // change in the shipped table is a legible failure rather than a blank
+        // frame.
+        let mut typed = Typed::on("x");
+        assert!(
+            super::under(&mut typed.layer, &typed.machine).is_empty(),
+            "nothing is half-typed, so there is nothing to show"
+        );
+        typed.keys("<space>");
+        let hints = super::under(&mut typed.layer, &typed.machine);
+        assert!(
+            hints.iter().any(|hint| hint.key.0 == "<space>c"),
+            "SPC c is one key under the leader: {hints:?}"
+        );
+        assert!(
+            hints.iter().all(|hint| {
+                parse_seq(hint.key.0.strip_prefix("<space>").unwrap_or_default())
+                    .is_some_and(|keys| keys.len() == 1)
+            }),
+            "only one key past what has been typed: {hints:?}"
+        );
     }
 
     #[test]
