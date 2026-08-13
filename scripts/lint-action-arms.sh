@@ -112,19 +112,13 @@ RECORDED = {
                                       "region, and regions arrive with the store at `T041`. The "
                                       "one live rail today is the unknown-key hint, which is "
                                       "unowned by design (`Node::VirtualText.owner` is None)."),
-    # The two below disagree with their own declared task, which is an attribution
-    # question rather than a missing arm — see docs/OPEN-QUESTIONS.md.
-    "Jump": ("T042", "The jumplist. `action.rs` declares `jump` as `[S3 / \"T026\"]`, but `T026` "
-                     "is ticked and its own coverage diff records marks and the jumplist as "
-                     "deliberately deferred because *anchors are the store's*. So the row's task "
-                     "and the reason it is unbuilt name different tasks. Consequence, found by "
-                     "the wiring agent: a truthful refusal derived from the row would read "
-                     "*T026 builds it*, which is false."),
-    "ApplyEdits": ("", "A batch of edits applied as one undo group — the shape an agent writes "
-                       "through. `T029`'s tree supports it (`record_batch`); no caller exists "
-                       "until there is a session. Declared `[S3 / \"T029\"]`, and `T029` is "
-                       "ticked and did not build it — the same attribution question as `Jump`, "
-                       "which is why this one still has no blocker."),
+    # `Jump` and `ApplyEdits` were recorded here and are gone. Neither was ever a
+    # missing arm: both were declared against a task that was ticked and had
+    # demonstrably not built them, so a refusal derived from the row named the
+    # wrong task — `jump` said *T026 builds it*, which was false. Re-declaring
+    # them (`jump` → `T042`, `apply-edits` → `T052`, both unticked) took them out
+    # of this table's ticked filter entirely, which is the right answer: the
+    # attribution was the bug, not the absent arm.
 }
 
 ACTIONS = pathlib.Path("crates/phosphor-core/src/action.rs")
@@ -199,6 +193,19 @@ for variant, (blocker, why) in sorted(RECORDED.items()):
         fail(
             f"RECORDED still lists `{variant}`, but the binary names it now. The record is "
             f"stale — delete the entry. ({why[:60]}…)"
+        )
+    if task not in ticked:
+        # The fifth way this table goes wrong, and the quietest. A record only
+        # means anything while its variant's own task is ticked — that is what
+        # makes an absent arm a broken promise rather than unstarted work. When
+        # the task is *un*ticked (re-declared against the task that will really
+        # build it, or moved to a later phase), the entry stops being checked by
+        # anything above and sits here as prose nobody reads and nothing proves.
+        # Two entries did exactly that this window before this check existed.
+        fail(
+            f"RECORDED lists `{variant}`, whose task `{task}` is not ticked — so it is not a "
+            f"promise anything broke, and nothing above checks this entry any more. Remove it; "
+            f"the arm is ordinary unstarted work now."
         )
     if blocker:
         if blocker not in known:

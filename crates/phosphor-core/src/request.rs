@@ -469,18 +469,18 @@ wire_choice!(Seek {
 /// The only thing that can move a viewport.
 ///
 /// **Invariant 3 in one type.** Every arm is a caller saying what it wants; none
-/// is a side effect of drawing. `phosphor-ui`'s `buffer_view::ScrollRequest`
-/// (`buffer_view.rs:180`) is the same shape, written first, and the S1 host's
-/// header records why `Action` has to carry it: the vendored core's `focus()`
-/// moves the viewport on every keystroke, so until `T026` stops calling
-/// `Editor::input` the viewport has two writers.
+/// is a side effect of drawing. `T026` deleted the second writer — the vendored
+/// core's `focus()` moved the viewport on every keystroke, and `Editor::input`
+/// is gone — so this is now the only thing that moves one.
 ///
-/// **Contract note for Window D.** Two definitions of one type is a seam that
-/// will drift. The canonical one belongs here — `phosphor-core` cannot depend on
+/// **This is the only definition.** `phosphor-ui`'s `buffer_view::ScrollRequest`
+/// was a second copy of this shape, written first, and was collapsed to a
+/// `pub use` of this type during the `CP-3` repairs. The 1-based-`u32` here to
+/// 0-based-`usize` conversion the widget needs happens in exactly one place,
+/// `Viewport::scrolled`'s `index_of`, rather than at a host boundary. The
+/// canonical definition belongs here because `phosphor-core` cannot depend on
 /// `phosphor-ui`, and `request` is importable from a widget where `action` is
-/// not. Collapsing them deletes a `surface`-owned definition, so it is a request
-/// to `surface`, not an edit `spine` makes: `T026` converts at the boundary
-/// until then.
+/// not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScrollRequest {
     /// Relative, in rows. Negative scrolls towards the top of the buffer.

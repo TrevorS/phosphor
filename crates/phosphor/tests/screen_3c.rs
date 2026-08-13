@@ -245,7 +245,14 @@ fn screen(runtime: &mut Runtime, theme: &Theme, width: u16, height: u16) -> Buff
     let area = Rect::new(0, 0, width, height);
     let mut editor = Editor::new("rust", RETRY_RS, Vec::new()).expect("rust editor");
     buffer_view::configure(&mut editor, theme);
-    apply_scroll(&mut editor, ScrollRequest::ToRow(0), editor_area(area));
+    // Row 1, not row 0: `ScrollRequest` is `phosphor_core::request`'s now
+    // (`R7-ScrollRequest`), and the vocabulary counts visual rows from 1
+    // because a person types them. The top of the file is what this asks for.
+    apply_scroll(
+        &mut editor,
+        ScrollRequest::ToRow { row: 1 },
+        editor_area(area),
+    );
     let resources = OneBuffer(editor);
     let tree = tree(runtime, theme, width);
     render(&tree, theme, &resources, area)

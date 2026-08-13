@@ -957,6 +957,122 @@ mod driven {
         editor.quit();
     }
 
+    /// **`q` and `m` stopped being silent.** The repair window between `CP-3`
+    /// and `S4` gave each a capability that means what the key means —
+    /// `set-macro-recording` (`T099`) and `place-anchor` (`T042`) — so both now
+    /// decline *by name* instead of resolving to a thunk that draws nothing.
+    ///
+    /// Through the pty rather than at the machine, because the two halves that
+    /// carry this are in different crates and only the loop joins them: the
+    /// keymap row is `runtime/keymaps.scm`'s, and for `q` the refusal is
+    /// manufactured in `Session::key` — `Machine::apply`'s `SetMacroRecording`
+    /// arm is a deliberate no-op, so an `Action::Input` that never reaches
+    /// `Editing::apply` would otherwise succeed silently. A test that drove the
+    /// machine would pass with the statusline saying nothing.
+    #[test]
+    fn the_macro_and_mark_keys_decline_by_naming_their_task() {
+        let scratch = Scratch::new("named-refusal");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\n").expect("a fixture");
+
+        // **One session each, and that is not fussiness.** The two sentences
+        // differ only in `T099` versus `T042`, and ratatui redraws the diff —
+        // pressing both in one session emits a frame carrying the two changed
+        // cells and nothing else, so the second assertion would read `42` and
+        // fail on a build that is correct.
+
+        // `q` — vim's macro record. The task is read off the capability's own
+        // row, so this sentence goes stale the day `T099` is ticked and the
+        // arm is not replaced, which is the point of asserting the task id.
+        let macros = Editor::open(&file, &scratch.state(), &runtime);
+        let before = macros.mark();
+        macros.press(b"q");
+        let frame = macros.since(before);
+        assert!(
+            shows(&frame, "not built yet — T099 builds it"),
+            "q names the task that builds the recorder; frame was: {frame}"
+        );
+        macros.quit();
+
+        // `m` — set a mark. A mark is an anchor, `place-anchor` is the setter
+        // that did not exist until this window, and `T042` is its row's task.
+        let marks = Editor::open(&file, &scratch.state(), &runtime);
+        let before = marks.mark();
+        marks.press(b"m");
+        let frame = marks.since(before);
+        assert!(
+            shows(&frame, "not built yet — T042 builds it"),
+            "m names the task that anchors the store; frame was: {frame}"
+        );
+        marks.quit();
+    }
+
+    /// **`B1` at the loop level: `3x` on a three-character line takes all
+    /// three.** It used to take two.
+    ///
+    /// `crates/phosphor-core/tests/input.rs`'s
+    /// `a_counted_fused_operator_takes_the_last_character_of_the_line` proves
+    /// the rule against `Machine`; nothing proved it against the *binary*
+    /// after the scratch driver that did was deleted. So this presses the keys
+    /// and reads the file: `l` is exclusive and stops at the end of the line,
+    /// and the end of the line for an *operand* is the boundary past the last
+    /// character rather than the last character itself.
+    #[test]
+    fn a_counted_delete_takes_the_last_character_of_the_line() {
+        let scratch = Scratch::new("counted-delete");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "abc\nkeep\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press(b"3x");
+        editor.press(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "\nkeep\n",
+            "3x took the whole line — `c` left behind is the defect B1 named"
+        );
+    }
+
+    /// **`B2` at the loop level: an operator lands the cursor at the start of
+    /// what it touched.**
+    ///
+    /// `crates/phosphor-core/tests/input.rs`'s
+    /// `an_operator_lands_the_cursor_at_the_start_of_what_it_touched` proves it
+    /// against `Machine`. Proving it against the binary needs the cursor to be
+    /// *observable*, and the frame is not where to read it — so the next key
+    /// reads it instead: `i` inserts wherever the cursor ended up, and the
+    /// saved file says where that was.
+    ///
+    /// `gUiw` from the middle of `alpha` uppercases the word and lands on its
+    /// first column, so the `X` goes in front. A cursor left where it started
+    /// would spell `ALXPHA beta`.
+    #[test]
+    fn an_operator_leaves_the_cursor_where_the_next_key_can_prove_it() {
+        let scratch = Scratch::new("operator-cursor");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha beta\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press(b"ll");
+        editor.press(b"gUiw");
+        editor.press(b"i");
+        editor.press(b"X");
+        editor.press(b"\x1b");
+        editor.press(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "XALPHA beta\n",
+            "the operator landed the cursor at the start of the word it changed"
+        );
+    }
+
     impl Editor {
         /// [`Editor::open`] with `$PHOSPHOR_KEYBOARD` forced, which is the only
         /// way to test both sides of `T027` on one machine.

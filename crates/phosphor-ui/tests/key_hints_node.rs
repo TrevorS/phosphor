@@ -117,6 +117,45 @@ fn a_help_body_gives_the_float_its_height() {
     );
 }
 
+/// `T086`'s limit, through the seam that produces it: a topic with more
+/// bindings than the screen has rows.
+///
+/// The float clamps the body to what is left after chrome (`float.rs`), so this
+/// is the only place the truncation is real — the widget's own tests hand it an
+/// area, and this one lets the chrome decide. §11 permits the drop; the last row
+/// is what makes it visible rather than silent.
+#[test]
+fn a_help_topic_larger_than_the_screen_says_how_much_it_dropped() {
+    let hints: Vec<KeyHint> = (0..60)
+        .map(|index| hint(&format!("g{index:02}"), "goto somewhere"))
+        .collect();
+    let tree = Tree::new(Node::Empty {}).with_float(Float {
+        mood: Mood::Informational,
+        header: Some(FloatHeader::new(":help normal")),
+        body: Child::new(Node::KeyHints {
+            density: Density::Help,
+            hints,
+        }),
+        footer: Some(Child::new(Node::KeyHints {
+            density: Density::Footer,
+            hints: vec![hint("q", "close")],
+        })),
+    });
+    let (buf, deferred) = draw(&tree);
+    let drawn = text(&buf);
+    assert!(deferred.is_empty(), "{deferred:?}");
+
+    // Whatever the chrome leaves, the body draws that many rows minus one and
+    // spends the last on the count — and the two add up to 60.
+    let shown = drawn.matches("goto somewhere").count();
+    assert!(shown > 0 && shown < 60, "the float clamps: {drawn}");
+    let dropped = 60 - shown;
+    assert!(
+        drawn.contains(&format!("{dropped} more — :help <topic>")),
+        "expected {dropped} accounted for:\n{drawn}"
+    );
+}
+
 /// A footer outside a float is the same row the float chrome draws — one
 /// string, two routes to it.
 #[test]

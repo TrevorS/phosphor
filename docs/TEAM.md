@@ -3,7 +3,7 @@
 Derived from [TASKS.md](TASKS.md) and [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).
 Five teammates, owning crates rather than features, gated by the twelve checkpoints.
 
-**105 of 107 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
+**107 of 109 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
 `T009` — the dependency spikes, already complete ([SPIKES.md](SPIKES.md)). `T005` is the single
 deliberate co-ownership and is called out where it appears.
 
@@ -17,7 +17,7 @@ Computed from `TASKS.md`, the longest-path wave widths are:
 
 ```
 wave    0   1   2   3    4    5    6    7   8   9  10
-tasks   2   5   8   6   15   24   20   13   8   3   1
+tasks   2   5   8   6   15   24   20   14   9   3   1
 ```
 
 By the graph, wave 4 is 15-wide and includes `T050` (ACP session client, S6) and `T069`
@@ -33,8 +33,8 @@ Three other numbers worth carrying:
 
 | | |
 |---|---|
-| `T001` gates **97 of 107** tasks | The workspace skeleton is the whole build's front door. |
-| `T019` gates **68** | The `Action` enum. The plan calls it "reversible: no in practice." |
+| `T001` gates **99 of 109** tasks | The workspace skeleton is the whole build's front door. |
+| `T019` gates **70** | The `Action` enum. The plan calls it "reversible: no in practice." |
 | `T041` has **14 direct dependents** | Store core — the second serialisation point. |
 
 And the shape that matters most for staffing: **waves 0–3 are 2, 5, 8 and 6 tasks wide.** The
@@ -77,7 +77,7 @@ owning crates gives near-zero merge contention for free.
 
 | Teammate | Model | Owns (exclusive write) |
 |---|---|---|
-| **spine** | `claude-opus-5` | `phosphor-core/{action,view}.rs` · `phosphor-steel/**` · `phosphor/{main,input,panes}.rs` · `phosphor-term/**` · `runtime/{init,keymaps,leader}.scm` · **the root manifest** |
+| **spine** | `claude-opus-5` | `phosphor-core/{action,view}.rs` · `phosphor-steel/**` · `phosphor/{main,input,panes}.rs` · `phosphor-term/**` · `phosphor-ui/{interpret,frame}.rs` · `runtime/{init,keymaps,leader}.scm` · **the root manifest** |
 | **surface** | `claude-opus-5` | `vendor/**` · `phosphor-buffer/**` · `phosphor-ui/{theme,buffer_view,status_line,gutter,virtual_text,float,key_hints,unknown_key,tab_bar,soft_wrap}.rs` |
 | **store** | `claude-opus-5` | `phosphor-core/{store,region,anchor,seen}.rs` · `phosphor-ui/picker.rs` · `phosphor-vcs/**` · `runtime/pickers/**` |
 | **agent** | `claude-sonnet-5` | `phosphor-agent/**` · `phosphor-core/{review,inbox,watch}.rs` · `phosphor-ui/{transcript,prompt_line,question,diff_body,watch_overlay}.rs` · `runtime/{permissions,inbox,watch}.scm` |
@@ -105,9 +105,13 @@ Two things the build added that this table predates:
   already lists `spine` as live, so no window changes.
 - **`scripts/lint-*.sh` is deliberately unowned.** The glob *is* the contract: `just lint` runs
   every script matching it, so any role adds a structural lint by dropping a file in, without
-  touching `harness`'s justfile or CI. Three exist — `T006`'s (harness), `T007`'s (spine) and the
-  app-layer lint added after `CP-1` (which closes a hole Cargo's feature unification opened, and
-  which no manifest can express).
+  touching `harness`'s justfile or CI. It started at three — `T006`'s (harness), `T007`'s (spine)
+  and the app-layer lint added after `CP-1`, which closes a hole Cargo's feature unification
+  opened and no manifest can express — and **the glob is now `ls scripts/lint-*.sh`, deliberately
+  not a number here.** Every window since has added one or more, each because the thing it catches
+  had already happened; a count in this sentence would be the third stale count this build has
+  had to correct, and unlike the task counts nothing recomputes it. `CLAUDE.md` describes what
+  each one is for.
 
 ### Two single-writer invariants
 
@@ -137,6 +141,18 @@ These override ownership and are the reason invariant 2 survives contact with a 
     the `SPC` leader grid, and the `:help` body. One kind, one file, one draw site, which is the
     same principle `scripts/lint-one-escape-hatch.sh` enforces for `Node::Spans`. So `T034` and
     `T086` are one widget at two densities, not two widgets.
+  - **`interpret.rs` and `frame.rs` are `spine`'s, and they are the exception the rule needs.**
+    They are the only two files in `phosphor-ui` that draw no node kind: both are `T079` —
+    *tree interpreter + frame cache* — which this table's task list already assigns to `spine`,
+    and `interpret.rs` is where a `Node` kind *becomes* pixels rather than a widget that paints
+    one. That makes it the view-tree protocol's other half, and single-writer rule 1 says only
+    `spine` edits the view-tree protocol. Ruled 2026-08-13 on the same rule that moved `T014`
+    and `T027` — **the file decides the task** — and stated positively so the boundary reads in
+    one direction: **`surface` owns every file in `phosphor-ui` that draws one node kind, and
+    `spine` owns the two that draw none.** It is not a hypothetical seam: every widget task
+    touches `interpret.rs` to add its arm, and `scripts/lint-one-escape-hatch.sh` already
+    treats its single `Node::Spans` draw site as load-bearing. A widget task that needs an arm
+    there requests it, the way it already requests the node kind.
 - **The pane manager (`T088`) is `spine`, not `surface`.** Panes are focus and event routing in
   the binary's loop, not a widget — `phosphor/panes.rs`. The `TabBar` that renders *over* them
   (`T089`) is `surface`. This is the same split as input: `spine` decides, `surface` draws.
@@ -174,7 +190,7 @@ rule that keeps it honest is mechanical — `scripts/lint-no-app-layer-in-ui.sh`
 surface decides what they look like" is a boundary the build enforces rather than a convention.
 
 **Tasks:** T001, T002, T007, **T014**, T019–T026, **T027**, T033, T078–T080, T088, **T090**,
-**T091**, **T092–T098** · **27**
+**T091**, **T092–T098**, **T099**, **T100** · **29**
 
 **`T090` is why `spine` is live in Window B.** The window table always listed it there, and the
 task breakdown gave it nothing to do — a contradiction nobody noticed until `CP-1` failed for
@@ -224,6 +240,11 @@ keyboard protocol, was on this list and is the same crate — the negotiation is
 `machine.set_protocol(…)` in the binary. The line is worth stating positively, because it is what
 this role *is* — **`surface` draws, and never touches a terminal**, and a task on this list that
 touches one is a mis-filed task, not an exception.
+
+**Two files in `phosphor-ui` are not this role's**, settled 2026-08-13 by the same rule:
+`interpret.rs` and `frame.rs` are `T079`'s and therefore `spine`'s. The test is whether a file
+draws one node kind — every file on the list above does, and those two do not. See the
+`phosphor-ui` bullet under *Shared boundaries*.
 
 *(`T005` CI scaffolding is co-owned with `harness` — `surface` needs it in wave 1, `harness`
 takes it over at `CP-1`.)*
@@ -322,6 +343,18 @@ built on an unverified foundation.
 > inventing a schedule rather than recording one. `T097` is the exception: `T086` cannot pass without it, so it sits in Window D
 > with `T086`.
 
+> **`T099` and `T100` are the repair window's, and they are scheduled differently from each
+> other.** `T100` — the door's voice — is `spine`'s and belongs at the **front of Window E**, in a
+> phase where nothing else is rewriting the parity expectations, because that is the whole cost of
+> it. `T099` — macros over `feed-keys` — belongs to whichever window next opens
+> `runtime/keymaps.scm` and the input machine together, and putting it in one now would be
+> inventing a schedule rather than recording one, the same call `T092`–`T096` got. What stops
+> `T099` going quiet is not the RECORDED table but the capability rows themselves:
+> `set-macro-recording`, `register` and `place-anchor` each cite an unticked task, so
+> `scripts/lint-action-arms.sh` fails the moment one is ticked with no arm behind it. `T100` has
+> no such guard — it is the door's voice, not an arm — which is the argument for scheduling it
+> rather than leaving it to a window that next happens to touch `door.rs`.
+
 > **Window F reopens `spine` and `surface` briefly.** `T088` (pane manager) and `T089` (`TabBar`)
 > both gate `T054`, so they run at the front of F and then those two roles go quiet again. It is
 > the one place the "windows narrow as the build goes on" shape doesn't hold, and the reason is
@@ -336,11 +369,14 @@ built on an unverified foundation.
 > Windows A and B are complete: the workspace, both vendored forks, three structural lints proven
 > to bite, the grammar ABI check, the whole S1 widget layer, the S1 host, and a calibrated tape
 > harness. **Window C is built** — `spine` and `harness` — and `CP-2`'s mechanical half is
-> green: 209 capabilities, three doors derived from one table, 627 door checks walked end to
+> green: 212 capabilities, three doors derived from one table, 636 door checks walked end to
 > end, Steel booted from `runtime/`, the REPL live, and the statusline composed in the editor
 > layer. **Window D's S3 half is built too**, across two concurrent runs and a repair pass, and
-> `CP-3`'s mechanical half is green. **`CP-3`'s manual half is outstanding**, and `S4` does not
-> start until it passes.
+> **`CP-3` has passed, both halves** — the mechanical half green at 639 tests and 14 lints, and
+> Teej's manual half on **2026-08-13** with **no findings**. The verdict is written at the
+> checkpoint in [TASKS.md](TASKS.md), which is the rule below being obeyed rather than restated.
+> `S4` is unblocked; a second repair window runs between the two, on debt this build had already
+> written down.
 >
 > That bookkeeping gap is closed. `TASKS.md` now carries `CP-2 · **PASSED**` and dates the verdict
 > to 2026-08-12, where it belonged all along: the manual half was run and answered in conversation,

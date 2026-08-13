@@ -304,7 +304,7 @@ actions! {
             span: Span = "the span to replace",
             text: String = "what replaces it",
         }
-        ApplyEdits = "apply-edits" [S3 / "T029" / Allow]
+        ApplyEdits = "apply-edits" [S6 / "T052" / Allow]
             "applies a batch of edits as one undo group; the primitive T029's log replays" {
             edits: Vec<Edit> = "the edits, in order",
         }
@@ -397,7 +397,7 @@ actions! {
             "jumps to an anchor, which survives the rewrite that moved it" {
             anchor: crate::request::AnchorId = "which anchor",
         }
-        Jump = "jump" [S3 / "T026" / Deny]
+        Jump = "jump" [S5 / "T042" / Deny]
             "walks the jumplist" {
             seek: Seek = "next (forward) or prev (back)",
         }
@@ -463,6 +463,11 @@ actions! {
         RepeatLast = "repeat-last" [S3 / "T026" / Deny]
             "repeats the last change — ." {
             count: u32 = "how many times",
+        }
+        SetMacroRecording = "set-macro-recording" [S3 / "T099" / Deny]
+            "records the keys you type into a register, or stops — q's other half, replayed by feed-keys" {
+            register: RegisterName = "which register the keys land in",
+            on: bool = "start recording into it, or stop and keep what it holds",
         }
     }
 
@@ -678,6 +683,11 @@ actions! {
         DeclareRegions = "declare-regions" [S5 / "T041" / Allow]
             "records claude-authored spans as regions; your own edits never create one" {
             regions: Vec<RegionSpec> = "the spans, each with its claimed author",
+        }
+        PlaceAnchor = "place-anchor" [S5 / "T042" / Allow]
+            "anchors a target and answers the id — m writes one, goto-anchor reads it back" {
+            at: Target = "what to anchor to",
+            label: Option<String> = "a name to find it by — m's a-z, or a caller's own",
         }
         Reanchor = "reanchor" [S5 / "T042" / Allow]
             "re-resolves a file's anchors after a rewrite — node tier, then line+content" {
@@ -1175,6 +1185,30 @@ pub struct Batch {
 /// answers `#watch-3 · streaming from next run` (TUI Mockups.dc.html:499-504).
 /// An Action returning nothing cannot draw that screen, and `T023`'s *"`--eval`
 /// and the REPL return identical results"* would have nothing to compare.
+///
+/// # The case that is missing, and what it costs today
+///
+/// **There is no case for *"it ran and raised"*.** `Done` is *it happened* and
+/// `Refused` is *it did not, and that is a normal state*; scheme source that
+/// began evaluating and then blew up is neither. `phosphor-steel`'s
+/// `Runtime::evaluate` therefore lands it in [`Refusal::Declined`], which means
+/// *a rule, a hook or the user said no* — so the wrong case carries Steel's own
+/// error text, envelope and all, into a line that [`Refusal::why`] promises is
+/// the product's voice. A refused **query** shows it most plainly. A query that
+/// cannot be answered *raises* rather than answering a value — deliberately, and
+/// `phosphor-steel`'s `registry.rs` says why — so a `QueryError` becomes a
+/// `SteelErr`, and what the CLI door prints for
+/// `--eval '(unseen-regions "src/retry.rs")'` is this enum's `#refused` head
+/// followed by Steel's rendering of its own error, envelope and all: the
+/// `Error: <kind>:` prefix wrapped around the one line
+/// [`Refusal::why`] would otherwise have owned.
+///
+/// This is `OPEN-QUESTIONS.md` §7, ruled into `T100` with §9. Adding the case
+/// here is the small half; the half that makes it real is in three files this
+/// task did not hold — the construction site (`Runtime::evaluate`), the scheme
+/// door's sigil beside `#ok`/`#refused` (`phosphor-steel`'s `registry.rs`), and
+/// the REPL's own arm. **Flagged rather than folded in:** a case nothing
+/// constructs is the exact debt this window exists to stop repeating.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     /// It happened.
@@ -1240,6 +1274,57 @@ pub enum Refusal {
         /// What to say about it.
         reason: String,
     },
+}
+
+impl Refusal {
+    /// Why the Action did not happen, in the product's voice — **the only
+    /// phrasing of this enum that exists.**
+    ///
+    /// Design Language §6: *lowercase, telegraphic, factual*; the midline dot
+    /// only inside a fact, the em dash for cause — *"session lost —
+    /// `:reattach`"*. Each line below is that shape: what is true, then what
+    /// to do about it. No Rust or Steel type name reaches a reader here; the
+    /// door name comes from [`Door::as_str`](crate::registry::Door::as_str),
+    /// which spells `steel`/`mcp`/`cli` and not the variants.
+    ///
+    /// # Why it is a method and not a function somewhere
+    ///
+    /// It used to be two functions. `crates/phosphor/src/door.rs` said
+    /// *"`T041` builds this"* where `phosphor-steel` said *"not built yet —
+    /// `T041` builds it"*, and one enum in two voices is how a vocabulary
+    /// stops being one vocabulary — recorded as `OPEN-QUESTIONS.md` §9 and
+    /// ruled into `T100`. A convention that the doors agree is not enough,
+    /// because the next door is written by whoever writes it. Hanging the
+    /// phrasing on the type makes the agreement structural: a second voice is
+    /// now a second `match` somebody has to write on purpose, over an enum
+    /// that already answers the question.
+    ///
+    /// Every surface reads this one string — a refused Action's
+    /// `(#refused "…")` value in scheme, the REPL's `⇒` line, the CLI door's
+    /// stdout, the ex line's diagnostic and a float.
+    #[must_use]
+    pub fn why(&self) -> String {
+        match self {
+            Self::NotYetImplemented { task } => format!("not built yet — {task} builds it"),
+            Self::FocusRelativeTargetOverMcp => {
+                "an agent has no cursor — name the target".to_owned()
+            }
+            Self::DoorDenied { door } => {
+                format!(
+                    "the {} door refuses this — open it in init.scm",
+                    door.as_str()
+                )
+            }
+            Self::NoRepository => "no repository here".to_owned(),
+            // Not *"it may have moved on"*: §6 asks for factual, and a hedge is
+            // the one thing a caller cannot act on. These are the two ways a
+            // target goes stale, per this variant's own doc.
+            Self::NoSuchTarget => "no such target — it was dropped or closed".to_owned(),
+            Self::WouldLoseWork => "unsaved work — force it or save first".to_owned(),
+            // A rule, a hook or the user already phrased this one.
+            Self::Declined { reason } => reason.clone(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -323,6 +323,14 @@ impl Machine {
             // Both are re-entries the host drives: it reads `last_change` or the
             // Action's own keys and feeds them back through `feed`.
             InputAction::FeedKeys { .. } | InputAction::RepeatLast { .. } => {}
+            // The recorder is `T099`'s and is deliberately not built here. The
+            // capture machinery it will grow out of is `record`/`record_changed`
+            // above — the same stream `.` already keeps — but generalising it to
+            // a named register is that task's, not the vocabulary's. Until then
+            // this is a no-op, and because `apply` returns nothing the *host* is
+            // the only place that can turn the call into a refusal naming
+            // `T099`; a silent success here is the failure `T098` exists to end.
+            InputAction::SetMacroRecording { .. } => {}
         }
     }
 

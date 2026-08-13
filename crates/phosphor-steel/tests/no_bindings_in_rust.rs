@@ -175,11 +175,17 @@ fn no_rust_source_binds_a_key() {
 /// only place the whole table is put through the real decoder.
 ///
 /// It *runs* a thunk binding, by construction — resolving one is running it.
-/// The shipped table has five, all `(key/deferred)`: `q` `@` `m` `'` and the
-/// backtick, bound by `T098` so a key we have deliberately not built resolves
+/// The shipped table has three, all `(key/deferred)`: `@`, `'` and the backtick.
+/// They are bound by `T098` so a key we have deliberately not built resolves
 /// rather than reading as unknown — which is what keeps `T035`'s once-per-session
 /// hint from being spent on one. Running them is harmless and is the point: a
 /// layer that binds a thunk is asking for it to run when the key is pressed.
+///
+/// It was five until the `CP-3` repairs gave `q` and `m` verbs to name, so both
+/// became `(key/run …)` and now decline *by name* instead of saying nothing. The
+/// remaining three are silent for a reason worth knowing: a thunk cannot refuse.
+/// `keymap::resolve_seq` answers `Resolution::Ran`, which tells the host nothing
+/// about what ran, so a refusal reaches the statusline only from `Role::Run`.
 #[test]
 fn every_shipped_binding_resolves() {
     let mut runtime = runtime();

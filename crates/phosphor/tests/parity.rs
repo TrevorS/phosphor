@@ -563,7 +563,7 @@ fn cli_door(capability: &Capability, verb: &Verb) -> Result<(), String> {
     // identifier — so the VM refuses it in Steel's own words, and a refusal that
     // names no task is the proof that the source reached a runtime at all.
     if is_the_vm(capability) {
-        return if printed.starts_with("#refused · ") && !printed.contains("builds this") {
+        return if printed.starts_with("#refused · ") && !printed.contains("not built yet") {
             Ok(())
         } else {
             Err(format!(
@@ -573,7 +573,10 @@ fn cli_door(capability: &Capability, verb: &Verb) -> Result<(), String> {
         };
     }
 
-    let expected = format!("#refused · {} builds this\n", task_of(capability));
+    let expected = format!(
+        "#refused · not built yet — {} builds it\n",
+        task_of(capability)
+    );
 
     if printed == expected {
         // The line names this row's own task, which `door.rs` reads off the

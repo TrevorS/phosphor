@@ -86,29 +86,20 @@ pub fn line(outcome: &Outcome) -> String {
 
 /// Why an Action did not happen, in the product's voice.
 ///
-/// Design Language §6: lowercase, telegraphic, factual; em dash for cause. The
-/// same text reaches a refused Action's `(#refused "…")` value in scheme
-/// ([`crate::registry`]), the REPL's `⇒` line and the CLI door's stdout —
-/// **written once, here**, because three surfaces phrasing one enum three ways
-/// is how a vocabulary stops being one vocabulary.
+/// **A delegate, and deliberately branchless.** The phrasing is
+/// [`Refusal::why`], hung on the enum it describes so that a second voice is a
+/// `match` somebody has to write on purpose — `OPEN-QUESTIONS.md` §9, where
+/// this function and `door.rs`'s own copy said *"not built yet — `T041` builds
+/// it"* and *"`T041` builds this"* about one value. `T100` collapsed them.
+///
+/// It stays as a name because the scheme door ([`crate::registry`]), the REPL
+/// and the ex line's diagnostic all reach the voice through it, and repointing
+/// those is an edit to files `T100` did not hold. Nothing is lost by the extra
+/// hop: there is one implementation, and it is not here. **Do not grow a
+/// `match` in this function** — that is precisely the defect that was fixed.
 #[must_use]
 pub fn why(refusal: &Refusal) -> String {
-    match refusal {
-        Refusal::NotYetImplemented { task } => format!("not built yet — {task} builds it"),
-        Refusal::FocusRelativeTargetOverMcp => {
-            "an agent has no cursor — name the target".to_owned()
-        }
-        Refusal::DoorDenied { door } => {
-            format!(
-                "the {} door refuses this — open it in init.scm",
-                door.as_str()
-            )
-        }
-        Refusal::NoRepository => "no repository here".to_owned(),
-        Refusal::NoSuchTarget => "no such target — it may have moved on".to_owned(),
-        Refusal::WouldLoseWork => "unsaved work — force it or save first".to_owned(),
-        Refusal::Declined { reason } => reason.clone(),
-    }
+    refusal.why()
 }
 
 /// A [`Value`] written the way the vocabulary is read: scheme.

@@ -77,6 +77,59 @@
 //! height does not depend on width at all. **Flagged rather than folded in** —
 //! a width parameter on that function is `spine`'s call.
 //!
+//! # A help body that does not fit — §11, argued (`T086`)
+//!
+//! A `Density::Help` body is taller than its float whenever the topic is large,
+//! and until this pass it simply **stopped**: the loop below drew rows until it
+//! ran out of area and the reader had no way to know there were more. That is
+//! the defect, and the question it raises is what a body should do about scale.
+//!
+//! **Design Language §11 rules it: *"scale is grouping, not scrolling"*.** Both
+//! of its examples group by something the datum carries — review blocks by
+//! directory, transcripts by turn — so the test for this surface is whether a
+//! [`KeyHint`] carries anything to group by. **It does not.** A `KeyHint` is a
+//! key and a verb and nothing else ([`phosphor_core::view::KeyHint`]), which
+//! leaves a widget exactly two derivable groupings, and neither is worth having:
+//!
+//! * **By shared leading key token** — the mechanism `KeyHints::common_prefix`
+//!   already uses at [`Density::Grid`]. Measured against the table it would run
+//!   on: `runtime/keymaps.scm` carries 131 `(list "…" (key/…))` forms over
+//!   **87** distinct first tokens, so folding by prefix takes about a third of
+//!   the rows off a page that is several times too long. Keys are flat; that
+//!   is what a modal keymap is.
+//! * **Packing into columns** the way [`Density::Grid`] does. That is squeezing,
+//!   which §11 forbids in as many words, and the arithmetic does not save it
+//!   either. The host's own note on `help_float` sizes the problem —
+//!   *"a table of 200-odd bindings that a float can show 25 of"* — and
+//!   [`GRID_COLUMNS`] is three, so the best a packing can do is a third of a
+//!   number that is an order of magnitude too big.
+//!
+//! So the grouping §11 asks for is real and it is **already built — one level
+//! up**. `:help` with no topic draws an *index* of topics with a count against
+//! each, and `:help <topic>` is that index's expansion; the host owns both
+//! (`crates/phosphor/src/main.rs`'s `index` and `TOPICS`). What is missing is
+//! the second fold, *inside* a topic, and the datum cannot express it.
+//!
+//! **What lands here is therefore the half a widget can honestly own: the body
+//! stops lying.** When the entries outrun the area the last row says how many
+//! did not fit and where to narrow — `87 more — :help <topic>`, §6's
+//! state-then-remedy em dash, the same shape as *"session lost — :reattach"*.
+//! §11's *"narrow terminals drop, never squeeze"* permits the drop; it was the
+//! **silence** that was wrong. Nothing here scrolls, and nothing moves that was
+//! not asked for: `KeyHints::help` is still a pure function of its hints and
+//! its area, so Invariant 3 is untouched — the same list at the same size draws
+//! the same cells, and a rebind at the REPL changes the frame only by changing
+//! the list.
+//!
+//! **The other half is owed, and it is `spine`'s**: a group label on `KeyHint`
+//! — the layer already knows a binding's scope and role family, and
+//! `keymap-entries` already emits both. With one, this density folds by it, a
+//! folded group draws as its label plus its members inline, and `6d`'s own
+//! `nouns  u unseen region  h hunk …` row — today a composed `Node::Spans` row
+//! outside this widget (`crates/phosphor/tests/screen_6d.rs`'s notes) — becomes
+//! the thing this widget draws. Raised as a contract request, not half-done
+//! here.
+//!
 //! Owned by `surface`.
 
 use phosphor_core::view::{Density, KeyHint};
@@ -116,6 +169,14 @@ const LEADER_CANONICAL: &str = "<space>";
 
 /// The drawn spelling of the leader (`3c`, Design Language).
 const LEADER_SPELLED: &str = "SPC";
+
+/// What a [`Density::Help`] body says instead of ending in silence, after the
+/// count of the rows that did not fit.
+///
+/// §6's em dash — state, then the remedy, exactly as *"session lost —
+/// :reattach"* is written — and the command spelled whole, never `:h`. The
+/// module docs argue why this is a drop rather than a scroll.
+const HELP_OVERFLOW: &str = " more — :help <topic>";
 
 /// One keymap surface, at one density.
 ///
@@ -260,6 +321,10 @@ impl<'a> KeyHints<'a> {
     }
 
     /// `6d`: one entry per row, keys aligned into a column.
+    ///
+    /// A list taller than `area` spends its last row on [`HELP_OVERFLOW`]
+    /// rather than stopping mid-table — §11's drop, made visible. See the
+    /// module docs for why it is a drop and not a scroll.
     fn help(self, area: Rect, buf: &mut Buffer) {
         let entries = self.entries();
         let key_width = entries.iter().map(|entry| entry.key_width()).max();
@@ -267,15 +332,38 @@ impl<'a> KeyHints<'a> {
         let key_style = Style::new().fg(self.theme.actors.claude);
         let verb_style = Style::new().fg(self.theme.neutrals.meta);
 
-        for (index, entry) in entries.iter().enumerate() {
+        // One row of the budget buys the truth about the rest of the table, and
+        // is only spent when there is a rest: a body that fits draws exactly
+        // what it drew before this arm learned to count.
+        let height = area.height as usize;
+        let shown = if entries.len() > height {
+            height.saturating_sub(1)
+        } else {
+            entries.len()
+        };
+
+        for (index, entry) in entries.iter().take(shown).enumerate() {
             let Ok(dy) = u16::try_from(index) else { break };
-            if dy >= area.height {
-                break;
-            }
             let y = area.y + dy;
             write(buf, area, area.x, y, &entry.key, key_style);
             let verb_x = area.x.saturating_add(key_width).saturating_add(GAP);
             write(buf, area, verb_x, y, entry.label, verb_style);
+        }
+
+        let dropped = entries.len() - shown;
+        if dropped > 0 {
+            // §6: *"a number beats an adjective"* — the count, not "and more".
+            // At the left edge rather than in the verb column, because it is a
+            // statement about the list and not a row of it.
+            let y = area.y + u16::try_from(shown).unwrap_or(u16::MAX);
+            write(
+                buf,
+                area,
+                area.x,
+                y,
+                &format!("{dropped}{HELP_OVERFLOW}"),
+                verb_style,
+            );
         }
     }
 
@@ -763,6 +851,64 @@ mod tests {
         assert_eq!(row(&buf, 0), "]u  next / previous unseen · ]b block-wise");
         assert_eq!(buf[(4, 0)].fg, theme.neutrals.meta);
         assert_eq!(buf[(0, 0)].fg, theme.actors.claude);
+    }
+
+    /// `T086`'s limit, closed the way §11 rules rather than with a scrollbar:
+    /// the body drops what does not fit and **says so**.
+    #[test]
+    fn a_help_body_taller_than_its_float_names_what_it_dropped() {
+        let hints: Vec<KeyHint> = (0..10)
+            .map(|n| hint(&format!("g{n}"), &format!("goto {n}")))
+            .collect();
+        let buf = draw(&hints, Density::Help, 40, 4);
+        assert_eq!(row(&buf, 0), "g0  goto 0");
+        assert_eq!(row(&buf, 2), "g2  goto 2");
+        // Three rows of table, one of truth: 10 − 3 = 7.
+        assert_eq!(row(&buf, 3), "7 more — :help <topic>");
+    }
+
+    /// The marker costs a row only when there is something to say. A body that
+    /// fits draws what `6d` draws and nothing else.
+    #[test]
+    fn a_help_body_that_fits_draws_no_marker() {
+        let hints = vec![
+            hint("viu", "select inner unseen region"),
+            hint("dih", "delete inner hunk"),
+        ];
+        for height in [2, 3, 9] {
+            let buf = draw(&hints, Density::Help, 40, height);
+            assert_eq!(row(&buf, 0), "viu  select inner unseen region");
+            assert_eq!(row(&buf, 1), "dih  delete inner hunk");
+            for y in 2..height {
+                assert_eq!(row(&buf, y), "", "row {y} at height {height}");
+            }
+        }
+    }
+
+    /// The count is what did *not* fit, at every height — including the one
+    /// where the marker is the only row there is room for.
+    #[test]
+    fn the_dropped_count_is_the_rows_the_reader_cannot_see() {
+        let hints: Vec<KeyHint> = (0..6).map(|n| hint(&format!("{n}"), "goto")).collect();
+        for (height, expected) in [(1, "6 more"), (2, "5 more"), (5, "2 more")] {
+            let buf = draw(&hints, Density::Help, 40, height);
+            let last = row(&buf, height - 1);
+            assert!(last.starts_with(expected), "{last:?} at height {height}");
+        }
+        // Six in six is not an overflow, and the sixth row is an entry.
+        let exact = draw(&hints, Density::Help, 40, 6);
+        assert_eq!(row(&exact, 5), "5  goto");
+    }
+
+    /// It reads as a note, not as a binding: meta, at the left edge, with the
+    /// key column left to the keys.
+    #[test]
+    fn the_marker_is_meta_and_not_a_key() {
+        let theme = Theme::phosphor_dark();
+        let hints: Vec<KeyHint> = (0..8).map(|n| hint(&format!("g{n}"), "goto")).collect();
+        let buf = draw(&hints, Density::Help, 40, 3);
+        assert_eq!(buf[(0, 2)].fg, theme.neutrals.meta);
+        assert_ne!(buf[(0, 2)].fg, theme.actors.claude);
     }
 
     // -- degenerate cases ----------------------------------------------------

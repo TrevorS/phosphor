@@ -45,7 +45,6 @@ S3 T026 feed-keys
 S3 T026 indent
 S3 T026 insert
 S3 T026 join-lines
-S3 T026 jump
 S3 T026 mode
 S3 T026 move-cursor
 S3 T026 paste
@@ -64,7 +63,6 @@ S3 T026 set-register
 S3 T026 viewport
 S3 T026 yank
 S3 T028 select-object
-S3 T029 apply-edits
 S3 T029 commit-undo-group
 S3 T029 redo
 S3 T029 undo
@@ -85,6 +83,8 @@ S3 T035 show-unknown-key-hint
 S3 T081 set-soft-wrap
 S3 T086 describe-key
 S3 T086 open-help
+S3 T099 register
+S3 T099 set-macro-recording
 S4 T036 apply-workspace-edit
 S4 T036 request-definition
 S4 T036 request-references
@@ -114,6 +114,8 @@ S5 T041 unseen-regions
 S5 T042 anchor
 S5 T042 anchors
 S5 T042 goto-anchor
+S5 T042 jump
+S5 T042 place-anchor
 S5 T042 reanchor
 S5 T045 float-accept
 S5 T045 float-select
@@ -133,6 +135,7 @@ S5 T049 next-region-by
 S6 T050 turn-began
 S6 T050 turn-ended
 S6 T051 session
+S6 T052 apply-edits
 S6 T053 declare-review-block
 S6 T053 review-blocks
 S6 T054 session-prose

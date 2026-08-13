@@ -210,7 +210,17 @@ fn buffer(theme: &Theme, area: Rect) -> Editor {
     );
     let inner = editor_area(area);
     soft_wrap::wrap_to(&mut editor, inner);
-    apply_scroll(&mut editor, ScrollRequest::ToRow(FOLD_HEADER), inner);
+    // `FOLD_HEADER` is a 0-based line index — it indexes the fork's lines — and
+    // `ScrollRequest` is the vocabulary's type now (`R7-ScrollRequest`), which
+    // counts visual rows from 1. The `+ 1` is that seam, and it is the same one
+    // the assertion above spells when it prints `FOLD_HEADER + 1`.
+    apply_scroll(
+        &mut editor,
+        ScrollRequest::ToRow {
+            row: FOLD_HEADER as u32 + 1,
+        },
+        inner,
+    );
     editor
 }
 

@@ -691,7 +691,12 @@ pub fn retry_with_backoff<T, E>(
         let mut editor = editor(&theme);
         // Through the one function allowed to move a viewport (T015), not by
         // reaching into the vendored core behind its back.
-        buffer_view::apply_scroll(&mut editor, buffer_view::ScrollRequest::ToRow(2), AREA);
+        // `ToRow` is 1-based (`R7`); the viewport index it lands on is 2.
+        buffer_view::apply_scroll(
+            &mut editor,
+            buffer_view::ScrollRequest::ToRow { row: 3 },
+            AREA,
+        );
         assert_eq!(buffer_view::viewport_of(&editor).top_row, 2);
         wrap_to(&mut editor, AREA);
         assert_eq!(buffer_view::viewport_of(&editor).top_row, 2);

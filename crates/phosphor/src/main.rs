@@ -54,7 +54,7 @@
 //! # `T023` — the CLI door, alongside the host
 //!
 //! [`door`] is the other half of this file's job and does not touch the loop at
-//! all. `phosphor --eval '(…)'` and the 209 generated capability verbs return
+//! all. `phosphor --eval '(…)'` and the 212 generated capability verbs return
 //! **before** [`Term`] is constructed: no alternate screen, no raw mode, no
 //! frame. That is a requirement, not an accident — `V006` seeds tape fixtures
 //! through `--eval` with no test-only backdoor, which needs the door to work
@@ -1953,8 +1953,13 @@ impl Editing {
                 self.set_case(target, *case);
                 done()
             }
+            // **No conversion.** `R7-ScrollRequest` closed in the repair window
+            // between `CP-3` and `S4`: `buffer_view::ScrollRequest` is a
+            // re-export of this very type now, so the vocabulary's request goes
+            // straight to the widget and the 1-based-to-0-based arithmetic lives
+            // once, in `Viewport::scrolled`.
             Action::View(ViewAction::Scroll { request, .. }) => {
-                buffer_view::apply_scroll(&mut self.editor, scroll_request(*request), self.area);
+                buffer_view::apply_scroll(&mut self.editor, *request, self.area);
                 done()
             }
             // `R19` — folds. `T016`'s whitespace half shipped with `8e`; this is
@@ -2631,6 +2636,23 @@ impl Session<'_> {
                     InputAction::SetMode { .. }
                     | InputAction::SetCount { .. }
                     | InputAction::SelectRegister { .. } => {}
+                    // `T099`, and the one arm in this match that answers rather
+                    // than keeps state. [`Machine::apply`]'s own arm is
+                    // deliberately a no-op and `apply` returns nothing, so the
+                    // host is the only place a `set-macro-recording` can become
+                    // the refusal `T098` asks for — `input.rs` says exactly that
+                    // where the no-op is.
+                    //
+                    // The task is read off the capability's row, never written
+                    // here: the day `T099` builds the recorder this arm is what
+                    // it replaces, and until then `q` declines by name instead
+                    // of succeeding silently, which is the failure the whole
+                    // deferred-keys section exists to end.
+                    InputAction::SetMacroRecording { .. } => {
+                        self.editing.refused = Some(Refusal::NotYetImplemented {
+                            task: action.spec().since.task,
+                        });
+                    }
                 }
             }
         }
@@ -2662,32 +2684,6 @@ const fn moves_cursor(action: &Action) -> bool {
                 | BufferAction::Paste { .. }
         ) | Action::History(HistoryAction::Undo { .. } | HistoryAction::Redo { .. })
     )
-}
-
-/// The vocabulary's scroll request as the widget layer's.
-///
-/// **The boundary conversion `request.rs` asks for by name.** Two definitions of
-/// one type exist — `phosphor_core::request::ScrollRequest` and
-/// `buffer_view::ScrollRequest` — because collapsing them deletes a
-/// `surface`-owned type, which is a request rather than an edit `spine` makes.
-/// Rows are 1-based in the vocabulary and 0-based in the widget, and this is the
-/// only place that is true.
-const fn scroll_request(
-    request: phosphor_core::request::ScrollRequest,
-) -> buffer_view::ScrollRequest {
-    use phosphor_core::request::ScrollRequest as Wire;
-    match request {
-        Wire::Rows { rows } => buffer_view::ScrollRequest::Rows(rows),
-        Wire::Pages { pages } => buffer_view::ScrollRequest::Pages(pages),
-        Wire::Columns { columns } => buffer_view::ScrollRequest::Columns(columns),
-        Wire::ToRow { row } => buffer_view::ScrollRequest::ToRow(row.saturating_sub(1) as usize),
-        Wire::ToTop {} => buffer_view::ScrollRequest::ToTop,
-        Wire::ToBottom {} => buffer_view::ScrollRequest::ToBottom,
-        Wire::RevealRow { row, margin } => buffer_view::ScrollRequest::RevealRow {
-            row: row.saturating_sub(1) as usize,
-            margin: margin as usize,
-        },
-    }
 }
 
 /// Whether this event is a press rather than a release.
@@ -3885,13 +3881,22 @@ mod tests {
             Resolution::Role(Role::Run(_))
         ));
         // `T098`: `q` is **known and not built**, so it does not spend `T035`'s
-        // one teaching row. It resolves to a thunk that does nothing, because
-        // the vocabulary has no macro verb to name — the truth is in its verb,
-        // which `:help` draws. `Q` is what genuinely nobody binds.
+        // one teaching row. It used to resolve to a thunk that did nothing,
+        // because the vocabulary had no macro verb to name; the repair window
+        // between `CP-3` and `S4` added `set-macro-recording`, so it resolves
+        // to a capability call now and the refusal names `T099` instead of the
+        // key saying nothing. `Q` is what genuinely nobody binds.
+        assert!(
+            matches!(resolved(&mut layer, "q"), Resolution::Role(Role::Run(_))),
+            "`q` names the verb that will record, and declines by naming its task"
+        );
+        // `@` is the one that is still a thunk, and it is argued where it is
+        // bound: playing a macro is `feed-keys` over the `register` query's
+        // answer, and a keymap cannot ask a query.
         assert_eq!(
-            resolved(&mut layer, "q"),
+            resolved(&mut layer, "@"),
             Resolution::Ran,
-            "`q` is deferred on purpose, and a deferred key is bound"
+            "`@` is deferred on purpose, and a deferred key is bound"
         );
         assert_eq!(
             resolved(&mut layer, "Q"),

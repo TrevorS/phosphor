@@ -16,6 +16,17 @@ file only if you read that file, and give `file:line` when the claim is load-bea
 citation below was checked against the tree on 2026-08-12, and every citation added or amended
 in the 2026-08-13 ruling pass was re-checked then.
 
+**Citations added from 2026-08-13 name a symbol rather than a line**, per rule 5 of *Concurrency*
+in [TEAM.md](TEAM.md): concurrent agents in one worktree move each other's line numbers, and a
+wrong line number in a register like this one reads as authoritative. The older entries keep
+their `file:line` and are correct as of the date above; treat a line that has drifted as a
+citation to re-derive, not as a claim that failed.
+
+**Swept 2026-08-13, in the repair window between `CP-3` and `S4`.** Four entries moved to
+*Closed* — §19 on a ruling, and §6, §13 and §17 because the tree had already answered them and
+nobody had noticed. The repair-pass list at the end was re-checked item by item and now carries
+what is done, what is still open, and one thing that was ruled not worth doing.
+
 ---
 
 ## Doc-versus-tree disagreements
@@ -24,73 +35,25 @@ These are cheap: the tree is right and a document has not caught up. They are li
 `docs/` is the specification, and a specification that disagrees with the build is a bug in the
 specification — but nobody may quietly edit it into agreement.
 
-**All three that stood here are ruled and closed** — §1, §2 and §3, all amending
-[TEAM.md](TEAM.md). One new one has taken their place.
-
-### 19 · Who owns `phosphor-ui/{interpret,frame}.rs`?
-
-Found while making the §1 amendment, and it is the same shape. `TEAM.md`'s widget list splits
-`phosphor-ui` per file across four owners, and it names neither `interpret.rs` nor `frame.rs`.
-Both exist (`crates/phosphor-ui/src/`), and both are `T079`'s — *tree interpreter + frame cache* —
-which `TEAM.md` assigns to `spine`. So the crate that `surface` owns contains two files whose
-task belongs to `spine`, and the table does not say so either way.
-
-This is not a hypothetical: `interpret.rs` is where a new `Node` kind becomes pixels, so it is
-touched by every widget task, and `scripts/lint-one-escape-hatch.sh` already treats its single
-`Node::Spans` draw site as load-bearing.
-
-- **Name them in `spine`'s row**, the way `T014` and `T027` were, on the same rule — the file
-  decides the task, and the interpreter is the view-tree protocol's other half rather than a
-  widget. `surface` keeps every file that draws one node kind.
-- **Or give them to `surface`** and move `T079` with them, which contradicts `TEAM.md`'s first
-  single-writer rule: *only `spine` edits the view-tree protocol.*
-
-*Recommendation: `spine`, and add the row. The first option is the only one consistent with the
-rule that is already mechanical.*
+**All four that stood here are ruled and closed** — §1, §2, §3 and §19, all amending
+[TEAM.md](TEAM.md). Nothing has taken their place.
 
 ---
 
 ## Scope questions
 
-**§4 and §5 are ruled and closed** — `V006`'s split, and `6b`'s `q close` footer.
+**§4, §5 and §6 are ruled and closed** — `V006`'s split, `6b`'s `q close` footer, and the three
+editor-layer names `6b` types that nothing binds.
 
-### 6 · Three editor-layer names `6b` types that nothing binds
-
-`goto`, `claude`, `region-author`. They belong in `runtime/` over the records `T041` returns at S5;
-writing them now would invent the record shape, which is why `CP-2` flagged rather than invented
-them. That part is settled.
-
-What is open is the *form of the flag*. Today it is a note, and this build's most recent defect was
-a rule that held by remembering — the keybinding invalidation `CP-2` found missing by running it.
-
-*Recommendation: keep them unbound, and add a test asserting they are still unbound, so the day
-`T041` lands the test goes red and forces the binding rather than waiting to be recalled.*
+*Nothing stands open in this category.*
 
 ---
 
 ## The door's voice
 
-### 7 · There is no `Outcome` case for "it ran and raised"
-
-A refused query surfaces as `#refused · Error: Generic: not built yet — T041 builds it`. The
-`Error: Kind:` envelope is Steel's and is not the §6 voice.
-
-### 9 · `door.rs::why` and `answer::why` phrase one enum two ways
-
-*"T041 builds this"* against *"not built yet — T041 builds it"*. Unifying them rewrites 627 parity
-expectations.
-
-*Recommendation for both: one task, `spine`, scheduled in the S4 run.* They are the same defect —
-the door does not speak §6's voice — and they rewrite the same expectation set, so doing them
-separately means regenerating and reviewing 627 expectations twice.
-
-> **Scope**
-> - Files: `crates/phosphor/src/door.rs`, `crates/phosphor-steel/src/answer.rs`,
->   `crates/phosphor/tests/parity.rs`
-> - Named units: 1 enum (`Outcome`), 2 `why` implementations, ~627 parity expectations
-> - Verification: existing parity suite
-> - Risk: public API yes (one `Outcome` case) · data migration no · cross-module yes
->   (`phosphor`, `phosphor-steel`) · reversible yes · external blocker no
+**§7 and §9 are ruled and closed** — the missing `Outcome` case and the two `why` implementations
+became one task, `T100`, exactly as both entries recommended. The scope block that stood here
+moved with them.
 
 ### 8 · `place-watch` takes a `Target`; `6b` passes a string
 
@@ -122,12 +85,20 @@ C. Two known gaps remain, and they unblock at different times:
 *Recommendation: raise the ground question in the S4 run's first phase, where `spine` is free, and
 land the frame once the literals exist. Nothing is gained by starting it in S3.*
 
+**Still open, and now due, checked 2026-08-13.** `crates/phosphor-ui/tests/golden_frames.rs`
+carries `screen_1a_minus_agent`, `screen_9c`, `screen_8c` and `screen_8d`, and no `6b` — read this
+session. S3 is over: `CP-3` passed both halves and `S4` is the next window, so the *"nothing is
+gained by starting it in S3"* clause has expired and the recommendation's own trigger has fired.
+Both gaps are `S4`'s to clear — `T037` brings the literals, and the ground question wants
+`spine`'s first free phase, which is the same window.
+
 ---
 
 ## Raised by Window D's S3 run
 
-**§11, §16 and §18 are ruled and closed** — the file lock, the hand-rolled codec, and the eleven
-declared mutations with no creditor.
+**§11, §13, §16, §17 and §18 are ruled and closed** — the file lock, the ex line's second draw
+path, the hand-rolled codec, `CP-3`'s VHS artifacts, and the eleven declared mutations with no
+creditor.
 
 ### 12 · Two mockups disagree with two other mockups
 
@@ -145,21 +116,6 @@ whichever rendering wins is what every agent-surface tape at `CP-5` will show.
 *Recommendation: Teej picks one rendering per conflict at claude.ai, and `fixtures/` follows. There
 is no build change here — nothing is wrong in the tree.*
 
-### 13 · The ex line draws outside the view tree
-
-`open-prompt` is declared `S6 / "T058"` (`crates/phosphor-core/src/action.rs:640`), but `T033`
-needed an ex line at S3 or `CP-3` cannot be judged — you cannot save. The binary implements
-`PromptKind::Ex` and declines Claude and Search with a reason naming `T058`. Because
-`Node::Prompt` is still deferred (`crates/phosphor-ui/src/interpret.rs:453`), the ex row is drawn
-from `Node::Line` / `Node::Label` in `main.rs`'s `draw` rather than through the prompt node.
-
-That is a second draw path for a surface that has a node kind, which is the shape
-`scripts/lint-one-escape-hatch.sh` exists to prevent for `Node::Spans`.
-
-*Recommendation: accept it as scaffolding with a demolition date at `T058`, and say so in a comment
-at the draw site so it is found. It is the same trade `T090` made and the same one `T026` collected
-on.*
-
 ### 14 · `phosphor --eval` cannot report refusal through its exit code
 
 Verified empirically by `V006`'s agent: a well-formed call the editor *refuses* and a trivial
@@ -174,53 +130,24 @@ successes. `scripts/seed-fixtures.sh` checks the printed value instead.
 exit code, and "the editor declined" is arguably a `1`. Touches `T023`'s contract, so it is
 `spine`'s.*
 
-### 17 · Does `CP-3` sign off without its VHS artifacts?
-
-`CP-3`'s "VHS produces" list names four captures: the leader popup (`3c`), folds collapsing and
-expanding, insert-only whitespace marks, and the unknown-key hint firing then *not* firing again
-(`8e`). These are `harness` standing work under `V005` rather than any numbered task — which is
-exactly why they can fall through a task-driven run.
-
-Two of the four also have no S3 task behind them at all: nothing in `T026`–`T035` builds folds or
-insert-only whitespace marks, so a tape for either would be capturing a surface that does not
-exist.
-
-*Recommendation: sign off on the two that have surfaces (`3c`, `8e`) and record the other two
-against the task that builds them, rather than holding the checkpoint for artifacts of nothing.*
-
-**Updated at the `CP-3` re-audit (repair pass) — the reasoning above no longer holds, and the
-position is worse, not better.** All four surfaces now exist in the shipping binary: `3c` opens on
-`SPC` (`crates/phosphor/tests/loop_pty.rs:417`), `8e` fires once on an unbound key (`:487`), folds
-close and open on `za`/`zR` (`:532`, wired at `crates/phosphor/src/main.rs:1911`-`1922`), and the
-INSERT-only whitespace marks are driven off `machine.mode()` every frame (`:903`). So the excuse
-for three of the four is gone.
-
-**All four are captured now.** `tapes/` carries `3c.tape`, `8e.tape`, `folds.tape` and
-`insert-whitespace-marks.tape`, with eleven committed artifacts between them — `3c` closed and
-open, `8e` silent and taught (the negative half `CP-3` asks for by name), `folds` closed, open and
-reopened, and the whitespace pair.
-
-**And the recapture answered the question it was left open on.** The whitespace tape's two stills
-were byte-identical when this section was first written — the `NORMAL` and `INSERT` frames the same
-bytes, mode chip included, which is impossible if the second screenshot advanced. Recaptured, they
-**differ**, so it was the VHS capture pipeline duplicating a frame and not the surface failing to
-render. Deleting them the first time greened `scripts/lint-repo-hygiene.sh` without answering that;
-recapturing did, and the answer is that the build was right all along.
-
-`tapes/artifacts/DUPLICATES.md` now exists for the pairs that *are* identical by construction, with
-each group stating whether it is a duplicate by definition or a gap — which is the honest
-resolution the first attempt skipped.
-
-*This question is answered, not by a ruling but by the work: it was never an artifact-of-nothing
-problem once the surfaces went live. What remains is the ordinary `harness` standing work of
-keeping them current.*
-
 ## Repair pass — queued work, not questions
 
-These need no ruling. They are collected here because every one of them lands in a file that no
-agent in the S3 run owns, so none of them can be done inside it. They run as one `spine`-and-
-`surface` pass **after the run and before `CP-3`'s manual half**, because most are things Teej
-would otherwise hit in the first minutes of editing.
+These need no ruling. They were collected here because every one of them lands in a file that no
+agent in the S3 run owns, so none of them could be done inside it.
+
+**Most of them have run.** The pass happened before `CP-3`'s manual half, which has now passed
+(2026-08-13, no findings — [TASKS.md](TASKS.md)'s `CP-3` entry). Each item below is marked with
+what the tree says **checked on 2026-08-13**, by symbol rather than line, because concurrent
+agents move line numbers inside a window:
+
+- **DONE** — verified in the tree this session, with what was read named beside it.
+- **OPEN** — verified *still* open in the tree this session. These are the second repair
+  window's list.
+- **RULED NOT TO DO** — looked at, and the answer was to leave it, with the reasoning recorded
+  in the file itself rather than here.
+
+The status marks are the point of keeping this section rather than deleting it: a list that says
+only what is left cannot tell you whether the rest was done or forgotten.
 
 > **Why there are so many, and it is one cause.** The S3 run gave `crates/phosphor/src/main.rs` to
 > exactly one agent, in phase 2, so that concurrent agents could never collide in the host. That
@@ -233,9 +160,121 @@ would otherwise hit in the first minutes of editing.
 > `grep -rn 'unknown_key\|UnknownKeyHint' crates/phosphor/src/` = **0**;
 > `grep -c '"z' runtime/keymaps.scm` = **0**; `grep -c 'SetFold\|FoldAll' main.rs` = **0**.
 >
-> The fix for the *window* is `R2` and `R17`–`R19` below. The fix for the *method* is to give the
-> host to a wiring agent in the last phase of every window from now on, whose whole job is that
-> nothing shipped this window is unreachable from a keystroke.
+> The fix for the *window* is `R2` and `R17`–`R19` below, **all four of which have landed.** The
+> fix for the *method* is to give the host to a wiring agent in the last phase of every window
+> from now on, whose whole job is that nothing shipped this window is unreachable from a
+> keystroke — now rule 2 of *Concurrency* in [TEAM.md](TEAM.md).
+
+### Done
+
+- **R2 · DONE — undo is wired into the host.** `struct Timeline` in
+  `crates/phosphor/src/main.rs` owns an `UndoTree`, `Timeline::opened` restores from the journal
+  and `Timeline::detached` covers the scratch buffer; `fn restored` rebuilds the tree through
+  `UndoTree::from_parts`. The fork's history path is gone rather than kept as a fallback. Proven
+  through the shipping loop, not the widget: `undo_survives_quitting_and_reopening`,
+  `undo_survives_a_kill_9` and `undo_and_redo_walk_the_tree_through_the_loop` in
+  `crates/phosphor/tests/loop_pty.rs`.
+- **R17 · DONE — `SPC` opens the leader popup.** `main.rs` composes `Node::KeyHints` with
+  `Density::Grid`; `driven::pressing_space_opens_the_leader_popup` and
+  `a_repl_rebind_reaches_the_leader_popup` drive the real binary on a pty.
+- **R18 · DONE — the unknown-key hint fires.** `UnknownKeyHint` is constructed in the loop and
+  `Action::App(AppAction::ShowUnknownKeyHint { .. })` has an arm.
+  `an_unbound_key_teaches_once_and_never_again` covers both the firing and the *not* firing.
+- **R19 · DONE — folds exist.** `Editing::act` has arms for `ViewAction::SetFold`, `FoldAll` and
+  `UnfoldAll`, the `z` bindings are in `runtime/keymaps.scm`, and
+  `za_closes_the_fold_the_cursor_is_in` proves it from a keystroke.
+- **R4 · DONE — `parse_seq` spells a bare `<`.** `input/key.rs`'s `'<'` arm falls back to
+  `Key::char('<')` when the bracket does not close, so `.` after `<<` repeats.
+- **R5 · DONE — `crates/phosphor-core/src/input/vim.rs` is deleted**, and `input.rs` no longer
+  declares the module. Checked by `ls`, not by grep.
+- **R8 / R16 · DONE — the stale comments are fixed, and one of them is now mechanical.**
+  `crates/phosphor-ui/src/interpret.rs`'s header carries a *still deferred* table held to the
+  tree by `tests::the_deferred_set_is_exactly_the_kinds_named_here`, which draws one node of
+  every listed kind and asserts the tags — so a widget that starts drawing reddens the test and
+  the fix is to delete a row. `crates/phosphor-ui/Cargo.toml`'s comment now records that `T026`
+  turned the fork's `crossterm` feature back off. `TEAM.md`'s *"CP-2's manual half is
+  outstanding"* sentence is gone.
+- **R9 · DONE — one colour mapping.** `fn hue` in `crates/phosphor-ui/src/gutter.rs` is the only
+  `StateMark` → `Color` map left; `buffer_view.rs` has none.
+- **R10 · DONE — the legacy chord fallback is reachable.** `machine.set_protocol(…)` reads
+  `term.capabilities().keyboard` in `main.rs`, and
+  `the_legacy_chord_fallback_is_reachable_on_a_legacy_terminal` drives it on a pty with the
+  keyboard forced.
+- **R11 · DONE — the ex line has a range grammar.** `phosphor/ex-range-at` splits the range off
+  before `phosphor/ex-split` sees the name, and `phosphor/ex-current-range` carries it to the
+  command. `crates/phosphor-steel/tests/shipped_grammar.rs` asserts `:'<,'>c` names `:c` over a
+  range and that `:'<,'>w` is `:write` with the range read off.
+- **R12 · DONE — the layer's canonicaliser folds a bracketed key.** `runtime/keymaps.scm` carries
+  the three rules by name (order, case-on-the-character, shift-folds-into-a-plain-character) and
+  says which `phosphor-core` function each mirrors.
+- **R14 · DONE — the toolchain regex is scoped.** `scripts/doc_claims.py` section 4 now requires
+  a `toolchain`/`channel` word on the same line before treating a version as a pin quote, so the
+  check that caught a real stale pin at `CP-0` is intact and the `insta` comment no longer
+  reddens it.
+- **R7 · DONE, both halves — and the *"ruled not to do"* half was overtaken by the tree.**
+  `soft_wrap.rs`'s `EditMode` collapsed to `pub use phosphor_core::request::EditMode` in the
+  first pass. The `ScrollRequest` half was recorded here as *ruled to stay two*; the repair
+  window between `CP-3` and `S4` collapsed it anyway, on both sides of the seam and in one
+  window. `crates/phosphor-ui/src/buffer_view.rs` now reads
+  `pub use phosphor_core::request::ScrollRequest;`, the 1-based-`u32` → 0-based-`usize`
+  conversion moved into `Viewport::scrolled` behind a private `index_of`, and the host's own
+  converter is gone — `crates/phosphor/src/main.rs`'s `ViewAction::Scroll` arm passes `*request`
+  straight to `buffer_view::apply_scroll` and there is no `fn scroll_request` left in the file.
+  Read in the tree on 2026-08-13. **What the old entry pointed at no longer says what it said:**
+  `buffer_view.rs`'s header section is now titled *"The duplicated type, and how it became one"*
+  and argues the collapse rather than the split.
+  **One consequence is still owed and belongs to whoever next holds `phosphor-core`:**
+  `crates/phosphor-core/src/request.rs`'s doc comment on `ScrollRequest` is now false in three
+  places — it calls `buffer_view::ScrollRequest` *"the same shape"* when it is a re-export, it
+  carries a *"Contract note for Window D"* asking `surface` to collapse the two, and it says
+  *"`T026` converts at the boundary until then"* when nothing converts at the boundary. Its
+  `buffer_view.rs:180` citation has also drifted, which is the failure *Concurrency* rule 5 in
+  [TEAM.md](TEAM.md) names. No lint reads doc prose against the tree, so this will not surface
+  on its own.
+- **R20 · DONE — recaptured, and it answered its own question.** The pair now differs
+  (`insert-whitespace-marks-normal.png` and `-insert.png` have different digests), so the
+  byte-identical stills were the VHS pipeline duplicating a frame and **not** the surface failing
+  to render — the build was right all along. `tapes/artifacts/DUPLICATES.md` records the pairs
+  that are identical by construction.
+
+### Still open — the second repair window's list
+
+- **R3 · OPEN, and it turned out to be the smaller half of something.**
+  `crates/phosphor-ui/src/interpret.rs`'s `Node::Gutter` arm says in its own words that the
+  degraded `▎` is unreachable from here: the tree carries no terminal capability and adding a
+  prop is `spine`'s call. The widget's degraded form is tested and reachable directly.
+  **The larger half is that `Node::Gutter` is composed by nothing at all** — found by
+  `scripts/lint-node-kinds.sh`, added in this window, which records it as one of two gaps with
+  *no creditor*: the state column ships as `BufferView`'s left column (`T031`, ticked and built),
+  and this kind is that column **without** the editor, for a surface that wants it — and no task
+  in the graph names such a surface. So R3 is asking how a composition should reach a capability
+  for a node kind nothing composes. Whoever picks it up should decide the second question first.
+- **R6 · OPEN.** `scripts/lint-one-vm-door.sh`'s `entries=` regex still lists
+  `keymap::press|keymap::reset`; neither name exists. Coverage is unaffected — both real call
+  sites match a different alternative — but the two dead alternatives should read
+  `keymap::resolve|keymap::ex`.
+- **R13 · PARTIAL.** Every *component* of `6d`'s sentences is now in the live keymap — `gs` as an
+  operator, the four nouns as object rows, `]u`/`[u` as sequence rows, and `:c` over a range —
+  and `help_narrows_to_the_agent_objects_topic` reads the four nouns off a real frame. What is
+  still absent is a row that spells a **sentence**: `:help agent-objects` teaches you `gs` and
+  `ib` and never shows you `gsib`. Arguably correct for a grid rendered from the live keymap,
+  since a sentence is a composition and not a binding — which makes this a question for whoever
+  next holds `T086`, not a defect to fix on sight.
+- **R15 · OPEN, and re-verified.** `gh api repos/TrevorS/phosphor/branches/main/protection`
+  answers *"Branch not protected"* (404) on 2026-08-13. The CI jobs are right; nothing enforces
+  them at the repository. A GitHub settings change only Teej can make.
+
+### Ruled not to do
+
+*Empty since 2026-08-13.* `R7` lived here and no longer does — see the `R7` entry under **Done**
+above. The heading stays because the distinction it draws is worth keeping: an item looked at and
+left is not the same as an item forgotten.
+
+### The originals, for the reasoning
+
+The entries below are the list as it was written on 2026-08-12, kept because each one records
+*how* the gap was found, which the status lines above do not. Read them for the method, and the
+marks above for the state.
 
 - **R20 · `tapes/insert-whitespace-marks.tape` needs recapturing, and its artifacts are gone.**
   The two stills it produced — `-normal.png` and `-insert.png` — were **byte-identical**, 51,293
@@ -297,10 +336,11 @@ would otherwise hit in the first minutes of editing.
 - **R6 · `scripts/lint-one-vm-door.sh:83`** lists `keymap::press|keymap::reset` in its VM-entry
   regex; neither name exists any more. Coverage is unaffected — both real call sites match a
   different alternative — but two alternatives are dead and should read `keymap::resolve|keymap::ex`.
-- **R7 · Two duplicated types at the `spine`/`surface` seam** (`surface`'s edit, both):
-  `soft_wrap.rs:85-100`'s `EditMode` says *"the real mode enum is spine's and does not exist yet
-  (T026)"* — it exists now; and `buffer_view.rs:180`'s second `ScrollRequest`. `main.rs` converts
-  at the boundary in one place for each.
+- **R7 · Two duplicated types at the `spine`/`surface` seam** — **both collapsed**, `EditMode` in
+  the first repair pass and `ScrollRequest` in the `CP-3` one. Each is now a single definition in
+  `phosphor-core` that `phosphor-ui` re-exports, and the coordinate conversion `main.rs` used to do
+  at the boundary lives in `Viewport::scrolled` instead. See the entry above for why the
+  `ScrollRequest` half was recorded as *ruled to stay two* and then done anyway.
 - **R8 · Two comments that stopped being true when `T026` landed.**
   `crates/phosphor-ui/Cargo.toml:20-37` describes the fork's `crossterm` feature as ON; `T026`
   deleted it. `crates/phosphor-ui/src/interpret.rs:52` says the five Window D node kinds each
@@ -348,6 +388,59 @@ would otherwise hit in the first minutes of editing.
 
 Rulings of **2026-08-13** first, then what came before. Each says where the ruling now lives, so
 this section is a set of pointers and not a second copy of the answer.
+
+Six moved here in the repair window between `CP-3` and `S4` — §19, §6, §13, §17, and §7 with §9
+as one. Three of them were closed by *reading the tree*, not by anyone deciding anything: the
+work that answered them had already landed and the question outlived its answer, which is the rot
+this file's own header names.
+
+- **§7 and §9 · The door does not speak §6's voice. RULED: one task, as both entries
+  recommended.** They are the same defect — no `Outcome` case for *"it ran and raised"*, so a
+  refused query surfaces Steel's `Error: Kind:` envelope; and `door.rs::why` against
+  `answer::why` phrasing one enum two ways — and they rewrite the same parity expectation set, so
+  doing them separately means regenerating and reviewing it twice. → `T100` in the new
+  *B · The repair window* section of [TASKS.md](TASKS.md), which carries the scope block that
+  stood here, and to `spine` in [TEAM.md](TEAM.md). The expectation count is deliberately not
+  quoted in prose any more: `scripts/doc_claims.py` recomputes it, and a hand-written copy is
+  what went stale.
+
+- **§19 · Who owns `phosphor-ui/{interpret,frame}.rs`? RULED 2026-08-13: `spine`.** Both files
+  are `T079`'s — *tree interpreter + frame cache* — which [TEAM.md](TEAM.md) already assigns to
+  `spine`, and `interpret.rs` is where a `Node` kind *becomes* pixels rather than a widget that
+  paints one, which makes it the view-tree protocol's other half and therefore single-writer rule
+  1's. Same rule that moved `T014` and `T027`: **the file decides the task.** Stated positively
+  so it reads in one direction — `surface` owns every file in `phosphor-ui` that draws one node
+  kind, `spine` owns the two that draw none. → `spine`'s row in [TEAM.md](TEAM.md)'s ownership
+  table, plus the `phosphor-ui` bullet under *Shared boundaries* and a note in `surface`'s role.
+
+- **§6 · Three editor-layer names `6b` types that nothing binds. CLOSED BY THE TREE: the flag is
+  a test, and it already exists.** `goto`, `claude` and `region-author` stay unbound until `T041`
+  returns the records they accessorise — that half was always settled. The open half was the
+  *form of the flag*, and `crates/phosphor-steel/tests/screen_6b.rs`'s
+  `the_session_is_typable_but_the_store_is_s5` is it: it runs all four of `6b`'s lines and
+  asserts what came back names each unbound identifier, so the day `T041` binds them the
+  assertions go red and force the binding rather than waiting to be recalled. That is exactly
+  what the recommendation asked for, written before the question was swept. → no file changes;
+  the test is the record, and `crates/phosphor/tests/screen_6b.rs`'s snapshot carries the same
+  claim on a frame.
+
+- **§13 · The ex line draws outside the view tree. RULED as recommended: scaffolding with a
+  demolition date, and the comment is in the tree.** `Node::Prompt` is still deferred — it is a
+  row in `crates/phosphor-ui/src/interpret.rs`'s *still deferred* table, against `T058` — and the
+  ex row is drawn from `Node::Line` / `Node::Label` in the binary. `main.rs` says so where
+  `ex_line` is declared: *"`view::Node::Prompt` is the vocabulary's shape for this and
+  `phosphor-ui` defers it to `T058`, so what S3 can hold is the primitives."* The same trade
+  `T090` made and `T026` collected on. → the demolition is recorded on `T058` in
+  [TASKS.md](TASKS.md); the comment at the site is what makes it findable.
+
+- **§17 · Does `CP-3` sign off without its VHS artifacts? ANSWERED BY THE WORK, and then by the
+  checkpoint.** All four surfaces went live in the repair pass, all four were captured, and
+  `CP-3` passed both halves on 2026-08-13. The recapture also settled the question the first
+  attempt dodged: the whitespace pair now **differs**, so the byte-identical stills were the VHS
+  pipeline duplicating a frame rather than the surface failing to render — deleting them greened
+  `scripts/lint-repo-hygiene.sh` without answering it, and recapturing answered it. The build was
+  right all along. → `tapes/`, `tapes/artifacts/DUPLICATES.md`, and R20 above; what remains is
+  ordinary `harness` standing work under `V005`.
 
 - **§1 · Is `Node::KeyHints` one widget file or two? RULED: one — `key_hints.rs`.** `spine` added
   one node kind (`Node::KeyHints`, `crates/phosphor-core/src/view.rs:500`) carrying a `Density`
@@ -405,6 +498,23 @@ this section is a set of pointers and not a second copy of the answer.
   in [TEAM.md](TEAM.md), and still recorded in `scripts/lint-action-arms.sh`'s RECORDED table —
   **which now needs its empty blocking-task fields filled in with the new ids**, a `scripts/`
   edit this pass could not make.
+  **Down to one, checked 2026-08-13.** The lint reports *13 recorded gaps (1 with no task that
+  closes them)*, and the one is `ApplyEdits`. The repair window re-homed the capability row itself
+  from `S3 / T029` to `S6 / T052`, so the creditor now exists and is named in the vocabulary; what
+  is still empty is the RECORDED table's own blocking-task field, which no agent in that window
+  owned `scripts/` to fill. That is the whole remaining edit.
+  **And it is not cosmetic — checked against the lint's own logic on 2026-08-13.** The
+  stale-record check (2) reads `if variant not in unreachable and task in ticked`, where `task`
+  is the *declaring* task on the capability row. Re-homing both rows moved them to unticked
+  tasks, so `Jump` and `ApplyEdits` have left the `unreachable` set and neither check can fire on
+  them today: both entries are **inert**. `Jump` re-arms correctly — its blocker `T042` is also
+  its declaring task, so check (3) fires the day `T042` is ticked without an arm. `ApplyEdits`
+  does **not**: with an empty blocker, check (3) is skipped, and check (1) is excused by the
+  record itself, so ticking `T052` with no arm would hide the gap permanently. Filling the field
+  with `T052` is what closes that hole. Two smaller corrections belong in the same edit: both
+  `why` texts quote the old `[S3 / "T026"]` and `[S3 / "T029"]` rows and are now false against
+  `crates/phosphor-core/src/action.rs`, and the comment above the pair — *"The two below disagree
+  with their own declared task"* — is no longer true of either.
 
 - **R1 · The `Motion` vocabulary. CLOSED AS BUILT, and the open half is ruled.** R1 said `f` `F`
   `t` `T` `;` `,` and `W` `B` `E` were not expressible and that there was no case-change
@@ -415,7 +525,10 @@ this section is a set of pointers and not a second copy of the answer.
   `runtime/keymaps.scm:420`–`431` binds all nine; and `SetCase` is a capability
   (`crates/phosphor-core/src/action.rs:336`) bound at `keymaps.scm:463` (`gu`), `:464` (`gU`),
   `:529` and `:556` (`~`). R1's arithmetic — *"the vocabulary goes 208 → 209"* — is the tell: it
-  already went, which is why `TASKS.md` reads 209.
+  already went, which is why `TASKS.md` read 209 when this was written. (It reads **212** now —
+  the repair window between `CP-3` and `S4` added `set-macro-recording`, `register` and
+  `place-anchor`. The count is recomputed by `scripts/doc_claims.py`, so it is not a claim
+  anybody maintains by hand.)
   **The design question R1 was really asking is ruled, 2026-08-13: the character does not ride
   inside `Motion`.** A payload-carrying arm would make `ParamType::Choice` the wrong type for
   `motion` and break the CLI's flag value and the MCP schema's enum in one edit — all three

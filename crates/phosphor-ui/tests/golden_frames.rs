@@ -154,7 +154,10 @@ fn editor(theme: &Theme, source: &str, top_line: usize, area: Rect) -> Editor {
     // not depend on the `TERM` of whoever runs it, so the capability is stated
     // rather than detected. `V009`'s tape is where the *other* half is shown.
     editor.set_underline_capability(Some(UnderlineCapability::Undercurl));
-    apply_scroll(&mut editor, ScrollRequest::ToRow(top_line - 1), area);
+    // `ToRow` is 1-based (`R7` collapsed the widget's copy into the
+    // vocabulary's), which is the coordinate this fixture already spoke.
+    let top_line = u32::try_from(top_line).expect("a line number");
+    apply_scroll(&mut editor, ScrollRequest::ToRow { row: top_line }, area);
     editor
 }
 

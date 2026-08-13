@@ -4,7 +4,7 @@ Decomposed from [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md), which is itsel
 the four design docs in [design/](design/). The plan says *what each phase is for*; this file
 says *what to build, in what order, and where we stop and look at it*.
 
-**98 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
+**100 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
 Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids
 are stable and assigned in order of creation — reference them in commits. New tasks append
 rather than renumber, so `T078`+ sit inside earlier phases.
@@ -19,13 +19,15 @@ never executed and says so at the task.
 rulings came out of the manual half; three amend design docs and are tabled in
 [§5](IMPLEMENTATION-PLAN.md#5-decisions).
 
-**Window C is built and its mechanical half is green.** The `Action` vocabulary is 209
+**Window C is built and its mechanical half is green.** The `Action` vocabulary is 212
 capabilities generated from one table, the three doors are total functions over it, and the
-parity test walks all 627 door checks end to end. (`208`/`624` until `S3` added
-`Buffer::SetCase`; the count is `scripts/lint-one-registry.sh`'s, which reads the tables in
+parity test walks all 636 door checks end to end. (`208`/`624` until `S3` added
+`Buffer::SetCase`, and `209`/`627` until the repair window added `set-macro-recording`, `register`
+and `place-anchor`; the count is `scripts/lint-one-registry.sh`'s, which reads the tables in
 `crates/phosphor-core/src/{action,query}.rs` — do not compute it by hand. All six prose citations
 of `208` are fixed, and `scripts/doc_claims.py` section 5 now recomputes both numbers and fails on
-a stale one, so this paragraph cannot go quietly wrong again.)
+a stale one, so this paragraph cannot go quietly wrong again — as it just did not, when the three
+new verbs reddened every stale copy of `209` in one run.)
 `CP-2`'s **manual half passed** on 2026-08-12 — Teej ran the editor, exercised the REPL and the
 live rebind, and gave the verdict, which is what unblocked S3. It is the checkpoint that asks
 whether the Steel layer is the editor or a config file with a Rust editor hiding behind it.
@@ -41,6 +43,12 @@ three are fixed. The second and third had one cause: the window's phases froze `
 parallel agents could not collide in it, and the two tasks that needed to wire themselves into
 the host had nowhere to do it.
 
+**`CP-3` has passed too, both halves** — the mechanical half green at 639 tests and 14 lints, and
+Teej's manual half on **2026-08-13**, with **no findings**. The verdict is written at the
+checkpoint, which is where it belongs and what the `CP-2` entry above exists to insist on. It
+unblocks `S4` and it settles nothing else: the arms in *A · Arms owed* are still owed and the
+repair items still open in [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) are still open.
+
 Checkboxes below track *tasks*, not checkpoints: a task is ticked when its own *done when* is
 demonstrably met. The two are deliberately separate, because a checkpoint is a human judgement
 about whether the result is any good, and every task in a window can be green while the answer
@@ -55,6 +63,13 @@ either of those: not a surface nobody had tasked, but **work nothing in the grap
 declared mutations had no arm in the binary and no task that would ever give them one, and a `q`
 key that a vim user's hands reach for was unbound rather than deferred. They live in their own
 section, *A · Arms owed*, at the end of this file — because their point is to rot **visibly**.
+
+**`T099` and `T100` were added by the repair window between `CP-3` and `S4`**, and they sit in a
+second such section, *B · The repair window*. Same reason, one turn later: that window added three
+capabilities — `set-macro-recording`, `register` and `place-anchor` — because `T098` had stopped
+at a wall the vocabulary put there, and a verb added with no task to build it is precisely the
+debt *Arms owed* exists to make visible. `T100` is different in kind: it is the door's *voice*
+rather than an arm, ruled from two open questions that turned out to be one defect.
 
 **`T090` was added by the first `CP-1` attempt**, which failed on it and nothing else: the widget
 layer was complete and green, and no task built an application around it, so `cargo run` drew
@@ -213,8 +228,8 @@ can actually see each one is noted, since it isn't obvious:
 |---|---|---|
 | M-0 · Scaffolding + spikes | T001–T009, T083 | **CP-0** — ✅ passed, both halves |
 | S1 · Theme + BufferView + StatusLine | T010–T018, T081, T084, T085, T090 | **CP-1** — ✅ passed, both halves |
-| S2 · Steel + Action + REPL + view tree | T019–T025, T078–T080 | **CP-2** — is the editor live |
-| S3 · Input + undo + gutter | T026–T035, T086 | **CP-3** — does it feel like an editor |
+| S2 · Steel + Action + REPL + view tree | T019–T025, T078–T080 | **CP-2** — ✅ passed, both halves |
+| S3 · Input + undo + gutter | T026–T035, T086 | **CP-3** — ✅ passed, both halves |
 | S4 · LSP | T036–T040, T082 | **CP-4** — boring on purpose |
 | S5 · Store + seen + Picker | T041–T049, T087 | **CP-5** — the awareness loop |
 | S6 · ACP + MCP + Transcript + Prompt | T050–T062, T088, T089 | **CP-6** session · **CP-7** directing |
@@ -222,6 +237,7 @@ can actually see each one is noted, since it isn't obvious:
 | S8 · Watches | T074–T077 | **CP-9** — ship check |
 | **V · Verification harness** | **V001–V009** | *cross-cutting — lands with S1, used from CP-1 on* |
 | **A · Arms owed** | **T092–T098** | *cross-cutting — debt the `CP-3` audit found; see the section at the end* |
+| **B · The repair window** | **T099, T100** | *between `CP-3` and `S4` — the verbs that window added, and their creditors* |
 
 ---
 
@@ -1045,7 +1061,21 @@ CP-0 settled the shape: **the input machine is ours.**
   > `runtime/keymaps.scm:475` (`gs`), `:602`–`:608` (`]u` `[u` `]b` `[b`), `:1003`
   > (`c[omment]`). The frame did not move, so `insta` passed it. The notes are the bug.
 
-### ✋ CP-3 — Does it feel like an editor? · **mechanical half green · manual half OUTSTANDING**
+### ✋ CP-3 — Does it feel like an editor? · **PASSED**
+
+**Both halves, on 2026-08-13.** The mechanical half is below and was green before the manual half
+ran — the gate at 639 tests and 14 lints, after the repair pass that wired what S3 had built and
+left dead to the keyboard. The manual half was Teej editing a real file, and **the verdict is no
+findings.**
+
+That is the whole verdict, and it is worth stating what it does *not* say. "No findings" answers
+this checkpoint's question — *does it feel like an editor* — and nothing else. It does not close
+the residue this build has already written down: the arms owed in *A · Arms owed* below are still
+owed, the repair items still open in [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) are still open, and
+the two rulings `CP-3` produced are still pending upstream against the design docs. A checkpoint
+that passes on feel is not a checkpoint that passes on debt.
+
+**`S4` is unblocked.**
 
 The first checkpoint that is mostly about feel, and the only one where muscle memory is the
 instrument.
@@ -1169,8 +1199,18 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
 
 - [ ] **T042 · Node anchoring**
   Anchors bind to tree-sitter nodes. Threads, seen-state, and watches survive rewrites.
+  **And vim's marks, added by the repair window between `CP-3` and `S4`.** `goto-anchor` named an
+  `AnchorId` that nothing produced and there was no setter at all, which is why `m`, `'` and
+  `` ` `` are bound to silence in `runtime/keymaps.scm` rather than to a refusal naming a task.
+  `place-anchor` (`crates/phosphor-core/src/action.rs`, S5, `Allow`) is that setter: it anchors a
+  `Target` and answers the id, with an optional label so `m`'s `a`–`z` and a caller's own naming
+  are one mechanism. Declared and unapplied. It needs no entry on
+  `scripts/lint-action-arms.sh`'s RECORDED table, because its capability row cites this task and
+  this task is not ticked — ticking it without an arm is what makes that lint fail.
   *Done when:* a real refactor moves code and the anchors follow, **and `jump` applies** — a
-  jumplist target is an anchor, so the arm lands with the anchors. *Needs:* T041
+  jumplist target is an anchor, so the arm lands with the anchors — **and `place-anchor` applies**,
+  so `m{a-z}` writes a mark, `'{a-z}` and `` `{a-z} `` read it back through `goto-anchor`, and
+  `T098`'s third clause closes for those three keys. *Needs:* T041
 
   > **The `jump` half is an arm this task owes**, not a new task. `Jump` is declared and
   > unapplied, recorded in `scripts/lint-action-arms.sh`'s RECORDED table against `T042` for
@@ -1699,6 +1739,120 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   *Done when:* pressing `q` in the running binary answers with a refusal naming its task, the
   once-per-session hint still fires exactly once on a key that is genuinely unknown, and a pty
   test covers both halves. *Needs:* T033, T035
+
+  > **Repair window — partial, not ticked, and the missing third is now buildable.** Two of the
+  > three clauses are met against the shipping loop, proven in `crates/phosphor/tests/loop_pty.rs`
+  > rather than at a widget: `a_deferred_key_names_the_task_that_builds_it` presses `/` and reads
+  > *"T058 builds the message and search prompts"* off the frame, then presses `n` and reads
+  > *"not built yet — T049 builds it"* — the task coming off the capability's own row rather than
+  > being written anywhere. `a_deferred_key_does_not_spend_the_session_hint` presses `q` and
+  > `Q` in one session and asserts the first is not called unknown while the second still spends
+  > `8e`'s one teaching row.
+  >
+  > **What is not met is `q` itself, and the reason is the interesting part.**
+  > `runtime/keymaps.scm` binds `q`, `@`, `m`, `'` and `` ` `` to `key/deferred` — known, silent,
+  > and naming no task — and says why in its own words: *"a key that is deferred and has **no
+  > capability to name** … binding it to the nearest-looking verb would put a keystroke in front
+  > of a capability that means something else, which is worse than silence: the refusal would name
+  > the wrong task."* That was correct when it was written. It stopped being correct in the repair
+  > window below, which added `set-macro-recording` and `register` (`T099`) and `place-anchor`
+  > (`T042`) — so `q`, `@` and `m` now each have a capability that means exactly what the key
+  > means, and the refusal they would raise would name the right task. Closing this clause is a
+  > line on `T099` and on `T042`, listed there, not new work here.
+
+---
+
+## B · The repair window between `CP-3` and `S4`
+
+`CP-3` passed on 2026-08-13 with no findings and `S4` did not start that day. A window ran between
+them, entirely on debt this build had already written down — the queued items in
+[OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s repair-pass list, which now carries a per-item status
+line saying which of them ran.
+
+**Why it ran before `S4` rather than after, and it is one item.** `S4` builds `Node::Completion`
+and `Node::Signature` — two more node kinds that the interpreter will draw and that nothing
+composes — and the lint which catches a kind drawn by the interpreter and composed by nobody had
+to exist *before* the window that would otherwise repeat the shape. It is the sibling of
+`scripts/lint-action-arms.sh` one layer over: that one watches mutations a ticked task declares
+and the binary never applies, this one watches node kinds. The gap it closes is not hypothetical
+— `Node::KeyHints` at `Density::Help` was composed by nothing while a golden-frame test
+hand-built a tree and matched it, which is the same defect `T016` taught and `T097` paid for.
+
+**Two tasks came out of it, and both exist for the same reason.** The vocabulary gained three
+capabilities in this window — `set-macro-recording`, `register` and `place-anchor` — because
+`T098` and `runtime/keymaps.scm` had both stopped at the same wall: a key that should decline by
+naming its task cannot, if the vocabulary has no verb that means what the key means. Adding the
+verb is `spine`'s and cheap; building the machine behind it is a task, and these are those tasks.
+They are numbered `T099`+ and append rather than renumber, like everything else here.
+
+- [ ] **T099 · Macros — `q` and `@`, over `feed-keys`** 📌
+  Ruled 2026-08-12 and recorded in `runtime/keymaps.scm`: **macros are the editor layer's, over
+  `input/feed-keys`** — recording is capturing keystrokes into a register and playing is feeding
+  them back, so the machinery is `T026`'s `record`/`record_changed` stream that `.` already keeps,
+  generalised to a named register. Two things were missing and neither was a keymap's to invent,
+  and this window added both: `set-macro-recording` (`crates/phosphor-core/src/action.rs`, S3,
+  `Deny` at the MCP door) starts and stops the capture, and the `register` query
+  (`crates/phosphor-core/src/query.rs`) answers what one holds so `@` can feed it back.
+  **Both are declared and neither is applied.** `Machine::apply`'s
+  `InputAction::SetMacroRecording` arm is deliberately a no-op and says so in a comment naming
+  this task. That is *not* on `scripts/lint-action-arms.sh`'s RECORDED table, and the difference
+  from `T092`–`T096` is worth understanding rather than glossing: that lint fires on a mutation
+  declared by a **ticked** task, and `set-macro-recording`'s capability row cites `T099`, which is
+  this one and is not ticked. So there is no gap to record — and the moment this task is ticked
+  without an arm behind it, the lint fails. Citing the unbuilt task on the row is what makes the
+  debt self-enforcing instead of needing an entry someone has to remember to delete.
+  Closes `T098`'s third clause for `q` and `@`: once the verb has an arm the layer binds them to
+  it, and the refusal names `T099` instead of being silent.
+  *Done when:* `q<reg>` records, `@<reg>` replays through `feed-keys`, the `register` query reads
+  the same register back through all three doors, and a pty test records a keystroke sequence and
+  replays it in the running binary. *Needs:* T026, T033
+
+- [ ] **T100 · The door speaks §6's voice** 📌
+  The two halves of one defect, ruled in this window to be one task because they rewrite the same
+  expectation set and doing them separately means regenerating and reviewing it twice. Recorded
+  at [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s §7 and §9:
+  **(1)** there is no `Outcome` case for *"it ran and raised"*, so a refused query surfaces the
+  `Error: Kind:` envelope, which is Steel's and not Design Language §6's voice; and
+  **(2)** `door.rs::why` and `answer::why` phrase one enum two ways — *"T041 builds this"* against
+  *"not built yet — T041 builds it"*.
+  > **Scope**
+  > - Files: `crates/phosphor/src/door.rs`, `crates/phosphor-steel/src/answer.rs`,
+  >   `crates/phosphor/tests/parity.rs`
+  > - Named units: 1 enum (`Outcome`), 2 `why` implementations, the parity expectation set
+  > - Verification: the existing parity suite, regenerated
+  > - Risk: public API yes (one `Outcome` case) · data migration no · cross-module yes
+  >   (`phosphor`, `phosphor-steel`) · reversible yes · external blocker no
+  *Done when:* a query that ran and raised is a distinct `Outcome` from one that was refused, the
+  two `why` implementations produce one sentence per enum value, and every door check passes
+  against the regenerated expectations. *Needs:* T020, T024
+
+**Two verbs were re-homed rather than added**, which is worth recording because a wrong phase on a
+capability row is what put them on `lint-action-arms.sh`'s creditor list in the first place:
+`apply-edits` moved from `S3 / T029` to `S6 / T052` and `jump` from `S3 / T026` to `S5 / T042`,
+matching the tasks [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s §18 ruling had already named as their
+creditors. `place-anchor` is the third and it is genuinely new: `goto-anchor` named an `AnchorId`
+that nothing produced and there was no setter at all, which is why `m` is bound to silence.
+
+**Two debts still have no creditor, and both lints say so out loud rather than passing quietly.**
+Neither gets a task here, because inventing one would be inventing product work rather than
+recording debt — but a reader looking for what this window did *not* close should find them named:
+
+- `scripts/lint-action-arms.sh` reports *13 recorded gaps (1 with no task that closes them)*, and
+  the one is `ApplyEdits`. Its capability row now says `S6 / T052`, so the creditor exists; the
+  RECORDED table's own blocking-task field is what is still empty, and that is a `scripts/` edit.
+- `scripts/lint-node-kinds.sh` reports *30 node kinds, 16 composed by the shipped configuration,
+  14 recorded gaps (1 with no task that closes them)*, and the one is `Node::Gutter` — the state
+  column **without** an editor around it, for a surface that wants it. `T031` built the column and
+  `BufferView` ships it as its left column; no task in the graph names a surface that would
+  compose the standalone kind. This is the same root as R3 in
+  [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md), which asks how a terminal capability should reach that
+  kind's arm — a question about composing something nothing composes.
+
+That second lint is also why the window ran before `S4` rather than after: `Completion` and
+`Signature` are already in its recorded gaps, against `T038` and `T039`. So the day `S4` builds
+those two widgets and composes neither, the lint is what says so — instead of a golden frame
+passing on a hand-built tree while the running binary draws nothing, which is the shape this
+build has now repeated twice.
 
 ---
 

@@ -625,6 +625,13 @@
 ;; says it out loud now: a key whose actions are refused puts the refusal on the
 ;; statusline, the way an ex line always has.
 ;;
+;; **two of the five silent ones now speak.** T098 could only defer `q` `@` `m`
+;; `'` and backtick to a thunk, because a refusal has to come from a capability
+;; and none of them had one. the repair window between CP-3 and S4 gave `q` and
+;; `m` theirs — `set-macro-recording` and `place-anchor` — so those two decline
+;; **by name** through the same path the ex line uses. the other three are
+;; argued where they are bound; each is a missing verb, not a missing decision.
+;;
 ;; **the operand key is not consumed.** vim's `q`, `@`, `m`, `'` and backtick
 ;; all take a following letter and this machine has no role for one — `"` is
 ;; `key/register` and a mark is not a register. so `ma` answers on `m` and the
@@ -665,22 +672,47 @@
 
 ;; macros. ruled 2026-08-12: **macros are the editor layer's, over
 ;; `input/feed-keys`** — recording is capturing keystrokes into a register and
-;; playing is feeding them back. two things are missing and neither is a
+;; playing is feeding them back. two things were missing and neither was a
 ;; keymap's to invent: a verb for *start recording*, and a query that answers a
-;; register's contents so `@` can feed them.
+;; register's contents so `@` can feed them. the repair window between CP-3 and
+;; S4 added both, so **`q` now has a verb** and stops being silent.
+;;
+;; `q` is `set-macro-recording`, which means exactly what the key means, so the
+;; refusal names T099 — the task that will build the recorder — instead of
+;; naming nothing. the register is `q`, which is what a vim user's `qq` types
+;; and the only register this row can name until an operand role exists; the
+;; call is refused either way, and T099 rewrites this row when it brings the
+;; role that consumes the letter.
+;;
+;; **`@` is still deferred, and this is the one key the window could not close.**
+;; playing a macro is `feed-keys` over the `register` query's answer, and a
+;; keymap cannot ask a query: only a `key/run` reaches the host's `apply`, and
+;; only a refusal from *there* reaches the statusline. a thunk that called
+;; `(register "q")` would raise, and a raising thunk answers `Unbound` — which
+;; spends T035's one teaching row on a key that is known. so the truth stays in
+;; the verb, which `:help` and which-key draw, and it names the task.
 (keymap-set-rows!
  '("normal")
  (list
-  (list "q" (key/deferred) "record a macro — not built; the layer's, over feed-keys")
-  (list "@" (key/deferred) "play a macro — not built; the layer's, over feed-keys")))
+  (list "q" (key/run (key/cmd "set-macro-recording" "register" "q" "on" #t))
+        "record a macro")
+  (list "@" (key/deferred) "play a macro — not built; T099, over feed-keys")))
 
-;; marks. a mark is an anchor and anchoring is T042's, but `goto-anchor` names
-;; an `AnchorId` that nothing yet produces and there is no setter at all — so
-;; these name the task rather than calling a verb with an invented id.
+;; marks. a mark is an anchor and anchoring is T042's. the repair window added
+;; **`place-anchor`**, the setter that did not exist — it takes a target and
+;; answers the id — so `m` is a real call at last: anchor the cursor. the label
+;; is absent rather than invented, because nothing here can consume the `a` in
+;; `ma`, and an absent optional is the honest spelling of *"unnamed"*.
+;;
+;; `'` and backtick are still deferred, and the reason is a gap rather than a
+;; choice: `place-anchor` writes a `label` that `goto-anchor` cannot read — it
+;; takes an `AnchorId`, and no capability turns a label into one. a literal id
+;; would be the invented-payload failure this section exists to avoid, and worse
+;; than silence once T042 starts handing ids out. so they name the task.
 (keymap-set-rows!
  '("normal" "visual")
  (list
-  (list "m" (key/deferred) "set a mark — not built; T042 anchors the store")
+  (list "m" (key/run (key/cmd "place-anchor" "at" (key/at-cursor))) "set a mark")
   (list "'" (key/deferred) "go to a mark's line — not built; T042 anchors the store")
   (list "`" (key/deferred) "go to a mark — not built; T042 anchors the store")))
 

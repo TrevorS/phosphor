@@ -89,8 +89,8 @@ const EVAL: &str = "eval";
 ///
 /// `T023` is the door; `T021` is `steel-core` embedded and booted. Until that
 /// lands there is nothing to evaluate *with*, and saying so with the task id is
-/// what [`Refusal::NotYetImplemented`] is for: a caller gets *"`T021` builds
-/// this"* rather than a stub that pretends.
+/// what [`Refusal::NotYetImplemented`] is for: a caller gets *"not built yet —
+/// `T021` builds it"* rather than a stub that pretends.
 const RUNTIME_TASK: &str = "T021";
 
 // ---------------------------------------------------------------------------
@@ -216,7 +216,7 @@ impl Error for DoorError {
 /// takes `Cli::command()` and adds to it, so `--theme`, `--float` and the file
 /// argument keep one definition.
 ///
-/// The verbs are hidden from the top-level help rather than absent from it: 209
+/// The verbs are hidden from the top-level help rather than absent from it: 212
 /// subcommands would bury the four flags a person actually types, and a door you
 /// discover by name (`phosphor <verb> --help`) is the shape every multi-verb CLI
 /// already has. [`after_help`] says so in one line, with the count derived.
@@ -399,7 +399,7 @@ pub(crate) fn answer(call: &Call, runtime: Option<&mut dyn Evaluate>) -> Result<
 ///
 /// At `S2` there is no store, so every Action that touches one answers
 /// [`Refusal::NotYetImplemented`] carrying **its own row's task id** — derived,
-/// not listed, which is why 209 capabilities need no table here. The single
+/// not listed, which is why 212 capabilities need no table here. The single
 /// special case is the one capability whose implementation *is* a runtime rather
 /// than a store: scheme source needs a VM, and the VM is [`Evaluate`].
 fn apply(request: &Request, runtime: Option<&mut dyn Evaluate>) -> Outcome {
@@ -425,8 +425,12 @@ const fn not_yet(task: &'static str) -> Outcome {
 /// `⇒ #watch-3 · streaming from next run` (TUI Mockups `6b`). The `⇒` is REPL
 /// chrome; the body is this. A receipt with no value is `#ok`, a note follows
 /// after ` · `, and a refusal says which of `Refusal`'s cases it was — including
-/// the task id, because *"`T041` builds this"* is the answer that tells a caller
-/// what to do next.
+/// the task id, because *"not built yet — `T041` builds it"* is the answer that
+/// tells a caller what to do next.
+///
+/// **This door does not phrase a refusal.** It asks [`Refusal::why`], which is
+/// the one implementation for every surface (`T100`); the door's contribution
+/// is the `#refused` head and the midline dot.
 pub(crate) fn render(answer: &Answer) -> String {
     match answer {
         Answer::Acted(Outcome::Done(receipt)) => {
@@ -440,22 +444,9 @@ pub(crate) fn render(answer: &Answer) -> String {
             }
         }
         Answer::Acted(Outcome::Refused(refusal)) => {
-            format!("#refused · {}", why(refusal))
+            format!("#refused · {}", refusal.why())
         }
         Answer::Read(value) => write_value(value),
-    }
-}
-
-/// Why an Action did not happen, in the product's voice.
-fn why(refusal: &Refusal) -> String {
-    match refusal {
-        Refusal::NotYetImplemented { task } => format!("{task} builds this"),
-        Refusal::FocusRelativeTargetOverMcp => "an agent has no cursor; name the target".to_owned(),
-        Refusal::DoorDenied { door } => format!("the {} door denies this", door.as_str()),
-        Refusal::NoRepository => "no repository here".to_owned(),
-        Refusal::NoSuchTarget => "no such target".to_owned(),
-        Refusal::WouldLoseWork => "that would lose unsaved work".to_owned(),
-        Refusal::Declined { reason } => reason.clone(),
     }
 }
 
@@ -467,11 +458,12 @@ fn why(refusal: &Refusal) -> String {
 /// line are the same text because they are the same function, and the
 /// `#`-sigil rule that keeps `#ok` from printing as `"#ok"` lives in one place.
 ///
-/// **Flagged, not folded in:** [`why`] is the same argument one step further —
-/// the CLI door says `T041 builds this` where the Steel door and the REPL say
-/// `not built yet — T041 builds it`, which is one enum in two voices.
-/// Reconciling them rewrites the expectations in `tests/parity.rs` and
-/// `tests/door.rs`, so it is reported rather than done here.
+/// **And now the refusals too.** This file used to carry its own `why`, saying
+/// `T041 builds this` where the Steel door and the REPL said `not built yet —
+/// T041 builds it` — one enum in two voices, flagged here and ruled into
+/// `T100`. That function is gone rather than repointed: the phrasing is
+/// [`Refusal::why`], on the enum, so the doors cannot drift again without
+/// somebody writing a second `match` on purpose.
 fn write_value(value: &Value) -> String {
     phosphor_steel::answer::value(value)
 }
@@ -628,7 +620,13 @@ mod tests {
             Answer::Acted(Outcome::Refused(Refusal::NotYetImplemented { task })),
             "the refusal is read off the row, not written here"
         );
-        assert_eq!(render(&answered), format!("#refused · {task} builds this"));
+        // The one voice, phrased by `Refusal::why` and not by this door
+        // (`T100`). Asserted as the whole line rather than a `contains`, so a
+        // door that grew a second phrasing fails here.
+        assert_eq!(
+            render(&answered),
+            format!("#refused · not built yet — {task} builds it")
+        );
         assert!(!answered.happened(), "a refusal must not exit zero");
     }
 
@@ -639,7 +637,7 @@ mod tests {
         let answered = answer(&eval_call("(+ 1 2)").unwrap(), None).unwrap();
         assert_eq!(
             render(&answered),
-            format!("#refused · {RUNTIME_TASK} builds this")
+            format!("#refused · not built yet — {RUNTIME_TASK} builds it")
         );
     }
 
@@ -648,7 +646,88 @@ mod tests {
         let call = Call::new("unseen-regions").with("path", Value::Text("src/retry.rs".to_owned()));
         let answered = answer(&call, None).expect("a well-formed query");
         let task = lookup("unseen-regions").expect("registered").since.task;
-        assert_eq!(render(&answered), format!("#refused · {task} builds this"));
+        assert_eq!(
+            render(&answered),
+            format!("#refused · not built yet — {task} builds it")
+        );
+    }
+
+    /// Every case of [`Refusal`], so the check below is over the enum and not
+    /// over the three someone thought of.
+    ///
+    /// The `match` is the guard: it names each variant once and the compiler
+    /// rejects it the day an eighth appears, so this list cannot go stale
+    /// quietly — the same shape `interpret.rs` uses for its deferred node
+    /// kinds.
+    fn every_refusal() -> Vec<Refusal> {
+        let all = vec![
+            Refusal::NotYetImplemented { task: "T041" },
+            Refusal::FocusRelativeTargetOverMcp,
+            Refusal::DoorDenied { door: Door::Mcp },
+            Refusal::NoRepository,
+            Refusal::NoSuchTarget,
+            Refusal::WouldLoseWork,
+            Refusal::Declined {
+                reason: "a rule said no".to_owned(),
+            },
+        ];
+        for refusal in &all {
+            match refusal {
+                Refusal::NotYetImplemented { .. }
+                | Refusal::FocusRelativeTargetOverMcp
+                | Refusal::DoorDenied { .. }
+                | Refusal::NoRepository
+                | Refusal::NoSuchTarget
+                | Refusal::WouldLoseWork
+                | Refusal::Declined { .. } => {}
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn the_cli_door_and_the_repl_phrase_one_enum_one_way() {
+        // `T100`, and the reason it is a task: this door used to say
+        // `T041 builds this` where `phosphor-steel` said
+        // `not built yet — T041 builds it`. Byte equality over every case,
+        // because "they agree" was true of five of the seven before too.
+        for refusal in every_refusal() {
+            let outcome = Outcome::Refused(refusal.clone());
+            assert_eq!(
+                render(&Answer::Acted(outcome.clone())),
+                phosphor_steel::answer::line(&outcome),
+                "the two front-ends disagree about {refusal:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_refusal_leaks_a_type_name_or_shouts() {
+        // Design Language §6 — *lowercase, telegraphic, factual*. What would
+        // break it here is a Rust identifier reaching a reader, a capitalised
+        // opener, or the exclamation §6 names outright ("Oops! Something went
+        // wrong"). A task id stays uppercase on purpose: `T041` is a name the
+        // caller looks up, like `:reattach` in §6's own example.
+        //
+        // `Declined`'s text belongs to whichever rule, hook or user wrote it,
+        // so what this asserts for that case is the fixture above and not the
+        // product. Every other case is the product.
+        const LEAKS: [&str; 5] = ["Refusal", "Outcome", "Steel", "Error:", "::"];
+        for refusal in every_refusal() {
+            let line = refusal.why();
+            assert!(!line.is_empty(), "{refusal:?} says nothing");
+            for leak in LEAKS {
+                assert!(!line.contains(leak), "`{line}` leaks `{leak}`");
+            }
+            assert!(
+                !line.starts_with(char::is_uppercase),
+                "`{line}` opens capitalised"
+            );
+            assert!(
+                !line.ends_with('.') && !line.contains('!'),
+                "`{line}` is a sentence, not a fact"
+            );
+        }
     }
 
     #[test]
@@ -698,7 +777,7 @@ mod tests {
 
     #[test]
     fn the_host_flags_survive_the_extension() {
-        // One parser, not two: adding 209 subcommands must not cost `--theme`
+        // One parser, not two: adding 212 subcommands must not cost `--theme`
         // or the file argument, and a subcommand must not demand the file.
         let matches = parser(crate::Cli::command())
             .try_get_matches_from(["phosphor", "--theme", "tokyo-night", "src/main.rs"])

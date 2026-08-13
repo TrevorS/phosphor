@@ -61,26 +61,33 @@
 //! offsets bit-identical, and a scan of this file's own source that fails if a
 //! second call site to the vendored core's viewport mutators ever appears.
 //!
-//! # The one duplicated type, and why it is still two
+//! # The duplicated type, and how it became one (`R7`)
 //!
 //! [`ScrollRequest`] was written before `Action` existed, deliberately shaped
 //! as the payload one variant of it would carry. `T019` carried it:
 //! `phosphor_core::request::ScrollRequest` is the same seven arms, and
-//! `request.rs`'s own header calls this file's copy out by name and asks
-//! `surface` to collapse them.
+//! `request.rs`'s own header called this file's copy out by name and asked
+//! `surface` to collapse them. **It is collapsed** — the name below is a
+//! re-export, and the vocabulary's is the only definition left.
 //!
-//! **No lint stands in the way.** `scripts/lint-no-action-in-ui.sh` lists
+//! No lint ever stood in the way. `scripts/lint-no-action-in-ui.sh` lists
 //! `phosphor_core::request` as ALLOWED in as many words — *"Position, Span,
 //! ScrollRequest, EditMode … naming a place is not asking for it to change"* —
-//! and `scripts/lint-no-store-mutation.sh` forbids only `::store`. That is why
-//! [`soft_wrap::EditMode`] collapsed to a re-export in the same pass and this
-//! did not: the two definitions differ in *coordinates*, not in shape. The
-//! vocabulary counts visual rows from 1 in `u32` because a person types them;
-//! this counts from 0 in `usize` because it indexes them. Collapsing moves that
-//! conversion from the host into [`Viewport::scrolled`]'s `ToRow` and
-//! `RevealRow` arms, and deletes `scroll_request()` at
-//! `crates/phosphor/src/main.rs:1886` — a file this crate's owner does not
-//! hold. Raised as a contract request rather than half-done here.
+//! and `scripts/lint-no-store-mutation.sh` forbids only `::store`. What held it
+//! was the file lock, and one real difference: the two definitions differed in
+//! *coordinates*, not in shape. The vocabulary counts visual rows from 1 in
+//! `u32` because a person types them; this counts from 0 in `usize` because it
+//! indexes them. That conversion now lives in [`Viewport::scrolled`]'s `ToRow`
+//! and `RevealRow` arms — the same one place it lived in the host, moved to the
+//! side of the seam that owns the index — which is what lets the host drop its
+//! own converter. [`soft_wrap::EditMode`] collapsed the same way, a pass
+//! earlier.
+//!
+//! **The half that is not this file's.** The host and the frames composed
+//! against it spell requests in the vocabulary's form from here on; the two
+//! `crates/phosphor/tests/` frames that call [`apply_scroll`] directly
+//! (`screen_3c`, `screen_8e`) are named in the report, since a 0-based
+//! `ToRow(n)` there is a 1-based `ToRow { row: n + 1 }` now.
 //!
 //! [`soft_wrap::EditMode`]: crate::soft_wrap::EditMode
 //!
@@ -180,36 +187,21 @@ pub struct ViewportBounds {
     pub height: usize,
 }
 
-/// The only thing that can move a viewport.
+/// The only thing that can move a viewport — **the vocabulary's own type**
+/// (`R7`).
 ///
-/// Every variant is a caller saying what it wants; none of them is a side
-/// effect of drawing. `T019` carried this shape into the vocabulary as
-/// `phosphor_core::request::ScrollRequest`; the host converts between them in
-/// one place, and the module header says what collapsing the two would take.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ScrollRequest {
-    /// Relative, in rows. Negative scrolls towards the top of the buffer.
-    Rows(i64),
-    /// Relative, in screenfuls.
-    Pages(i64),
-    /// Relative, in columns. Negative scrolls left.
-    Columns(i64),
-    /// Absolute: put this visual row at the top.
-    ToRow(usize),
-    /// The first screenful.
-    ToTop,
-    /// The last screenful.
-    ToBottom,
-    /// Bring `row` inside the viewport with at least `margin` rows of context
-    /// on the side it entered from, moving as little as possible — and not at
-    /// all if it is already there.
-    ///
-    /// **This is the whole of "follow the cursor", and it is a request.** The
-    /// vendored core has its own `focus()` that does this implicitly on every
-    /// keystroke; nothing here calls it, because a viewport that moves because
-    /// the cursor moved is only legitimate when the caller asked for both.
-    RevealRow { row: usize, margin: usize },
-}
+/// Re-exported rather than redeclared: this module wrote the shape first and
+/// `T019` carried it into `phosphor_core::request`, where it belongs, because
+/// `phosphor-core` cannot depend on `phosphor-ui` and `request` is importable
+/// from a widget where `action` is not. `scripts/lint-no-action-in-ui.sh` names
+/// `phosphor_core::request` as allowed for exactly this reason: naming a place
+/// is not asking for it to change.
+///
+/// **Rows are 1-based here, and 0-based in the viewport**, which is what the
+/// two definitions actually disagreed about — a person types a line number,
+/// [`Viewport`] indexes one. [`Viewport::scrolled`]'s `ToRow` and `RevealRow`
+/// arms are where the two meet, and they are now the only place that is true.
+pub use phosphor_core::request::ScrollRequest;
 
 impl Viewport {
     /// Applies a request. Pure — no editor, no clock, no I/O.
@@ -225,15 +217,21 @@ impl Viewport {
 
         let mut next = self;
         match request {
-            ScrollRequest::Rows(delta) => next.top_row = shift(self.top_row, delta),
-            ScrollRequest::Pages(delta) => {
-                next.top_row = shift(self.top_row, delta.saturating_mul(height as i64));
+            ScrollRequest::Rows { rows } => next.top_row = shift(self.top_row, rows),
+            ScrollRequest::Pages { pages } => {
+                next.top_row = shift(self.top_row, pages.saturating_mul(height as i64));
             }
-            ScrollRequest::Columns(delta) => next.left_col = shift(self.left_col, delta),
-            ScrollRequest::ToRow(row) => next.top_row = row,
-            ScrollRequest::ToTop => next.top_row = 0,
-            ScrollRequest::ToBottom => next.top_row = last_page,
+            ScrollRequest::Columns { columns } => next.left_col = shift(self.left_col, columns),
+            // The 1-based → 0-based conversion, in the one place it happens.
+            // Row 0 is not a row a caller can mean, and saturating there rather
+            // than rejecting keeps this total: it lands on the first row, which
+            // is what the host's own converter did before this collapsed.
+            ScrollRequest::ToRow { row } => next.top_row = index_of(row),
+            ScrollRequest::ToTop {} => next.top_row = 0,
+            ScrollRequest::ToBottom {} => next.top_row = last_page,
             ScrollRequest::RevealRow { row, margin } => {
+                let row = index_of(row);
+                let margin = usize::try_from(margin).unwrap_or(usize::MAX);
                 // A margin that does not fit centres instead of fighting itself.
                 let margin = margin.min(height.saturating_sub(1) / 2);
                 let first = self.top_row.saturating_add(margin);
@@ -248,6 +246,14 @@ impl Viewport {
         next.top_row = next.top_row.min(max_top);
         next
     }
+}
+
+/// A 1-based visual row as the index [`Viewport`] keeps.
+///
+/// The whole of the coordinate difference between the vocabulary's spelling and
+/// this module's, in one function, called from two arms.
+fn index_of(row: u32) -> usize {
+    usize::try_from(row).unwrap_or(usize::MAX).saturating_sub(1)
 }
 
 /// `value + delta`, saturating at both ends of `usize`.
@@ -678,7 +684,7 @@ pub fn retry_with_backoff<T, E>(
         let mut editor = editor(RETRY_RS);
         apply_scroll(
             &mut editor,
-            ScrollRequest::ToRow(15),
+            ScrollRequest::ToRow { row: 16 },
             Rect::new(0, 0, 80, 5),
         );
         let area = Rect::new(0, 0, 60, 5);
@@ -843,7 +849,7 @@ pub fn retry_with_backoff<T, E>(
         let area = Rect::new(0, 0, 80, 8);
 
         // Put it somewhere interesting: not the top, not the bottom.
-        apply_scroll(&mut editor, ScrollRequest::ToRow(9), area);
+        apply_scroll(&mut editor, ScrollRequest::ToRow { row: 10 }, area);
         let baseline = viewport_of(&editor);
         assert_eq!(baseline.top_row, 9);
 
@@ -961,7 +967,7 @@ pub fn retry_with_backoff<T, E>(
         let mut editor = editor(RETRY_RS);
         apply_scroll(
             &mut editor,
-            ScrollRequest::ToRow(12),
+            ScrollRequest::ToRow { row: 13 },
             Rect::new(0, 0, 80, 6),
         );
         let before = viewport_of(&editor);
@@ -981,30 +987,36 @@ pub fn retry_with_backoff<T, E>(
     fn relative_scrolling_clamps_at_both_ends() {
         let b = bounds(24, 8);
         let v = Viewport::default();
-        assert_eq!(v.scrolled(ScrollRequest::Rows(-1), b).top_row, 0);
-        assert_eq!(v.scrolled(ScrollRequest::Rows(3), b).top_row, 3);
-        assert_eq!(v.scrolled(ScrollRequest::Rows(i64::MAX), b).top_row, 23);
-        assert_eq!(v.scrolled(ScrollRequest::Pages(2), b).top_row, 16);
-        assert_eq!(v.scrolled(ScrollRequest::Pages(-2), b).top_row, 0);
+        assert_eq!(v.scrolled(ScrollRequest::Rows { rows: -1 }, b).top_row, 0);
+        assert_eq!(v.scrolled(ScrollRequest::Rows { rows: 3 }, b).top_row, 3);
+        assert_eq!(
+            v.scrolled(ScrollRequest::Rows { rows: i64::MAX }, b)
+                .top_row,
+            23
+        );
+        assert_eq!(v.scrolled(ScrollRequest::Pages { pages: 2 }, b).top_row, 16);
+        assert_eq!(v.scrolled(ScrollRequest::Pages { pages: -2 }, b).top_row, 0);
     }
 
     #[test]
     fn to_bottom_shows_the_last_screenful() {
         assert_eq!(
             Viewport::default()
-                .scrolled(ScrollRequest::ToBottom, bounds(24, 8))
+                .scrolled(ScrollRequest::ToBottom {}, bounds(24, 8))
                 .top_row,
             16
         );
         // A buffer shorter than the screen has nowhere to go.
         assert_eq!(
             Viewport::default()
-                .scrolled(ScrollRequest::ToBottom, bounds(3, 8))
+                .scrolled(ScrollRequest::ToBottom {}, bounds(3, 8))
                 .top_row,
             0
         );
     }
 
+    /// Rows in, indices out. `row` is 1-based — the request's coordinate — and
+    /// `top_row` is the index, so a viewport at 20 shows lines 21 through 30.
     #[test]
     fn reveal_moves_as_little_as_possible_and_not_at_all_when_it_can() {
         let b = bounds(100, 10);
@@ -1016,17 +1028,37 @@ pub fn retry_with_backoff<T, E>(
             v.scrolled(ScrollRequest::RevealRow { row, margin }, b)
                 .top_row
         };
-        assert_eq!(reveal(25, 0), 20, "already visible: no movement");
-        assert_eq!(reveal(20, 0), 20, "the top row is visible");
-        assert_eq!(reveal(29, 0), 20, "the bottom row is visible");
-        assert_eq!(reveal(30, 0), 21, "one row past the bottom: one row down");
-        assert_eq!(reveal(15, 0), 15, "above: the row becomes the top");
-        assert_eq!(reveal(15, 3), 12, "with a margin of context above it");
-        assert_eq!(reveal(30, 3), 24, "and below it");
+        assert_eq!(reveal(26, 0), 20, "already visible: no movement");
+        assert_eq!(reveal(21, 0), 20, "the top row is visible");
+        assert_eq!(reveal(30, 0), 20, "the bottom row is visible");
+        assert_eq!(reveal(31, 0), 21, "one row past the bottom: one row down");
+        assert_eq!(reveal(16, 0), 15, "above: the row becomes the top");
+        assert_eq!(reveal(16, 3), 12, "with a margin of context above it");
+        assert_eq!(reveal(31, 3), 24, "and below it");
         // A row inside the margin band is visible but has no context: reveal
         // buys it the margin it asked for rather than calling it good enough.
-        assert_eq!(reveal(22, 3), 19, "a row inside the top margin scrolls up");
-        assert_eq!(reveal(27, 3), 21, "and inside the bottom margin, down");
+        assert_eq!(reveal(23, 3), 19, "a row inside the top margin scrolls up");
+        assert_eq!(reveal(28, 3), 21, "and inside the bottom margin, down");
+    }
+
+    /// `R7`'s whole substance: the seam between the coordinate a person types
+    /// and the one a viewport indexes, which used to live in the host.
+    #[test]
+    fn a_one_based_row_becomes_a_zero_based_index() {
+        let b = bounds(100, 10);
+        let v = Viewport::default();
+        assert_eq!(v.scrolled(ScrollRequest::ToRow { row: 1 }, b).top_row, 0);
+        assert_eq!(v.scrolled(ScrollRequest::ToRow { row: 40 }, b).top_row, 39);
+        // Row 0 is not a row anyone can mean. It saturates onto the first
+        // rather than wrapping, which is what the host's converter did.
+        assert_eq!(v.scrolled(ScrollRequest::ToRow { row: 0 }, b).top_row, 0);
+        // And a reveal of the first row is a reveal of index 0, not of index
+        // -1 — the arm that would silently scroll one row too far.
+        assert_eq!(
+            v.scrolled(ScrollRequest::RevealRow { row: 1, margin: 0 }, b)
+                .top_row,
+            0
+        );
     }
 
     #[test]
@@ -1037,7 +1069,7 @@ pub fn retry_with_backoff<T, E>(
             top_row: 50,
             left_col: 0,
         };
-        let next = v.scrolled(ScrollRequest::RevealRow { row: 80, margin: 5 }, b);
+        let next = v.scrolled(ScrollRequest::RevealRow { row: 81, margin: 5 }, b);
         assert!(next.top_row <= 80 && next.top_row + 2 > 80, "{next:?}");
     }
 
@@ -1048,10 +1080,18 @@ pub fn retry_with_backoff<T, E>(
             top_row: 0,
             left_col: 4,
         };
-        assert_eq!(v.scrolled(ScrollRequest::Columns(-9), b).left_col, 0);
-        assert_eq!(v.scrolled(ScrollRequest::Columns(6), b).left_col, 10);
         assert_eq!(
-            v.scrolled(ScrollRequest::Columns(2), b).top_row,
+            v.scrolled(ScrollRequest::Columns { columns: -9 }, b)
+                .left_col,
+            0
+        );
+        assert_eq!(
+            v.scrolled(ScrollRequest::Columns { columns: 6 }, b)
+                .left_col,
+            10
+        );
+        assert_eq!(
+            v.scrolled(ScrollRequest::Columns { columns: 2 }, b).top_row,
             0,
             "a horizontal scroll is not a vertical one"
         );
@@ -1062,11 +1102,11 @@ pub fn retry_with_backoff<T, E>(
         let b = bounds(0, 10);
         let v = Viewport::default();
         for request in [
-            ScrollRequest::Rows(5),
-            ScrollRequest::Pages(1),
-            ScrollRequest::ToBottom,
-            ScrollRequest::ToRow(9),
-            ScrollRequest::RevealRow { row: 4, margin: 2 },
+            ScrollRequest::Rows { rows: 5 },
+            ScrollRequest::Pages { pages: 1 },
+            ScrollRequest::ToBottom {},
+            ScrollRequest::ToRow { row: 10 },
+            ScrollRequest::RevealRow { row: 5, margin: 2 },
         ] {
             assert_eq!(v.scrolled(request, b).top_row, 0, "{request:?}");
         }
@@ -1080,13 +1120,13 @@ pub fn retry_with_backoff<T, E>(
         let area = Rect::new(0, 0, 80, 6);
         let rows = editor.visual_len_lines();
         for request in [
-            ScrollRequest::ToTop,
-            ScrollRequest::ToBottom,
-            ScrollRequest::Rows(5),
-            ScrollRequest::Rows(-2),
-            ScrollRequest::Pages(9),
-            ScrollRequest::ToRow(usize::MAX),
-            ScrollRequest::RevealRow { row: 23, margin: 2 },
+            ScrollRequest::ToTop {},
+            ScrollRequest::ToBottom {},
+            ScrollRequest::Rows { rows: 5 },
+            ScrollRequest::Rows { rows: -2 },
+            ScrollRequest::Pages { pages: 9 },
+            ScrollRequest::ToRow { row: u32::MAX },
+            ScrollRequest::RevealRow { row: 24, margin: 2 },
         ] {
             let expected = viewport_of(&editor).scrolled(
                 request,

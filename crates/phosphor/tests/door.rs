@@ -119,8 +119,12 @@ fn a_generated_verb_is_reachable_end_to_end() {
     // Action, and answers. Every flag here came out of the registry row.
     let out = run(&["mark-seen", "--target", "region", "--target.region.id", "3"]);
     let printed = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        printed.starts_with("#refused · T041 "),
+    // The whole line, from the real binary. `T100` collapsed this door's own
+    // phrasing into `Refusal::why`, so what a shell sees here is byte-for-byte
+    // what the REPL and a float show — asserted rather than assumed, because
+    // "they agree" is the claim that was false before.
+    assert_eq!(
+        printed, "#refused · not built yet — T041 builds it\n",
         "unexpected answer: {printed:?}"
     );
 }
@@ -146,7 +150,7 @@ fn the_host_still_needs_a_file_and_the_door_does_not() {
     let file = scratch("host").with_extension("rs");
     fs::write(&file, "fn main() {}\n").expect("write");
     // Not run — opening it would take the terminal. What is under test is that
-    // the *parser* accepts the host's line unchanged now that 209 subcommands
+    // the *parser* accepts the host's line unchanged now that 212 subcommands
     // sit beside it, which `--help` exercises without drawing a frame.
     let help = run(&["--help"]);
     let _ = fs::remove_file(&file);

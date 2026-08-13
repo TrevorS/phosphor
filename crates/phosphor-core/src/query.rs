@@ -55,7 +55,7 @@
 use crate::registry::{McpPolicy, Param, ParamType, Since};
 use crate::request::{
     Actor, AnchorId, AskId, BlockId, BufferId, EditMode, KeySeq, LanguageId, PaneRef, Position,
-    RegionFilter, RegionId, SourceId, Target, ThreadId, TurnId, WatchId,
+    RegionFilter, RegionId, RegisterName, SourceId, Target, ThreadId, TurnId, WatchId,
 };
 use crate::value::{Args, Call, Value, Wire, WireError};
 
@@ -381,6 +381,10 @@ queries! {
         }
         PendingKeys = "pending-keys" [S3 / "T026"] -> ParamType::Text,
             "the keys typed so far in an unfinished sequence — 3c's SPC pending" {
+        }
+        Register = "register" [S3 / "T099"] -> ParamType::Text,
+            "what a register holds — @ reads one back, and an unset one is empty" {
+            register: RegisterName = "which register",
         }
         Keymap = "keymap" [S3 / "T033"] -> ParamType::List(&ParamType::Any),
             "the live keymap under a prefix; redefining a binding changes this at once" {

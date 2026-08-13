@@ -31,7 +31,7 @@ Then:
   published sources with `file:line` citations, the full dependency manifest with verified
   versions, and the hygiene tooling. **Read this before T001** — it inverts one recorded
   decision and uncovers unbudgeted work.
-- **[TASKS.md](TASKS.md)** — the plan decomposed into 98 tasks across the 9 phases, plus 9
+- **[TASKS.md](TASKS.md)** — the plan decomposed into 100 tasks across the 9 phases, plus 9
   verification-harness tasks, with **12 checkpoints** where work stops for manual verification.
   `T084`–`T089` were added by a review of these docs: six widget and primitive tasks the design
   requires — the `Float` chrome primitive, undercurl, the `HelpGrid`, region tints, the pane
@@ -40,7 +40,9 @@ Then:
   application around it, so `cargo run` drew nothing and the checkpoint could not be judged.
   `T092`–`T098` were added by the `CP-3` audit and sit in their own *Arms owed* section: ten
   mutations the vocabulary declares, the doors advertise, and the binary never applies, plus the
-  vim keys that are unbound rather than deferred.
+  vim keys that are unbound rather than deferred. `T099` and `T100` were added by the repair
+  window between `CP-3` and `S4` and sit in a second such section, *B · The repair window*:
+  macros over `feed-keys`, and the one task that makes the door speak §6's voice.
 - **[TEAM.md](TEAM.md)** — five teammates owning crates rather than features, gated by those
   checkpoints. Includes the wave-width analysis showing why the early phases are deliberately
   under-staffed, and the kickoff prompt. Each checkpoint splits what can be
