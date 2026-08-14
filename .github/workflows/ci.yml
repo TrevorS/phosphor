@@ -10,9 +10,17 @@
 #
 # This has run for real on GitHub's runners since shortly after T005 landed
 # (`gh workflow view ci.yml` — nine runs as of this comment, mostly green).
-# The `tapes-diff` job below is the one addition nothing has executed on a
-# runner yet — see its own comment and this phase's report for exactly what
-# was and wasn't verified.
+# The `tapes-diff` and `features` jobs below are the two additions nothing has
+# executed on a runner yet — see their own comments and each phase's report for
+# exactly what was and wasn't verified.
+#
+# NOT here, and deliberately: coverage. `just coverage` is a measurement and the
+# justfile's own comment carries the argument — a coverage floor reddens for
+# reasons unrelated to correctness, so it gets lowered until it means nothing.
+# Same reason `bench` has no job. `just unused-deps` is absent for a different
+# reason: cargo-machete's right answer today is "yes, deliberately" for the
+# placeholder crates, and a check whose findings are correct-but-not-actionable
+# is one people learn to skip.
 
 name: CI
 
@@ -109,7 +117,7 @@ jobs:
           tool: just
       # The whole seam: every lint is one scripts/lint-*.sh script, and
       # `just lint` runs all of them. Nobody edits this workflow to add a lint —
-      # sixteen exist now and not one of them changed this file. (It said "six"
+      # seventeen exist now and not one of them changed this file. (It said "six"
       # until the count was ten behind, which is the seam working and the prose
       # not: nothing recomputes a number written in a comment.)
       - run: just lint
@@ -128,6 +136,49 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+
+  # Does every feature combination still build?
+  #
+  # SPIKES.md's hygiene table has listed `cargo-hack` since M-0 for one reason —
+  # Q4's guardrail, that the transcript must render with the markdown feature on
+  # and off — and `vendor/ratatui-markdown/VENDOR.md` promises
+  # `cargo hack --feature-powerset` is what will prove it. Nothing kept that
+  # promise: the tool was not installed and no recipe named it. This job and
+  # `just hack` are the promise, kept.
+  #
+  # THIS ONE GATES, unlike `tapes-diff` above, and the distinction is the whole
+  # of `harness`'s standing rule rather than an exception to it. "Feature set X
+  # does not compile" is a deterministic fact about the tree with one right
+  # answer; a pixel comparison across font rendering and vhs versions is not.
+  # A check that can only go red for a real defect belongs in the required set;
+  # a change detector never does.
+  #
+  # Its own job, not a step in `test`, for the reason every job here is its own
+  # job: a failure should name which check failed without reading a log. And in
+  # CI rather than in `just gate` because `--each-feature` is n+2 full-workspace
+  # `cargo check` passes — 15 of them today — and `gate` is run constantly by
+  # people who are not touching a `[features]` table.
+  #
+  # Not yet executed on a GitHub runner: added in the same window as this
+  # comment, and verified only by running `just hack` locally (15 combinations
+  # across the 8 crates, all green, cargo-hack 0.6.45 — the version SPIKES.md
+  # pins). The powerset form was run locally too, 18 combinations, also green.
+  features:
+    name: cargo hack (feature combinations)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # taiki-e maintains both cargo-hack and install-action, so the exact pin
+      # SPIKES.md records is installable as a prebuilt binary here.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-hack@0.6.45
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - run: just hack
+        env:
+          RUST_BACKTRACE: "1"
 
   # V008 — Tier 2 (VHS pixel diff). docs/TASKS.md's three-tier table is
   # explicit that only Tier 1 (the `test` job above, via T018's committed

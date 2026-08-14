@@ -1,0 +1,92 @@
+# The fuzz crate — deliberately its own workspace, and deliberately not a member
+# of the root one.
+#
+# Two reasons, and they are the same two that keep `vendor/` out:
+#
+#   1. **Toolchain.** `libfuzzer-sys` needs `-Zsanitizer`, which is nightly.
+#      `/rust-toolchain.toml` pins 1.97.1 for tape determinism (VHS reference
+#      images are only comparable if the same compiler produced the binary), and
+#      that pin is not negotiable. A directory outside the workspace can carry
+#      its own `rust-toolchain.toml`, so `fuzz/rust-toolchain.toml` selects
+#      nightly for exactly this crate and nothing else — `cargo build`,
+#      `just test` and `just gate` at the root never see it.
+#   2. **The gate.** `just gate` runs `cargo … --workspace`, and a fuzz target is
+#      not something CI runs — it is something a person runs deliberately, for as
+#      long as they choose. A target compiled into the gate would be a build cost
+#      paid by everybody for a thing nobody ran.
+#
+# `[workspace]` below makes this directory a workspace root of its own. The root
+# `Cargo.toml` also names `fuzz` in `[workspace] exclude`, which is belt and
+# braces: without one of the two, cargo refuses with "current package believes
+# it's in a workspace when it's not".
+[workspace]
+
+[package]
+name = "phosphor-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+# Nothing here is version-sensitive beyond "the `fuzz_target!` macro exists";
+# `fuzz/Cargo.lock` records what resolved (0.4.13 at the time of writing). This
+# lockfile is separate from the root one by construction — a second workspace
+# root has its own — so a fuzz dependency can never move a workspace one.
+libfuzzer-sys = "0.4"
+phosphor-core = { path = "../crates/phosphor-core" }
+phosphor-ui = { path = "../crates/phosphor-ui" }
+
+# Every fuzz target takes a raw `&[u8]`, so `arbitrary`'s derive is deliberately
+# absent. That is not laziness — an `Arbitrary`-shaped target cannot be seeded
+# from a real file, because its corpus is in `arbitrary`'s own encoding rather
+# than the format under test. `seeds/journal_open/` holds real journals written
+# by the real writer, and that is only possible because the target reads bytes.
+
+# `test = false` / `doc = false` on every target: these binaries have no tests
+# and no docs, and the defaults make `cargo test` here try to link libFuzzer
+# into a libtest harness.
+
+[[bin]]
+name = "journal_open"
+path = "fuzz_targets/journal_open.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "journal_records"
+path = "fuzz_targets/journal_records.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "key_notation"
+path = "fuzz_targets/key_notation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "theme_load"
+path = "fuzz_targets/theme_load.rs"
+test = false
+doc = false
+bench = false
+
+# The seed writer — an `[[example]]` rather than a `[[bin]]`, on purpose.
+#
+# `cargo fuzz list` enumerates the crate's *binaries*, so a seed generator
+# declared as one appears in the list of fuzz targets and `cargo fuzz run seed`
+# then fails with a link error about a missing libFuzzer main. An example is
+# built by `cargo build --example seed`, is not built by a bare `cargo build`,
+# and is invisible to `cargo fuzz`. `scripts/fuzz.sh seed` runs it.
+[[example]]
+name = "seed"
+path = "examples/seed.rs"
+test = false
+doc = false
+bench = false

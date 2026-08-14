@@ -1,0 +1,23 @@
+# What a fuzz run produces, and what it must not commit.
+#
+# `seeds/` IS tracked — it is the reviewable input, derived from real repo files
+# by `src/bin/seed.rs` and regenerable with `scripts/fuzz.sh seed`. Everything
+# below is the fuzzer's own working state:
+#
+#   corpus/    — the growing, machine-found corpus. Thousands of small files
+#                that nobody reads, that change on every run, and that would
+#                make `scripts/lint-repo-hygiene.sh`'s untracked-file sweep walk
+#                a directory the size of the build. `scripts/fuzz.sh` copies
+#                `seeds/<target>/` into it before every run, so a fresh clone
+#                loses nothing but machine time.
+#   artifacts/ — a crash, a leak or a timeout, written as the exact input that
+#                produced it. Deliberately ignored: a reproducer belongs in the
+#                owning crate's test file as a regression test, minimised with
+#                `cargo fuzz tmin`, not as an opaque blob here.
+#   coverage/  — `cargo fuzz coverage` output.
+#   target/    — a second target directory; the sanitizer build has its own
+#                fingerprint and shares nothing with the root one.
+corpus/
+artifacts/
+coverage/
+target/

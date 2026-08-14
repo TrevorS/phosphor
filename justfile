@@ -78,14 +78,240 @@ test:
 deny:
     cargo deny check
 
-# T079's acceptance criterion is a measurement, so it is a target rather than a
-# script: `benches/frame_cache.rs` prints VM invocations per second against
-# frames per second, cached and uncached, and asserts the claim CP-2 reads.
-# `harness = false` — no libtest, no criterion; see the bench's own header.
+# Every benchmark here exists because a NUMBER WOULD CHANGE A DECISION, and
+# each is a target rather than a script so `just clippy --all-targets` keeps it
+# compiling. `harness = false` throughout — no libtest, no criterion. Each one
+# prints its numbers and asserts only the SHAPE (flat versus climbing, O(n)
+# versus O(n²), a count in versus a count out), because a threshold on wall
+# clock goes red for reasons unrelated to correctness. That is also why this
+# recipe is not in `gate`: see the Measurements block below, which makes the
+# same argument about `coverage`.
+#
+#   phosphor-ui/benches/frame_cache.rs      T079 — VM invocations flat while
+#                                           frames climb. CP-2 reads its verdict.
+#   phosphor/benches/vm_invocations.rs      T091 — the same claim counted from
+#                                           outside the shipping binary, on a pty.
+#   phosphor-core/benches/journal.rs        B1 — what an undo record costs on the
+#                                           keystroke path, what fsync would cost
+#                                           instead, and what a compaction of a
+#                                           long session reclaims (T095's input).
+#   phosphor-ui/benches/soft_wrap.rs        B2 — what a resize costs on the one
+#                                           uncached path in the frame. NOT RUN
+#                                           BY THIS RECIPE YET: it needs a
+#                                           `[[bench]] name = "soft_wrap"` /
+#                                           `harness = false` pair in
+#                                           crates/phosphor-ui/Cargo.toml, which
+#                                           was outside the writing agent's file
+#                                           lock. Without it cargo autodiscovers
+#                                           the file with libtest's harness, so
+#                                           it compiles, runs zero measurements
+#                                           and prints nothing.
+#
+# There is deliberately no benchmark of the input machine. It was measured and
+# came back at 57-302 ns per keystroke, flat between a 100-line buffer and a
+# 20,000-line one — five orders of magnitude inside a frame. The cost that IS on
+# the keystroke path is `phosphor/resolve`, which is a Steel call and uncached by
+# design (T022), and `vm_invocations.rs` already counts it. A benchmark that will
+# never change a decision is maintenance for nothing.
 
-# Run the benchmarks (T079's frame cache).
+# Run the benchmarks (frame cache, VM invocations, journal, soft wrap).
 bench:
     cargo bench --workspace
+
+# ── Measurements ─────────────────────────────────────────────────────────────
+#
+# `coverage`, `hack` and `unused-deps` are the three below, and none of them is
+# in `gate`. That is one decision, not three, and it is the same one `bench` and
+# `tapes-diff` already carry: a check that can fail a build for a reason
+# unrelated to correctness teaches the team to stop reading it.
+#
+# For `coverage` specifically, because the instinct on reading the next recipe
+# will be to wire it into `gate` with a floor: A COVERAGE FLOOR IS A CHANGE
+# DETECTOR. It reddens when a refactor deletes tested code, when a `#[cfg]` arm
+# stops being compiled on this platform, when a test moves between crates —
+# every one of those a green build that now reports red. The response is always
+# to lower the floor or to write a test whose only job is to colour a line, and
+# a test written to colour a line costs a maintenance obligation and proves
+# nothing. The number is an input to a person deciding where to look, and it
+# stops being that the moment it can fail CI.
+
+# Coverage, as a per-file table sorted worst first — `just coverage [substring]`.
+#
+# `--json --summary-only` rather than the default text report, because the text
+# report sorts by path: it answers "how covered is file X" and answers "where is
+# the suite thin" only if you read every row. `scripts/coverage_report.py` sorts
+# it and truncates to the worst 20, so the thin files and the TOTAL are both on
+# screen when the command returns (`--all` for every row; a bare substring
+# filters — `just coverage journal`).
+#
+# `nextest`, matching `just test` — same runner, same per-test process
+# isolation, so the coverage figure describes the suite that actually gates
+# rather than a differently-isolated one that does not.
+#
+# CARGO_TARGET_DIR, and what it is NOT for. The obvious reason to set it is that
+# `-Cinstrument-coverage` is a different fingerprint from every other recipe
+# here, so a shared `target/` would have `just coverage` and `just test`
+# invalidate each other and rebuild from scratch every alternation. That reason
+# is wrong, and it was in this comment until a running process disproved it:
+# cargo-llvm-cov already nests its own build under `target/llvm-cov-target`
+# (visible in the `cargo nextest run --target-dir …` it spawns), so `target/debug`
+# was never at risk and this override buys nothing there.
+#
+# What it does buy is one worktree, several agents — how this build runs windows
+# (TEAM.md's concurrency rules). cargo-llvm-cov clears the stale `.profraw` set
+# when a run starts, so a bare `cargo llvm-cov` in another shell and this recipe
+# would silently delete each other's profile data. Two runs of THIS recipe still
+# collide; the override narrows the window rather than closing it. Worth keeping
+# for that alone, and worth dropping the moment the shared tree stops being one.
+#
+# Run in two phases — `--no-report`, then `report` — rather than as the single
+# `cargo llvm-cov nextest --json …` invocation this started as. The first shape
+# was found wrong by running it: one flaky pty test failed, nextest's default
+# fail-fast cancelled 642 of 679 tests, and cargo-llvm-cov never wrote a report
+# at all. So the answer to "where is the suite thin" was nothing, because one
+# test was red — the opposite of what a measurement is for, and exactly when you
+# most want the map. `--no-fail-fast` runs the rest; splitting the phases means
+# the report is built from whatever profile data exists either way.
+#
+# The exit code is still the test run's. This recipe does not gate anything, so
+# nothing depends on that — but a measurement that reports success over a red
+# suite is its own small lie, and the banner plus the status keep it honest.
+
+# Per-file coverage, worst first — `just coverage [substring|--all]`. Never gates.
+coverage *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    cd "{{ justfile_directory() }}"
+    if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
+        echo "just coverage: cargo-llvm-cov is not installed —"
+        echo "    cargo binstall cargo-llvm-cov"
+        exit 1
+    fi
+    out="target/coverage/summary.json"
+    mkdir -p "$(dirname "$out")"
+    tests=0
+    CARGO_TARGET_DIR=target/coverage \
+        cargo llvm-cov nextest --workspace --no-tests=pass \
+        --no-report --no-fail-fast || tests=$?
+    CARGO_TARGET_DIR=target/coverage \
+        cargo llvm-cov report --json --summary-only --output-path "$out" || exit $?
+    echo
+    python3 scripts/coverage_report.py "$out" {{ args }}
+    if [ "$tests" -ne 0 ]; then
+        echo
+        echo "  NOTE: the test run exited ${tests} — some tests failed or were not run,"
+        echo "  so the figures above describe a partial suite. \`just test\` is the gate."
+    fi
+    exit "$tests"
+
+# The HTML report, for reading one file's uncovered lines in place.
+#
+# Reuses the profile data `just coverage` already produced — `llvm-cov report`
+# re-renders it without re-running a test — and falls back to a full run when
+# there is none. So the loop is: `just coverage` to find the thin file, then
+# `just coverage-html` to see which lines inside it nobody reached.
+#
+# The reuse test globs for `*.profraw`, not for the target directory: a run that
+# compiled and then failed leaves the directory populated and the profile data
+# gone, because cargo-llvm-cov clears the old `.profraw` set before it starts.
+# Testing for the directory made the common case — `just coverage` red because a
+# test does not compile, `just coverage-html` next — fail with llvm-cov's own
+# "not found *.profraw files", which reads as a broken recipe rather than as
+# "there is nothing to re-render yet".
+
+# The HTML coverage report — read one file's uncovered lines in place.
+coverage-html:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{ justfile_directory() }}"
+    shopt -s nullglob
+    profraw=(target/coverage/llvm-cov-target/*.profraw)
+    if [ ${#profraw[@]} -gt 0 ]; then
+        echo "re-rendering ${#profraw[@]} profile(s) from the last run — no tests re-run"
+        CARGO_TARGET_DIR=target/coverage cargo llvm-cov report --html
+    else
+        echo "no coverage data yet — running the suite first"
+        CARGO_TARGET_DIR=target/coverage \
+            cargo llvm-cov nextest --workspace --no-tests=pass --html
+    fi
+    echo
+    echo "open target/coverage/llvm-cov/html/index.html"
+
+# Feature combinations — does every one of them build?
+#
+# SPIKES.md's hygiene table has carried `cargo-hack` since M-0 for exactly one
+# reason, [Q4](docs/IMPLEMENTATION-PLAN.md#q4)'s guardrail: the transcript has to
+# render with the markdown feature on AND off. `vendor/ratatui-markdown/VENDOR.md`
+# promises `cargo hack --feature-powerset` will prove it. Nothing kept that
+# promise until this recipe; the tool was not installed.
+#
+# `--each-feature`, not `--feature-powerset`, is the default here. The powerset
+# is 2^n builds per crate and the workspace has three optional features across
+# two crates (`phosphor-ui/markdown`, `phosphor-buffer/{clipboard,grammars-extra}`),
+# which is small today and is not the argument — the argument is that the defect
+# this catches is almost always "a crate that only compiles with default features
+# on", and `--each-feature` catches that in n+2 builds instead of 2^n. Reach for
+# the powerset when you have added a feature that INTERACTS with another one:
+#
+#     just hack --feature-powerset
+#
+# NOT in `gate`, and this one is a cost argument rather than a flakiness one:
+# `gate` is run constantly and every extra full-workspace build is paid by
+# everybody, every time. Run it when you touch a `[features]` table, and in the
+# `features` CI job, which is where a slow check belongs.
+
+# Check every feature combination — `just hack [--feature-powerset]`.
+hack *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{ justfile_directory() }}"
+    command -v cargo-hack >/dev/null 2>&1 || {
+        echo "just hack: cargo-hack is not installed —"
+        echo "    cargo binstall cargo-hack@0.6.45   # SPIKES.md's hygiene table"
+        exit 1
+    }
+    args=({{ args }})
+    # An `if`, not `[ … ] && args=(…)`: under `set -e` an AND-OR list whose test
+    # fails is the classic way a recipe exits 1 having done nothing, and this one
+    # takes the failing branch precisely when an argument WAS passed.
+    if [ ${#args[@]} -eq 0 ]; then
+        args=(--each-feature)
+    fi
+    cargo hack --workspace "${args[@]}" check --all-targets
+
+# Dependencies nothing imports — `cargo-machete` (SPIKES.md's hygiene table).
+#
+# An unused dependency is build time, audit surface, and a `cargo deny` row for
+# nothing. `cargo-machete` over `cargo-udeps` for one disqualifying reason:
+# `udeps` requires a nightly toolchain, and `rust-toolchain.toml` pins 1.97.1
+# because VHS reference images are only comparable if the binary that made them
+# was built the same way. A second toolchain to run one lint is a worse trade
+# than machete's imprecision.
+#
+# And it IS imprecise — it greps for the crate name rather than resolving it, so
+# a dependency whose lib name differs from its package name reads as unused.
+# `steel-core` is exactly that case in this workspace: the package is
+# `steel-core`, the lib is `steel`, and every use site says `use steel::`.
+# `--with-metadata` resolves the rename and is why it is on by default here.
+#
+# NOT in `gate`: it still reports true-but-not-actionable findings — see this
+# recipe's own output for the placeholder crates — and a lint whose right answer
+# is sometimes "yes, deliberately" is a lint people learn to skip.
+
+# Dependencies nothing imports — cargo-machete over the workspace crates.
+unused-deps *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{ justfile_directory() }}"
+    command -v cargo-machete >/dev/null 2>&1 || {
+        echo "just unused-deps: cargo-machete is not installed —"
+        echo "    cargo binstall cargo-machete@0.9.2   # SPIKES.md's hygiene table"
+        exit 1
+    }
+    # `crates`, not the repo root: `vendor/` is upstream code we did not write
+    # and its dependency hygiene is not ours to hold to this standard — the same
+    # scoping every `scripts/lint-*.sh` uses.
+    cargo machete --with-metadata --skip-target-dir crates {{ args }}
 
 # The structural-lint seam (T005 + T006/T007). Every structural lint is one
 # executable script matching scripts/lint-*.sh — that glob is the entire

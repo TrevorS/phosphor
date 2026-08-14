@@ -9,7 +9,14 @@ members = ["crates/*"]
 # Excluded, they still build (as dependencies of `phosphor-buffer` / `phosphor-ui`)
 # but our lints stop at the seam. `ratatui-code-editor` also carries its own
 # `[workspace]` table for its examples, which would be a second workspace root.
-exclude = ["vendor/ratatui-code-editor", "vendor/ratatui-markdown"]
+#
+# `fuzz` is excluded for the same reason at a different seam. It is a cargo-fuzz
+# crate, so it needs nightly for `-Zsanitizer` while `rust-toolchain.toml` pins
+# 1.97.1 for tape determinism — and a directory outside the workspace may carry
+# its own `rust-toolchain.toml`, which `fuzz/` does. Excluding it also keeps a
+# fuzz target out of `--workspace` builds: fuzzing is something a person runs
+# deliberately, not a cost `just gate` pays on every invocation.
+exclude = ["fuzz", "vendor/ratatui-code-editor", "vendor/ratatui-markdown"]
 resolver = "3"
 
 [workspace.package]

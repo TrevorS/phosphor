@@ -9,5 +9,40 @@ version.workspace = true
 # nor a ratatui dependency (Q12, T078), so neither side can come to own it.
 [dependencies]
 
+# `tests/properties.rs`. Three laws this crate states in prose — the wire
+# model's round-trip and rejection, the motion span never leaving the buffer,
+# and torn-tail recovery yielding a prefix — were each checked at two or three
+# hand-picked inputs; they are properties, not examples. `SPIKES.md`'s hygiene
+# table names proptest 1.11.0 for exactly this shape of test, and
+# `phosphor-ui` already takes that version for `T017`'s statusline invariant.
+#
+# Dev-only, so the floor is unchanged: nothing here reaches a shipped binary,
+# and the rule this crate's dependency line actually enforces —
+# `scripts/lint-no-store-mutation.sh`'s check that no `ratatui` or `steel`
+# crate appears here — is untouched.
+#
+# Declared here rather than in `[workspace.dependencies]` for the reason
+# `crates/phosphor-ui/Cargo.toml` records for the same crate: a member's own
+# dev-only test dependency is not a contract change. Lift it to the root when a
+# third crate needs it — one version in one place is the rule that matters, and
+# both declarations read 1.11.0.
+[dev-dependencies]
+proptest = "1.11.0"
+
+# `benches/journal.rs` — what an undo record costs on the keystroke path, what a
+# long session costs at startup, and what a compaction reclaims. A real target
+# rather than a script, for the reason `crates/phosphor-ui/Cargo.toml` gives for
+# `frame_cache`: `just clippy` passes `--all-targets`, so a target keeps
+# compiling and a script rots.
+#
+# `harness = false` — no libtest, no criterion, matching the two benchmarks that
+# came before it. The interesting outputs are a shape (flat versus climbing) and
+# two record counts, neither of which is a confidence interval. It adds no
+# dependency, so this crate's "dependency-free at the floor" line still holds:
+# the bench uses `std` and the crate's own public API.
+[[bench]]
+name = "journal"
+harness = false
+
 [lints]
 workspace = true

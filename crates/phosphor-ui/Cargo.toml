@@ -98,6 +98,14 @@ ratatui-code-editor = { workspace = true, features = ["grammar-rust"] }
 name = "frame_cache"
 harness = false
 
+# `harness = false` is not optional here, and the failure is silent. Without this
+# pair cargo autodiscovers `benches/soft_wrap.rs` under libtest's harness: it
+# compiles green, `just bench` reports it, and it runs zero measurements. The
+# benchmark that found the 5.7-second resize would have said nothing.
+[[bench]]
+name = "soft_wrap"
+harness = false
+
 [features]
 default = []
 # Rich markdown in the transcript. Per-language highlight features stay off:

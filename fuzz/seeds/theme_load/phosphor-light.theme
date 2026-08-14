@@ -1,0 +1,76 @@
+# phosphor · light — warm paper with deepened hues (§10, mockup 8c)
+#
+# base16-style: one `key: value` per line, values are `#rrggbb`.
+# A line whose first non-blank character is `#` is a comment; there are no
+# trailing comments (a value is the rest of its line).
+#
+# `actor.*` is the contract, not a preference: each actor is locked to a hue
+# family and `Theme::load` rejects a file that moves one out of it. Hue is
+# fixed; saturation and lightness are yours (Design Language §10).
+#
+# PROVENANCE — mockup `8c` (and `9c` right) give: claude, you, attention,
+# trouble, transient, ground, text, line_numbers, meta, region.anchor,
+# region.anchor_undercurl, chrome.statusline, chrome.mode_chip_fg (= ground),
+# chrome.divider. §10 pins claude-green at #1a9a62.
+# DERIVED, because no doc or mockup carries a light value for them: steel,
+# prose, dimmed_under_float, bright_text, region.selection, region.failure,
+# all six float.*, chrome.tab_bar_rule. Method below.#
+# DERIVATION METHOD — a derived value is never invented freehand. Each is the
+# phosphor-dark relationship re-applied to this palette: a lightness offset from
+# this theme's own `ground` (anchor +/-0.043, dimmed +/-0.094, selection
+# +/-0.122, failure +/-0.047, statusline +/-0.061, tab_bar_rule +/-0.074,
+# float.body +/-0.018 in HSL L, sign by variant), or a ratio off this theme's
+# own actor colour (float.informational = claude at S x0.54 / L x0.48 on dark;
+# float.needs_you = attention likewise; region.failure takes trouble's hue).
+# Reproduce or re-derive them and the numbers come back.
+name: phosphor
+variant: light
+
+# actors — Design Language §1. Validated at load.
+actor.claude: #1a9a62
+actor.you: #3568a8
+actor.attention: #a06a10
+actor.trouble: #b5473a
+actor.transient: #8f6a2e
+actor.steel: #5d9645
+
+# neutral ramp — §1
+neutral.ground: #f4f2ec
+neutral.text: #3a3830
+neutral.prose: #5a574b
+neutral.meta: #8a8474
+neutral.line_numbers: #b0aa98
+neutral.dimmed_under_float: #e3decd
+neutral.bright_text: #141411
+
+# region tints and undercurl — §3
+region.anchor: #e6efe6
+region.anchor_undercurl: #1a9a62
+region.selection: #ded7c4
+region.failure: #ecdddc
+region.failure_undercurl: #b5473a
+
+# float chrome — §4
+float.informational: #157b4e
+float.needs_you: #80550d
+float.needs_you_body: #f6ecda
+float.needs_you_rule: #c9a871
+float.passive: #bbd3c9
+float.body: #f1eee6
+
+# statusline and tab bar — §5
+chrome.statusline: #e8e4d8
+chrome.mode_chip_fg: #f4f2ec
+chrome.tab_bar: #f4f2ec
+chrome.tab_bar_rule: #e7e2d3
+chrome.divider: #d8d4c8
+
+# syntax — theme-owned (§10). Not validated.
+syntax.text: #3a3830
+syntax.keyword: #3568a8
+syntax.type: #8f6a2e
+syntax.function: #5d9645
+syntax.constant: #8f6a2e
+syntax.string: #8f6a2e
+syntax.number: #8f6a2e
+syntax.comment: #8a8474

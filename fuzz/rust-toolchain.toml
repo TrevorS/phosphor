@@ -1,0 +1,17 @@
+# Nightly, for this directory only.
+#
+# `cargo fuzz` compiles with `-Zsanitizer=address`, which stable does not
+# accept. The root `/rust-toolchain.toml` pins 1.97.1 and says why — VHS
+# reference images are only comparable if the same compiler built the binary —
+# and that pin must not move for a fuzzer's sake.
+#
+# `rustup` resolves the toolchain from the *nearest* `rust-toolchain.toml` at or
+# above the invocation directory, and `fuzz/` is excluded from the root
+# workspace, so this file governs `cargo fuzz` runs and governs nothing else.
+# `just gate`, run from the repo root, still gets 1.97.1.
+#
+# Unpinned on purpose, unlike the root. A fuzzer is a search, not a reference
+# image: two nightlies finding different inputs is the tool working. Pinning
+# would mean a `rustup update` silently stopped the fuzzer from building.
+[toolchain]
+channel = "nightly"

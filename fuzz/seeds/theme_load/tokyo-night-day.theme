@@ -1,0 +1,73 @@
+# tokyo night · day — mapping (Q7; no mockup, inherits 9b's shape)
+#
+# base16-style: one `key: value` per line, values are `#rrggbb`.
+# A line whose first non-blank character is `#` is a comment; there are no
+# trailing comments (a value is the rest of its line).
+#
+# `actor.*` is the contract, not a preference: each actor is locked to a hue
+# family and `Theme::load` rejects a file that moves one out of it. Hue is
+# fixed; saturation and lightness are yours (Design Language §10).
+#
+# PROVENANCE — as tokyo-night, against the published Tokyo Night Day palette
+# (a real light variant, which is half of why Q7 chose it).
+# DERIVED: bright_text, region.anchor, region.selection, region.failure,
+# all six float.*, chrome.tab_bar_rule. Method below.#
+# DERIVATION METHOD — a derived value is never invented freehand. Each is the
+# phosphor-dark relationship re-applied to this palette: a lightness offset from
+# this theme's own `ground` (anchor +/-0.043, dimmed +/-0.094, selection
+# +/-0.122, failure +/-0.047, statusline +/-0.061, tab_bar_rule +/-0.074,
+# float.body +/-0.018 in HSL L, sign by variant), or a ratio off this theme's
+# own actor colour (float.informational = claude at S x0.54 / L x0.48 on dark;
+# float.needs_you = attention likewise; region.failure takes trouble's hue).
+# Reproduce or re-derive them and the numbers come back.
+name: tokyo night
+variant: light
+
+# actors — Design Language §1. Validated at load.
+actor.claude: #587539
+actor.you: #2e7de9
+actor.attention: #8c6c3e
+actor.trouble: #f52a65
+actor.transient: #b15c00
+actor.steel: #118c74
+
+# neutral ramp — §1
+neutral.ground: #e1e2e7
+neutral.text: #3760bf
+neutral.prose: #6172b0
+neutral.meta: #848cb5
+neutral.line_numbers: #a8aecb
+neutral.dimmed_under_float: #c4c8da
+neutral.bright_text: #28458a
+
+# region tints and undercurl — §3
+region.anchor: #d4d6de
+region.anchor_undercurl: #587539
+region.selection: #bdc0cd
+region.failure: #e4ccd3
+region.failure_undercurl: #f52a65
+
+# float chrome — §4
+float.informational: #465e2e
+float.needs_you: #705632
+float.needs_you_body: #f2e0c7
+float.needs_you_rule: #baab95
+float.passive: #bccaac
+float.body: #dcdde3
+
+# statusline and tab bar — §5
+chrome.statusline: #d0d5e3
+chrome.mode_chip_fg: #e1e2e7
+chrome.tab_bar: #e1e2e7
+chrome.tab_bar_rule: #cbcdd7
+chrome.divider: #c4c8da
+
+# syntax — theme-owned (§10). Not validated.
+syntax.text: #3760bf
+syntax.keyword: #9854f1
+syntax.type: #b15c00
+syntax.function: #118c74
+syntax.constant: #b15c00
+syntax.string: #b15c00
+syntax.number: #b15c00
+syntax.comment: #848cb5

@@ -1,0 +1,78 @@
+# tokyo night · night — mapping (Q7; no mockup, inherits 9b's shape)
+#
+# base16-style: one `key: value` per line, values are `#rrggbb`.
+# A line whose first non-blank character is `#` is a comment; there are no
+# trailing comments (a value is the rest of its line).
+#
+# `actor.*` is the contract, not a preference: each actor is locked to a hue
+# family and `Theme::load` rejects a file that moves one out of it. Hue is
+# fixed; saturation and lightness are yours (Design Language §10).
+#
+# PROVENANCE — Q7 replaced Ayu with Tokyo Night; there is no mockup, so `9b`
+# stands as the acceptance *shape* only (same slice of UI, second palette, actor
+# contract intact). Published Tokyo Night roles: claude=green, you=blue,
+# attention=yellow, trouble=red, transient=orange, steel=green1,
+# ground=bg, text=fg, prose=fg_dark, meta=comment, line_numbers=fg_gutter,
+# dimmed_under_float=bg_highlight, chrome.statusline=bg_dark,
+# chrome.divider=bg_highlight, syntax.keyword=magenta.
+# DERIVED: bright_text, region.anchor, region.selection, region.failure,
+# all six float.*, chrome.tab_bar_rule. Method below.#
+# DERIVATION METHOD — a derived value is never invented freehand. Each is the
+# phosphor-dark relationship re-applied to this palette: a lightness offset from
+# this theme's own `ground` (anchor +/-0.043, dimmed +/-0.094, selection
+# +/-0.122, failure +/-0.047, statusline +/-0.061, tab_bar_rule +/-0.074,
+# float.body +/-0.018 in HSL L, sign by variant), or a ratio off this theme's
+# own actor colour (float.informational = claude at S x0.54 / L x0.48 on dark;
+# float.needs_you = attention likewise; region.failure takes trouble's hue).
+# Reproduce or re-derive them and the numbers come back.
+name: tokyo night
+variant: dark
+
+# actors — Design Language §1. Validated at load.
+actor.claude: #9ece6a
+actor.you: #7aa2f7
+actor.attention: #e0af68
+actor.trouble: #f7768e
+actor.transient: #ff9e64
+actor.steel: #73daca
+
+# neutral ramp — §1
+neutral.ground: #1a1b26
+neutral.text: #c0caf5
+neutral.prose: #a9b1d6
+neutral.meta: #565f89
+neutral.line_numbers: #3b4261
+neutral.dimmed_under_float: #292e42
+neutral.bright_text: #e5e9fb
+
+# region tints and undercurl — §3
+region.anchor: #222434
+region.anchor_undercurl: #9ece6a
+region.selection: #32344c
+region.failure: #3a1e23
+region.failure_undercurl: #f7768e
+
+# float chrome — §4
+float.informational: #4c5f36
+float.needs_you: #6e5430
+float.needs_you_body: #332510
+float.needs_you_rule: #3f311e
+float.passive: #344026
+float.body: #1e1f2b
+
+# statusline and tab bar — §5
+chrome.statusline: #16161e
+chrome.mode_chip_fg: #1a1b26
+chrome.tab_bar: #1a1b26
+chrome.tab_bar_rule: #282a3d
+chrome.divider: #292e42
+
+# syntax — theme-owned (§10). Not validated.
+syntax.text: #c0caf5
+syntax.keyword: #bb9af7
+syntax.type: #ff9e64
+syntax.function: #73daca
+syntax.constant: #ff9e64
+syntax.string: #ff9e64
+syntax.number: #ff9e64
+syntax.comment: #565f89

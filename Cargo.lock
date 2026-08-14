@@ -1706,6 +1706,7 @@ version = "0.1.0"
 dependencies = [
  "crossterm",
  "phosphor-term",
+ "proptest",
  "ratatui-code-editor",
  "ratatui-core",
  "ropey",
@@ -1726,6 +1727,9 @@ dependencies = [
 [[package]]
 name = "phosphor-core"
 version = "0.1.0"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "phosphor-steel"

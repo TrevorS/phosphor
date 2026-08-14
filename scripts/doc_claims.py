@@ -330,6 +330,100 @@ for path in count_files:
     if bad:
         fail(f"{path}: cites a stale capability/parity count", "; ".join(sorted(set(bad))))
 
+# ── 6 · the lint count, where CI's own prose quotes it ───────────────────────
+#
+# The last unchecked count anyone has found in this repo. `.github/workflows/ci.yml`'s
+# `lint` job carries the sentence that explains the whole seam — every lint is one
+# `scripts/lint-*.sh` script, so nobody edits the workflow to add one — and it
+# ends by naming how many exist. That number said "six" while sixteen existed:
+# ten behind, corrected by hand, and *the comment says so itself*. Nothing above
+# reads a `.yml` file at all; sections 2 and 3 recompute task counts from the
+# dependency graph and section 5 walks the capability table, and the workflow
+# was outside both.
+#
+# The irony is the argument. A comment whose subject is "nothing recomputes a
+# number written in a comment" is the one comment that has to be recomputed.
+#
+# The count is read from the glob that `just lint` runs (`justfile`'s `lint`
+# recipe) rather than from a list here, so the lint and the recipe cannot drift
+# into disagreeing about what a lint *is*.
+
+LINT_SCRIPTS = sorted(pathlib.Path("scripts").glob("lint-*.sh"))
+lint_count = len(LINT_SCRIPTS)
+
+if not lint_count:
+    fail(
+        "scripts/: no lint-*.sh found",
+        "`just lint` globs the same path and would pass vacuously; either the "
+        "glob moved or every structural lint was deleted",
+    )
+
+# Prose spells small counts as words ("sixteen exist now"), so both spellings
+# have to parse. Twenty-nine is far past any plausible number of lint scripts
+# and the digits cover the rest.
+NUMBER_WORDS = {
+    w: i
+    for i, w in enumerate(
+        "zero one two three four five six seven eight nine ten eleven twelve "
+        "thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty "
+        "twenty-one twenty-two twenty-three twenty-four twenty-five twenty-six "
+        "twenty-seven twenty-eight twenty-nine thirty".split()
+    )
+}
+NUMBER = r"\d+|" + "|".join(sorted(NUMBER_WORDS, key=len, reverse=True))
+
+# Same discipline as section 5: the unit phrase sits directly against the
+# number, and the number has to *be* a number — a bare `\w+` here would match
+# the `(` in "just lint (structural lints)", which is a job name and not a
+# claim. Both rules together are what keep the historical aside in the same
+# sentence from matching: `(It said "six" until the count was ten behind` has a
+# quote after "six" and "behind" after "ten", so neither is a live claim.
+LINT_COUNT_PATTERNS = [
+    re.compile(rf"\b({NUMBER})\s+exist now\b"),
+    re.compile(rf"\b({NUMBER})\s+(?:structural\s+)?lints?\b"),
+    re.compile(rf"\b({NUMBER})\s+lint scripts?\b"),
+]
+
+# A YAML comment wraps across lines exactly as a Rust doc comment does, and for
+# the same reason: it is prose in a column-limited file. Flatten `#`
+# continuations before matching, or a rewrap moves "sixteen" and "exist now"
+# onto different lines and the check goes quietly blind.
+YAML_CONTINUATION_RE = re.compile(r"\n[ \t]*#[ \t]?")
+
+workflow_claims = 0
+for path in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
+    text = YAML_CONTINUATION_RE.sub(" ", path.read_text(encoding="utf-8", errors="replace"))
+    bad = []
+    for pattern in LINT_COUNT_PATTERNS:
+        for match in pattern.finditer(text):
+            workflow_claims += 1
+            token = match.group(1)
+            found = NUMBER_WORDS.get(token, None)
+            if found is None:
+                found = int(token)
+            if found != lint_count:
+                bad.append(f"{match.group(0).strip()!r} (expected {lint_count})")
+    if bad:
+        fail(
+            f"{path}: cites a stale lint count",
+            "; ".join(sorted(set(bad)))
+            + f"; scripts/lint-*.sh has {lint_count}: "
+            + ", ".join(p.name for p in LINT_SCRIPTS),
+        )
+
+# A check with nothing to check is the failure mode every lint in this repo
+# exists to prevent, and this one is one careless rewrite away from it: delete
+# the sentence and the loop above passes for a tree with any number of lints at
+# all. So the absence of a claim is itself a failure — restore the sentence, or
+# delete this section deliberately rather than by accident.
+if not workflow_claims:
+    fail(
+        ".github/workflows/: no lint-count claim left to check",
+        "this section verifies CI's prose against `scripts/lint-*.sh`, and found "
+        "no sentence making a claim — restore it (ci.yml's `lint` job explained "
+        "the seam by naming how many lints exist) or remove this section on purpose",
+    )
+
 # ── report ───────────────────────────────────────────────────────────────────
 
 if FAILURES:
@@ -341,6 +435,6 @@ if FAILURES:
 print(
     f"lint-doc-claims: clean — {len(t_tasks)} tasks + {len(v_tasks)} harness, "
     f"waves {computed_waves}, {capability_count} capabilities, "
-    f"{parity_count} parity door checks, no dangling references, "
-    f"toolchain quoted consistently"
+    f"{parity_count} parity door checks, {lint_count} structural lints, "
+    f"no dangling references, toolchain quoted consistently"
 )

@@ -37,6 +37,17 @@ tree-sitter.workspace = true
 #     `crossterm` is only "wait for a keypress, then quit".
 crossterm.workspace = true
 phosphor-term = { path = "../phosphor-term" }
+# `tests/undo_properties.rs` states `T029`'s laws over generated edit sequences
+# rather than six hand-built groups — the boundaries an undo tree breaks at are
+# between records, and a property reaches them. `SPIKES.md`'s hygiene table
+# names proptest 1.11.0 and `phosphor-ui` already takes it at that version.
+#
+# Declared here rather than in `[workspace.dependencies]` for the reason
+# `phosphor-ui`'s own comment gives: the root manifest is `spine`'s and a
+# member's dev-only test dependency is not a contract change. That comment also
+# says to lift it once a second crate needs one — this is that second crate, and
+# the lift is `spine`'s to make, so it is raised rather than taken.
+proptest = "1.11.0"
 ratatui-core.workspace = true
 tree-sitter-css = "0.25.0"
 tree-sitter-html = "0.23.2"

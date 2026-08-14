@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 8375c2f82d148123598e4209f7e1c9d9a41fc139eae166084c3c6d2952ef42d9 # shrinks to base = "", script = [(Start, [Insert { at: Start, text: "a" }]), (Anywhere(8), [Delete { at: End, len: 0 }])], over = 1
+cc 343a9263475601f05b4a2ebf2bcb4bb3a3091601ba9cf9e0a26f75e83f486a78 # shrinks to base = "fn main() {}\n", first = [(AfterNewline, [Insert { at: Start, text: "\n" }])], back = 0, second = [(Start, [Insert { at: Start, text: "\n" }])], order = [43, 3, 17, 0]

@@ -268,6 +268,12 @@ impl<'a> Decoder<'a> {
                 .filter(|shifted| shifted >> shift == part)
                 .ok_or(DecodeError::Overflow)?;
             if byte & 0x80 == 0 {
+                // A multi-byte varint whose last byte carries nothing is a
+                // longer spelling of a shorter number. Rejecting it is what
+                // makes the encoding canonical — see `NonMinimalVarint`.
+                if shift > 0 && part == 0 {
+                    return Err(DecodeError::NonMinimalVarint);
+                }
                 return Ok(value);
             }
         }
@@ -376,6 +382,21 @@ pub enum DecodeError {
     /// A varint does not fit a `u64`, or a value does not fit this host's
     /// `usize`.
     Overflow,
+    /// A varint is spelled with more bytes than its value needs — `[0x80|60, 0]`
+    /// for 60, where `[60]` says the same thing.
+    ///
+    /// Rejected so the encoding is **canonical**: one value, one spelling. A
+    /// journal whose bytes are not a function of its state cannot be compared,
+    /// deduplicated, or checksummed against a rebuild, and a decoder that
+    /// accepts a redundant continuation makes `decode(encode(x)) == x` true
+    /// while `encode(decode(b)) == b` is false. The second is the one a file
+    /// format needs.
+    ///
+    /// Found by `arbitrary_bytes_decode_or_refuse`, which asserted the byte
+    /// round-trip and had never gone red: 256 draws of short uniform bytes
+    /// almost never produce a redundant continuation, and proptest reseeds from
+    /// entropy every run — so this was a random failure waiting for a stranger.
+    NonMinimalVarint,
     /// A byte that should have been `0` or `1` was not.
     BadBool {
         /// What was there.
@@ -407,6 +428,7 @@ impl fmt::Display for DecodeError {
         match self {
             Self::UnexpectedEnd => f.write_str("record ended mid-value"),
             Self::Overflow => f.write_str("integer does not fit"),
+            Self::NonMinimalVarint => f.write_str("integer is spelled longer than it needs"),
             Self::BadBool { byte } => write!(f, "expected 0 or 1, found {byte}"),
             Self::Utf8 => f.write_str("string is not utf-8"),
             Self::TooLong { want, remaining } => {
