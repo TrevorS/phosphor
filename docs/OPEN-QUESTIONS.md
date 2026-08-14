@@ -275,17 +275,23 @@ on the strength of this paragraph.
 
 - **Split it per door.** Three test functions instead of one, and `nextest` runs them
   concurrently. It is already three independent assertions wearing one name — `check` is a
-  `match` on `Door` — so this costs almost nothing and is the only option that needs no
-  measurement first.
+  `match` on `Door` — so it costs almost nothing and is the only option needing no measurement
+  first. **But do not expect it to fix the wall clock.** A split bounds the run at the *largest*
+  third, and if the guess above is right — that the Steel door owns nearly all of the 176 s —
+  then the largest third is nearly 176 s and the speedup rounds to nothing. Its real value is
+  that `nextest` then prints the three numbers, which is how the guess stops being one.
 - **Hoist the compile** — bind each capability's call once and apply it per check, rather than
   evaluating a freshly built source string. Bigger win if the guess above is right, and worthless
   if it is wrong.
 - **Leave it.** Defensible: it is one test, it is green, and it buys the invariant the whole
   registry design exists for.
 
-*Recommendation: split it per door before `S4` opens, and measure the thirds while you are in
-there — that turns the guess above into a number for free. Leave the Steel cost alone until that
-number exists.*
+*Recommendation: split it per door before `S4` opens — not as the fix, but because it is the
+cheapest way to buy the measurement, and because the file is otherwise spoken for (see the note
+on `T100` in [TASKS.md](TASKS.md), which is scheduled to have `parity.rs` to itself at the front
+of Window E). Then decide with a number in hand. Hoisting the compile is the only option that
+could actually move 176 s, and it is not worth writing until something has shown that the compile
+is where the time goes.*
 
 ---
 
