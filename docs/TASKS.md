@@ -1826,6 +1826,19 @@ They are numbered `T099`+ and append rather than renumber, like everything else 
   two `why` implementations produce one sentence per enum value, and every door check passes
   against the regenerated expectations. *Needs:* T020, T024
 
+  > **It collides with §26, and the pre-`S4` scout found it by reading the two scopes together.**
+  > [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s §26 wants `crates/phosphor/tests/parity.rs` split per
+  > door, because one test function in it takes 176 s of a 182 s suite. That is the same file this
+  > task's scope names, and [TEAM.md](TEAM.md) schedules this task at the **front of Window E**
+  > precisely so *nothing else is rewriting the parity expectations* while it runs. Under rule 1
+  > of *Concurrency* the two cannot be concurrent.
+  >
+  > So it is one of two things, and picking is cheaper than discovering: either the split lands
+  > **before `S4` opens**, or it is **folded into this task's agent** as the first thing it does.
+  > The second is defensible — regenerating the expectation set and splitting the harness that
+  > walks it are the same sitting — but it must be *said*, because the default (two agents, one
+  > file, one window) is the failure rule 1 exists for.
+
 **Two verbs were re-homed rather than added**, which is worth recording because a wrong phase on a
 capability row is what put them on `lint-action-arms.sh`'s creditor list in the first place:
 `apply-edits` moved from `S3 / T029` to `S6 / T052` and `jump` from `S3 / T026` to `S5 / T042`,
@@ -1833,13 +1846,24 @@ matching the tasks [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s §18 ruling had alre
 creditors. `place-anchor` is the third and it is genuinely new: `goto-anchor` named an `AnchorId`
 that nothing produced and there was no setter at all, which is why `m` is bound to silence.
 
-**Two debts still have no creditor, and both lints say so out loud rather than passing quietly.**
-Neither gets a task here, because inventing one would be inventing product work rather than
-recording debt — but a reader looking for what this window did *not* close should find them named:
+**One debt still has no creditor, and the lint says so out loud rather than passing quietly.**
+It gets no task here, because inventing one would be inventing product work rather than recording
+debt — but a reader looking for what this window did *not* close should find it named:
 
-- `scripts/lint-action-arms.sh` reports *13 recorded gaps (1 with no task that closes them)*, and
-  the one is `ApplyEdits`. Its capability row now says `S6 / T052`, so the creditor exists; the
-  RECORDED table's own blocking-task field is what is still empty, and that is a `scripts/` edit.
+> **This paragraph said *two* until the pre-`S4` scout, and the numbers under it were three
+> versions stale.** It quoted `scripts/lint-action-arms.sh` at *13 recorded gaps (1 with no task
+> that closes them)* and named `ApplyEdits` as the one; the lint reports **11 recorded gaps (0
+> with no task that closes them)** as of 2026-08-13. The fix was also not the one predicted here.
+> This text proposed filling the RECORDED table's empty blocking-task field — a `scripts/` edit —
+> and what actually happened is better: `Jump` and `ApplyEdits` were **removed from the table
+> entirely**, because re-declaring their capability rows against unticked tasks (`jump` → `T042`,
+> `apply-edits` → `T052`) took them out of the ticked filter that puts an entry there at all. The
+> note at `scripts/lint-action-arms.sh`'s RECORDED table records the reasoning: neither was ever a
+> missing arm, the attribution was the bug. **Nothing recomputes the numbers in this paragraph** —
+> `scripts/doc_claims.py` checks capability, parity, task, wave and lint counts, not quoted lint
+> output — which is exactly why it drifted, and is worth knowing before quoting a lint in prose
+> again.
+
 - `scripts/lint-node-kinds.sh` reports *30 node kinds, 16 composed by the shipped configuration,
   14 recorded gaps (1 with no task that closes them)*, and the one is `Node::Gutter` — the state
   column **without** an editor around it, for a surface that wants it. `T031` built the column and
@@ -1848,7 +1872,7 @@ recording debt — but a reader looking for what this window did *not* close sho
   [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md), which asks how a terminal capability should reach that
   kind's arm — a question about composing something nothing composes.
 
-That second lint is also why the window ran before `S4` rather than after: `Completion` and
+That lint is also why the window ran before `S4` rather than after: `Completion` and
 `Signature` are already in its recorded gaps, against `T038` and `T039`. So the day `S4` builds
 those two widgets and composes neither, the lint is what says so — instead of a golden frame
 passing on a hand-built tree while the running binary draws nothing, which is the shape this
