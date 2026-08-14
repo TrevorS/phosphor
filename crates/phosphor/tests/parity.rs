@@ -650,8 +650,14 @@ fn run(argv: &[String]) -> Output {
 // The enumeration
 // ---------------------------------------------------------------------------
 
+/// The registry's shape, which every walk below assumes and none of them
+/// re-checks.
+///
+/// Split out with the three walks at `§26`. It is the assertion that makes an
+/// empty or half-registered table fail loudly rather than letting three tests
+/// pass over nothing.
 #[test]
-fn every_capability_is_reachable_at_every_door() {
+fn the_registry_is_one_row_per_capability_at_three_doors() {
     let registered = registrations();
     assert_eq!(
         registered.len(),
@@ -660,33 +666,126 @@ fn every_capability_is_reachable_at_every_door() {
     );
     assert!(
         !registered.is_empty(),
-        "an empty registry would pass every check below"
+        "an empty registry would pass every walk below"
     );
     assert_eq!(
         Door::ALL.len(),
         3,
-        "invariant 2 is three doors; a fourth needs a third of this file"
+        "invariant 2 is three doors, and there is one walk per door below. \
+         A fourth door needs a fourth walk — `Doors::check`'s `match` will not \
+         compile without one, and this says so before the compiler does."
     );
+}
 
+/// One door, every capability. The body of the three walks below.
+///
+/// **Why there are three walks and not one loop over `Door::ALL`.** This was a
+/// single test until `§26`, and it took **176.1 s of a 182.5 s** suite — every
+/// other test in the repository finished inside the remaining ~6 seconds.
+/// `nextest` isolates tests per process and can run hundreds concurrently, but
+/// it cannot split one test *function*, so that was a floor under `just gate`
+/// that no parallelism removed, paid once per agent in a concurrent window.
+///
+/// Splitting per door was **not** expected to be the fix — a split bounds the
+/// run at the largest third, and if one door owns nearly all of the time the
+/// speedup rounds to nothing. It was expected to be the cheapest way to buy the
+/// measurement, because three tests print three numbers. Read those numbers
+/// before optimising anything here; the entry at `docs/OPEN-QUESTIONS.md`'s
+/// `§26` records what they turned out to be.
+///
+/// Nothing about the checking changed. `Doors::check` is still a `match` on
+/// [`Door`], so a fourth door is still a compile error rather than a third of
+/// the vocabulary nobody walked.
+fn walk(door: Door) {
+    let registered = registrations();
     let mut doors = Doors::open();
     let mut failures = Vec::new();
+
     for registration in &registered {
-        for door in Door::ALL {
-            if let Err(why) = doors.check(*door, registration) {
-                failures.push(format!(
-                    "{} · {} — {why}",
-                    registration.capability.name,
-                    door.as_str()
-                ));
-            }
+        if let Err(why) = doors.check(door, registration) {
+            failures.push(format!("{} — {why}", registration.capability.name));
         }
     }
 
     assert!(
         failures.is_empty(),
-        "{} of the {} door checks over {} capabilities failed:\n{}",
+        "{} of the {} {} checks failed:\n{}",
         failures.len(),
-        registered.len() * Door::ALL.len(),
+        registered.len(),
+        door.as_str(),
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn every_capability_is_reachable_at_the_steel_door() {
+    walk(Door::Steel);
+}
+
+#[test]
+fn every_capability_is_reachable_at_the_mcp_door() {
+    walk(Door::Mcp);
+}
+
+/// The CLI door, and the only walk that does not go through [`Doors::check`].
+///
+/// **This third is the whole cost, and the split is what proved it.** Measured
+/// the moment the three walks existed: Steel **1.19 s**, MCP **1.14 s**, CLI
+/// **157.62 s**. The guess recorded at `§26` — that the Steel door owned the
+/// time, because it is one parse/compile/eval per capability — was wrong by two
+/// orders of magnitude, which is the argument for measuring before optimising
+/// stated as a fact rather than as advice.
+///
+/// The reason is structural and not a defect: [`cli_door`] is the only door
+/// whose check *spawns the shipping binary*, because a CLI door with an exit
+/// code and an argv is not a function you can call in-process. So this walk is
+/// 212 process launches, each one booting the Steel layer on the way up.
+///
+/// They are also completely independent of one another — separate processes,
+/// null stdin, no shared state, nothing written — so they are run across lanes
+/// rather than end to end. That is a genuine wall-clock fix rather than a
+/// rearrangement: the work per capability is unchanged and every one of them
+/// still runs.
+///
+/// This is why the walk calls [`cli_door`] directly. The `match` on [`Door`] in
+/// [`Doors::check`] still exists and is still what the other two walks go
+/// through, so a fourth door remains a compile error there — and
+/// `the_registry_is_one_row_per_capability_at_three_doors` fails first, saying
+/// a fourth walk is owed.
+#[test]
+fn every_capability_is_reachable_at_the_cli_door() {
+    let registered = registrations();
+    let lanes = std::thread::available_parallelism()
+        .map_or(4, |cores| cores.get())
+        .clamp(1, registered.len().max(1));
+    let per_lane = registered.len().div_ceil(lanes).max(1);
+
+    let failures: Vec<String> = std::thread::scope(|scope| {
+        let lanes: Vec<_> = registered
+            .chunks(per_lane)
+            .map(|slice| {
+                scope.spawn(move || {
+                    slice
+                        .iter()
+                        .filter_map(|registration| {
+                            cli_door(&registration.capability, &registration.cli)
+                                .err()
+                                .map(|why| format!("{} — {why}", registration.capability.name))
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        lanes
+            .into_iter()
+            .flat_map(|lane| lane.join().expect("a lane spawns the binary and no more"))
+            .collect()
+    });
+
+    assert!(
+        failures.is_empty(),
+        "{} of the {} cli checks failed:\n{}",
+        failures.len(),
         registered.len(),
         failures.join("\n")
     );
@@ -850,4 +949,44 @@ fn the_eval_route_reaches_what_no_flag_can_express() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// `§14` — one door, one refusal, one exit code.
+///
+/// The two routes into the CLI door disagreed: a verb decodes to an Action and
+/// gets `Outcome::Refused`, while `--eval` runs scheme and the refusal comes
+/// back as the *value* the scheme evaluated to, inside a successful
+/// `Outcome::Done`. So the same refusal exited `1` one way and `0` the other,
+/// and a script that seeded state through this door could not tell.
+///
+/// Both spellings below are the same capability refusing for the same reason.
+/// The eval one also happens to be the `§8` spelling — a plain `path:line`
+/// where a tagged target used to be required — so this pins both rulings at the
+/// shipping binary rather than at a unit boundary.
+#[test]
+fn the_two_cli_routes_agree_on_what_a_refusal_exits() {
+    let verb = run(&["mark-seen".to_owned(), "--target=cursor".to_owned()]);
+    let eval = run(&[
+        "--eval".to_owned(),
+        "(mark-seen! \"src/retry.rs:24\")".to_owned(),
+    ]);
+
+    for (route, output) in [("verb", &verb), ("eval", &eval)] {
+        let printed = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(
+            printed.contains("refused"),
+            "the {route} route was supposed to refuse; it printed {printed:?}"
+        );
+        assert!(
+            !output.status.success(),
+            "the {route} route refused and still exited 0 — a caller checking `$?` \
+             cannot tell that nothing happened"
+        );
+    }
+
+    assert_eq!(
+        verb.status.code(),
+        eval.status.code(),
+        "one door, one refusal, one exit code"
+    );
 }

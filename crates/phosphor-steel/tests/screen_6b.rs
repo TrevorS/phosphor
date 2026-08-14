@@ -18,7 +18,7 @@
 //! | `(unseen-regions "src/retry.rs")` | reaches the registered query; refused, naming `T041` |
 //! | `(map region-author (block-regions …))` | `block-regions` is registered; **`region-author` is unbound** |
 //! | `(keymap-set! "]r" (lambda () (goto (next-region-by claude))))` | `next-region-by` is registered; **`goto` and `claude` are unbound** (Steel names `claude`), and a lambda's free identifiers are resolved when it is *defined*, so the drawn body cannot be compiled |
-//! | `(watch-place "src/retry.rs:24" 'delay)` | the alias resolves to `place-watch`; its `anchor` is a `Target`, and the drawing passes a string |
+//! | `(watch-place "src/retry.rs:24" 'delay)` | the alias resolves to `place-watch` and the string decodes — refused, naming `T077`. Until `§8` this was the one line that failed on *shape*: `anchor` is a `Target` and the drawing passed a string, so the answer was a `TypeMismatch`. The mockup was right and the vocabulary was wrong |
 //!
 //! `query.rs` already says `region-author` is *"an ordinary accessor over one of
 //! those records, free and unregistered"* — so it and `goto` belong in
@@ -119,9 +119,26 @@ fn the_session_is_typable_but_the_store_is_s5() {
     // and `goto-location` are the registered names, and the actor identifiers
     // have no binding at all. Steel names the first it reaches.
     assert!(answers[2].contains("claude"), "{answers:#?}");
-    // `6b` draws `(watch-place "src/retry.rs:24" …)`; the row's `anchor` is a
-    // `Target`. The alias resolved — this is a shape gap, not a missing name.
-    assert!(answers[3].contains("place-watch"), "{answers:#?}");
+    // `6b` draws `(watch-place "src/retry.rs:24" …)`, and this line used to
+    // assert the *shape gap*: the alias resolved, the row's `anchor` was a
+    // `Target`, and a string could not be one — so the answer was Steel's
+    // `TypeMismatch` naming `place-watch`, and `contains("place-watch")` was
+    // reading an error message.
+    //
+    // `§8` ruled the mockup right and the vocabulary wrong. `path:line` is a
+    // `Target` spelling now, so this line does what it is drawn doing: the
+    // alias resolves, the string decodes, the call reaches the dispatcher, and
+    // what comes back is the editor declining in its own voice rather than the
+    // VM rejecting an argument.
+    //
+    // The assertion moved with it, and is stronger for it — naming the task is
+    // something only a *decoded* call can do, where the old one passed on any
+    // message that happened to mention the capability.
+    assert!(answers[3].contains("T077"), "{answers:#?}");
+    assert!(
+        !answers[3].contains("TypeMismatch"),
+        "the drawn line reaches the dispatcher now; a shape error means `§8` regressed: {answers:#?}"
+    );
 }
 
 #[test]

@@ -95,16 +95,16 @@ fn session() -> (Repl, Runtime) {
 /// reverse-engineer an absence."* Every line was checked against the tree in
 /// the session that wrote it.
 const NOTES: &[&str] = &[
-    "`6b` draws `⇒ #ok · …` for all four lines. Three cannot answer that at",
-    "  S2 and the fourth is a shape gap; the per-line table in",
-    "  phosphor-steel/tests/screen_6b.rs says which is which.",
+    "`6b` draws `⇒ #ok · …` for all four lines. None can answer that yet;",
+    "  the per-line table in phosphor-steel/tests/screen_6b.rs says why",
+    "  each one cannot.",
     "`unseen-regions` is registered and refuses, naming T041 — there is no",
     "  store to query (S5).",
     "`region-author`, `goto` and `claude` are unbound. They are editor-layer",
     "  names over records T041 returns; writing them now would invent the",
     "  record shape (T033, T041).",
-    "`watch-place` resolves as an alias and then fails on shape: the row's",
-    "  anchor is a Target and the mockup passes a string (T077).",
+    "`watch-place` resolves as an alias, and since §8 the mockup's",
+    "  `path:line` string decodes to a Target — so it refuses (T077).",
     "The λ prompt is drawn steel `#9ec98c`, not claude green. Design Language",
     "  line 53 draws `λ ◆` in steel captioned \"steel prompt\"; 6b draws it in",
     "  claude green. Teej ruled for the lexicon — the mockup is the bug.",

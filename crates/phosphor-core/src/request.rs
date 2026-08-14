@@ -332,7 +332,59 @@ pub enum Target {
     },
 }
 
-wire_union!(Target {
+/// `"path:line"` and `"path:first-last"`, the way a person writes a location.
+///
+/// **Ruled at `§8`, and the build was the bug.** Mockup `6b` draws
+/// `(watch-place "src/retry.rs:24" 'delay)`; the vocabulary took only a tagged
+/// [`Target`] record, so the drawing decoded to an alias and then failed on
+/// shape. `path:line` is what a person types, what a compiler prints, and what
+/// an agent sends over MCP — and [`Value`](crate::value::Value) is deliberately
+/// smaller than JSON, no arbitrary-key maps, which makes a structured target
+/// most awkward at exactly the door that matters most. The mockup drew what
+/// someone would naturally write, and that is evidence.
+///
+/// **A colon and a number are required.** A bare word is *not* a path here, and
+/// that is the whole reason this is narrow: `"cursor"` is a real tag, and a
+/// spelling that turned it into a file target would convert a typo into a
+/// silently different request. Anything this does not recognise falls through
+/// to the tagged shape and its error, which names the tags.
+///
+/// The span is half-open and whole-line, and the last colon wins, so a path
+/// that itself contains one still parses — or, failing to, is rejected rather
+/// than guessed at.
+fn target_from_text(text: &str) -> Option<Target> {
+    let (path, lines) = text.rsplit_once(':')?;
+    if path.is_empty() {
+        return None;
+    }
+
+    let (first, last) = match lines.split_once('-') {
+        Some((first, last)) => (first.parse::<u32>().ok()?, last.parse::<u32>().ok()?),
+        None => {
+            let only = lines.parse::<u32>().ok()?;
+            (only, only)
+        }
+    };
+    if first == 0 || last < first {
+        return None;
+    }
+
+    Some(Target::Explicit {
+        path: PathBuf::from(path),
+        span: Span {
+            start: Position {
+                line: first,
+                column: 1,
+            },
+            end: Position {
+                line: last.saturating_add(1),
+                column: 1,
+            },
+        },
+    })
+}
+
+wire_union!(Target, text = target_from_text {
     Cursor => "cursor", "wherever the cursor is — focus-relative, refused over MCP" {},
     Selection => "selection", "the live visual selection — focus-relative, refused over MCP" {},
     PickerRow => "picker-row", "the highlighted picker row — focus-relative, refused over MCP" {},
@@ -1229,5 +1281,92 @@ mod tests {
         };
         assert_eq!(got, "everything");
         assert!(expected.contains(&"region"));
+    }
+
+    /// `§8`, the case the mockup drew: `(watch-place "src/retry.rs:24" 'delay)`.
+    #[test]
+    fn the_spelling_6b_draws_decodes_to_an_explicit_target() {
+        let target = Target::from_value(&Value::Text("src/retry.rs:24".to_owned())).unwrap();
+        assert_eq!(
+            target,
+            Target::Explicit {
+                path: PathBuf::from("src/retry.rs"),
+                span: Span {
+                    start: Position {
+                        line: 24,
+                        column: 1
+                    },
+                    end: Position {
+                        line: 25,
+                        column: 1
+                    },
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn a_range_spells_first_and_last_and_the_span_stays_half_open() {
+        let target = Target::from_value(&Value::Text("src/fetch.rs:3-7".to_owned())).unwrap();
+        let Target::Explicit { span, .. } = target else {
+            panic!("a range is an explicit target");
+        };
+        assert_eq!(span.start.line, 3);
+        // Half-open: line 7 is inside the span, so the first position *after*
+        // it is line 8. An inclusive `end` here would silently drop a line.
+        assert_eq!(span.end.line, 8);
+    }
+
+    /// The reason the spelling requires a colon and a number rather than
+    /// accepting a bare word as a path.
+    #[test]
+    fn a_bare_tag_name_is_not_quietly_a_file() {
+        for text in ["cursor", "selection", "region"] {
+            let error = Target::from_value(&Value::Text(text.to_owned()));
+            assert!(
+                error.is_err(),
+                "`{text}` is a tag, and a spelling that made it a file target \
+                 would turn a typo into a different request"
+            );
+        }
+    }
+
+    #[test]
+    fn a_location_that_is_not_one_is_refused_rather_than_guessed_at() {
+        for text in [
+            "src/retry.rs:",     // no number
+            "src/retry.rs:0",    // lines are 1-based
+            "src/retry.rs:9-2",  // backwards
+            ":24",               // no path
+            "src/retry.rs:2.5",  // not an integer
+            "src/retry.rs:-4",   // no first line
+            "src/retry.rs:1-",   // no last line
+            "src/retry.rs:1-1x", // trailing junk
+        ] {
+            assert!(
+                Target::from_value(&Value::Text(text.to_owned())).is_err(),
+                "`{text}` is not a location and must not decode as one"
+            );
+        }
+    }
+
+    /// The spelling is an *input*, and `to_value` still answers the tagged
+    /// record — so one target has one encoding and the doors keep agreeing.
+    #[test]
+    fn the_text_spelling_is_an_input_and_never_an_encoding() {
+        let target = Target::from_value(&Value::Text("a.rs:1".to_owned())).unwrap();
+        let encoded = target.to_value();
+        assert_eq!(encoded.tag(), Some("explicit"));
+        assert_eq!(Target::from_value(&encoded).unwrap(), target);
+    }
+
+    /// A union that declares no spelling is unchanged by the macro's new arm.
+    #[test]
+    fn a_union_without_a_spelling_still_refuses_text() {
+        let error = PaneRef::from_value(&Value::Text("focused".to_owned()));
+        assert!(
+            error.is_err(),
+            "only `Target` opted into a text spelling; every other union takes the tagged record"
+        );
     }
 }

@@ -333,6 +333,27 @@ lifetime: the harness outlives any single phase and gets extended at every check
   > `gh api repos/TrevorS/phosphor/branches/main/protection` still answers
   > `404 Branch not protected`, run again this session. Nothing blocks a merge. The `just lint`
   > half is fixed — `lint-doc-claims` reports clean on this tree.
+  >
+  > **Pre-`S4` scout — item (1) is closed. `main` is protected.** The same `gh api` call now
+  > answers a protection object with six required status checks, which are the six blocking CI
+  > jobs by name: `cargo fmt --check`, `cargo clippy -D warnings`, `cargo nextest run`,
+  > `just lint (structural lints)`, `cargo deny check`, `cargo hack (feature combinations)`.
+  > `Tier 2 — VHS pixel diff (non-blocking)` is **deliberately not among them**, which is this
+  > task's *done when* stated as configuration rather than as intent. Force-pushes and branch
+  > deletion are refused.
+  >
+  > `enforce_admins` is **false**, and that is the one judgement in it rather than a
+  > transcription of the criterion. Teej pushes `master:main` directly and this build has no
+  > PR flow; enforcing against admins would have made the next push fail rather than made
+  > anything safer, since required checks cannot have run on a commit that does not exist yet.
+  > So the protection is real for a PR and for anyone who is not an admin, and the owner's own
+  > push still works. Turning it on is one field — `gh api -X PUT
+  > repos/TrevorS/phosphor/branches/main/protection/enforce_admins` — the day there is a flow
+  > that wants it.
+  >
+  > **Still outstanding: item (2).** The `tapes-diff` job has still never executed, so there is
+  > still no Tier-2 signal to point at, and that is what keeps this unticked. A criterion about
+  > which tier blocks cannot be met by the half that blocks alone.
 
 - [ ] **V009 · Degradation tapes**
   `Env TERM xterm-256color` and `Env NO_COLOR 1` variants of the core screens, exercising the
@@ -1047,6 +1068,14 @@ CP-0 settled the shape: **the input machine is ours.**
   > This is exactly the `T034`/`3c` failure mode that this repair pass existed to close, and it
   > is the one surface where it was not closed. **Wanted:** an arm in the host and one pty test
   > that types `:help agent-objects` and reads the grid off the frame.
+  >
+  > **↑ That paragraph is spent, and it was still telling readers to grep for its own
+  > evidence.** `T097` built the arm and is ticked; `grep -n OpenHelp crates/phosphor/src/main.rs`
+  > answers `2022` today. Struck rather than deleted because the instruction it carries — *grep
+  > it* — is exactly what a reader would have done, and they would have found the opposite of
+  > what it promised. **What `T097` did not settle is the rest of the criterion:** the *done
+  > when* is that `6d` reproduces from a keystroke and that a REPL rebind shows up in it, and
+  > the two items below are what still stands between the arm and that.
   >
   > **Second, smaller, outstanding item.** The page composes from the **first** `Select` and
   > the **first** `Operator` bound in normal scope — `crates/phosphor/tests/screen_6d.rs:129-132`

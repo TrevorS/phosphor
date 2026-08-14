@@ -3,16 +3,16 @@ source: crates/phosphor/tests/screen_6b.rs
 expression: frame.to_text(&buf)
 ---
 screen 6b-80 · phosphor-dark · 80x24 cells
-  `6b` draws `⇒ #ok · …` for all four lines. Three cannot answer that at
-    S2 and the fourth is a shape gap; the per-line table in
-    phosphor-steel/tests/screen_6b.rs says which is which.
+  `6b` draws `⇒ #ok · …` for all four lines. None can answer that yet;
+    the per-line table in phosphor-steel/tests/screen_6b.rs says why
+    each one cannot.
   `unseen-regions` is registered and refuses, naming T041 — there is no
     store to query (S5).
   `region-author`, `goto` and `claude` are unbound. They are editor-layer
     names over records T041 returns; writing them now would invent the
     record shape (T033, T041).
-  `watch-place` resolves as an alias and then fails on shape: the row's
-    anchor is a Target and the mockup passes a string (T077).
+  `watch-place` resolves as an alias, and since §8 the mockup's
+    `path:line` string decodes to a Target — so it refuses (T077).
   The λ prompt is drawn steel `#9ec98c`, not claude green. Design Language
     line 53 draws `λ ◆` in steel captioned "steel prompt"; 6b draws it in
     claude green. Teej ruled for the lexicon — the mockup is the bug.
@@ -33,7 +33,7 @@ text
   8 │⇒ #refused · Error: FreeIdentifier: Cannot reference an identifier before its de│
   9 │                                                                                │
  10 │λ (watch-place "src/retry.rs:24" 'delay)                                        │
- 11 │⇒ #refused · Error: TypeMismatch: `place-watch`: argument `anchor`: expected a t│
+ 11 │⇒ (#refused "not built yet — T077 builds it")                                   │
  12 │λ                                                                               │
  13 │                                                                                │
  14 │                                                                                │
@@ -61,7 +61,7 @@ fg
   8 │iiiiiiiiiijjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj│
   9 │................................................................................│
  10 │ffhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh........................................│
- 11 │iiiiiiiiiijjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj│
+ 11 │iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii...................................│
  12 │ffh.............................................................................│
  13 │................................................................................│
  14 │................................................................................│

@@ -654,9 +654,29 @@ macro_rules! wire_record {
 /// Every variant must be brace-form, including the empty ones (`Cursor {}`).
 /// Uniform shape beats terse declarations here: one match arm pattern works for
 /// all of them, and the generated code has no special cases to get wrong.
+/// The `text = …` parser a union gets when it declares none.
+///
+/// Generic in the return type so the macro can call it unconditionally: the
+/// binding it feeds is annotated `Option<Self>`, which is what fixes `T`.
+pub(crate) fn no_text_spelling<T>(_text: &str) -> Option<T> {
+    None
+}
+
 macro_rules! wire_union {
+    // No plain-text spelling — the ordinary case. Delegates rather than
+    // duplicating the body, so the two arms cannot drift.
     (
         $ty:ident {
+            $($body:tt)*
+        }
+    ) => {
+        $crate::value::wire_union!($ty, text = $crate::value::no_text_spelling {
+            $($body)*
+        });
+    };
+
+    (
+        $ty:ident, text = $parser:path {
             $(
                 $variant:ident => $tag:literal, $vdoc:literal {
                     $( $field:ident : $fty:ty = $doc:literal ),* $(,)?
@@ -700,6 +720,16 @@ macro_rules! wire_union {
             fn from_value(
                 value: &$crate::value::Value,
             ) -> ::core::result::Result<Self, $crate::value::WireError> {
+                // The optional plain-text spelling, tried before the tagged
+                // shape and never instead of it. A union that declares none
+                // gets `no_text_spelling`, which is `None` for every input, so
+                // this costs one branch and changes no behaviour there.
+                if let $crate::value::Value::Text(text) = value {
+                    let spelled: ::core::option::Option<Self> = $parser(text);
+                    if let ::core::option::Option::Some(target) = spelled {
+                        return ::core::result::Result::Ok(target);
+                    }
+                }
                 let $crate::value::Value::Record(args) = value else {
                     return Err($crate::value::WireError::Type {
                         expected: concat!("a tagged ", stringify!($ty), " record"),

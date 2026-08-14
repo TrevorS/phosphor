@@ -146,8 +146,57 @@ impl Answer {
     /// through this door has to be able to tell. That is the whole reason this
     /// exists: `V006` builds tape fixtures out of `--eval` calls, and a refusal
     /// that exited `0` would produce a wrong recording silently.
-    const fn happened(&self) -> bool {
-        !matches!(self, Self::Acted(Outcome::Refused(_)))
+    ///
+    /// **Ruled at `§14`: the two routes through this door had to agree, and
+    /// they did not.** Measured against the tree rather than reasoned about:
+    ///
+    /// ```text
+    /// phosphor mark-seen --target=cursor        #refused · not built yet …   exit 1
+    /// phosphor --eval '(mark-seen! "a.rs:1")'   (#refused "not built yet …") exit 0
+    /// ```
+    ///
+    /// One door, one refusal, two exit codes. The verb route decodes to an
+    /// Action and gets [`Outcome::Refused`], which the first arm catches; the
+    /// eval route runs *scheme*, and the capability's refusal comes back as the
+    /// value that scheme evaluated to — a `(#refused "…")` list inside an
+    /// `Outcome::Done`. The evaluation genuinely succeeded, which is why the
+    /// shape is right and the exit code was wrong.
+    ///
+    /// So the eval route now reads its own result. This is not a new contract:
+    /// it is `T023`'s existing one, applied to the route that was skipping it.
+    ///
+    /// **Why now, when `§14` says nothing is wrong today.** Because today is
+    /// when it is free. Nothing reads `$?` from this route yet — the parity
+    /// walk reads stdout and `scripts/seed-fixtures.sh` matches the refusal
+    /// text before it ever consults `code` — and `§14`'s trap springs the day
+    /// `T041` lands and refusals start turning into successes. Changing it
+    /// while every caller is indifferent is the cheapest this will ever be.
+    ///
+    /// Distinct from `T100`, which is about the *voice* of a refusal and adds
+    /// an `Outcome` case for "it ran and raised". This is only the exit code,
+    /// and it reads the shape `phosphor_steel::registry::REFUSED` already
+    /// defines — the constant whose own doc comment says it is two elements
+    /// "so the reason survives to the REPL and to a composition that wants to
+    /// branch on it". This is such a composition.
+    fn happened(&self) -> bool {
+        match self {
+            Self::Acted(Outcome::Refused(_)) => false,
+            Self::Acted(Outcome::Done(receipt)) => !Self::is_refusal(&receipt.value),
+            Self::Read(_) => true,
+        }
+    }
+
+    /// A refusal the VM answered as data, rather than one the dispatcher
+    /// returned as an [`Outcome`].
+    fn is_refusal(value: &Value) -> bool {
+        matches!(
+            value,
+            Value::List(items)
+                if matches!(
+                    items.first(),
+                    Some(Value::Text(head)) if head == phosphor_steel::registry::REFUSED
+                )
+        )
     }
 }
 

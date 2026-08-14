@@ -35,6 +35,14 @@ here that is specifically about running a **window** rather than about the produ
 *"nothing is gained by starting it in `S3`"* has now expired by its own terms; it is `S4` work and
 is called out as such below rather than left reading like a deferral.
 
+**Then the scout's own list was worked, in the same window.** §8 and §14 are ruled and built,
+`R15` is done, §26 is measured and fixed, and §20 is hardened without having been reproduced.
+**Three of those five contradicted the entry that recorded them**, which is the argument for
+running a register rather than reading it: §26's guess about where the time went was wrong by two
+orders of magnitude, §14 turned out to be a live inconsistency rather than a forward-looking
+trap, and `R15` said only Teej could do it when the API takes it. Every one of those corrections
+came from executing the thing, and none from thinking harder about it.
+
 ---
 
 ## Doc-versus-tree disagreements
@@ -63,18 +71,12 @@ editor-layer names `6b` types that nothing binds.
 became one task, `T100`, exactly as both entries recommended. The scope block that stood here
 moved with them.
 
-### 8 · `place-watch` takes a `Target`; `6b` passes a string
+**§8 is ruled and closed too**, by the pre-`S4` scout, taking its own recommendation: `path:line`
+is a `Target` spelling now. **§14 went with it**, from *Raised by Window D's S3 run* below — the
+two were one seam, and running §14 rather than reasoning about it found that the CLI door already
+disagreed with itself.
 
-`(watch-place "src/retry.rs:24" 'delay)` decodes to the alias and then fails on shape.
-
-Here the build is the bug, which is the opposite direction from the other two mockup
-disagreements and worth stating plainly. `"path:line"` is what a person types and what an agent
-sends over MCP, and `Value` is deliberately smaller than JSON — no arbitrary-key maps — so a
-structured `Target` is most awkward at exactly the door that matters most. The alias decoding
-already sits at that seam.
-
-*Recommendation: make `path:line` a valid `Target` spelling at the door. The mockup drew what
-someone would naturally write, and that is evidence.*
+*Nothing stands open in this category.*
 
 ---
 
@@ -124,19 +126,9 @@ whichever rendering wins is what every agent-surface tape at `CP-5` will show.
 *Recommendation: Teej picks one rendering per conflict at claude.ai, and `fixtures/` follows. There
 is no build change here — nothing is wrong in the tree.*
 
-### 14 · `phosphor --eval` cannot report refusal through its exit code
-
-Verified empirically by `V006`'s agent: a well-formed call the editor *refuses* and a trivial
-`(+ 1 2)` both exit `0`, because the refusal is data the evaluation returned rather than a failure
-of the evaluation. Only a Steel-level error — unbound identifier, bad arity — exits `1`.
-
-Nothing is wrong today. The trap is forward-looking: any seeding or tape tooling that checks `$?`
-to decide whether a call worked will silently misreport the day `T041` lands and refusals turn into
-successes. `scripts/seed-fixtures.sh` checks the printed value instead.
-
-*Recommendation: decide whether refusal is an error at the CLI door. It is the one door with an
-exit code, and "the editor declined" is arguably a `1`. Touches `T023`'s contract, so it is
-`spine`'s.*
+**§14 is ruled and closed** — `phosphor --eval`'s exit code. It was recorded as a
+forward-looking trap; running it found the CLI door's two routes already answering different
+exit codes for the same refusal, which made the ruling a correction rather than a decision.
 
 ## Raised by the test-depth run
 
@@ -160,6 +152,37 @@ map denies you exactly when you want it. `just coverage` works around it with
 should wait for the frame that proves the keystroke landed rather than sampling after a delay.
 The same pattern is in 35 other `loop_pty` tests and only this one has been seen to fail, which
 is worth understanding before assuming the rest are safe.*
+
+**Pre-`S4` scout — worked, and it stays open with its status changed rather than ticked. It
+could not be reproduced.**
+
+- **~400 executions, none failed.** 30 runs of the single test under 20 spinning processes on 10
+  cores; 24 concurrent runs of the whole binary — four at a time, 16 pty children each — which is
+  the shape of three agents running `just test` at once that the entry describes.
+- **Two hypotheses were formed and measurement killed both.** First: that `Editor::open` waits for
+  one frame while startup draws several, so the first `press` is satisfied by leftovers and no key
+  is ever handled. Startup was measured drawing **exactly one** frame and holding at one after
+  1.5 s idle. Second: that some key draws no frame, or two. Every key these tests press was
+  measured at **exactly one** — `l`, `g`, `U`, `i`, `w`, `X`, `esc`, `:`, `w`, `\r`, `SPC`.
+- **What was found instead is real, and is a hole of the right shape.** The harness's
+  synchronisation was **one-sided**. Too *few* frames times out, loudly. Too *many* — one key
+  drawing two — was invisible, and its consequence lands on the *next* `press`: `target` is
+  computed from a counter the surplus already inflated, so that press returns without its keys
+  having been handled, and the assertion at the end reads a buffer that never saw them. That
+  produces a plausible mis-sequencing rather than a timeout, which is the symptom this entry
+  records, and it is load-sensitive because whether the surplus lands before or after `press`
+  returns is a scheduling question.
+- **So the surplus is accounted for now.** Each press records what it waited for and the next one
+  requires the counter to still be there. Proven on a planted off-by-one baseline; the failure
+  names the unaccounted frame, the key being typed, and the last frame drawn. All 16 tests pass
+  with it, which is itself the stronger statement the probes could not make: **no key in any of
+  them draws a surplus frame.**
+
+**Not asserted: that this was the cause.** It is a mechanism that produces the symptom, closed.
+If the flake recurs it now says why instead of being a mystery a second time — and if it recurs
+*without* tripping this assertion, that is a genuinely new fact and worth more than a fix would
+have been. The second-order problem is untouched: `cargo llvm-cov --workspace` still cannot
+complete, because that depends on the test never failing rather than on it failing legibly.
 
 ### 21 · `gU` splices back a different length than it took
 
@@ -293,6 +316,31 @@ of Window E). Then decide with a number in hand. Hoisting the compile is the onl
 could actually move 176 s, and it is not worth writing until something has shown that the compile
 is where the time goes.*
 
+**Pre-`S4` scout — done, and the guess above was wrong by two orders of magnitude.** The split
+landed and the three numbers came back on the first run:
+
+| door  | time     | what its check does                              |
+| ----- | -------- | ------------------------------------------------ |
+| Steel | 1.19 s   | one parse/compile/eval per capability, in-process |
+| MCP   | 1.14 s   | in-process                                        |
+| CLI   | 157.62 s | **spawns the shipping binary, once per capability** |
+
+Everything above hedged on the Steel door owning the time, because it is the one doing 212
+parse-compile-evals. It owns **0.8%** of it. The CLI door owns the rest and for a reason nothing
+in this entry considered: a door with an argv and an exit code is not a function you can call
+in-process, so `cli_door` launches the binary, and each launch boots the Steel layer on the way
+up. That is 212 process spawns, and it is structural rather than a defect.
+
+**So the fix was not the split, and it was not hoisting the compile either.** The spawns are
+independent — separate processes, null stdin, nothing shared, nothing written — so they run
+across lanes instead of end to end. **157.6 s → 30.1 s**, no longer `nextest`'s slowest test, with
+every capability still checked exactly as before.
+
+Kept as a record rather than trimmed to the answer, because the wrong guess is the useful part:
+every option above was ranked against a hypothesis with no measurement behind it, the hedge
+(*"not asserted: that the Steel third is where the time goes"*) was the only thing that stopped
+it becoming a wasted optimisation, and the cheapest possible experiment settled it in one run.
+
 ---
 
 ## Repair pass — queued work, not questions
@@ -401,6 +449,16 @@ only what is left cannot tell you whether the rest was done or forgotten.
   byte-identical stills were the VHS pipeline duplicating a frame and **not** the surface failing
   to render — the build was right all along. `tapes/artifacts/DUPLICATES.md` records the pairs
   that are identical by construction.
+- **R15 · DONE — `main` is protected, and it was not "only Teej" after all.** This entry said a
+  GitHub settings change only he could make; the API takes it, and the pre-`S4` scout made it on
+  his instruction. Six required status checks, which are the six blocking CI jobs by name, with
+  `Tier 2 — VHS pixel diff (non-blocking)` deliberately excluded — that exclusion is `V008`'s
+  *done when* written as configuration. Force-pushes and deletion refused. `enforce_admins` is
+  **false** on purpose: `master:main` is pushed directly here and there is no PR flow, and
+  required checks cannot have run on a commit that does not exist yet, so enforcing against
+  admins would have broken the next push rather than protected anything. It closes item (1) of
+  `V008`; item (2), which is that the Tier-2 job has still never executed, is what keeps that
+  task unticked.
 - **R6 · DONE — and the entry below understated it by five.** The rot was real and in both
   directions: `scripts/lint-one-vm-door.sh`'s `entries=` regex named `keymap::press` and
   `keymap::reset`, which do not exist, and it also **missed five functions that do**.
@@ -439,10 +497,6 @@ only what is left cannot tell you whether the rest was done or forgotten.
   `ib` and never shows you `gsib`. Arguably correct for a grid rendered from the live keymap,
   since a sentence is a composition and not a binding — which makes this a question for whoever
   next holds `T086`, not a defect to fix on sight.
-- **R15 · OPEN, and re-verified.** `gh api repos/TrevorS/phosphor/branches/main/protection`
-  answers *"Branch not protected"* (404) on 2026-08-13. The CI jobs are right; nothing enforces
-  them at the repository. A GitHub settings change only Teej can make.
-
 ### Ruled not to do
 
 *Empty since 2026-08-13.* `R7` lived here and no longer does — see the `R7` entry under **Done**
@@ -572,6 +626,62 @@ Six moved here in the repair window between `CP-3` and `S4` — §19, §6, §13,
 as one. Three of them were closed by *reading the tree*, not by anyone deciding anything: the
 work that answered them had already landed and the question outlived its answer, which is the rot
 this file's own header names.
+
+**Two more from the pre-`S4` scout — §8 and §14, both ruled and both built.** They are together
+here because they turned out to be the same shape twice: a door that was awkward at the spelling a
+person actually uses, and a door that answered two different things depending on how you reached
+it.
+
+- **§8 · `place-watch` takes a `Target`; `6b` passes a string. RULED: the mockup was right and
+  the build was the bug.** `path:line` is now a `Target` spelling —
+  `crates/phosphor-core/src/request.rs`'s `target_from_text`, reached through an optional
+  `text = …` clause on `wire_union!` that every other union declines by default. It is
+  deliberately narrow: a colon and a number are required, so `"cursor"` stays a tag error rather
+  than becoming a file target and turning a typo into a different request. `to_value` still
+  answers the tagged record, so the spelling is an input and never an encoding, and the three
+  doors keep one wire form. Proven at the shipping binary, not at a unit boundary:
+  `phosphor --eval '(mark-seen! "src/retry.rs:24")'` decodes and refuses on its own terms.
+
+  **The most useful thing it turned up was that three tests were pinning the bug.** `6b`'s two
+  golden frames went red, and the diff is the whole ruling in two lines:
+
+  ```text
+  - ⇒ #refused · Error: TypeMismatch: `place-watch`: argument `anchor`: expected a tagged Target record, found text
+  + ⇒ (#refused "not built yet — T077 builds it")
+  ```
+
+  The line the mockup draws now reaches the dispatcher and gets declined in the product's voice
+  instead of the VM's. Alongside them, `crates/phosphor-steel/tests/screen_6b.rs` asserted
+  `answers[3].contains("place-watch")` — which was reading the *error message*, and passes on any
+  message that happens to mention the capability. It asserts `T077` now, and separately that the
+  answer is **not** a `TypeMismatch`, which only a decoded call can satisfy. Both frames also
+  carried a `NOTES` block, rendered into the snapshot, stating that this line *"fails on shape"*.
+  All of it was accurate when written and all of it described the defect as the specification.
+  That is the same shape as the `6d` prose recorded on `T086` in [TASKS.md](TASKS.md), found the
+  same way — by a behaviour change forcing a frame to move.
+
+- **§14 · `phosphor --eval` cannot report refusal through its exit code. RULED: the two routes
+  had to agree, and the eval one was wrong.** The entry framed this as a forward-looking trap.
+  Running it found something sharper — the *same door* already disagreed with itself:
+
+  ```text
+  phosphor mark-seen --target=cursor        #refused · not built yet …   exit 1
+  phosphor --eval '(mark-seen! "a.rs:1")'   (#refused "not built yet …") exit 0
+  ```
+
+  A verb decodes to an Action and gets `Outcome::Refused`; the eval route runs scheme, and the
+  refusal comes back as the *value* the scheme evaluated to, inside a perfectly successful
+  `Outcome::Done`. So this is not a new contract — it is `T023`'s existing one applied to the
+  route that was skipping it. `Answer::happened` in `crates/phosphor/src/door.rs` now reads the
+  result, branching on `phosphor_steel::registry::REFUSED`, whose own doc comment says the shape
+  is two elements *"so the reason survives to … a composition that wants to branch on it"*.
+  Pinned by `the_two_cli_routes_agree_on_what_a_refusal_exits`.
+
+  **Done now precisely because the entry said nothing was wrong yet.** Nothing reads `$?` from
+  this route today — the parity walk reads stdout, and `scripts/seed-fixtures.sh` matches the
+  refusal text before it ever consults `code` — so the change is free. It stops being free the
+  day `T041` lands and refusals start turning into successes, which is what §14 was warning
+  about. Distinct from `T100`, which is the *voice* of a refusal; this is only the exit code.
 
 - **§7 and §9 · The door does not speak §6's voice. RULED: one task, as both entries
   recommended.** They are the same defect — no `Outcome` case for *"it ran and raised"*, so a

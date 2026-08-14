@@ -96,6 +96,11 @@ mod driven {
         child: std::process::Child,
         transcript: Arc<Mutex<Vec<u8>>>,
         frames: Arc<AtomicU64>,
+        /// Frames this harness has asked for and waited on. It tracks `frames`
+        /// exactly, and the gap between them is the bug [`Editor::press`]
+        /// describes — see its doc comment for why an unaccounted frame is a
+        /// failure and not a curiosity.
+        accounted: AtomicU64,
         reader: Option<std::thread::JoinHandle<()>>,
     }
 
@@ -148,10 +153,17 @@ mod driven {
                 child,
                 transcript,
                 frames,
+                accounted: AtomicU64::new(1),
                 reader: Some(reader),
             };
             // Raw mode is on by the time the first frame lands, so nothing
             // written after this is echoed into what is being read.
+            //
+            // One frame, and `accounted` above says one: startup was measured
+            // drawing exactly one and then settling — held at 1 after 1.5s
+            // idle — so a second frame arriving here is the editor gaining a
+            // startup redraw, which every press after it would silently
+            // absorb. The first press is where that now surfaces.
             editor.await_frames(1);
             editor
         }
@@ -166,12 +178,50 @@ mod driven {
         /// Every sequence these tests write is single-byte keys, so the count
         /// of bytes is the count of frames to wait for; a test that needs a
         /// multi-byte escape would have to say so.
+        ///
+        /// **That check was one-sided until `§20`, and the missing side is the
+        /// one that fails quietly.** Too *few* frames times out, loudly. Too
+        /// *many* — one key drawing two — was invisible, and its consequence
+        /// lands on the *next* press: `target` is computed from a counter the
+        /// surplus has already inflated, so that press returns without its keys
+        /// having been handled at all, and the test goes on to assert against a
+        /// buffer that never saw them. That is a mechanism for exactly the
+        /// symptom `§20` records — a file whose contents are a plausible
+        /// mis-sequencing rather than a timeout — and it is load-sensitive,
+        /// because whether the surplus frame lands before or after `press`
+        /// returns is a scheduling question.
+        ///
+        /// So the surplus is now accounted for. Each press records the count it
+        /// waited for; the next one requires the counter to still be there.
+        ///
+        /// **Not asserted: that this is what `§20` saw.** It could not be
+        /// reproduced — ~400 executions across 30 single-test runs under 20
+        /// spinners on 10 cores, and 24 concurrent whole-binary runs, all green
+        /// — and every key these tests press was measured drawing exactly one
+        /// frame, including `:`, `w`, `\r`, `esc` and `SPC`. This closes the
+        /// hole that would produce that symptom and makes the next occurrence
+        /// name itself instead of being a mystery a second time.
         fn press(&self, keys: &[u8]) {
-            let target = self.frames.load(Ordering::Relaxed) + keys.len() as u64;
+            let before = self.frames.load(Ordering::Relaxed);
+            let accounted = self.accounted.load(Ordering::Relaxed);
+            assert_eq!(
+                before,
+                accounted,
+                "{} frame(s) arrived that no `press` asked for, before typing {:?}. \
+                 One frame per key is this harness's whole synchronisation: a key that drew \
+                 two means every press after it returns early, and the assertion at the end of \
+                 the test reads a buffer that never saw its keys. Last frame: {}",
+                before - accounted,
+                printable(keys),
+                self.tail()
+            );
+
+            let target = before + keys.len() as u64;
             (&*self.master)
                 .write_all(keys)
                 .expect("the child takes the keys");
             self.await_frames(target);
+            self.accounted.store(target, Ordering::Relaxed);
         }
 
         /// Everything drawn since `mark`, as printable text.
@@ -1110,6 +1160,7 @@ mod driven {
                 child,
                 transcript,
                 frames,
+                accounted: AtomicU64::new(1),
                 reader: Some(reader),
             };
             editor.await_frames(1);
