@@ -96,16 +96,22 @@ deny:
 #                                           instead, and what a compaction of a
 #                                           long session reclaims (T095's input).
 #   phosphor-ui/benches/soft_wrap.rs        B2 — what a resize costs on the one
-#                                           uncached path in the frame. NOT RUN
-#                                           BY THIS RECIPE YET: it needs a
-#                                           `[[bench]] name = "soft_wrap"` /
-#                                           `harness = false` pair in
-#                                           crates/phosphor-ui/Cargo.toml, which
-#                                           was outside the writing agent's file
-#                                           lock. Without it cargo autodiscovers
-#                                           the file with libtest's harness, so
-#                                           it compiles, runs zero measurements
-#                                           and prints nothing.
+#                                           uncached path in the frame. This
+#                                           said NOT RUN BY THIS RECIPE YET,
+#                                           pending a `[[bench]] name =
+#                                           "soft_wrap"` / `harness = false`
+#                                           pair that was outside the writing
+#                                           agent's file lock. The pair landed
+#                                           (crates/phosphor-ui/Cargo.toml), so
+#                                           it runs. The warning is worth
+#                                           keeping though, because the failure
+#                                           is SILENT: without the pair cargo
+#                                           autodiscovers the file under
+#                                           libtest's harness, it compiles, this
+#                                           recipe reports it, and it runs zero
+#                                           measurements. A benchmark that finds
+#                                           a 5.7-second resize would say
+#                                           nothing at all.
 #
 # There is deliberately no benchmark of the input machine. It was measured and
 # came back at 57-302 ns per keystroke, flat between a 100-line buffer and a
