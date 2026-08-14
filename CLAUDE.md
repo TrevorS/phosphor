@@ -27,15 +27,26 @@ Use the `just` recipes, not raw cargo — several of them differ from the obviou
   unrelated to correctness and gets raised until it means nothing.
 - `just hack` — `cargo-hack --each-feature`. This one **does** gate, in its own CI job, because
   "feature set X does not compile" has exactly one right answer.
+- **The vendor helpers**, which the fork section below assumes: `just vendor-check` (each
+  `VENDOR.md`'s recorded SHA against git history) · `just vendor-pull <fork> <ref>` (merge new
+  upstream) · `just vendor-build-headless` (proves `arboard` is out of the default graph **and**
+  returns with `--features clipboard` — both directions, which is what makes it a proof).
 - A bare `just` lists the recipes. It used to run the first one in the file, which was `build`.
+
+**`just --list` is the authority, not this section.** It was five recipes behind at the pre-`S4`
+audit — the three above plus `tapes-diff` and `tape-diff` — because nothing recomputes a list in
+prose. If the two disagree, the justfile wins.
 
 **Never run `cargo fmt --all`.** `--all` does not mean "workspace members" — it recurses through the
 path dependencies into both vendored forks and fails on upstream code. The only way to green it
 would be reformatting the forks, which permanently breaks `just vendor-diff`. Use `just fmt-fix`.
 A PreToolUse hook blocks the `--all` form.
 
-`just tapes` and `just tape <id>` need the `phosphor` binary on `$PATH` — `just install` puts it
-there.
+`just tapes` and `just tape <id>` regenerate the Tier-2 capture library — every screen, or one.
+`just tapes-diff` and `just tape-diff <id>` capture fresh and diff against the committed
+reference *without* overwriting it, which is the pair CI runs and the one you want when the
+question is *"did this change the screen?"* rather than *"bless this change."* All four need the
+`phosphor` binary on `$PATH` — `just install` puts it there.
 
 ## Version control
 

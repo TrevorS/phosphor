@@ -323,17 +323,31 @@ Verified 2026-08-11. Everything below resolved — no missing crates.
 Each of these is here because it catches a failure this project has already demonstrated it can
 produce. Nothing on the list is a default.
 
+> **Audited against the tree on 2026-08-13, before `S4`, and it had drifted in both directions.**
+> This table was written at `M-0` and nothing recomputes it — `scripts/doc_claims.py` checks task,
+> wave, capability, parity and lint counts, and no tool list at all. It named `divan`, which no
+> manifest uses; it named `typos-cli` and `cargo-sort`, which were never installed; and it did not
+> name `cargo-llvm-cov` or `cargo-fuzz`, which the test-depth run added and which have a recipe
+> and a gating lint between them.
+>
+> **The three struck rows were each installed and run before being struck**, because *"we decided
+> not to"* and *"nobody got round to it"* look identical in a table a year later, and only one of
+> them is a decision. The evidence is in each row. Everything unstruck below is installed, wired
+> to a `just` recipe, and exercised.
+
 | Tool | Version | The specific risk it catches |
 |---|---|---|
 | **`cargo-deny`** | 0.20.2 | **The one that matters most.** A `[bans]` rule denying multiple versions of `ratatui` / `ratatui-core` would have caught the `tui-textarea` and `ratatui-markdown` 0.29-vs-0.30 split *mechanically*, before either reached the plan. Also covers licences (`ratatui-code-editor` is MIT, `ratatui-markdown` is `MIT OR Apache-2.0`) and the advisory DB — which subsumes `cargo-audit`, so we don't need both. |
 | **`insta`** | 1.48.0 | Tier 1 golden-frame snapshots (T018). Purpose-built for exactly this, with review tooling for intentional changes. |
 | **`proptest`** | 1.11.0 | T017's statusline invariant — never two rows, at every width from 40 to 200. This is a property, not a set of examples. |
-| **`divan`** | 0.1.21 | T079's benchmark: VM invocations flat while FPS climbs. Lighter and clearer output than `criterion` for a single tracked number. |
+| ~~`divan`~~ | — | **Not adopted, and the build says so rather than this row.** It was picked for `T079`'s benchmark; all four benchmarks are `harness = false` with no framework at all (`crates/*/Cargo.toml`, four `[[bench]]` entries; `divan` appears in no manifest). The reason is in `phosphor-ui/Cargo.toml`: the measurement is two counters over a simulated clock and *"the interesting number is their ratio, not a confidence interval"* — which is the same argument against `divan` as against `criterion`. Kept as a struck row because a tool this table names and the tree does not use is exactly the drift the table exists to prevent. |
+| **`cargo-llvm-cov`** | — | Per-file coverage, worst first (`just coverage`). **Deliberately not a gate and no floor** — the justfile's own block argues it at length: a coverage floor is a change detector, it reddens for reasons unrelated to correctness, and the response is always to lower it or to write a test whose only job is to colour a line. Added by the test-depth run; this table did not name it until the pre-`S4` tooling audit. |
+| **`cargo-fuzz`** | — | Four targets over the parsers that take bytes from outside the process. `scripts/lint-fuzz-targets.sh` checks the targets against the parsers they claim, so a target that stops covering its parser fails the gate rather than passing quietly. Added by the test-depth run, and missing from this table for the same reason `divan` outlived its adoption: **nothing recomputes this table.** |
 | **`cargo-hack`** | 0.6.45 | [Q4](IMPLEMENTATION-PLAN.md#q4)'s guardrail: the transcript must render with the markdown feature **on and off**. `--feature-powerset` proves it rather than trusting it. |
 | **`cargo-nextest`** | 0.9.143 | Per-test process isolation. We have tests that touch the XDG state dir and terminal state; shared-process test runners make those flaky in ways that waste hours. |
 | **`cargo-machete`** | 0.9.2 | Vendored forks accumulate dependencies we don't use — the editor fork alone arrives with 16 grammars, `arboard` and `rust-embed`. |
-| **`typos-cli`** | 1.49.0 | The design language specifies voice down to the word. User-facing strings are a product surface. |
-| **`cargo-sort`** | 2.1.4 | Seven crates' worth of `Cargo.toml` staying diff-friendly. |
+| ~~`typos-cli`~~ | — | **Evaluated at the pre-`S4` tooling audit and declined.** Installed at the pinned 1.49.0 and run over `crates/ docs/ scripts/ runtime/ justfile CLAUDE.md`: **283 findings, 0 real.** 266 are `ratatui` → `ratatouille`, in a repository built on ratatui. Of the other 17, every one is correct as written — hyphenated `mis-` prefixes (`mis-sequencing`, `mis-highlighted`, `mis-wired`, `mis-filed`), `unparseable`, and two that show what a spell checker cannot know here: **`yiu` is a vim sequence** (yank-inner-unseen, `agent_objects.rs`), and **`targt` is a deliberately planted bad flag** in two tests that check an unknown flag is rejected. An allowlist could silence the 266; what it could not do is find anything, and the reason is that this codebase's prose is already read line by line by the checks in `scripts/lint-doc-claims.sh` and by every checkpoint. |
+| ~~`cargo-sort`~~ | — | **Evaluated at the same audit and declined, with the diff as the argument.** `cargo sort --check` flags three crates; running it moved `ratatui-core` in `phosphor-ui/Cargo.toml` **45 lines away from the comment that explains it** — *"`ratatui-core` only — never `ratatui`. This is the whole point of the pin (T002)"* — and left that comment sitting above `phosphor-core`, which it is not about. These manifests are documentation: the dependency order is the order the comments read in. Alphabetical sorting buys diff-friendliness and pays for it in exactly the currency this repo spends everywhere else. |
 | **`just`** | 1.58.0 | Already assumed by the plan (`vendor-diff`, `vendor-pull`, `tapes`). |
 
 Plus two things that are configuration rather than tools, and belong in the same conversation:
