@@ -130,6 +130,113 @@ successes. `scripts/seed-fixtures.sh` checks the printed value instead.
 exit code, and "the editor declined" is arguably a `1`. Touches `T023`'s contract, so it is
 `spine`'s.*
 
+## Raised by the test-depth run
+
+Property tests, fuzzing and benchmarks found these. None was known before; three are product
+bugs, one is a design question with a number attached, and one is costing us signal right now.
+
+### 20 · A gating test is load-flaky, and it makes the coverage tool unusable
+
+`crates/phosphor/tests/loop_pty.rs`'s `driven::an_operator_leaves_the_cursor_where_the_next_key_
+can_prove_it` failed under three-way CPU contention with `left: "XALPHA BETa"` against
+`right: "XALPHA beta"` — the pty driver read the screen before the last keystroke rendered. It
+passes on an isolated re-run of the same binary. **It gates CI, and a saturated GitHub runner is
+the same condition.** Two agents hit it independently.
+
+Second-order, and worse: **`cargo llvm-cov --workspace` cannot complete on this repo.** llvm-cov
+drives `cargo test`, not nextest, so that one test aborts the run and no report is written — the
+map denies you exactly when you want it. `just coverage` works around it with
+`--no-report --no-fail-fast`, which is a workaround, not a fix.
+
+*Recommendation: fix the test, not the runner. It is a synchronisation bug in the driver — it
+should wait for the frame that proves the keystroke landed rather than sampling after a delay.
+The same pattern is in 35 other `loop_pty` tests and only this one has been seen to fail, which
+is worth understanding before assuming the rest are safe.*
+
+### 21 · `gU` splices back a different length than it took
+
+`text::cased` is **not** character-count-preserving, in any of its three modes. Measured under
+this toolchain: `to_uppercase('ß')` is `"SS"`, `'ﬁ'` is `"FI"`, `'İ'` and `'ǰ'` both grow, and
+toggle inherits both — so `~~` on `ß` gives `"ss"` and is not an involution.
+
+`Buffer::SetCase` carries a `Target`, and the host replaces the target's span with the cased text.
+When the cased text is longer, everything after it moves. That is a real editing bug on German,
+Turkish, and any ligature.
+
+- **Make the caller span-aware** — re-derive the span from the result rather than assuming length.
+- **Or restrict `gU` to ASCII**, which is a smaller product.
+
+*Recommendation: the first. The property `cased_never_loses_a_character` is shipped and true;
+what is missing is a caller that believes it.*
+
+### 22 · Dragging a window edge can cost 5.7 seconds
+
+A soft-wrap rebuild is **41 ns/character**, dead linear over a 16× climb, indifferent to line
+shape — and nothing caches it. `crates/phosphor/src/main.rs` calls `soft_wrap::wrap_to` once per
+turn of the main loop, and the no-op path is genuinely free (10 ns), so the module header's
+*"calling it every frame is free"* holds exactly. **Only real width changes pay, and they pay a
+lot**: ~400 KiB of buffer is one whole frame per resize; 3.3 MB is 138 ms; dragging 120 → 80
+columns on that buffer is 5.7 seconds of solid CPU and one late frame per column.
+
+Design Language §8 makes a torn frame a P0. This is how you get one.
+
+- **Cache by (width, revision)** — the obvious fix, and the rebuild is already keyed on exactly
+  those two things.
+- **Or wrap incrementally**, which is a rewrite of `T081`'s core.
+- **Or debounce the resize**, which hides it rather than fixing it and breaks *nothing moves
+  unless you asked* the moment a debounce fires late.
+
+*Recommendation: the cache. `T081`'s own note says nothing caches because rebuild happens when
+buffer, folds or width change — that was a reason not to bother, and the number says otherwise.*
+
+### 23 · Compaction reclaims nothing, and nothing calls it
+
+Three measurements, all `T095`'s input:
+
+- A typing session's compaction is **net negative**: 16,385 records in, **16,387 out**. 620 KiB
+  rewritten to save 0 KiB, because `undo::History::snapshot` emits one `Record::Node` per node and
+  drops none, then appends its own `Cursor` and `Saved`. A walking session reclaims 12.3%, which
+  is `Cursor`/`Saved` churn — so compaction *works*, and a history that only grows has nothing to
+  collapse.
+- **`should_compact()` is false on every freshly opened log, always.** `Log::open` sets its
+  denominator to `state.snapshot().len()`, which for an undo history is one record per node — so a
+  session starts already as short as compaction would make it. A 4,096-record log needed 4,100
+  *more* groups in that process before the policy first said yes.
+- **Nothing in `crates/phosphor/src/main.rs` calls `compact_if_needed` or `compact` at all.**
+
+*Recommendation: `T095` should start from these numbers rather than from the assumption that a log
+needs compacting. The real cost is not size — it is the startup fold, below.*
+
+### 24 · Startup fold is superlinear in undos
+
+`Record::Cursor`'s fold is `History::walk_to`, which re-points `redo_child` from the target back to
+the root — O(depth) per undo. 16,385 typing records fold in 2.4 ms and the per-record cost *falls*;
+18,689 walking records fold in **69 ms** and the per-record cost *climbs* 4.6× over the same 16×
+range. That is 4.1 frames before the buffer is drawn, on a session with a lot of undo in it.
+
+Deliberately printed and not asserted by the benchmark: the day somebody makes `walk_to`
+incremental, the assertion would be the thing that broke.
+
+### 25 · Three tests that pass for the wrong reason
+
+The gate's theatre check planted against every property added and found five weak or false. Two
+were fixed in the same window (`any_value_is_decoded_or_refused` gained the `iff`; the varint
+decoder gained `NonMinimalVarint` and a pinned case). **Three remain, recorded rather than
+concealed:**
+
+- `cased_never_loses_a_character` and `upper_and_lower_are_idempotent` both survive **swapping
+  `Upper` and `Lower`** in `text::cased`. Only the pinned example `cased_grows_on_a_sharp_s`
+  catches it, so the entire defence of `gU` meaning the right thing is one hand-written example.
+- `every_record_round_trips_through_the_codec` never generates a deletion, a replacement, a
+  multi-byte character, or a string longer than two ASCII bytes — `removed` is always empty and
+  `inserted` is always `x{0..2}`.
+
+*Recommendation: fix the generators. A property whose generator only produces the happy case is
+the specific failure this build has now shipped three times — a vacuous lint, a CRC property that
+could not fail, and these.*
+
+---
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

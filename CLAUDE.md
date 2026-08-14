@@ -17,8 +17,17 @@ Use the `just` recipes, not raw cargo — several of them differ from the obviou
 - `just lint` — the structural lints below; runs every `scripts/lint-*.sh`. Add a lint by dropping
   a script in, never by editing the justfile or CI.
 - `just fmt` (check) · `just fmt-fix` (in place) · `just build` · `just clippy` (warnings denied) ·
-  `just deny` · `just vendor-diff` · `just bench` (T079's frame cache; not in CI, it is a
-  measurement) · `just review` (`cargo insta review` for the golden frames)
+  `just deny` · `just vendor-diff` (bare, the full divergence — `gate` takes `--stat`) ·
+  `just review` (`cargo insta review` for the golden frames)
+- **Measurements, deliberately not gates.** `just bench` (four benchmarks; asserts *shapes*, prints
+  numbers, because a figure that moves with the machine has no business failing a build — this
+  worktree saw absolute times swing 25× under concurrent load while every shape assertion held) ·
+  `just coverage` (per-file, worst first) · `just coverage-html` · `just unused-deps`. None of
+  these is in `gate` or CI, and a coverage floor should not be added: it reddens for reasons
+  unrelated to correctness and gets raised until it means nothing.
+- `just hack` — `cargo-hack --each-feature`. This one **does** gate, in its own CI job, because
+  "feature set X does not compile" has exactly one right answer.
+- A bare `just` lists the recipes. It used to run the first one in the file, which was `build`.
 
 **Never run `cargo fmt --all`.** `--all` does not mean "workspace members" — it recurses through the
 path dependencies into both vendored forks and fails on upstream code. The only way to green it
@@ -62,6 +71,17 @@ Architecture:
   unconstructible rather than merely tested for.
 - **One escape hatch.** `Node::Spans` is the only custom-draw path, drawn in exactly one place.
 - **The Steel barrier.** `phosphor-steel` reaches `phosphor-core` and the VM, and nothing else.
+- **One VM door.** `Layer` owns the `Runtime`, exposes no `&mut Runtime`, and the loop reads
+  `Layer::stale()` in one place — so "arbitrary scheme ran, invalidate the frame" is structural
+  rather than remembered. `CP-2` found the keybinding half of that rule missing by running it.
+
+Reachability — a ticked task may not ship something no keystroke can reach:
+
+- **Action arms.** Every mutation a *ticked* task declares must be named by the binary. `T016` was
+  ticked for three windows with `za` doing nothing, on a snapshot that hand-built the view tree.
+  Known gaps live in a RECORDED table that fails four ways, so it can only shrink.
+- **Node kinds.** The same check one layer up, over the thirty `Node` variants and the four places
+  composition happens — two of them Steel, addressed by tag rather than by Rust path.
 
 Hygiene and truthfulness — each of these exists because the thing it catches already happened:
 
@@ -76,6 +96,15 @@ Hygiene and truthfulness — each of these exists because the thing it catches a
   `1.85` for two windows while `ratatui` required `1.88`.
 - **Vendor provenance** — each `VENDOR.md`'s recorded SHA and claimed licence are checked against
   git history and the fork's own `Cargo.toml`.
+- **Vendor hunks** — every file diverging from the upstream tree must be *mentioned* in that
+  fork's `VENDOR.md`. This paragraph used to say `just vendor-diff` audited that contract; it
+  never did — it prints and exits 0, and a human reading 3,336 lines was the entire check. The
+  first version of the lint was vacuous for every source file (a one-component directory match, so
+  `src/` "documented" `src/types.rs`) and passed a planted violation silently.
+- **Fuzz targets** — the `fuzz/` crate's targets are checked against the parsers they claim.
+- **Counts nothing else recomputes** — the capability and parity counts (`209`/`627` went stale in
+  six places at once), and the lint count in CI's own prose, which said "six" while sixteen
+  existed. Seventeen now, and section 6 caught the seventeenth on its first day.
 
 ## Do not assert what you have not read
 
