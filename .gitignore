@@ -8,3 +8,15 @@
 # under tapes/artifacts/ and are unaffected by this non-recursive pattern.
 /tapes/*.gif
 /tapes/*.png
+
+# Agent worktrees. `EnterWorktree` puts them here, and a git worktree carries
+# its own `.git` file — so `git status` showed `?? .claude/worktrees/` as one
+# opaque untracked directory rather than recursing into it. Two consequences,
+# and the second is why this line exists: `git add -A` would have staged an
+# entire second checkout, and `scripts/lint-repo-hygiene.sh`'s untracked-file
+# checks walk `git ls-files --others --exclude-standard`, where only the
+# `[ -f "$file" ]` guard (directories are skipped) kept it from scanning six
+# copies of `target/`. `/target` is root-anchored and does not cover
+# `.claude/worktrees/*/target`. Ignoring them outright is the honest state:
+# they are scratch checkouts and their commits live on master or nowhere.
+/.claude/worktrees/

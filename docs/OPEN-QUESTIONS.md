@@ -27,6 +27,14 @@ citation to re-derive, not as a claim that failed.
 nobody had noticed. The repair-pass list at the end was re-checked item by item and now carries
 what is done, what is still open, and one thing that was ruled not worth doing.
 
+**Swept again the same day by the pre-`S4` scout**, which is a narrower pass: it asks only *what
+must be true before the next window opens*, and it changed three things. `R6` is done and moved
+to the list above — the fix it proposed would itself have shipped a list missing four names, so
+the lint now derives that list instead of enumerating it. §26 is new, and it is the only finding
+here that is specifically about running a **window** rather than about the product. And §10's
+*"nothing is gained by starting it in `S3`"* has now expired by its own terms; it is `S4` work and
+is called out as such below rather than left reading like a deferral.
+
 ---
 
 ## Doc-versus-tree disagreements
@@ -235,6 +243,50 @@ concealed:**
 the specific failure this build has now shipped three times — a vacuous lint, a CRC property that
 could not fail, and these.*
 
+## Raised by the pre-`S4` scout
+
+### 26 · One test is 96% of the test suite's wall clock
+
+Measured in this worktree on 2026-08-13, on an otherwise idle `just gate`:
+`phosphor::parity::every_capability_is_reachable_at_every_door` took **176.136 s** of a
+**182.498 s** run over 682 tests. Every other test in the repository finishes inside the
+remaining ~6 seconds. `nextest` reports it as the one `SLOW` test and crosses both its 60 s and
+120 s thresholds on the way.
+
+The shape explains the size, and the shape is deliberate. `Doors::open` boots one `Runtime`
+(`crates/phosphor/tests/parity.rs`, `impl Doors`), and `steel_door` then builds a fresh source
+string per capability and calls `Runtime::evaluate` on it — so the Steel third is one full
+parse/compile/eval per capability, and the test as a whole is 636 door checks over 212
+capabilities. That is exactly the thing worth having: it is the test that makes *one API, three
+doors* true rather than asserted.
+
+**Why it is worth an entry now rather than whenever somebody notices.** `nextest` isolates tests
+per process and can run 682 of them concurrently, but it cannot split one test *function* — so
+this is a hard floor under `just gate` that no amount of parallelism removes. `S4` is a ~10-agent
+window and the standing instruction is that every agent gates before it hands work back; that
+floor gets paid once per agent. It is also the same CPU-contention window in which §20's flaky
+`loop_pty` test is most likely to fire, and a three-minute gate is how a flake stops being cheap
+to re-run.
+
+**Not asserted:** that the Steel third is where the time goes. The shape says so and 176 s over
+212 capabilities is ~0.83 s each, which is consistent with parse-and-compile; but nothing has
+profiled it, and the MCP and CLI thirds have not been timed separately. Do not "optimise Steel"
+on the strength of this paragraph.
+
+- **Split it per door.** Three test functions instead of one, and `nextest` runs them
+  concurrently. It is already three independent assertions wearing one name — `check` is a
+  `match` on `Door` — so this costs almost nothing and is the only option that needs no
+  measurement first.
+- **Hoist the compile** — bind each capability's call once and apply it per check, rather than
+  evaluating a freshly built source string. Bigger win if the guess above is right, and worthless
+  if it is wrong.
+- **Leave it.** Defensible: it is one test, it is green, and it buys the invariant the whole
+  registry design exists for.
+
+*Recommendation: split it per door before `S4` opens, and measure the thirds while you are in
+there — that turns the guess above into a number for free. Leave the Steel cost alone until that
+number exists.*
+
 ---
 
 ## Repair pass — queued work, not questions
@@ -343,6 +395,24 @@ only what is left cannot tell you whether the rest was done or forgotten.
   byte-identical stills were the VHS pipeline duplicating a frame and **not** the surface failing
   to render — the build was right all along. `tapes/artifacts/DUPLICATES.md` records the pairs
   that are identical by construction.
+- **R6 · DONE — and the entry below understated it by five.** The rot was real and in both
+  directions: `scripts/lint-one-vm-door.sh`'s `entries=` regex named `keymap::press` and
+  `keymap::reset`, which do not exist, and it also **missed five functions that do**.
+  `grep -rn '^pub fn .*runtime: &mut Runtime' crates/phosphor-steel/src/` answers seven —
+  `keymap::{resolve, resolve_seq, canonical, entries, ex_entries, ex}` and `status::compose` —
+  against the two the regex listed. So the fix this entry proposed (*"should read
+  `keymap::resolve|keymap::ex`"*) would itself have shipped a list missing four.
+  **Fixed by deriving the list rather than correcting it**, since a hand-written enumeration of
+  another crate's surface is what rotted: the script now builds the alternation from that
+  signature at run time, and adding a VM-entering function to `phosphor-steel` extends the lint
+  in the same commit. It fails loudly if the derivation yields nothing, so a changed signature
+  convention cannot silently empty it.
+  Coverage never actually lapsed, exactly as the entry said — `Layer` is the only owner of a
+  `Runtime` (rule 1), so every real call site also matches `self\.runtime`. Proven by planting
+  `keymap::canonical(rt, "zz")` outside `impl Layer`: the lint fails on it now, and the old
+  hand-written list contained no alternative that matches that line. **The defect was a lint whose
+  stated rule was wider than what it checked** — which is the same class as the vacuous vendor-hunk
+  directory match, and worth the same treatment.
 
 ### Still open — the second repair window's list
 
@@ -356,10 +426,6 @@ only what is left cannot tell you whether the rest was done or forgotten.
   and this kind is that column **without** the editor, for a surface that wants it — and no task
   in the graph names such a surface. So R3 is asking how a composition should reach a capability
   for a node kind nothing composes. Whoever picks it up should decide the second question first.
-- **R6 · OPEN.** `scripts/lint-one-vm-door.sh`'s `entries=` regex still lists
-  `keymap::press|keymap::reset`; neither name exists. Coverage is unaffected — both real call
-  sites match a different alternative — but the two dead alternatives should read
-  `keymap::resolve|keymap::ex`.
 - **R13 · PARTIAL.** Every *component* of `6d`'s sentences is now in the live keymap — `gs` as an
   operator, the four nouns as object rows, `]u`/`[u` as sequence rows, and `:c` over a range —
   and `help_narrows_to_the_agent_objects_topic` reads the four nouns off a real frame. What is

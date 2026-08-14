@@ -74,7 +74,33 @@ fi
 # running one, so none of those is listed. A call *through* a `Layer` value
 # (`layer.evaluate(…)`, `self.0.evaluate(…)`) is the door working, not a hole in
 # it, so the pattern names the runtime rather than the method.
-entries='self\.runtime|runtime\.evaluate\(|runtime\.call\(|keymap::press|keymap::reset|status::compose'
+#
+# The `module::function` half is **derived from `phosphor-steel`, not listed
+# here.** It was a hand-written list until this session and it had rotted in
+# both directions at once: it named `keymap::press` and `keymap::reset`, which
+# have never existed in this tree, and it missed five functions that do —
+# `resolve_seq`, `canonical`, `entries`, `ex_entries` and `ex` all take a
+# `&mut Runtime`. Coverage did not actually lapse, because `Layer` is the only
+# owner of a `Runtime` (rule 1) so every real call site also matches
+# `self\.runtime`; but a lint whose stated rule is wider than what it checks is
+# the failure this repo has a whole section about. Deriving it means adding a
+# VM-entering function to `phosphor-steel` extends this lint in the same commit.
+alternatives=$(
+    for src in crates/phosphor-steel/src/*.rs; do
+        module=$(basename "$src" .rs)
+        grep -oE '^pub fn [a-z_]+\(runtime: &mut Runtime' "$src" 2>/dev/null |
+            sed -E "s/^pub fn ([a-z_]+)\(.*/${module}::\1/" || true
+    done | sort -u | paste -sd'|' -
+)
+
+if [ -z "$alternatives" ]; then
+    echo "lint-one-vm-door: FAILED — no \`pub fn …(runtime: &mut Runtime\` found in phosphor-steel"
+    echo "    This lint derives its module-function list from that signature. Zero matches means"
+    echo "    the signature convention changed and rule 2 is now checking less than it claims."
+    exit 1
+fi
+
+entries="self\.runtime|runtime\.evaluate\(|runtime\.call\(|${alternatives}"
 outside=$(grep -nE "$entries" "$FILE" | awk -F: -v first="$first" -v last="$last" '
     $1 < first || $1 > last { print }
 ' || true)
