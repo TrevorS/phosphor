@@ -5,6 +5,18 @@
 # so this file never has to change when that seam is filled in.
 import? 'vendor/vendor.just'
 
+# `just` with no arguments runs the FIRST recipe in the file, so which recipe
+# that is decides what a bare `just` does. It was `build`, which meant a typo'd
+# or half-typed command silently compiled the workspace. This is that slot,
+# deliberately claimed: a bare `just` lists what there is.
+#
+# It has to stay at the top. Moving a recipe above it changes what `just` does,
+# which is the kind of thing nobody expects a reordering to do.
+
+# List the recipes (what a bare `just` does).
+default:
+    @just --list
+
 # T005: CI calls these recipes rather than inlining cargo invocations, so
 # "green in CI" and "green from `just <recipe>` on your machine" never drift
 # apart — reproduce any CI failure locally with the same command CI ran.
