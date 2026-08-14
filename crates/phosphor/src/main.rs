@@ -133,11 +133,12 @@ use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::OpenOptions;
-use std::io::Write as _;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, ValueEnum};
 use crossterm::event::{
@@ -1037,7 +1038,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             );
         })?;
 
-        let event = event::read()?;
+        let event = coalesce_resizes(event::read()?)?;
         // A notice says what the last ex line did, and the next key is the
         // acknowledgement — there is no dismiss and nothing to remember. `8e`'s
         // hint is acknowledged the same way: it has been on screen for a frame,
@@ -2686,6 +2687,69 @@ const fn moves_cursor(action: &Action) -> bool {
     )
 }
 
+/// Drops resize events that a newer one has already superseded.
+///
+/// **`§22`: dragging a window edge from 120 columns to 80 on a 3.3 MB buffer
+/// was 5.7 seconds of solid CPU**, and one late frame per column. A soft-wrap
+/// rebuild is 41 ns/character, dead linear and uncached — 138 ms at that size —
+/// and the loop pays it once per turn in which the width changed. Forty columns
+/// is forty rebuilds.
+///
+/// **This does not make the rebuild cheaper; it makes fewer of them happen.**
+/// Nothing here is a debounce: there is no timer and nothing waits. It reads
+/// only what is *already queued* and drops the resizes it can prove are stale,
+/// which is every one with another event behind it. The `Duration::ZERO` poll
+/// is what makes that "already queued" rather than "might arrive".
+///
+/// **It is self-correcting, which is the property worth having.** Events pile
+/// up only because the rebuild is slower than the drag, so the bigger the
+/// buffer the more this skips, and on a buffer small enough to wrap between
+/// two events it does nothing at all.
+///
+/// **Nothing is dropped but a size.** A resize's entire content is the new
+/// size, and the loop does not read it — it calls `term.size()` at the top of
+/// every turn and gets the current one. The first non-resize event stops the
+/// drain and is returned to be handled normally, so no keystroke is ever
+/// swallowed. Invariant 3 is untouched: the state you land in is the size you
+/// asked for, reached without drawing the ones you dragged through.
+/// The terminal half: what is already queued, or [`None`].
+fn queued() -> io::Result<Option<Event>> {
+    if event::poll(Duration::ZERO)? {
+        return event::read().map(Some);
+    }
+    Ok(None)
+}
+
+fn coalesce_resizes(first: Event) -> io::Result<Event> {
+    coalesce(first, queued)
+}
+
+/// The decision, with the terminal passed in — so it can be tested against a
+/// queue rather than against a real drag.
+///
+/// A pty harness cannot exercise this: the slave fd is moved into the child, so
+/// the test side has nothing to call `TIOCSWINSZ` on, and Apple's master
+/// rejects it. Splitting the pure half out is what makes the rule provable at
+/// all, and the two properties worth proving are that a stale resize is dropped
+/// and that a keystroke behind one never is.
+fn coalesce<F>(first: Event, mut next: F) -> io::Result<Event>
+where
+    F: FnMut() -> io::Result<Option<Event>>,
+{
+    if !matches!(first, Event::Resize(..)) {
+        return Ok(first);
+    }
+    let mut latest = first;
+    while let Some(event) = next()? {
+        let superseded = matches!(event, Event::Resize(..));
+        latest = event;
+        if !superseded {
+            break;
+        }
+    }
+    Ok(latest)
+}
+
 /// Whether this event is a press rather than a release.
 ///
 /// Under the kitty protocol every press is also reported as a release (`T014`
@@ -3247,6 +3311,66 @@ mod tests {
     use std::sync::Arc;
 
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+
+    /// `§22` — a queue of events, standing in for a drag.
+    fn drain(first: super::Event, queued: &[super::Event]) -> super::Event {
+        let mut rest = queued.iter().cloned();
+        super::coalesce(first, move || Ok(rest.next())).expect("the queue does not fail")
+    }
+
+    fn resize(width: u16) -> super::Event {
+        super::Event::Resize(width, 30)
+    }
+
+    fn typed(character: char) -> super::Event {
+        super::Event::Key(KeyEvent::new(
+            KeyCode::Char(character),
+            KeyModifiers::empty(),
+        ))
+    }
+
+    /// Dragging an edge queues one resize per column, and only the last is the
+    /// size you are asking for. Wrapping to the ones in between is what made
+    /// `§22`'s drag 5.7 seconds.
+    #[test]
+    fn a_drag_collapses_to_the_size_it_ended_at() {
+        assert_eq!(
+            drain(resize(120), &[resize(110), resize(96), resize(80)]),
+            resize(80)
+        );
+    }
+
+    /// The safety half, and the one worth a test of its own: dropping a stale
+    /// *size* is dropping nothing, but dropping a keystroke would be a bug far
+    /// worse than the one this fixes.
+    #[test]
+    fn a_key_behind_a_resize_is_never_swallowed() {
+        assert_eq!(
+            drain(resize(120), &[resize(80), typed('x')]),
+            typed('x'),
+            "the drain stops at the first event that is not a resize, and hands it back"
+        );
+    }
+
+    #[test]
+    fn a_lone_resize_with_nothing_behind_it_is_itself() {
+        assert_eq!(drain(resize(80), &[]), resize(80));
+    }
+
+    /// Nothing is read at all unless the first event is a resize — a keystroke
+    /// must never cause a poll that could consume the one behind it.
+    #[test]
+    fn a_key_is_returned_without_touching_the_queue() {
+        let mut polled = false;
+        let out = super::coalesce(typed('a'), || {
+            polled = true;
+            Ok(None)
+        })
+        .expect("the queue does not fail");
+        assert_eq!(out, typed('a'));
+        assert!(!polled, "a non-resize must not drain anything behind it");
+    }
+
     use phosphor_core::action::{Action, Outcome, Refusal, Request, RuntimeAction};
     use phosphor_core::registry::Door;
     use phosphor_core::request::Actor;

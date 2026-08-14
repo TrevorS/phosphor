@@ -1100,6 +1100,63 @@ mod driven {
     /// `gUiw` from the middle of `alpha` uppercases the word and lands on its
     /// first column, so the `X` goes in front. A cursor left where it started
     /// would spell `ALXPHA beta`.
+    /// **`§21`: `~` advances past what it wrote, not by one character.**
+    ///
+    /// `text::cased` is not character-count preserving —
+    /// `to_uppercase('\u{df}')` is `"SS"` — and `~` is the one case operator
+    /// that *advances*, so it was the one that could land inside its own
+    /// output. Measured before the fix, through this same harness:
+    /// `~` on `\u{df}xy` gave `S|Sxy` and `~~` gave `Ss|xy`, the second toggle
+    /// re-casing the second `S` instead of moving on to `x`.
+    ///
+    /// The cursor is read the way `an_operator_leaves_the_cursor_where_the_
+    /// next_key_can_prove_it` reads it: `i` inserts wherever it ended up, and
+    /// the saved file says where that was. The ASCII rows are the regression
+    /// half — a fix that moved the cursor differently when nothing grew would
+    /// break every `~` a person actually types.
+    #[test]
+    fn a_case_change_that_grows_leaves_the_cursor_past_what_it_wrote() {
+        for (name, keys, source, expected) in [
+            ("one toggle", &b"~"[..], "\u{df}xy\n", "SS|xy\n"),
+            (
+                "twice, and the second lands on x",
+                &b"~~"[..],
+                "\u{df}xy\n",
+                "SSX|y\n",
+            ),
+            ("at end of line", &b"~"[..], "\u{df}\n", "SS|\n"),
+            ("ascii is unchanged", &b"~"[..], "abc\n", "A|bc\n"),
+            // `gU` was never affected and must stay that way: an operator lands
+            // at the *start* of what it touched, and a start does not move when
+            // an end does.
+            (
+                "gU still lands at the start",
+                &b"gUiw"[..],
+                "stra\u{df}e beta\n",
+                "|STRASSE beta\n",
+            ),
+        ] {
+            let scratch = Scratch::new("case-grows");
+            let runtime = copy_layer(&scratch.path);
+            let file = scratch.path.join("sample.txt");
+            fs::write(&file, source).expect("a fixture");
+
+            let editor = Editor::open(&file, &scratch.state(), &runtime);
+            editor.press(keys);
+            editor.press(b"i");
+            editor.press(b"|");
+            editor.press(b"\x1b");
+            editor.press(b":w\r");
+            editor.quit();
+
+            assert_eq!(
+                fs::read_to_string(&file).expect("the file survives"),
+                expected,
+                "{name}: `|` marks where the cursor was left"
+            );
+        }
+    }
+
     #[test]
     fn an_operator_leaves_the_cursor_where_the_next_key_can_prove_it() {
         let scratch = Scratch::new("operator-cursor");

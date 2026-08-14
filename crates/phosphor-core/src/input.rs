@@ -929,7 +929,32 @@ impl Machine {
             return;
         }
         if self.fused_advance {
-            out.push(set_cursor(text::clamp(text, span.end)));
+            // **A case change is not character-count preserving**, so `span.end`
+            // is a position in the text *before* the edit and `~` is the one
+            // operator that lands on it. `§21`, measured through the shipping
+            // binary: `~` on `ßxy` gave `S|Sxy` — `ß` upper-cases to `SS`, the
+            // cursor advanced by one *character*, and it landed between the two
+            // letters it had just written. `~~` then gave `Ss`, because the
+            // second toggle re-cased the second `S` instead of moving on.
+            //
+            // `to_uppercase('ß')` is `"SS"`, `'ﬁ'` is `"FI"`, and `'İ'` and
+            // `'ǰ'` both grow too, so this is German, Turkish and every
+            // ligature — not an exotic corner.
+            //
+            // `gU` and `gu` were never affected and still are not: an operator
+            // lands at the *start* of what it touched (`*operator-resulting-pos*`,
+            // below), and the start does not move when the end does.
+            //
+            // The landing is deliberately **not** `text::clamp`ed here. That
+            // clamps against the pre-edit text, which is exactly the staleness
+            // this is fixing; the host clamps against the real buffer when it
+            // converts the position (`main.rs`, `fn offset`), which is the only
+            // place the post-edit line length is known.
+            let landing = match case_change(operator) {
+                Some(case) => fused_case_end(text, span, case),
+                None => text::clamp(text, span.end),
+            };
+            out.push(set_cursor(landing));
             return;
         }
         let position = if operator == Operator::Yank && kind == SelectionKind::Line {
@@ -1230,6 +1255,49 @@ fn is_edit(action: &Action) -> bool {
                 | BufferAction::ApplyEdits { .. }
         )
     )
+}
+
+/// Which [`CaseChange`] an operator asks for, if it asks for one.
+///
+/// One place, so [`Machine::land`] and the arm that emits
+/// [`BufferAction::SetCase`] cannot disagree about which operators are case
+/// changes — the same argument [`text::cased`] makes about what `~` *means*.
+const fn case_change(operator: Operator) -> Option<CaseChange> {
+    match operator {
+        Operator::Upper => Some(CaseChange::Upper),
+        Operator::Lower => Some(CaseChange::Lower),
+        Operator::ToggleCase => Some(CaseChange::Toggle),
+        _ => None,
+    }
+}
+
+/// Where a **fused** case change leaves the cursor, counted on the text the
+/// edit is about to produce rather than the text it consumed.
+///
+/// `~` is `g~` fused with `l`, so it advances — and what it advances *past* is
+/// the cased text, which may be longer than the span. See [`Machine::land`] for
+/// the measurement that produced this.
+///
+/// Falls back to `span.end` for a span that is not on one line, which `~`
+/// cannot produce: it takes a count on the current line and stops there.
+fn fused_case_end(text: &dyn Text, span: Span, case: CaseChange) -> Position {
+    if span.start.line != span.end.line || span.end.column <= span.start.column {
+        return span.end;
+    }
+    let Some(line) = text.line(span.start.line) else {
+        return span.end;
+    };
+    let skip = span.start.column.saturating_sub(1) as usize;
+    let take = span.end.column.saturating_sub(span.start.column) as usize;
+    let consumed: String = line.chars().skip(skip).take(take).collect();
+    let produced = text::cased(&consumed, case).chars().count();
+    Position {
+        line: span.start.line,
+        column: span
+            .start
+            .column
+            .saturating_add(u32::try_from(produced).unwrap_or(u32::MAX)),
+    }
 }
 
 /// A find in the other direction — the whole of what `,` means.

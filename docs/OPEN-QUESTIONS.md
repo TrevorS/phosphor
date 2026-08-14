@@ -135,6 +135,19 @@ exit codes for the same refusal, which made the ruling a correction rather than 
 Property tests, fuzzing and benchmarks found these. None was known before; three are product
 bugs, one is a design question with a number attached, and one is costing us signal right now.
 
+**Worked in the window after the pre-`S4` scout. §21, §22 and §25 are fixed; §23 and §24 are
+deliberately not, and the difference is worth stating.** Those two are *measurements*, not
+defects: their own text says all three numbers are `T095`'s input, and `T095` — history
+maintenance — is an unticked task in *A · Arms owed*. Acting on them now would be building
+product work nothing has scheduled, on the strength of a benchmark. They stay here as the input
+that task should start from rather than the assumption it would otherwise start from, which is
+what they were collected for. `R3` in the repair list below is the same shape: a question about
+how a composition should reach a capability for a node kind nothing composes, not a defect with a
+fix waiting.
+
+**Two of the three fixes were not where the entry said they were** — see §21 and §22, each of
+which named a recommendation that would have changed correct code or saved nothing.
+
 ### 20 · A gating test is load-flaky, and it makes the coverage tool unusable
 
 `crates/phosphor/tests/loop_pty.rs`'s `driven::an_operator_leaves_the_cursor_where_the_next_key_
@@ -200,6 +213,36 @@ Turkish, and any ligature.
 *Recommendation: the first. The property `cased_never_loses_a_character` is shipped and true;
 what is missing is a caller that believes it.*
 
+**FIXED — and the defect was not where this entry put it.** Both options above are about the
+*splice*, and the splice was already correct. Measured through the shipping binary, `|` marking
+where the cursor was left:
+
+```text
+gUiw  straße beta   ->  |STRASSE beta      correct, before and after
+~     ßxy           ->  S|Sxy              the bug
+~~    ßxy           ->  Ss|xy              its consequence
+```
+
+`gU` and `gu` were never affected, because an operator lands at the **start** of what it touched
+(vim's `*operator-resulting-pos*`, which `Machine::land` already implements) — and a start does
+not move when an end does. `~` is the exception: it is `g~` fused with `l`, so it *advances*, and
+it advanced to `span.end` — a position measured on the text **before** the edit. `ß` upper-cases
+to `SS`, so that column was the second `S`, and the cursor landed inside what it had just written.
+`~~` then re-cased that `S` instead of moving on to `x`, which is where the `"ss"` in the
+paragraph above came from.
+
+The landing is computed from the *cased* length now (`fused_case_end` in
+`crates/phosphor-core/src/input.rs`) and deliberately not clamped there, because the machine's
+clamp runs against the pre-edit text — which is the very staleness at issue. The host clamps when
+it converts the position, against the real buffer, which is the only place the post-edit line
+length is known. Pinned at the pty by
+`a_case_change_that_grows_leaves_the_cursor_past_what_it_wrote`, including the ASCII rows: a fix
+that moved the cursor differently when nothing grew would break every `~` a person actually types.
+
+*The lesson is the entry itself.* It reasoned from a true general fact — case conversion is not
+length-preserving — to a specific caller that turned out to be innocent, and named two fixes that
+would both have changed correct code. One run of the real binary found the actual line.
+
 ### 22 · Dragging a window edge can cost 5.7 seconds
 
 A soft-wrap rebuild is **41 ns/character**, dead linear over a 16× climb, indifferent to line
@@ -219,6 +262,36 @@ Design Language §8 makes a torn frame a P0. This is how you get one.
 
 *Recommendation: the cache. `T081`'s own note says nothing caches because rebuild happens when
 buffer, folds or width change — that was a reason not to bother, and the number says otherwise.*
+
+**FIXED, by none of the three, and the recommended one would not have helped.** A cache keyed on
+`(width, revision)` pays off when a width *recurs*. Dragging 120 → 80 visits forty widths **once
+each**, so every lookup is a miss and every rebuild still happens: the cache would have added a
+map and saved nothing on the one scenario this entry is named after. It would help a drag that
+returns to where it started, which is not the case that costs 5.7 seconds.
+
+What was actually redundant is the *frames*, not the rebuilds. The loop reads `term.size()` fresh
+each turn, so each queued resize costs one wrap and one draw for a width the user has already
+dragged past. `coalesce_resizes` in `crates/phosphor/src/main.rs` drops the resizes that another
+event is already sitting behind. There is **no timer and nothing waits** — the poll is
+`Duration::ZERO`, so it reads only what is already queued, which is what separates this from the
+debounce the entry rules out. Invariant 3 is untouched: you land at the size you asked for,
+without the editor drawing the ones you dragged through.
+
+**It is self-correcting, which is the property worth having.** Events queue only because the
+rebuild is slower than the drag, so the bigger the buffer the more it skips, and on a buffer small
+enough to wrap between two events it does nothing at all. The 41 ns/character is unchanged and
+one rebuild at 3.3 MB still costs 138 ms; what is gone is paying it forty times to draw frames
+nobody sees.
+
+*A pty harness cannot test this* — the slave fd is moved into the child, so the test side has
+nothing to resize, and Apple's master rejects `TIOCSWINSZ`. So the decision is split from the
+terminal and tested against a queue: a drag collapses to the size it ended at, **a keystroke
+behind a resize is never swallowed**, and a non-resize event does not cause a poll that could
+consume the one behind it.
+
+**Still open, and it is the real ceiling:** the rebuild is whole-buffer. Wrapping only the visible
+window is `T081`'s core and the entry's second option, and this makes it less urgent rather than
+unnecessary.
 
 ### 23 · Compaction reclaims nothing, and nothing calls it
 
@@ -265,6 +338,31 @@ concealed:**
 *Recommendation: fix the generators. A property whose generator only produces the happy case is
 the specific failure this build has now shipped three times — a vacuous lint, a CRC property that
 could not fail, and these.*
+
+**FIXED, all three, and the diagnosis needed splitting in two.** Only the codec one was a
+*generator* problem. The two `cased` properties had generators covering `ß`, `İ`, `ǰ` and emoji
+already — what they lacked was an assertion that said which way the conversion went. Counting is
+symmetric and so is idempotence, so between them they proved `gU` changed case without ever
+saying *to what*.
+
+- **`cased_never_loses_a_character`** now asserts direction outright: `Upper` leaves no lowercase
+  character behind, `Lower` leaves no uppercase one. `Toggle` gets no such law, because producing
+  both is its job.
+- **`upper_and_lower_are_idempotent`** gained two. That the two are *different functions*, which
+  idempotence alone does not say — and, because a **swap** leaves them different as well as
+  idempotent, the one that actually catches the plant: the last one applied wins. `Lower` then
+  `Upper` leaves no lowercase; `Upper` then `Lower` leaves no uppercase.
+- **`every_record_round_trips_through_the_codec`** was the real generator gap. `Step::Commit`
+  carried an edit *count*, and `records_from` turned it into `removed: String::new()` with
+  `inserted: format!("x{index}")` — so every record ever generated was an insertion of one or two
+  ASCII bytes, the varint length prefix never exceeded one byte, and the branch that handles a
+  removal never ran. It carries the text now: empty strings stay in the domain, multi-byte
+  characters exercise bytes-versus-characters, and a 40–90 character arm pushes the length prefix
+  past 128 for the first time. It passes, which is the codec earning the property it had.
+
+Verified by planting the swap the entry names. Before: only the hand-written
+`cased_grows_on_a_sharp_s` failed. After: **all three fail**, and the two properties are no longer
+carried by one example.
 
 ## Raised by the pre-`S4` scout
 

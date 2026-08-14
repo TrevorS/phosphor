@@ -892,6 +892,25 @@ proptest! {
             );
             prop_assert!(out.is_ascii());
         }
+
+        // **Which way it went**, which everything above is blind to. `§25`
+        // found this property and its sibling both surviving a swap of `Upper`
+        // and `Lower` in `text::cased`: counting is symmetric and so is
+        // idempotence, so between them they said `gU` changed case without
+        // ever saying *to what*. One hand-written example
+        // (`cased_grows_on_a_sharp_s`) was the entire defence.
+        match case {
+            CaseChange::Upper => prop_assert!(
+                !out.chars().any(char::is_lowercase),
+                "Upper left a lowercase character: {source:?} -> {out:?}"
+            ),
+            CaseChange::Lower => prop_assert!(
+                !out.chars().any(char::is_uppercase),
+                "Lower left an uppercase character: {source:?} -> {out:?}"
+            ),
+            // Toggle's whole job is to produce both, so it has no such law.
+            CaseChange::Toggle => {}
+        }
     }
 
     /// **`Upper` and `Lower` are idempotent; `Toggle` is not, and cannot be.**
@@ -913,6 +932,34 @@ proptest! {
                 "{:?} is not idempotent on {:?}", case, source
             );
         }
+
+        // **And that they are not the same function**, which idempotence alone
+        // does not say — `§25` again. A `cased` that ignored its argument
+        // entirely, or that ran `Lower` for both, would satisfy every
+        // assertion above.
+        let upper = text::cased(&source, CaseChange::Upper);
+        let lower = text::cased(&source, CaseChange::Lower);
+        if source.chars().any(|character| character.is_lowercase() || character.is_uppercase()) {
+            prop_assert_ne!(
+                &upper, &lower,
+                "Upper and Lower agreed on {:?}, which has a cased letter in it", source
+            );
+        }
+
+        // **The last one applied is the one that wins.** This is the direction
+        // claim in the form this test is about — composition rather than a
+        // single call — and it is what catches the plant `§25` names.
+        // *Swapping* `Upper` and `Lower` leaves both idempotent and leaves them
+        // differing from each other, so neither law above sees it; but it
+        // reverses which one wins here, and that is visible.
+        prop_assert!(
+            !text::cased(&lower, CaseChange::Upper).chars().any(char::is_lowercase),
+            "Lower then Upper left a lowercase character in {source:?}"
+        );
+        prop_assert!(
+            !text::cased(&upper, CaseChange::Lower).chars().any(char::is_uppercase),
+            "Upper then Lower left an uppercase character in {source:?}"
+        );
     }
 }
 
@@ -987,19 +1034,62 @@ impl Drop for TempDir {
 
 /// One operation a real undo session performs, before it knows which node ids
 /// exist.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Step {
     /// Commit a group: a new node, branching from wherever the buffer is.
-    Commit { edits: u8, at: u16 },
+    ///
+    /// **`edits` carries the text, and `§25` is why.** It used to be a *count*,
+    /// and `records_from` turned it into `removed: String::new()` with
+    /// `inserted: format!("x{index}")` — so every record this generator has
+    /// ever produced was an insertion of one or two ASCII bytes. The codec
+    /// round-trip property was green over a domain containing no deletion, no
+    /// replacement, no multi-byte character and no string longer than two
+    /// bytes: the varint length prefix never exceeded one byte, and the branch
+    /// that handles a removal never ran.
+    Commit { edits: Vec<Edit>, at: u16 },
     /// Undo, redo, or walk to a checkpoint. The seed picks an existing node.
     Goto { seed: u16 },
     /// Mark the buffer saved at the current node, or at none.
     Save { here: bool },
 }
 
+/// One edit's text, generated rather than assumed.
+#[derive(Debug, Clone)]
+struct Edit {
+    removed: String,
+    inserted: String,
+}
+
+/// Text an edit actually carries.
+///
+/// The empty string stays in the domain — a pure insertion has nothing removed
+/// and a pure deletion has nothing inserted, and both are real. What is new is
+/// that they are no longer the *only* shapes: multi-byte characters exercise
+/// the byte-versus-character distinction the codec has to get right, and a
+/// string long enough to need a two-byte varint exercises the length prefix
+/// past its first byte.
+fn any_edit_text() -> impl Strategy<Value = String> {
+    prop_oneof![
+        3 => Just(String::new()),
+        4 => "[a-z]{1,8}",
+        2 => prop::collection::vec(
+                prop::sample::select(vec!['é', '日', 'ß', 'İ', '👍', '\n', '\t', '"']),
+                1..6,
+             ).prop_map(|characters| characters.into_iter().collect::<String>()),
+        // Past the one-byte varint boundary (128), which nothing reached before.
+        1 => prop::collection::vec(prop::sample::select(vec!['a', 'é', '👍']), 40..90)
+                .prop_map(|characters| characters.into_iter().collect::<String>()),
+    ]
+}
+
+fn any_edit() -> impl Strategy<Value = Edit> {
+    (any_edit_text(), any_edit_text()).prop_map(|(removed, inserted)| Edit { removed, inserted })
+}
+
 fn any_step() -> impl Strategy<Value = Step> {
     prop_oneof![
-        3 => (0_u8..3, any::<u16>()).prop_map(|(edits, at)| Step::Commit { edits, at }),
+        3 => (prop::collection::vec(any_edit(), 0..3), any::<u16>())
+                .prop_map(|(edits, at)| Step::Commit { edits, at }),
         2 => any::<u16>().prop_map(|seed| Step::Goto { seed }),
         1 => any::<bool>().prop_map(|here| Step::Save { here }),
     ]
@@ -1019,13 +1109,16 @@ fn records_from(steps: &[Step]) -> Vec<undo::Record> {
     let mut next: undo::NodeId = 1;
     let mut current: undo::NodeId = undo::ROOT;
     for step in steps {
-        match *step {
+        match step {
             Step::Commit { edits, at } => {
-                let edits = (0..edits)
-                    .map(|index| undo::Edit {
-                        at: usize::from(at) + usize::from(index),
-                        removed: String::new(),
-                        inserted: format!("x{index}"),
+                let at = *at;
+                let edits = edits
+                    .iter()
+                    .enumerate()
+                    .map(|(index, edit)| undo::Edit {
+                        at: usize::from(at) + index,
+                        removed: edit.removed.clone(),
+                        inserted: edit.inserted.clone(),
                     })
                     .collect();
                 out.push(undo::Record::Node {
@@ -1048,7 +1141,7 @@ fn records_from(steps: &[Step]) -> Vec<undo::Record> {
                 next += 1;
             }
             Step::Goto { seed } => {
-                let to = undo::NodeId::from(seed) % next;
+                let to = undo::NodeId::from(*seed) % next;
                 out.push(undo::Record::Cursor { to });
                 current = to;
             }
