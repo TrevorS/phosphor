@@ -4,4 +4,15 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
+#
+# PROVENANCE, because the header above would otherwise read as a bug this
+# editor shipped. It did not. The seed below was generated against a
+# DELIBERATELY PLANTED swap of Upper and Lower in `text::cased` — the plant
+# `§25` names, run to check that the direction assertions added in the same
+# commit actually bite. They do; all three case tests fail on it now, where
+# before only the hand-written `cased_grows_on_a_sharp_s` did.
+#
+# It is kept rather than deleted because it is the *minimal* input that
+# distinguishes Upper from Lower — proptest shrank it to one character — so
+# re-running it first is exactly what you want from this file.
 cc 47312c7ed0e33fdd14e813d5e5f509cc218e6a4050139ae2c6a92eb31d8a8d08 # shrinks to source = "a", case = Upper
