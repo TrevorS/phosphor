@@ -96,9 +96,16 @@ bug.
 excluded from `[workspace] members` so our lints stop at the seam.
 
 **Every hunk under `vendor/` needs a matching entry in that fork's `VENDOR.md`** — that is the
-acceptance contract, audited by `just vendor-diff`. An undocumented hunk is how a fork silently
-becomes a rewrite. Keep patches minimal and put phosphor additions in the fork's own `phosphor/`
-module. Pin by SHA, not tag: upstream published `ratatui-code-editor` 0.0.6 without ever tagging it.
+acceptance contract. An undocumented hunk is how a fork silently becomes a rewrite. Keep patches
+minimal and put phosphor additions in the fork's own `phosphor/` module. Pin by SHA, not tag:
+upstream published `ratatui-code-editor` 0.0.6 without ever tagging it.
+
+Two commands, and they do different jobs. `scripts/lint-vendor-hunks.sh` (inside `just lint`) is
+the **audit**: it fails if a file diverging from upstream is never mentioned in that fork's
+`VENDOR.md`. `just vendor-diff` is the **review**: it prints the divergence so you can read
+whether the entry actually explains it, which no lint can judge. This paragraph said the second
+one audited the contract; it never did — it prints and exits 0 — and a human reading 3,336 lines
+was the entire check.
 
 ## docs/ is the specification
 

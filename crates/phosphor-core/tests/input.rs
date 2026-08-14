@@ -933,15 +933,41 @@ fn r_replaces_under_the_cursor_and_repeats() {
     buffer.at(1, 1);
 
     let stream = drive(&mut machine, &mut keymap, &mut buffer, "rx");
-    assert_eq!(names(&stream), ["replace", "commit-undo-group"]);
+    assert_eq!(
+        names(&stream),
+        ["replace", "set-cursor", "commit-undo-group"]
+    );
     assert_eq!(buffer.content(), "xbcd");
     assert_eq!(machine.mode(), EditMode::Normal, "r is not R");
+    assert_eq!(
+        buffer.cursor().column,
+        1,
+        "r replaces IN PLACE — the cursor stays on the character it wrote"
+    );
+
+    // Twice in a row, which is how the drift shows up in real editing: without
+    // the landing the second `r` writes one cell to the right of where a vim
+    // user is looking.
+    let mut twice = Buffer::new("abcd");
+    twice.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut twice, "rx");
+    drive(&mut machine, &mut keymap, &mut twice, "ry");
+    assert_eq!(
+        twice.content(),
+        "ybcd",
+        "the second r lands on the same cell"
+    );
 
     // The count replaces that many, and refuses when the line is too short —
     // vim's rule, and the reason a partial replace is not a thing.
     buffer.at(1, 2);
     drive(&mut machine, &mut keymap, &mut buffer, "2ry");
     assert_eq!(buffer.content(), "xyyd");
+    assert_eq!(
+        buffer.cursor().column,
+        3,
+        "a counted r lands on the LAST character it replaced, not past it"
+    );
     buffer.at(1, 3);
     let stream = drive(&mut machine, &mut keymap, &mut buffer, "9rz");
     assert_eq!(names(&stream), ["set-count", "cancel-pending"]);

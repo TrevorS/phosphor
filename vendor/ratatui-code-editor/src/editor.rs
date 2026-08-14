@@ -369,6 +369,11 @@ impl Editor {
         Some(line_start_char + char_idx)
     }
 
+    // PHOSPHOR PATCH 9 — orphaned by the deletion of `Editor::mouse`, which was
+    // its only caller. Kept rather than deleted: it is upstream's own working
+    // code and the day phosphor wants click-to-fold it is where that starts.
+    // See VENDOR.md §9.
+    #[allow(dead_code)]
     pub(crate) fn toggle_fold_at_mouse(&mut self, mouse_x: u16, mouse_y: u16, area: &Rect) -> bool {
         if !self.is_code_folding_enabled() {
             return false;

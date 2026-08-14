@@ -171,9 +171,21 @@ gate:
     #!/usr/bin/env bash
     set -uo pipefail
     status=0
-    for recipe in fmt lint clippy test deny vendor-diff; do
+    # `vendor-diff` takes `--stat` HERE and nowhere else. Bare, it prints the
+    # forks' full divergence — 3,336 lines of hunks, VENDOR.md prose and deleted
+    # binaries — which is exactly right when you are reviewing a fork change and
+    # exactly wrong as the last step of a gate, because it buries the verdict
+    # under a wall of expected output and teaches you to stop reading. `--stat`
+    # is the signal: which files diverge, and by how much.
+    #
+    # Nothing is lost by shortening it. `vendor-diff` never failed on an
+    # undocumented hunk in the first place — it prints and exits 0. The audit
+    # CLAUDE.md promised is `scripts/lint-vendor-hunks.sh`, which runs inside
+    # `just lint` above and fails on a fork file no VENDOR.md mentions.
+    for recipe in fmt lint clippy test deny "vendor-diff --stat"; do
         echo "── just ${recipe} ──"
-        if ! just "$recipe"; then
+        # shellcheck disable=SC2086 # the one entry with a flag is split on purpose
+        if ! just ${recipe}; then
             echo "FAILED: just ${recipe}"
             status=1
         fi

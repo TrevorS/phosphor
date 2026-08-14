@@ -453,3 +453,32 @@ spike ([SPIKES.md](../../docs/SPIKES.md)):
 - **`crossterm` is off in our build** (the fork's `crossterm` feature gates
   `editor_crossterm.rs`). Input is phosphor's — `T026` — so we do not want upstream's key
   handling. Revisit only if something in S1 turns out to need that module.
+
+### 9 · `Editor::input` and `Editor::mouse` are deleted
+
+**Files:** `src/editor.rs` (two public methods removed, one orphan silenced).
+**Upstreamable:** no. This is phosphor taking over a responsibility upstream offers, not a
+defect in what it offers.
+
+Recorded late, and that is the finding: `T026` removed both methods in Window D and no entry
+was written for them. `scripts/lint-vendor-hunks.sh` did not catch it either — it checks that a
+diverging *file* is documented, and `src/editor.rs` is documented several times over for other
+patches. **Deleting an upstream public method is the largest divergence a fork can carry**, and
+it was the one hunk with nothing written down.
+
+**Why they went.** Both were second writers on state phosphor's invariants say has exactly one.
+`Editor::input` ends every keystroke with its own `focus()`, and `Editor::mouse` calls
+`scroll_up`/`scroll_down` directly — so with either of them live the viewport has two writers and
+*"nothing moves unless you asked"* (invariant 3) stops holding. `Action::Scroll` is the single
+writer, and `T026`'s input machine emits it. Wrapping them was not an option: a wrapper cannot
+stop the callee from scrolling.
+
+Mouse events still work. They are decoded by the host and lowered to `SetCursor`, `SelectRange`
+and `Scroll` like any other input, which is what makes a click and a keystroke the same kind of
+thing to everything downstream.
+
+**One orphan, silenced rather than deleted.** `toggle_fold_at_mouse` was reachable only from
+`Editor::mouse`, so it is now dead code and warns on every build. It carries `#[allow(dead_code)]`
+with a pointer here, rather than a deletion, because it is upstream's own working code and the
+day phosphor wants click-to-fold it is what that feature starts from. `T016` owns folding; the
+fold *gutter* it targets is off (§4), so nothing calls this today.

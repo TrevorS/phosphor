@@ -701,6 +701,23 @@ impl Machine {
             },
             text: character.to_string().repeat(count as usize),
         }));
+        // `r` replaces IN PLACE. Vim leaves the cursor on the character it just
+        // wrote — on the *last* one for a count, so `3rx` ends two to the right
+        // of where it started and `rx` does not move at all (change.txt: "replace
+        // the character under the cursor"). Without this the applier's splice
+        // leaves the cursor past the replacement, so every `r` drifted one cell
+        // right and `rx` twice in a row skipped a character. Found by Teej at
+        // `CP-3`, editing.
+        //
+        // Not `Machine::land`: that is the operator landing rule, and `r` is not
+        // an operator — it takes no motion and no text object.
+        out.push(set_cursor(text::clamp(
+            text,
+            Position {
+                column: cursor.column.saturating_add(count).saturating_sub(1),
+                ..cursor
+            },
+        )));
         out.push(Action::History(HistoryAction::CommitUndoGroup {}));
         self.clear(out);
     }
