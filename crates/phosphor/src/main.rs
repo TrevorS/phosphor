@@ -2057,8 +2057,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         sent = edits.get();
                         // A new buffer is a new place; a list anchored in the old
                         // one would be drawn over code it knows nothing about.
-                        editing.completion = None;
-                        editing.offered.clear();
+                        editing.close_completion();
                         editing.signature = None;
                         // `gd` landing. Applied as the Action it is, so the
                         // cursor moves through the one path every cursor move
@@ -2183,8 +2182,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // rule is about surfaces — so leaving insert mode is what closes this
         // one, and it closes it wherever the mode changed from.
         if machine.mode() != EditMode::Insert && editing.completion.is_some() {
-            editing.completion = None;
-            editing.offered.clear();
+            editing.close_completion();
         }
         // And the signature raised inside that session goes with it. A hover
         // read in normal mode is dismissed by the next key above; this is the
@@ -2602,6 +2600,9 @@ fn offered(item: phosphor_buffer::lsp::Completion) -> WireCompletion {
         detail: item.detail,
         documentation: item.documentation,
         insert: item.insert,
+        kind: item.kind,
+        source: item.source,
+        deprecated: item.deprecated,
     }
 }
 
@@ -3314,6 +3315,36 @@ struct Editing {
     /// may not mutate. The two are built and dropped together, in
     /// `IngestCompletions`' arm and in [`Editing::accept`].
     offered: Vec<Offer>,
+    /// Whether the user has **chosen** a row in this session, rather than
+    /// merely been offered one — set by `move-completion` and by nothing else.
+    ///
+    /// This is the state `accept-completion`'s `otherwise` reads, and it is the
+    /// whole reason that argument can exist: **a keymap is data**. A binding
+    /// names a capability and its arguments and cannot ask whether a row is
+    /// selected, so the guard that makes `<space>` usable — accept only if the
+    /// user steered, otherwise type a space — has to be the host's. The
+    /// keymap's `<C-x>` note argues the same constraint for the *opening* key.
+    ///
+    /// **Three writers, and they are one setter and the two ways a session
+    /// ends** — counted by `grep`, because the first version of this comment
+    /// said *"cleared in [`Editing::close_completion`] and nowhere else"*, the
+    /// `MoveCompletion` arm said *"the one writer"*, the `IngestCompletions`
+    /// arm said *"the two are the only writers"*, and the three were an
+    /// invariant claim nothing checked:
+    ///
+    /// * `Lsp::MoveCompletion`'s arm sets it — pressing `<C-n>` is the whole of
+    ///   what *"the user chose a row"* means.
+    /// * [`Editing::close_completion`] clears it, and is the one place a
+    ///   session is **dropped** (`esc`, an accept, leaving insert mode).
+    /// * `Lsp::IngestCompletions`' arm clears it, and is the one place a
+    ///   session is **replaced** — a fresh answer puts the selection back on
+    ///   row 0, so the row the user steered to no longer exists.
+    ///
+    /// That is the invariant worth stating, and it is what makes the flag safe
+    /// rather than the count: **it can only be true inside a session the user
+    /// steered in**, because dropping a session and replacing one are the only
+    /// two exits and both clear it.
+    chosen: bool,
     /// The live signature-help or hover answer (`T039`). One field for two
     /// features because they are one surface — see `float::SignatureVm`.
     signature: Option<SignatureVm>,
@@ -3339,6 +3370,22 @@ struct Editing {
     dirty: Rc<Cell<bool>>,
     /// Set by `App::Quit`; the loop reads it once per turn.
     quit: bool,
+    /// What mode the machine says it is in — **the machine's report, kept so
+    /// that a host-side edit can type the way a keystroke would**.
+    ///
+    /// One writer, and it is the `Input::SetMode` arm of [`Session::key`]:
+    /// `Action::Input` is the one family that never reaches [`Editing::act`]
+    /// (the loop answers it, so the machine and the host stay in step through
+    /// one path), and `Machine::set_mode` emits exactly this Action on every
+    /// change. Read by [`Editing::accept`] and by nothing else.
+    ///
+    /// **`CP-4`'s `R` defect is why it exists.** `Scope::of` folds `Replace`
+    /// into the insert scope — vim's `:imap` does the same — so binding
+    /// `<space>` and `<cr>` there bound them in `R` too, where no completion
+    /// float can ever be open and the fall-through therefore always fires. It
+    /// spliced text in, so `R` stopped overwriting: `abcdef` with `RXY Z` read
+    /// `XY Zdef` instead of vim's `XY Zef`.
+    mode: EditMode,
 }
 
 /// The unnamed register, as vim spells it.
@@ -3431,6 +3478,7 @@ impl Editing {
             question: None,
             completion: None,
             offered: Vec::new(),
+            chosen: false,
             signature: None,
             diagnostics,
             registers: BTreeMap::new(),
@@ -3440,6 +3488,7 @@ impl Editing {
             depth: 0,
             dirty,
             quit: false,
+            mode: EditMode::Normal,
         }
     }
 
@@ -3794,7 +3843,13 @@ impl Editing {
             // say why (`T098`'s rule, applied to a surface instead of a task).
             Action::Lsp(LspAction::MoveCompletion { delta }) => {
                 let offered = &self.offered;
-                match &mut self.completion {
+                // `stepped` and not `moved`: the free function [`moved`] is
+                // called inside this binding's own initializer, and it resolves
+                // there only because a `let` is not in scope until after it.
+                // That compiles and is correct, and it is one hoist away from
+                // silently meaning something else — `CP-4`'s review asked for
+                // the shadow to go rather than for a comment about it.
+                let stepped = match &mut self.completion {
                     Some(session) => {
                         session.selected = moved(session.selected, session.items.len(), *delta);
                         // The prose under the rule follows the selection, with
@@ -3806,20 +3861,35 @@ impl Editing {
                             .get(session.selected)
                             .map(|offer| offer.documentation.clone())
                             .unwrap_or_default();
-                        done()
+                        true
                     }
-                    None => declined("no completion list is open"),
+                    None => false,
+                };
+                // **The only writer of [`Editing::chosen`] that sets it** — the
+                // other two clear it, and the field's own doc counts all three.
+                // Pressing `<C-n>` is the whole of what *"the user chose a
+                // row"* means, and it is what `<space>`'s `otherwise` consults
+                // before it types instead of accepting. Outside the match
+                // because the session is borrowed inside it.
+                self.chosen |= stepped;
+                if stepped {
+                    done()
+                } else {
+                    declined("no completion list is open")
                 }
             }
-            Action::Lsp(LspAction::AcceptCompletion { index }) => match self.accept(*index) {
+            Action::Lsp(LspAction::AcceptCompletion {
+                index,
+                then,
+                otherwise,
+            }) => match self.accept(*index, then.as_deref(), otherwise.as_deref()) {
                 Ok(()) => done(),
                 Err(reason) => declined(&reason),
             },
             Action::Lsp(LspAction::CancelCompletion {}) => {
                 // Both, and deliberately: `esc` closes what is on screen, and
                 // §9 says it closes top-down rather than one surface per press.
-                self.completion = None;
-                self.offered.clear();
+                self.close_completion();
                 self.signature = None;
                 done()
             }
@@ -3860,6 +3930,14 @@ impl Editing {
                             documentation: item.documentation.clone(),
                         })
                         .collect();
+                    // A fresh answer is a fresh session: `Editing::completions`
+                    // puts the selection back on row 0, so the row the user
+                    // had steered to no longer exists and `<space>` must go
+                    // back to typing a space. **Replacing a session**, where
+                    // [`Editing::close_completion`] is **dropping** one — the
+                    // two exits, and the field's doc counts them beside the one
+                    // writer that sets it.
+                    self.chosen = false;
                 }
                 done()
             }
@@ -4280,6 +4358,21 @@ impl Editing {
         Anchor::new(x.saturating_sub(u16::try_from(shift).unwrap_or(0)), y)
     }
 
+    /// The offset of the newline that ends the line `cursor` is on, or the end
+    /// of the rope on the last line.
+    ///
+    /// The boundary `R` stops at: [`Editing::accept`]'s fall-through overwrites
+    /// one character in replace mode, and *"one character"* must not be the
+    /// newline — vim's `R` at the end of a line appends and leaves the line
+    /// break alone. The same clamp `Editing::offset` applies to a `Position`
+    /// whose column is past the end, which is how `Machine::insert_key`'s own
+    /// replace span degrades to an insert there.
+    fn line_end(&self, cursor: usize) -> usize {
+        let code = self.editor.code_ref();
+        let line = code.char_to_line(cursor);
+        code.line_to_char(line) + code.line_len(line)
+    }
+
     /// How many characters of a word are behind the cursor — the prefix a
     /// completion replaces, and how far left of the cursor its float hangs.
     ///
@@ -4398,6 +4491,9 @@ impl Editing {
                 .map(|item| CompletionItemVm {
                     label: item.label.clone(),
                     detail: item.detail.clone(),
+                    kind: item.kind,
+                    source: item.source.clone(),
+                    deprecated: item.deprecated,
                 })
                 .collect(),
             selected: 0,
@@ -4419,12 +4515,87 @@ impl Editing {
         }
     }
 
+    /// Drops the completion session, whatever ended it.
+    ///
+    /// **The one place a session is dropped**, which is what makes
+    /// [`Editing::chosen`] safe to add: a flag cleared at five call sites is a
+    /// flag that survives one of them by the end of the next window, and this
+    /// session's state is already three fields that have to agree.
+    ///
+    /// Dropping is not the only exit — `Lsp::IngestCompletions`' arm *replaces*
+    /// a session, and clears the same flag for its own reason. The field's doc
+    /// counts both.
+    fn close_completion(&mut self) {
+        self.completion = None;
+        self.offered.clear();
+        self.chosen = false;
+    }
+
     /// Accepts a completion, replacing the word prefix under the cursor.
+    ///
+    /// # The three arguments, and the one that is a guard
+    ///
+    /// `then` is text typed **after** the accepted item — the space `<space>`
+    /// leaves behind, and empty for `<enter>`. It is part of the same edit
+    /// batch, so one `u` undoes the completion and its space together.
+    ///
+    /// `otherwise` is text typed **instead**, when the user has not chosen a
+    /// row with `move-completion`. It is what makes `<space>` and `<enter>`
+    /// bindable at all: a completion float is open for most of the time you
+    /// are typing, so a `<space>` that accepted unconditionally would complete
+    /// a word every time you finished one, and `<enter>` would stop making
+    /// newlines. `nvim-cmp` spells the same rule `select = false` — the key
+    /// acts only on a selection the user steered to. `<C-y>` passes `None`
+    /// here and so keeps vim's meaning exactly: it accepts whatever is
+    /// highlighted, because pressing it *is* the choosing.
+    ///
+    /// **Deliberately not a mode or a setting.** The guard lives in the
+    /// argument because the keymap is where the fall-through *text* lives, and
+    /// nothing else knows what key was pressed: `<space>` types `" "`,
+    /// `<enter>` types `"\n"`, and a host that had to work that out would be
+    /// the keymap-in-rust `T033` exists to forbid.
+    ///
+    /// # The fall-through types the way the mode types
+    ///
+    /// *"What the key would have typed"* is not one edit — in `R` it overwrites
+    /// the character under the cursor. `Scope::of` folds `EditMode::Replace`
+    /// into the insert scope (so does vim's `:imap`), and the loop's completion
+    /// trigger is gated on `EditMode::Insert`, so in `R` there is never a float
+    /// and this branch fires on **every** `<space>` and `<cr>`. A fall-through
+    /// that always spliced turned `R` into `i`: `CP-4`'s review typed `RXY Z`
+    /// over `abcdef` and got `XY Zdef` where vim gives `XY Zef`.
+    ///
+    /// So the span this replaces is [`Machine::insert_key`]'s own — the one
+    /// character under the cursor, clamped to the end of the line, which is why
+    /// `R` at the end of a line appends instead of eating the newline.
     ///
     /// # Errors
     ///
-    /// A sentence, when there is no session or `index` names no row.
-    fn accept(&mut self, index: u32) -> Result<(), String> {
+    /// A sentence, when there is nothing to accept and no `otherwise` to type
+    /// instead, or when `index` names no row.
+    fn accept(
+        &mut self,
+        index: u32,
+        then: Option<&str>,
+        otherwise: Option<&str>,
+    ) -> Result<(), String> {
+        // The guard, and it reads *"there is a session and the user steered in
+        // it"* — one condition, because a key with no float open and a key over
+        // a float nobody has touched are the same situation to the hands.
+        if let Some(fallthrough) = otherwise
+            && !(self.chosen && self.completion.is_some())
+        {
+            let cursor = self.editor.get_cursor();
+            let over = if self.mode == EditMode::Replace {
+                self.line_end(cursor).min(cursor + 1)
+            } else {
+                cursor
+            };
+            self.begin();
+            self.splice(cursor, over, fallthrough);
+            self.commit();
+            return Ok(());
+        }
         let session = self
             .completion
             .as_ref()
@@ -4446,10 +4617,13 @@ impl Editing {
             .ok_or_else(|| format!("no completion {row} in a list of {}", self.offered.len()))?;
         let back = self.prefix_len();
         let cursor = self.editor.get_cursor();
-        self.completion = None;
-        self.offered.clear();
+        self.close_completion();
         self.begin();
         self.splice(cursor - back, cursor, &insert);
+        if let Some(trailing) = then.filter(|trailing| !trailing.is_empty()) {
+            let at = self.editor.get_cursor();
+            self.splice(at, at, trailing);
+        }
         self.commit();
         Ok(())
     }
@@ -4760,9 +4934,11 @@ impl Session<'_> {
                             }
                         }
                     }
-                    InputAction::SetMode { .. }
-                    | InputAction::SetCount { .. }
-                    | InputAction::SelectRegister { .. } => {}
+                    // **The one writer of [`Editing::mode`]**, and it is here
+                    // rather than in `Editing::act` because `Action::Input` is
+                    // the family that never reaches it. See the field.
+                    InputAction::SetMode { mode } => self.editing.mode = *mode,
+                    InputAction::SetCount { .. } | InputAction::SelectRegister { .. } => {}
                     // `T099`, and the one arm in this match that answers rather
                     // than keeps state. [`Machine::apply`]'s own arm is
                     // deliberately a no-op and `apply` returns nothing, so the
@@ -4797,6 +4973,23 @@ impl Session<'_> {
 }
 
 /// Whether an Action moved the cursor, and so wants revealing.
+///
+/// # Why `accept-completion` is on this list
+///
+/// It edits the buffer without being a `Buffer::…` Action — [`Editing::accept`]
+/// calls [`Editing::splice`] directly, and its `otherwise` fall-through types
+/// whatever the key would have typed. So it moves the cursor exactly as much as
+/// the text it wrote, and until `T106` it was the one editing verb this
+/// function did not name.
+///
+/// **`CP-4` is what made that fatal.** Before `<cr>` was bound in the insert
+/// scope, an accept moved the cursor by a few columns and a viewport that did
+/// not follow was invisible. Binding `<cr>` routes *every newline typed in
+/// insert mode* through this Action: with the reveal missing, pressing enter
+/// past the last visible row walked the cursor off the bottom of the screen and
+/// you typed where you could not see. Driven on the installed binary at 80x24
+/// — `A` then thirty `<cr>` — the viewport stayed on lines 1..23 with the
+/// statusline reading `31:1`.
 const fn moves_cursor(action: &Action) -> bool {
     matches!(
         action,
@@ -4810,6 +5003,7 @@ const fn moves_cursor(action: &Action) -> bool {
                 | BufferAction::Replace { .. }
                 | BufferAction::Paste { .. }
         ) | Action::History(HistoryAction::Undo { .. } | HistoryAction::Redo { .. })
+            | Action::Lsp(LspAction::AcceptCompletion { .. })
     )
 }
 
@@ -5921,6 +6115,9 @@ mod tests {
                         detail: None,
                         documentation: Vec::new(),
                         insert: "default()".to_owned(),
+                        kind: None,
+                        source: None,
+                        deprecated: false,
                     }],
                     at: Position { line: 1, column: 1 },
                     buffer: None,
@@ -6718,12 +6915,18 @@ mod tests {
             detail: Some("fn(D) -> Result<Self, Error>".to_owned()),
             documentation: Vec::new(),
             insert: "with_a_rather_long_name".to_owned(),
+            kind: None,
+            source: None,
+            deprecated: false,
         };
         let narrow = WireCompletion {
             label: "with_a".to_owned(),
             detail: None,
             documentation: Vec::new(),
             insert: "with_a".to_owned(),
+            kind: None,
+            source: None,
+            deprecated: false,
         };
         let ingest = |items: Vec<WireCompletion>, at| {
             Action::Lsp(phosphor_core::action::LspAction::IngestCompletions {
@@ -6760,6 +6963,108 @@ mod tests {
         drop(editing.act(&ingest(vec![narrow], moved)));
         let fresh = editing.completion.as_ref().expect("a new session");
         assert_eq!(fresh.width_floor, 0, "a new word starts content-sized");
+    }
+
+    /// **The worst regression `CP-4`'s review found: enter stopped scrolling.**
+    ///
+    /// `runtime/keymaps.scm` binds `<cr>` in the insert scope, so every newline
+    /// typed in insert mode is now an `accept-completion` whose `otherwise` is
+    /// `"\n"` — and `moves_cursor` did not name that Action, so `Editing::apply`
+    /// skipped the reveal. On the installed binary at 80x24 the cursor reached
+    /// line 31 with the viewport still showing lines 1..23: you type where you
+    /// cannot see.
+    ///
+    /// Driven through [`Editing::apply`] and not `act`, because `apply` is
+    /// where the reveal lives and it is what [`Session::key`] calls.
+    ///
+    /// **This bites:** drop the `Action::Lsp` arm from [`moves_cursor`] and the
+    /// viewport stays at row 0 with the cursor thirty rows below it.
+    #[test]
+    fn accepting_a_completion_reveals_the_cursor_it_moved() {
+        use phosphor_core::action::LspAction;
+
+        let text: String = (1..=100).map(|line| format!("line {line}\n")).collect();
+        let mut editing = editing(&text);
+        editing.area = Rect::new(0, 0, 80, 10);
+        editing.mode = phosphor_core::request::EditMode::Insert;
+        editing.editor.set_cursor(0);
+
+        // Thirty newlines, exactly as `<cr>` sends them with no float open.
+        for _ in 0..30 {
+            drop(editing.apply(&Action::Lsp(LspAction::AcceptCompletion {
+                index: 0,
+                then: None,
+                otherwise: Some("\n".to_owned()),
+            })));
+        }
+
+        assert_eq!(
+            editing.text().cursor().line,
+            31,
+            "thirty newlines put the cursor on line 31"
+        );
+        assert!(
+            editing.editor.get_offset_y() > 0,
+            "the viewport followed the cursor down; it was still on row {} \
+             with the cursor on line 31, which is eight rows below a 10-row window",
+            editing.editor.get_offset_y()
+        );
+        assert!(
+            editing
+                .editor
+                .get_visible_cursor(&editing.area)
+                .is_some_and(|(_, y)| u32::from(y) < u32::from(editing.area.height)),
+            "and the cursor is on screen rather than below it"
+        );
+    }
+
+    /// **`R` is still vim's `R`** — the second half of the same `CP-4` defect.
+    ///
+    /// `Scope::of` folds `EditMode::Replace` into the insert scope, so the
+    /// `<space>` and `<cr>` rows bind in `R` too. No completion float can ever
+    /// be open there (the loop's trigger is gated on `EditMode::Insert`), so
+    /// [`Editing::accept`]'s `otherwise` branch fires unconditionally — and
+    /// while it spliced, `R` quietly stopped overwriting.
+    ///
+    /// **This bites:** delete the `EditMode::Replace` arm in `accept` and the
+    /// second case reads `ab cdef` instead of `ab def` — the `c` survives,
+    /// which is the whole defect.
+    #[test]
+    fn the_fall_through_types_the_way_the_mode_types() {
+        use phosphor_core::action::LspAction;
+        use phosphor_core::request::EditMode;
+
+        let space = Action::Lsp(LspAction::AcceptCompletion {
+            index: 0,
+            then: None,
+            otherwise: Some(" ".to_owned()),
+        });
+        let at = |mode, text: &str, cursor| {
+            let mut editing = editing(text);
+            editing.area = Rect::new(0, 0, 80, 24);
+            editing.mode = mode;
+            editing.editor.set_cursor(cursor);
+            drop(editing.apply(&space));
+            editing.contents()
+        };
+
+        assert_eq!(
+            at(EditMode::Insert, "abcdef\n", 2),
+            "ab cdef\n",
+            "in insert the fall-through inserts, as it always has"
+        );
+        assert_eq!(
+            at(EditMode::Replace, "abcdef\n", 2),
+            "ab def\n",
+            "in replace it overwrites the character under the cursor — the `c` goes"
+        );
+        // `R` at the end of a line appends in vim; the newline is not a
+        // character it may eat, which is what `Editing::line_end` clamps to.
+        assert_eq!(
+            at(EditMode::Replace, "ab\ncd\n", 2),
+            "ab \ncd\n",
+            "at the end of a line it appends rather than joining the next one"
+        );
     }
 
     #[test]

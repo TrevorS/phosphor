@@ -4,7 +4,7 @@ Decomposed from [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md), which is itsel
 the four design docs in [design/](design/). The plan says *what each phase is for*; this file
 says *what to build, in what order, and where we stop and look at it*.
 
-**103 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
+**108 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
 Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids
 are stable and assigned in order of creation — reference them in commits. New tasks append
 rather than renumber, so `T078`+ sit inside earlier phases.
@@ -260,7 +260,8 @@ can actually see each one is noted, since it isn't obvious:
 | **V · Verification harness** | **V001–V009** | *cross-cutting — lands with S1, used from CP-1 on* |
 | **A · Arms owed** | **T092–T098** | *cross-cutting — debt the `CP-3` audit found; see the section at the end* |
 | **B · The repair window** | **T099, T100** | *between `CP-3` and `S4` — the verbs that window added, and their creditors* |
-| **C · The repair window** | **T101, T102** | *between `CP-4` and Window E — a ruling that overrides a mockup, a fork fix, and the fork tests nothing ran* |
+| **C · The repair window** | **T101–T103** | *between `CP-4` and Window E — a ruling that overrides a mockup, a fork fix, the fork tests nothing ran, and a second CLI dispatcher* |
+| **D · `CP-4`'s manual half** | **T104–T108** | *what Teej found by typing into the shipping binary; see the section at the end* |
 
 ---
 
@@ -2467,6 +2468,413 @@ Numbered `T101`+ and appended rather than renumbered, like `T099` and `T100` bef
   verb claims a ticked-and-armed capability is unbuilt for a reason the door invented, the parity
   walk discriminates by capability name rather than by a shared task id, and no gate run writes to
   a real config home. *Needs:* T023, T024, T101
+
+---
+
+## D · What `CP-4`'s manual half found — five tasks from Teej at the keyboard
+
+`CP-4`'s manual half is the one only Teej can run, and this is what running it produced. Section
+`C` above collected work that gets *more expensive if Window E runs first*; these are different —
+they are things a person met by typing into the shipping binary, which is the entire reason a
+checkpoint has a half no gate can perform. Two of them (`T105`, `T106`) were being built while
+this section was being written and one (`T108`) is deliberately not buildable yet.
+
+Numbered `T104`+ and appended rather than renumbered, like `T099`–`T103` before them. **📌 marks
+the two that are new surfaces rather than repairs**: `T107` and `T108` name things no task in the
+graph names at all, while `T104` extends `T026`'s operator machine and `T033`'s keymap and
+`T105`/`T106` extend a ticked `T038`.
+
+> **The review of this section found a defect older than any of it, and two the section caused.**
+> Recorded here rather than as tasks, because they are fixes rather than work: adding rows to this
+> graph moves counts `scripts/lint-doc-claims.py` recomputes, and none of these is a surface.
+>
+> * **A literal `<` made Rust untypeable, and it predates `S4`.** `phosphor/prefix?` in
+>   `runtime/keymaps.scm` compared canonical key spellings with `starts-with?` — on *characters*.
+>   A canonical spelling is a concatenation of keys and the character `<` spells itself, so `<` was
+>   a prefix of `<space>`, `<esc>`, `<C-x>` and every other bracketed row in its scope. The machine
+>   answered `Pending`, held the key, and flushed the batch as text when the sequence died — with
+>   every Action in the batch built against one stale cursor, because the host applies them and the
+>   machine cannot. Typed into the running binary, `a<u8>b` wrote `a8>bu<` and
+>   `let v: Vec<u8> = Vec::new();` wrote `let v: Vec8> = Vec::new();u<`. Both halves are fixed —
+>   `phosphor/boundary?` makes a prefix end where a key ends, and `Machine::insert_keys` walks the
+>   position across a batch — and each half has a test that was watched going red on its own
+>   mutation. Either fix alone rescues the string, which is why the pty test that reads it
+>   (`a_rust_generic_types_forwards_in_insert_mode`) is the outcome check and not the isolating one.
+> * **Enter stopped scrolling.** `T105` binds `<cr>` in the insert scope, so every newline typed in
+>   insert mode is an `accept-completion`; `main.rs`'s `moves_cursor` did not name that Action, so
+>   `Editing::apply` skipped the reveal. At 80x24, `A` then thirty `<cr>` left the viewport on lines
+>   1..23 with the cursor on line 31 — you type where you cannot see. Every test in the tree passed,
+>   because none of them pressed enter in insert mode past the last visible row.
+> * **`R` stopped overwriting.** `Scope::of` folds `EditMode::Replace` into the insert scope (so
+>   does vim's `:imap`), and the loop's completion trigger is gated on `EditMode::Insert` — so in
+>   `R` there is never a float and `accept-completion`'s fall-through fires on every `<space>` and
+>   `<cr>`. It spliced, so `R` was `i`: `abcdef` with `RXY Z` read `XY Zdef` where vim gives
+>   `XY Zef`. `Editing` now keeps the mode the machine reports and the fall-through types the way
+>   the mode types.
+>
+> All three are the same shape and it is worth naming: **a keymap row changed the meaning of keys
+> nobody was testing.** The machine-level tests drive their own transcribed table, the widget tests
+> hand-build ViewModels, and `runtime/keymaps.scm` reaches the buffer only through a pty. That seam
+> is where all three lived.
+
+**One key is contested by two of them.** `T104` wants `<tab>` to mean *one indent level* and
+`T105` wants it to mean *take this completion* — the same key, in the same scope, with the answer
+depending on whether a list is open. `T105`'s mechanism (a fall-through argument on
+`accept-completion`) settles `<space>` and `<CR>` and **does not settle this one**, because the
+fall-through it takes is literal text and an indent level is a per-language value a keymap cannot
+name. Neither task may decide it alone; it is [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s §38.
+
+- [ ] **T104 · `<tab>`, and what one indent level is**
+  Reported at `CP-4`: *"tab only seems to go a space at a time when indenting"*. **Four things are
+  true underneath that one sentence and not one of them is a missing binding**, so the report is
+  worth taking apart before it is fixed.
+  **(1) A tab is exactly one cell, and nothing in this build knows what a tabstop is.**
+  `vendor/ratatui-code-editor/src/render.rs`'s `impl Widget for &Editor` walks a line's graphemes
+  and draws each as `g.to_string().replace('\t', " ")`, advancing `x` by
+  `code::grapheme_width_and_bytes_len` — which is `unicode_width::UnicodeWidthStr::width`, and
+  `unicode-width` 0.2.2's `tables::width_in_str` answers `1` for every `c <= '\u{A0}'` that is not
+  `\n` or `\r`. So a tab measures one column and paints one space, and *"a space at a time"* is
+  literally what the renderer was asked to do. `tab_width`, `tabstop`, `shiftwidth`, `expandtab`
+  and `softtabstop` have **zero occurrences** across `crates/`, `runtime/`, `vendor/` and
+  `scripts/`, grepped this session.
+  **(2) `<tab>` in insert mode is not unbound — it is decided, and the decision is a placeholder
+  with a task id on it.** Three `keymap-set-rows!` blocks in `runtime/keymaps.scm` name the
+  `insert` scope and at `e3af880` they carried eleven rows between them — `<esc>` in the all-scopes row, four
+  arrows under the comment *"insert mode is text, with four exceptions that are not"*, and
+  `T038`'s six LSP keys, which landed after that comment was written and make it read one binding
+  set short. `<tab>` is in none of them, so it reaches `Machine::insert_key`
+  (`crates/phosphor-core/src/input.rs`), which has an explicit arm for it:
+  `key::Code::Named(key::Named::Tab) => Some("\t".to_owned())`, above a comment saying *"What a
+  tab inserts is an option two reasonable users differ on, which makes it `T033`'s `set-option!`
+  rather than a number invented here."* The literal tab is deliberate; the option it defers to was
+  never built. (That comment names `T033`; the capability row is
+  `SetOption = "set-option" [S2 / "T021" / Allow]` and the table is real —
+  `runtime/init.scm` sets `soft-wrap` and `completion-min-chars` through it.)
+  **(3) `Indent` is armed and bound, and it answers a different question.** `>` and `<` are
+  operators in `runtime/keymaps.scm`'s `phosphor/operators`, bound in normal and
+  operator-pending so `>>` and `>ap` are lookups rather than special cases;
+  `phosphor_steel::keymap` maps `"indent"` to `Operator::Indent`, `Machine::operate`
+  (`input.rs`) emits `BufferAction::Indent { target, delta }`, and `main.rs`'s arm calls
+  `AppHost::indent`, which batches the whole range into one undo step. **Nothing presses it.**
+  There is no test in `crates/phosphor/tests/` or `crates/phosphor-core/tests/` that types `>`,
+  which is how the *unit* below stayed invisible through a green gate.
+  **(4) The unit is the fork's, hardcoded, and keyed on the grammar name.** `AppHost::indent`
+  takes `self.editor.code_ref().indent()` → `Code::indent` → `utils::indent(&self.lang)`, a
+  `match` in `vendor/ratatui-code-editor/src/utils.rs`: four spaces for
+  `rust|python|php|toml|c|cpp|zig|kotlin|erlang|html|sql`, a **literal tab** for `go|c_sharp`, two
+  spaces for everything else. The name it matches is what `main::grammar_of` answered — the
+  declaration's `grammar` field, or `"text"` — so of the twelve shipped declarations
+  (`runtime/languages/`) rust, python, toml and html get four spaces and the other eight get two;
+  `csv` declares `"grammar" void` and so does every undeclared file, both landing on `"text"` and
+  two spaces; and the `\t` arm is **unreachable in the shipped configuration**, because nothing
+  declares `go` or `c_sharp`. `define-language!` cannot influence any of it.
+  **The question this entry may not answer, stated so nobody answers it by accident: spaces or
+  tabs, and per-language or global.** `LanguageSpec` (`crates/phosphor-core/src/request.rs`)
+  already carries `comment_prefix` — a per-language fact reached through `define-language!`, which
+  its own doc calls *"the userspace road up from a second-tier language to a first-class one"* —
+  so a per-language indent has an obvious home. Global is `set-option!`, which `insert_key`'s
+  comment already points at. They are not exclusive: vim ships both (`shiftwidth`/`expandtab`
+  global, `ftplugin` per filetype). Whichever is ruled, **the fork's table stops being the answer**
+  and something has to replace it, because a value declared in scheme cannot reach `Code::indent`
+  without either a fork patch or the host computing the unit itself and never asking.
+  **Contested with `T105` on `<tab>`** — see §38.
+  *Done when:* a tab renders at a tabstop this build can name rather than in one cell, `<tab>` in
+  insert mode inserts one indent level rather than one character, `>` and `<` shift by that same
+  unit, the unit comes from something a user set rather than from `utils::indent`, and **a pty
+  test presses `<tab>` and `>>` in the running binary** — an arm and a binding both already exist
+  for `>` and neither has ever been pressed. *Needs:* T021, T026, T033
+
+- [ ] **T105 · The completion keys a hand already reaches for**
+  Reported at `CP-4`: *"i like being able to hit space to select and put a space after or enter to
+  select without a space after"*. The float raises itself while you type (`T038`) and then answers
+  to five keys nobody's fingers go to first.
+  **What the report was about**, at `e3af880`: the list is driven by `<C-x>` (request),
+  `<C-n>`/`<C-p>` (step), `<C-y>` (accept) and `<C-e>` (dismiss), all in `runtime/keymaps.scm`'s
+  third `insert` block. The keys a person actually presses do something else — `<up>`/`<down>`
+  are bound in the same scope to the `line-up`/`line-down` motions, so they walk the cursor out
+  from under a float anchored to the word being completed; `<CR>` reaches `Machine::insert_key`
+  and inserts `"\n"`; `<tab>` reaches the same function and inserts `"\t"` (`T104`). **None of the
+  three touches the session.**
+  **Why it was never a keymap edit.** A binding is data: `input::table::Role`'s richest case is
+  `Run(Vec<Action>)` — a fixed list of capabilities with their arguments baked in — and `Scope` is
+  a five-value Rust enum derived from the edit mode by `Scope::of`. The thing that knows a list is
+  open is `Editing::completion` in `crates/phosphor/src/main.rs`, and no binding can ask it. That
+  is [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s §29 item 1 arriving a second time, from the other
+  side; §38 is the question it raises and the mechanism below is the answer that landed.
+
+  > **Mid-flight as this was written, and recorded as such.** The working tree carried the change
+  > below **uncommitted** while this entry was being written, `runtime/keymaps.scm` landing after
+  > the capability did. Read the commit rather than this paragraph; what is here is the shape and
+  > the reasoning, not the tick. **`<tab>` was still unbound** when this was last checked, which
+  > is §38 and not an oversight.
+  >
+  > **The mechanism is neither of the two obvious ones — the capability grew the condition.**
+  > `accept-completion` takes two new optional arguments (`crates/phosphor-core/src/action.rs`):
+  > `then`, *"text to type after the accepted item — the space `<space>` leaves behind"*, and
+  > `otherwise`, *"text to type when no row has been chosen; present is what makes a key fall
+  > through instead of accepting"*. So `<space>` is bindable as *accept-if-steered, otherwise type
+  > a space*, with the **text** in the keymap where the key's meaning is and the **condition** in
+  > the host where the state is. No sixth `Scope`, no conditional `Role`, and `runtime/keymaps.scm`
+  > stays data.
+  >
+  > **The state it reads is a new field with one setter and two clearers.** `Editing::chosen` is
+  > *set* by the `MoveCompletion` arm and by nothing else — *"pressing `<C-n>` is the whole of
+  > what the user chose a row means"* — and *cleared* at the two ways a session ends: in
+  > `Editing::close_completion`, a new method that is now the single place a session is **dropped**
+  > (five call sites collapsed into it), and in the `IngestCompletions` arm, the single place one
+  > is **replaced**. The invariant is the point rather than the count: the flag can only be true
+  > inside a session the user steered in, because those two are the only exits. (This paragraph
+  > said *"exactly one writer"* and the three comments in `main.rs` said one, one and two — all
+  > four wrong against a `grep` of the file, and corrected at the `CP-4` review.) `Editing::accept`'s guard
+  > reads *"there is a session **and** the user steered in it"* as one condition, because a key
+  > over no float and a key over a float nobody has touched are the same situation to the hands.
+  > `<C-y>` passes `None` for `otherwise` and so keeps vim's meaning exactly. `nvim-cmp` spells the
+  > same rule `select = false`.
+  >
+  > **`then` is why `<space>` is one undo step.** The trailing text is spliced inside the same
+  > `begin`/`commit` batch as the accepted item, so `u` takes back the completion and its space
+  > together rather than leaving a widowed space behind.
+  >
+  > **Three keys, one capability, three readings of it** — the two rows `runtime/keymaps.scm`
+  > gained answer the report line for line: `<space>` is `"then" " " "otherwise" " "`, `<cr>` is
+  > `"otherwise" "\n"` with no `then` at all, and `<C-y>` passes neither and so still accepts
+  > whatever is highlighted. The file's new comment block argues it where it binds it, which is
+  > where the `<C-x>` divergence is argued too.
+
+  *Done when:* the keys a vim or VS Code user reaches for drive the list while it is open and do
+  their ordinary job when it is not, in the running binary, **proved by a pty test that presses
+  each contested key in both states** — a test that only presses it with the float up cannot fail
+  when the fall-through is wrong, which is the defect class this build has already had to replace
+  tests for. `<C-x>`/`<C-n>`/`<C-p>`/`<C-y>`/`<C-e>` keep working, because they are what `7c`'s
+  no-footer exception means by *"every key that drives it has to be one your hands already know"*.
+  **`<tab>` is not settled by this task alone** — §38. *Needs:* T026, T033, T038
+
+- [ ] **T106 · What a completion row says about itself**
+  Reported at `CP-4`: a row is a label and a type and nothing else, and every completion UI a
+  person has used says more.
+  **The prior art, recorded because it is the reason for the shape rather than as decoration.**
+  Teej named five, and **all five** converge on one row grammar — `<kind> <label> <detail dimmed>
+  [source]`: `nvim-cmp` with `lspkind` (kind as a symbol or a word, `menu` carrying the source);
+  Emacs `corfu` with `kind-icon` (a coloured margin formatter keyed on the kind) and `company-box`
+  (icons plus a documentation child-frame); VS Code (icon, label, `labelDetails.detail` inline and
+  `labelDetails.description` right-aligned); and Helix, which draws a plain kind column. The
+  agreement across five independent designs is the argument: **the kind is the first thing a
+  reader wants and the last thing this build carries.** (This paragraph said *"four of them"* and
+  then listed five, and attributed the per-kind hue to `lspkind`; corrected at the `CP-4` review.
+  `lspkind` supplies the glyphs or words and has a text-only `mode`; in nvim the **hue** comes
+  from `nvim-cmp`'s `CmpItemKind*` highlight groups, and `kind-icon` is the one that makes the
+  colour its whole subject. Helix's plain kind column is the one claim here nothing in this tree
+  can check.)
+  **The finding underneath it, verified against `e3af880` this session, which is what this task
+  was written from.** `lsp-types` 0.95.1's `CompletionItem` carries `kind` (25 values,
+  `CompletionItemKind::TEXT`…`TYPE_PARAMETER`),
+  `label_details: Option<CompletionItemLabelDetails>` with **two** fields — `detail`, *"rendered
+  less prominently directly after the label"*, and `description`, *"fully qualified names or file
+  path"* — plus `tags: Option<Vec<CompletionItemTag>>` (one value, `DEPRECATED`), `deprecated:
+  Option<bool>` and `preselect`. `phosphor_buffer::lsp::completions_from_lsp` reads `label`,
+  `detail` (falling back to `label_details.detail`), `documentation`, `insert_text`, `filter_text`
+  and `sort_text`. **`kind`, `label_details.description`, `tags`, `deprecated` and `preselect` are
+  read by nothing**, and neither `phosphor_buffer::lsp::Completion` nor
+  `phosphor_core::request::Completion` nor `phosphor_ui::float::CompletionItemVm` has a field to
+  put them in — the last is `label` and `detail` and stops.
+  **And the client never asked for two of them**, which is the half a reading of
+  `completions_from_lsp` alone would miss: `lsp::initialize_params` sends
+  `completion: Some(CompletionClientCapabilities::default())`, whose `completion_item` is `None`,
+  so `labelDetailsSupport`, `tagSupport` and `deprecatedSupport` are all unannounced. A
+  specification-conformant server may therefore send no `labelDetails` at all — which makes the
+  existing fallback at `item.label_details.detail` potentially dead code against exactly the
+  servers that behave. **Announcing the capability is part of this task and precedes the drawing**;
+  the `initialize_params` header already argues the general form of that point (*"a server is
+  entitled to answer nothing to a request the client never said it could use"*).
+  **Two design constraints this cannot fold in, and one drawing it changes.** Design Language §2
+  is *"one cell, one concept … all single-cell, Nerd-Font-free, present in default terminal
+  fonts"*, so the icon half of every one of the five prior-art UIs is **out** — a kind is a word,
+  an abbreviation, or one of §2's existing glyphs. §1 is *"each color names exactly one actor or
+  state, never decoration"*, so `kind-icon`'s per-kind hue is out too; the nearest thing the
+  palette already has is `#cfa86a transient`, whose stated meaning includes *types*. And
+  `TUI Mockups.dc.html`'s `7c` **draws two columns** — label, and detail in meta-grey — so **two**
+  more columns (`kind` left of the label, `source` right of the detail) are a change to a mockup,
+  which under `CLAUDE.md`'s rule is **flagged and not folded in**: Teej amends it at claude.ai, and
+  `docs/design/` is not touched here.
+  **`7c`'s golden frames are *not* the mechanical cost, and that is the point.** This entry used
+  to say `crates/phosphor/tests/screen_7c.rs` and `crates/phosphor-ui/tests/screen_7c.rs` *"both
+  re-bless"*; neither did — `git diff --stat HEAD -- '*.snap'` over the `7c` captures is empty.
+  Both fixtures transcribe the **mockup**, which has neither new column, so both frames stay
+  byte-identical and no divergence is blessed. That is the right outcome (re-blessing a
+  conformance capture before the mockup changes is the shape `T100` found in `6b`) and it was
+  briefly the *wrong* mechanism: the fixtures took the two new fields as
+  `..CompletionItemVm::default()`, which made the frames blind to the change rather than faithful
+  to the mockup — a sixth field would have arrived the same silent way. The fields are spelled out
+  now, so the next one breaks the fixture and forces a decision. The new columns are captured
+  instead in `crates/phosphor-ui/tests/float_width.rs`'s `decorated-80` / `decorated-120` /
+  `decorated-selected-deprecated` frames, whose commit notes say `7c` draws neither.
+
+  > **Mid-flight as this was written**, and the same caveat as `T105`: the working tree carried
+  > this **uncommitted**, `crates/phosphor-ui/tests/completion_shed.rs` was named by a doc comment
+  > and did not yet exist, and no `runtime/` or pty change had landed. Read the commit. What is
+  > worth recording here is that **the finding above was answered rather than argued with**, and
+  > that the §2 constraint decided the shape:
+  >
+  > * **`request::CompletionKind` — twenty-five arms, exhaustive**, because the set is closed by
+  >   the protocol; `phosphor_buffer::lsp::completion_kind` maps the wire newtype and answers
+  >   `None` outside 1–25 rather than guessing, since `lsp_types::CompletionItemKind` is an `i32`
+  >   newtype the protocol may extend. Its header takes the §2 argument head-on: *"inventing
+  >   twenty-five glyphs is inventing a second lexicon"*, so a kind is a **four-cell lowercase
+  >   word** (`fn`, `strc`, `memb`) with a `WIDTH` constant and an `abbreviation` that cannot
+  >   exceed it — fixed rather than widest-present, so the labels do not slide sideways as you
+  >   press `<C-n>`.
+  > * **The client now asks for what it reads.** `initialize_params` announces
+  >   `label_details_support`, `tag_support` and `deprecated_support` where it sent
+  >   `CompletionClientCapabilities::default()` — the exact gap this entry named, and the comment
+  >   there records it was measured against rust-analyzer 1.97.1 rather than assumed.
+  > * **`source` is `labelDetails.description`, not `.detail`** — the other half was already read
+  >   as a fallback for the top-level `detail`, and conflating them is the mistake the field name
+  >   is chosen to prevent. `deprecated` accepts **both** spellings (`tags` and the pre-3.15
+  >   boolean) because rust-analyzer sends both.
+  > * **A shed order, which is §11 applied to a row.** `float::ListLayout` computes columns from
+  >   the width the body was handed rather than from the content, and drops widest-first —
+  >   `source`, then `detail`, then `kind`, and the label elides only when everything else is
+  >   gone. That is *"drop, never squeeze"*: a column is present at full natural width or absent,
+  >   because squeezing puts an `⋯` on every row instead of showing two whole columns. The half
+  >   this replaced placed the detail at *widest-label + 2* and let elision absorb the overrun.
+  > * **One thing is flagged rather than folded in, and it is in the right place.**
+  >   `float::label_style` draws a deprecated row struck through **and** receded one step down §1's
+  >   neutral ramp, and its own header says why both: `Modifier::CROSSED_OUT` is SGR 9, which no
+  >   capability query can report on, so the treatment that survives a terminal ignoring it has to
+  >   carry the meaning alone. **`view::props::Emphasis` does not name strikethrough** — read this
+  >   session, it is `Plain`, `Inverted`, `Underline` and `Undercurl` — so the SGR is a fifth
+  >   treatment nothing in the design language has blessed. One function, one place to remove it.
+  >
+  > **What the review of the above changed, all inside the same files:**
+  >
+  > * **A one-cell detail column is not a squeezed detail, it is the elision mark alone.**
+  >   `keep_detail` kept the column whenever a single cell survived, so at 30 columns against
+  >   rust-analyzer a row read `meth len   ⋯` — two gap cells and one content cell spent saying
+  >   *"something was removed"*, which is the squeeze §11 forbids one column over from where
+  >   `ListLayout` argues the elision **is** allowed. `float::DETAIL_MIN` is the floor and
+  >   `a_surviving_detail_column_can_say_something` is the law.
+  > * **Two of the shed-order proptests could not fail.** Their guards were the implementation's
+  >   own branch conditions and their assertions reduced to `x >= x`. Restated: the label one now
+  >   also asserts that the cells it was promised are cells no meta column claims (two fields tied
+  >   together, red under `label_room = width - label_at`), and the kind one is stated against the
+  >   **drawn cells** — *the kind column is on screen and no label carries an `⋯`* — which says
+  >   nothing about how `keep_kind` is spelled. Both were watched going red on a planted mutation.
+  > * **`label_style`'s selected-and-deprecated arm was executed and asserted by nothing.**
+  >   `decorated()` selects row 0 and the deprecated row is row 2, so a mutation swapping the two
+  >   neutrals left every committed frame byte-identical. `decorated-selected-deprecated` is the
+  >   frame, with a buffer assertion beside it.
+  > * **The order is a priority, not a monotone sequence**, and `ListLayout`'s header says so now.
+  >   Measured: a kind column, a 10-cell label and an 8-cell detail draw both at 19 cells, lose the
+  >   detail at 18, and get it back at 14 when the kind goes and the label stops starting five
+  >   columns in. That is what the four steps describe; it is not what the phrase sounds like.
+  > * **Ceremony removed.** The kind column's `x` was `label_at - (WIDTH + KIND_GAP)`, arithmetic
+  >   that can only evaluate to zero — `ListLayout` has a `kind_at` now, so the layout owns all
+  >   four placements. The `column == 0 ? 0 : column + gap` rule was written out four times and is
+  >   `float::column_block` once.
+  > * **Two doc comments asserted what a third recorded as unverified.** `CompletionItemVm::source`
+  >   and `request::Completion::source` said flatly that rust-analyzer fills
+  >   `labelDetails.description` with an import path; `completions_from_lsp`, from the same change,
+  >   says that case wanted a workspace the measurement did not have. Both now carry the caveat and
+  >   point at the measurement.
+
+  *Done when:* a row carries what the server said about it — at minimum the kind — the client
+  announces the capabilities it reads, the float still fits `MAX_ITEM_ROWS` and §8's padding at 80
+  columns, and it reproduces **from a keystroke** in the running binary rather than from a
+  hand-built `CompletionVm`. **Not before the `7c` drawing is amended**, and not with a fifth
+  emphasis the view tree cannot name. *Needs:* T036, T038
+
+- [ ] **T107 · A buffer with no file — `phosphor` with no argument** 📌
+  Teej at `CP-4`: *"we need a scratch buffer when no file is specified mode if thats not already
+  on the roadmap"*. **Most of it is already there and one line refuses it.**
+  **What refuses.** `Cli::path` in `crates/phosphor/src/main.rs` is
+  `#[arg(value_name = "FILE", required_unless_present_any = ["eval", "repl"])]`, so a bare
+  `phosphor` never reaches the loop. Run this session against the installed binary: `phosphor`
+  answers *"error: the following required arguments were not provided: <FILE>"* and exits `2`,
+  which is clap's usage error and not this build's voice at all.
+  **What already exists, which is why this is small.** The loop's `match &cli.path` has a `None`
+  arm that builds `buffer("text", "", &theme)` for `--repl`; `Timeline::detached` is the
+  no-file history and the comment above it already uses the words *"a scratch buffer has no file
+  to key one on and gets a tree with nowhere to write itself"*; `Timeline::log`'s own doc says
+  `None` is *"a scratch buffer and … a workspace with no state directory — a session that cannot
+  persist still undoes"*; `AppHost::write` already answers `no file name — :write <path>`
+  when there is nothing to write to; `main::adopt`'s header already says a buffer with no file
+  *"tells no server anything … a server addresses files"*; and the statusline draws no file
+  segment. So the
+  concept is built, tested through `--repl`, and unreachable without a flag that also opens a
+  REPL.
+  **What is genuinely open**, and it is not the CLI line: what the first frame *says*. `--repl`'s
+  empty buffer is *behind* a surface that explains itself; a bare `phosphor` has nothing in front
+  of it, and `IMPLEMENTATION-PLAN.md`'s third invariant is *nothing moves unless you asked*, not
+  *nothing is said*. Related: `main`'s `fresh: Option<PathBuf>` already exists to let the first
+  frame say a named file has nothing behind it yet.
+  **Its relation to `7d`, which is a cross-reference and not a merge.** `7d` is *Cold start* and
+  `T057` owns it (`S6`, *"cold start (`7d`), attach/adopt/start (`5d`), drop and reattach (`7b`),
+  opening mid-task (`2d`)"*, needing `T051`). `TUI Mockups.dc.html`'s own rule for it is *"Cold
+  start invites, never nags: an empty dashboard states what it found (no session, no history) and
+  lists three verbs. One dismissable line, then it's just an editor."* — and the screen it draws
+  is `phosphor` bare, with `repo ~/src/fetchd · 214 files · no vcs detected`, `session none
+  running`, `history —`, and `:e edit · :cn start claude · :f find file`. **The overlap is real
+  and the subject is not the same**: `7d` is about *no agent session* and needs `T051` to know
+  there is none; this is about *no file* and needs nothing. So this task builds the buffer and the
+  honest first line, `T057` builds the dashboard over it, and the second must not wait on the
+  first — `S6` is three phases away and a bare `phosphor` should work before then.
+  *Done when:* `phosphor` with no argument opens an editable buffer, `:w` without a path refuses
+  in §6's voice rather than clap's, `:w <path>` gives it a file and a history from that point, and
+  a pty test starts the binary with no argument and types into it. *Needs:* T030, T033
+
+- [ ] **T108 · The file browser — netrw → vinegar → oil.nvim** 📌
+  Teej at `CP-4`: *"lets start scouting ahead for what we will need for a netrw inspired vim
+  vinegar inspired and eventually oil.nvim inspired file browser, but ill want to implement that
+  in detail with you, so im just letting you know now so we can plan"*.
+  **This is a placeholder for a design session and it has no *Done when:* on purpose.** Writing
+  one would be inventing the surface Teej said he wants to design; a criterion invented here is
+  one somebody later builds to. What follows is the lineage, one hypothesis marked as a
+  hypothesis, and the three things a design session should not have to re-derive — each checked
+  against the tree this session.
+  **The lineage, and what each step adds.** *netrw* is a directory **listing in a window**: it
+  draws the entries and opens one. *vim-vinegar* keeps netrw and fixes the addressing — `-` opens
+  the **parent** directory with the cursor on the file you came from, so "up" is a keystroke and
+  you never lose your place. *oil.nvim* makes the directory an **editable buffer**: renaming is
+  editing text on a line, deleting is deleting a line, creating is adding one, and `:w` applies
+  the accumulated filesystem operations. The three are a progression in *what the buffer is*, not
+  in features — a view, an addressable view, and then a mutable one.
+  **Why the oil model may fit this build unusually well — a hypothesis, not a decision.** Every
+  edit in this editor is already an `Action`, an `Action` already crosses one vocabulary and three
+  doors, and undo is already a tree keyed on a buffer. If a directory is a buffer, then a rename
+  is an ordinary buffer edit that produces an ordinary Action, which means it is scriptable from
+  Steel, callable over MCP, and undoable, **with no second mechanism** — and an agent would rename
+  a file through exactly the door a person does, which is invariant 2's whole claim. `7a`'s
+  permission ask is the natural gate on the consequential half, and the capability table already
+  has the rating for it: `ReloadFromDisk`, `ResolveDiskDiff` and `RevertHunk` are declared `Ask`.
+  **Read the caveat with the hypothesis**: nothing enforces `Ask` yet — `main::deliver` answers
+  `McpPolicy::Ask` with *"needs an ask first — T060 builds the queue"* — so the gate is a policy
+  value and a screen, not a mechanism.
+  **What must be scouted before designing, with what the tree says today.**
+  **(1) The vocabulary has no filesystem verbs beyond opening and writing.** `Action::File`
+  (`crates/phosphor-core/src/action.rs`) is exactly nine: `open-file`, `save-buffer`, `save-all`,
+  `close-buffer`, `reload-from-disk`, `note-disk-change`, `open-disk-diff`, `resolve-disk-diff`,
+  `set-file-watch`. **There is no create, no rename, no delete, no mkdir anywhere in the table** —
+  not in `File` and not in any of the other twenty domains: grepped this session, the only
+  `create`/`delete`/`remove` names in it are `create-pane-from-view`, `delete-thread`,
+  `remove-watch` and `remove-keybinding`, none of which touches a filesystem. So the oil model is
+  not a re-use of
+  existing verbs; it is *new capabilities*, which is `spine`'s and is the first thing the design
+  session has to rule.
+  **(2) A directory listing is neither a store query nor a buffer today — it is nothing.**
+  `crates/phosphor-core/src/query.rs` has no filesystem query at all; the closest thing in the
+  graph is `T046`'s *files* picker source, which is `(define-picker-source …)` producing rows for
+  the Picker (`picker-rows` takes a `SourceId`) — a **transient float over a list**, which is a
+  different object from a buffer you can edit and save. Whether the browser reuses that source or
+  needs a real listing is a scouting question, and the answer changes which crate owns it.
+  **(3) Anchors on a buffer whose lines are paths land on `T043`, not `T042`.** `T042` binds
+  anchors to **tree-sitter nodes**; a directory buffer has no grammar, so it falls to `T043` —
+  *"line + content fallback anchoring … the floor, not a degraded extra … markers work correctly
+  on an extensionless file with no grammar"*. That is the right home and it is worth knowing
+  before designing, because the interesting case is not an anchor surviving an edit — it is what a
+  region on a line **means** after `:w` has renamed the file that line named. Nothing in the
+  region lifecycle (§7: *claude writes → unseen → seen*) is defined over a line that is an
+  address rather than content.
+  *Needs:* T033
 
 ---
 

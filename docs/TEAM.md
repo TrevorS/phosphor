@@ -3,9 +3,20 @@
 Derived from [TASKS.md](TASKS.md) and [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).
 Five teammates, owning crates rather than features, gated by the twelve checkpoints.
 
-**110 of 112 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
-`T009` — the dependency spikes, already complete ([SPIKES.md](SPIKES.md)). `T005` is the single
-deliberate co-ownership and is called out where it appears.
+**107 of 117 tasks are assigned**, each to exactly one owner. `T005` is the single deliberate
+co-ownership and is called out where it appears. The ten with no owner are `T008` and `T009` — the
+dependency spikes, already complete ([SPIKES.md](SPIKES.md)) — and `T101`–`T108`, which no role
+list below names.
+
+> **This line read *"110 of 112"* and *"the two unassigned are `T008` and `T009`"*, and both halves
+> were wrong.** Summed this session, the five **Tasks:** lines below carry 29 + 29 + 14 + 25 + 11
+> entries and share `T005`, which is **107 distinct** and never was 110; and `T101`, `T102` and
+> `T103` were appended by the repair window between `CP-4` and Window E without ever being added
+> to a role. `scripts/doc_claims.py` checks the **denominator** against the graph in `TASKS.md`
+> and nothing recomputes the numerator or the per-role totals, so the sentence went quietly wrong
+> in exactly the shape [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s §30 describes. Corrected rather
+> than papered over, and the eight are left unassigned rather than assigned here — see the note
+> under the ownership table for what the file rule implies about them.
 
 ---
 
@@ -17,7 +28,7 @@ Computed from `TASKS.md`, the longest-path wave widths are:
 
 ```
 wave    0   1   2   3    4    5    6    7   8   9  10
-tasks   2   5   8   6   15   24   21   15   10   3   1
+tasks   2   5   8   6   15   24   22   15   14   3   1
 ```
 
 By the graph, wave 4 is 15-wide and includes `T050` (ACP session client, S6) and `T069`
@@ -33,8 +44,8 @@ Three other numbers worth carrying:
 
 | | |
 |---|---|
-| `T001` gates **102 of 112** tasks | The workspace skeleton is the whole build's front door. |
-| `T019` gates **73** | The `Action` enum. The plan calls it "reversible: no in practice." |
+| `T001` gates **107 of 117** tasks | The workspace skeleton is the whole build's front door. |
+| `T019` gates **77** | The `Action` enum. The plan calls it "reversible: no in practice." |
 | `T041` has **14 direct dependents** | Store core — the second serialisation point. |
 
 And the shape that matters most for staffing: **waves 0–3 are 2, 5, 8 and 6 tasks wide.** The
@@ -112,6 +123,21 @@ Two things the build added that this table predates:
   had already happened; a count in this sentence would be the third stale count this build has
   had to correct, and unlike the task counts nothing recomputes it. `CLAUDE.md` describes what
   each one is for.
+
+**`T101`–`T108` are unassigned, and here is what the file rule implies about them** — a note for
+whoever schedules the next window, **not an assignment made here**, because the two repair windows
+and `CP-4`'s manual half appended tasks and no role list was updated. By *"the file decides the
+task"*: `T101` (config home, `phosphor-core/src/config.rs` + `main.rs` + `runtime/`) and `T103`
+(the CLI verb route, `phosphor/src/{door,main}.rs`) are `spine`'s; `T102` (the undo crash) is
+`surface`'s by the second single-writer invariant, since it writes `vendor/`. Of `CP-4`'s five:
+`T105` (`phosphor-core/src/input/table.rs`, `runtime/keymaps.scm`, `main.rs`) and `T107`
+(`main.rs`) are `spine`'s; `T106` (`phosphor-buffer/**`, `phosphor-ui/float.rs`) is `surface`'s,
+with a contract request to `spine` for the `request::Completion` fields it needs. **Two do not
+resolve, and that is the point of writing this down rather than filling in a table.** `T104`
+crosses the boundary in a way no precedent covers — its renderer half is `vendor/` and therefore
+`surface`'s by invariant 2, while its keymap and input-machine halves are `spine`'s — so it is
+either split into two tasks or given a co-ownership like `T005`'s, and that is Teej's call.
+`T108` has no files at all until its design session runs.
 
 ### Two single-writer invariants
 

@@ -29,6 +29,7 @@
 mod frame_grid;
 
 use frame_grid::Frame;
+use phosphor_core::request::CompletionKind;
 use phosphor_ui::float::{
     ANCHORED_WIDTH_PCT, Anchor, CompletionItemVm, CompletionList, CompletionVm, Float, FloatBody,
     FloatSlot, SignatureBody, SignatureVm, anchored_max_cols, anchored_wrap_cols,
@@ -36,6 +37,7 @@ use phosphor_ui::float::{
 use phosphor_ui::theme::Theme;
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
+use ratatui_core::text::Span;
 
 /// The two widths every golden frame in this repo is taken at.
 const WIDTHS: [u16; 2] = [120, 80];
@@ -44,6 +46,7 @@ fn item(label: &str, detail: Option<&str>) -> CompletionItemVm {
     CompletionItemVm {
         label: label.to_owned(),
         detail: detail.map(str::to_owned),
+        ..CompletionItemVm::default()
     }
 }
 
@@ -259,6 +262,196 @@ fn a_list_of_wide_characters() {
             ],
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The decorated row (`CP-4`)
+// ---------------------------------------------------------------------------
+
+/// A row with all four columns, so the shed order is visible rather than
+/// argued.
+///
+/// One item of each awkward shape, because a list where every row was the same
+/// would pass a renderer that measured only the first: a long label, a long
+/// detail, a long `source`, a **deprecated** row, and a CJK label whose width
+/// in cells is twice its length in characters.
+fn decorated() -> CompletionVm {
+    let full = |label: &str, detail: &str, source: &str, deprecated: bool| CompletionItemVm {
+        label: label.to_owned(),
+        detail: Some(detail.to_owned()),
+        source: Some(source.to_owned()),
+        kind: Some(CompletionKind::Function),
+        deprecated,
+    };
+    CompletionVm {
+        items: vec![
+            full(
+                "retry_with_backoff",
+                "fn(&mut Client) -> Value",
+                "net::retry",
+                false,
+            ),
+            CompletionItemVm {
+                label: "retries_left".to_owned(),
+                detail: Some("u32".to_owned()),
+                source: None,
+                kind: Some(CompletionKind::Constant),
+                deprecated: false,
+            },
+            full("retry_forever", "fn(&mut Client) -> !", "net::legacy", true),
+            CompletionItemVm {
+                label: "送信する".to_owned(),
+                detail: Some("fn(Addr) -> Result".to_owned()),
+                source: Some("送信".to_owned()),
+                kind: Some(CompletionKind::Method),
+                deprecated: false,
+            },
+        ],
+        selected: 0,
+        documentation: vec!["Retries the request with exponential backoff.".to_owned()],
+        anchor: Anchor::new(2, 1),
+        width_floor: 0,
+    }
+}
+
+#[test]
+fn a_decorated_completion_list() {
+    for width in WIDTHS {
+        let vm = decorated();
+        let list = CompletionList::new(&vm);
+        let area = Rect::new(0, 0, width, 10);
+        let (buf, frame) = frame_of(&list, area);
+
+        assert!(frame.width <= anchored_max_cols(width));
+        // The claim the frames are here to show, stated as arithmetic so a
+        // reader does not have to count cells in a snapshot: at 120 there is
+        // room for the source column and at 80 there is not, and the label
+        // keeps every one of its cells at both.
+        let body = frame.width - 6;
+        let layout = list.layout(body);
+        let widest = vm
+            .items
+            .iter()
+            .map(|item| u16::try_from(Span::raw(&item.label).width()).unwrap_or(u16::MAX))
+            .max()
+            .unwrap_or(0);
+        assert_eq!(layout.label_room, widest, "the label is whole at {width}");
+        assert!(layout.detail_at.is_some(), "the detail survives at {width}");
+        assert_eq!(
+            layout.source_at.is_some(),
+            width == 120,
+            "the source column is the first thing shed, at {width} columns"
+        );
+
+        commit(
+            &format!("decorated-{width}"),
+            &buf,
+            &[
+                "CP-4: 'do we have plans to decorate the auto complete with things like",
+                "  src and meta info about each item like in common lsp implementations",
+                "  in emacs and vim?'. Four columns now: kind, label, detail, source —",
+                "  the shape nvim-cmp+lspkind, corfu+kind-icon, company-box and VS Code",
+                "  all share, with the kind left and the meta dimmed on the right.",
+                "The kind is a WORD (fn, cnst, meth) and not an icon. §2's glyph lexicon",
+                "  is ten entries, Nerd-Font-free, and none of them is a completion",
+                "  kind — inventing twenty-five would be inventing a second lexicon, and",
+                "  four ASCII letters cannot have the cells-vs-chars bug this repo has",
+                "  shipped three times.",
+                "SHED ORDER (§11 'drop, never squeeze'): source → detail → kind → and",
+                "  only then the label elides. At 120 all four fit; at 80 the source is",
+                "  gone, the detail has taken what is left and elides into it, and the",
+                "  label has lost nothing.",
+                "Three of the four columns are whole or absent. The detail is the one",
+                "  that elides, because it is the last column before the label and has",
+                "  nothing further right to hand its room to — and because a real",
+                "  rust-analyzer signature is 100 cells against a 72-cell float, so a",
+                "  detail that had to fit whole would never be drawn in Rust at all.",
+                "  A source is a NAME and net::ret⋯ names nothing, which is why that",
+                "  one goes whole.",
+                "The deprecated row (retry_forever) is struck through AND receded one",
+                "  step down §1's neutral ramp, on T085's degradation principle: SGR 9",
+                "  is not universal and phosphor-term cannot report on it, so the colour",
+                "  carries the meaning where the escape is ignored.",
+                "7c itself draws NEITHER of the two new columns. Adding them is a design",
+                "  change, flagged rather than folded in.",
+            ],
+        );
+    }
+}
+
+/// **The deprecated row, selected** — the branch of `float::label_style` the
+/// frames above execute and assert nothing about.
+///
+/// `label_style` recedes one step down §1's neutral ramp, and *which* step
+/// depends on where the row started: `bright_text → text` on the selected row,
+/// `text → prose` everywhere else. `decorated()` selects row 0 and the
+/// deprecated row is row 2, so the `decorated-80` frame pins only the second
+/// arm — a mutation swapping the two neutrals leaves every committed frame
+/// byte-identical. `CP-4`'s review found that by reading the frame.
+///
+/// The assertion is on the buffer rather than only on the snapshot, because
+/// *"the struck cells are `neutrals.text`"* is the claim and a reader should
+/// not have to decode a legend letter to check it. The frame is committed
+/// beside it so the two treatments are visible together.
+///
+/// **This bites:** swap `theme.neutrals.text` and `theme.neutrals.prose` in
+/// `label_style` and this fails naming both colours.
+#[test]
+fn a_deprecated_row_recedes_from_the_selected_colour_when_it_is_the_selected_row() {
+    let theme = Theme::phosphor_dark();
+    let mut vm = decorated();
+    // `retry_forever`, the one row with `deprecated: true`.
+    vm.selected = 2;
+    assert!(
+        vm.items[vm.selected].deprecated,
+        "this test is about the selected row being the deprecated one"
+    );
+
+    let list = CompletionList::new(&vm);
+    let area = Rect::new(0, 0, 120, 10);
+    let (buf, _) = frame_of(&list, area);
+
+    let struck: Vec<(u16, u16)> = area
+        .rows()
+        .flat_map(|row| row.columns())
+        .filter(|position| {
+            buf[*position]
+                .modifier
+                .contains(ratatui_core::style::Modifier::CROSSED_OUT)
+        })
+        .map(|position| (position.x, position.y))
+        .collect();
+    assert!(
+        !struck.is_empty(),
+        "the deprecated label is struck through; nothing on the frame is"
+    );
+    for (x, y) in &struck {
+        assert_eq!(
+            buf[(*x, *y)].fg,
+            theme.neutrals.text,
+            "the selected deprecated row recedes bright_text -> text, not text -> prose"
+        );
+    }
+    assert_ne!(
+        theme.neutrals.text, theme.neutrals.prose,
+        "the two arms of label_style would be indistinguishable otherwise"
+    );
+
+    commit(
+        "decorated-selected-deprecated",
+        &buf,
+        &[
+            "The same list as decorated-120 with the DEPRECATED row selected.",
+            "label_style recedes one step down §1's neutral ramp and which step",
+            "  depends on where the row started: bright_text -> text when it is the",
+            "  selected row, text -> prose otherwise. decorated-120 selects row 0 and",
+            "  so only ever draws the second arm — swapping the two neutrals left",
+            "  every committed frame byte-identical, which CP-4's review found by",
+            "  reading the frame rather than by running anything.",
+            "The strikethrough is unchanged: SGR 9 is not universal, so the colour",
+            "  is what carries the meaning where the escape is ignored (T085).",
+        ],
+    );
 }
 
 // ---------------------------------------------------------------------------

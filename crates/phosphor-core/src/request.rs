@@ -1000,6 +1000,192 @@ wire_record!(CharRange {
     end: u32 = "first character after the range",
 });
 
+/// What sort of thing a completion is — LSP's `CompletionItemKind`, all
+/// twenty-five of it (`T038`).
+///
+/// **Twenty-five arms rather than the handful a Rust buffer meets**, because
+/// the wire number is the server's and a client that folded `Color`, `Folder`
+/// and `Event` into an *other* arm would answer *"what is this row"* with a
+/// shrug on the first CSS, path or DAP server anyone points at it. The set is
+/// closed by the protocol, so this enum can be exhaustive and stay that way.
+///
+/// # Why this is a name and not a glyph
+///
+/// Design Language §2 is a **lexicon**: ten glyphs, each naming one concept,
+/// *"all single-cell, Nerd-Font-free, present in default terminal fonts"*.
+/// None of them is a completion kind. So the list draws these as short ASCII
+/// words ([`crate::request::CompletionKind::abbreviation`]) rather than the
+/// Nerd-Font icons `lspkind` and `company-box` use: inventing twenty-five
+/// glyphs is inventing a second lexicon, and it would import the exact bug this
+/// repo has shipped three times — a glyph measured in `char`s rather than
+/// display cells. Four ASCII letters cannot have that bug, and there is nothing
+/// for a terminal without the font to fall back *to*, so `T085`'s
+/// degradation-path machinery is not owed one here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CompletionKind {
+    /// Plain text with no semantics — the protocol's `1`.
+    Text,
+    /// A method.
+    Method,
+    /// A free function.
+    Function,
+    /// A constructor.
+    Constructor,
+    /// A struct or class field.
+    Field,
+    /// A local or a binding.
+    Variable,
+    /// A class.
+    Class,
+    /// An interface or trait.
+    Interface,
+    /// A module or namespace.
+    Module,
+    /// A property.
+    Property,
+    /// A unit — CSS's `px`, and the protocol's own example.
+    Unit,
+    /// A value.
+    Value,
+    /// An enum.
+    Enum,
+    /// A language keyword.
+    Keyword,
+    /// A snippet. Never expanded here — see `Completion::insert`.
+    Snippet,
+    /// A colour.
+    Color,
+    /// A file.
+    File,
+    /// A reference.
+    Reference,
+    /// A folder.
+    Folder,
+    /// One member of an enum.
+    EnumMember,
+    /// A constant.
+    Constant,
+    /// A struct.
+    Struct,
+    /// An event.
+    Event,
+    /// An operator.
+    Operator,
+    /// A type parameter — the protocol's `25`.
+    TypeParameter,
+}
+
+wire_choice!(CompletionKind {
+    Text => "text",
+    Method => "method",
+    Function => "function",
+    Constructor => "constructor",
+    Field => "field",
+    Variable => "variable",
+    Class => "class",
+    Interface => "interface",
+    Module => "module",
+    Property => "property",
+    Unit => "unit",
+    Value => "value",
+    Enum => "enum",
+    Keyword => "keyword",
+    Snippet => "snippet",
+    Color => "color",
+    File => "file",
+    Reference => "reference",
+    Folder => "folder",
+    EnumMember => "enum-member",
+    Constant => "constant",
+    Struct => "struct",
+    Event => "event",
+    Operator => "operator",
+    TypeParameter => "type-parameter",
+});
+
+impl CompletionKind {
+    /// Every kind, in the protocol's own order. The one place the set is
+    /// written down for iteration, so a test can walk it without repeating it.
+    pub const ALL: [Self; 25] = [
+        Self::Text,
+        Self::Method,
+        Self::Function,
+        Self::Constructor,
+        Self::Field,
+        Self::Variable,
+        Self::Class,
+        Self::Interface,
+        Self::Module,
+        Self::Property,
+        Self::Unit,
+        Self::Value,
+        Self::Enum,
+        Self::Keyword,
+        Self::Snippet,
+        Self::Color,
+        Self::File,
+        Self::Reference,
+        Self::Folder,
+        Self::EnumMember,
+        Self::Constant,
+        Self::Struct,
+        Self::Event,
+        Self::Operator,
+        Self::TypeParameter,
+    ];
+
+    /// The widest an [`abbreviation`] may be, in cells — which for ASCII is
+    /// also its length in bytes.
+    ///
+    /// A **fixed** column rather than the widest-abbreviation-present, because
+    /// the point of the column is that the labels line up: a list whose kind
+    /// column narrowed when the `function` rows scrolled out would move every
+    /// label sideways as you press `<C-n>`.
+    ///
+    /// [`abbreviation`]: CompletionKind::abbreviation
+    pub const WIDTH: u16 = 4;
+
+    /// A short lowercase word for the list's leftmost column — `fn`, `meth`,
+    /// `strc`.
+    ///
+    /// Lowercase and telegraphic because §6 is (*"lowercase, telegraphic,
+    /// factual"*), and never longer than [`WIDTH`] — `abbreviations_fit` is the
+    /// test that holds the two together, and it is the reason this is a
+    /// function on the enum rather than a table in `phosphor-ui`.
+    ///
+    /// [`WIDTH`]: CompletionKind::WIDTH
+    #[must_use]
+    pub const fn abbreviation(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Method => "meth",
+            Self::Function => "fn",
+            Self::Constructor => "ctor",
+            Self::Field => "fld",
+            Self::Variable => "var",
+            Self::Class => "cls",
+            Self::Interface => "intf",
+            Self::Module => "mod",
+            Self::Property => "prop",
+            Self::Unit => "unit",
+            Self::Value => "val",
+            Self::Enum => "enum",
+            Self::Keyword => "kw",
+            Self::Snippet => "snip",
+            Self::Color => "col",
+            Self::File => "file",
+            Self::Reference => "ref",
+            Self::Folder => "dir",
+            Self::EnumMember => "memb",
+            Self::Constant => "cnst",
+            Self::Struct => "strc",
+            Self::Event => "evt",
+            Self::Operator => "op",
+            Self::TypeParameter => "tprm",
+        }
+    }
+}
+
 /// One completion a server offered (`T038`).
 ///
 /// Same shape and same name as `phosphor-buffer`'s `lsp::Completion`, on the
@@ -1023,6 +1209,39 @@ pub struct Completion {
     pub documentation: Vec<String>,
     /// What to type when this item is accepted.
     pub insert: String,
+    /// What sort of thing it is, when the server said. `None` is the honest
+    /// reading of a server that sent no `kind`, and it draws as blank cells
+    /// rather than as a guess.
+    pub kind: Option<CompletionKind>,
+    /// Where it comes from — `CompletionItemLabelDetails::description`, drawn
+    /// dimmest and rightmost, and the **first thing shed** when the float
+    /// cannot hold every column.
+    ///
+    /// Named `source` rather than `description` after the column every other
+    /// editor draws in that position — `nvim-cmp`'s `menu`, VS Code's
+    /// right-aligned `labelDetails.description`.
+    ///
+    /// **The name is a bet on a case this build has not measured**, and it is
+    /// recorded that way rather than asserted: rust-analyzer is documented to
+    /// put an import path here on an auto-import row, and the only measurement
+    /// anyone here has taken — 1.97.1 over a pipe with `labelDetailsSupport`
+    /// announced — produced **no auto-import rows at all**, because it wanted a
+    /// workspace the harness did not have. `phosphor_buffer::lsp`'s
+    /// `completions_from_lsp` holds that measurement and the same caveat. What
+    /// *was* measured is the case the code handles: the field repeating the
+    /// `detail` beside it, on ordinary rows.
+    ///
+    /// The field is empty for most rows on most servers, which is why it may
+    /// be the first column to go.
+    pub source: Option<String>,
+    /// `CompletionItemTag::DEPRECATED`, or the pre-3.15 `deprecated` boolean.
+    ///
+    /// A `bool` and not part of [`kind`]: deprecation is orthogonal to what a
+    /// thing *is*, and every editor that draws it draws it as a treatment over
+    /// the label rather than as a different row type.
+    ///
+    /// [`kind`]: Completion::kind
+    pub deprecated: bool,
 }
 
 wire_record!(Completion {
@@ -1030,6 +1249,9 @@ wire_record!(Completion {
     detail: Option<String> = "the type or shape, drawn right of the label",
     documentation: Vec<String> = "this item's documentation, one row per line",
     insert: String = "what to type when it is accepted",
+    kind: Option<CompletionKind> = "what sort of thing it is",
+    source: Option<String> = "where it comes from — the server's labelDetails.description, drawn rightmost",
+    deprecated: bool = "the server tagged it deprecated",
 });
 
 /// One signature, as signature help gives it (`T039`).
@@ -1361,6 +1583,54 @@ mod tests {
     use super::*;
     use crate::value::{Value, Wire};
 
+    /// Every kind abbreviation fits the fixed column, is ASCII, and names one
+    /// kind only.
+    ///
+    /// **Three claims, and each is a bug the column would have.** Over
+    /// [`CompletionKind::WIDTH`] and the abbreviation is truncated or the
+    /// labels stop lining up. Non-ASCII and the column's width in *cells* stops
+    /// being its length in bytes — which is the confusion this repo has shipped
+    /// three times, and the reason the abbreviations are words rather than
+    /// glyphs. Two kinds sharing a word and the column tells you nothing on the
+    /// row where you needed it.
+    #[test]
+    fn every_kind_abbreviation_fits_the_column_and_names_one_kind() {
+        let mut seen = std::collections::BTreeSet::new();
+        for kind in CompletionKind::ALL {
+            let short = kind.abbreviation();
+            assert!(
+                !short.is_empty() && short.len() <= CompletionKind::WIDTH as usize,
+                "{kind:?} abbreviates to {short:?}, which does not fit {} cells",
+                CompletionKind::WIDTH
+            );
+            assert!(
+                short.is_ascii(),
+                "{kind:?} abbreviates to {short:?}, whose width in cells is not its length"
+            );
+            assert!(seen.insert(short), "{short:?} names more than one kind");
+        }
+        assert_eq!(seen.len(), 25, "the protocol defines twenty-five kinds");
+    }
+
+    /// Each kind survives the wire under its own name.
+    ///
+    /// The round trip is what makes `ALL` safe to iterate in the mapper test
+    /// one crate over: a `wire_choice` tag that collided would send two kinds
+    /// as one string and read them back as the first.
+    #[test]
+    fn every_kind_round_trips_through_the_wire() {
+        let mut tags = std::collections::BTreeSet::new();
+        for kind in CompletionKind::ALL {
+            let value = kind.to_value();
+            let Value::Text(tag) = &value else {
+                panic!("{kind:?} is not a choice on the wire");
+            };
+            assert!(tags.insert(tag.clone()), "{tag:?} is two kinds");
+            assert_eq!(CompletionKind::from_value(&value), Ok(kind));
+        }
+        assert_eq!(tags.len(), CompletionKind::ALL.len());
+    }
+
     #[test]
     fn focus_relative_targets_are_the_four_we_refuse() {
         assert!(Target::Cursor {}.focus_relative());
@@ -1507,9 +1777,17 @@ mod tests {
         );
     }
 
-    /// `detail` is what a server *may* send, so a completion arrives without
-    /// one rather than with an empty one. A required `detail` would make every
-    /// server that omits it decode as an argument error instead of a row.
+    /// `detail`, `kind` and `source` are what a server *may* send, so a
+    /// completion arrives without them rather than with empty ones. Requiring
+    /// any of the three would make every server that omits it decode as an
+    /// argument error instead of a row.
+    ///
+    /// **`deprecated` is required and the other three are not**, which is the
+    /// vocabulary's own rule rather than a choice made here: optionality is
+    /// spelled `Option<T>` and nothing else ([`crate::value::Wire::REQUIRED`]
+    /// is *"`false` only for `Option<T>`"*). A `bool` has no absent reading —
+    /// `Some(false)` and `None` would be two spellings of *"not deprecated"* —
+    /// so it is stated, the way `quit`'s `force` is.
     #[test]
     fn a_completion_without_a_detail_omits_it_rather_than_requiring_it() {
         let terse = Value::Record(
@@ -1519,12 +1797,34 @@ mod tests {
                     "documentation",
                     Value::List(vec![Value::Text("Returns the policy.".to_owned())]),
                 )
-                .with("insert", Value::Text("default()".to_owned())),
+                .with("insert", Value::Text("default()".to_owned()))
+                .with("deprecated", Value::Bool(false)),
         );
         let completion = Completion::from_value(&terse).unwrap();
         assert_eq!(completion.detail, None);
+        assert_eq!(completion.kind, None);
+        assert_eq!(completion.source, None);
         assert_eq!(completion.documentation.len(), 1);
         assert_eq!(completion.insert, "default()");
+    }
+
+    /// …and the three that *are* optional round trip when they are present.
+    ///
+    /// The other half of the test above, because *"absent decodes"* and
+    /// *"present decodes to the right thing"* are two claims and the first
+    /// alone is satisfied by a decoder that dropped all three.
+    #[test]
+    fn a_decorated_completion_round_trips_through_the_wire() {
+        let item = Completion {
+            label: "old_retry".to_owned(),
+            detail: Some("fn() -> RetryPolicy".to_owned()),
+            documentation: vec!["Superseded by retry_with_backoff.".to_owned()],
+            insert: "old_retry()".to_owned(),
+            kind: Some(CompletionKind::Function),
+            source: Some("retry::legacy".to_owned()),
+            deprecated: true,
+        };
+        assert_eq!(Completion::from_value(&item.to_value()), Ok(item));
     }
 
     /// The two shapes signature help actually arrives in, and they are not the

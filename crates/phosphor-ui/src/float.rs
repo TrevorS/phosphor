@@ -135,8 +135,10 @@
 
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::{Position, Rect};
-use ratatui_core::style::{Color, Style};
+use ratatui_core::style::{Color, Modifier, Style};
 use ratatui_core::symbols::line;
+
+use phosphor_core::request::CompletionKind;
 
 use crate::interpret::cells;
 use crate::theme::Theme;
@@ -655,6 +657,39 @@ impl FloatBody for TextBody<'_> {
 /// at column 15.
 const DETAIL_GAP: u16 = 2;
 
+/// One space between the kind column and the label, and the reason the kind
+/// column is not simply [`DETAIL_GAP`] away from it.
+///
+/// A four-letter word plus two spaces is six columns before the first label
+/// character on every row, on a float already capped at 60% of the screen.
+/// One space is enough to read `fn` as a separate column because the column is
+/// a *fixed* width — the labels line up under each other, which is what
+/// separates them, not the gap.
+const KIND_GAP: u16 = 1;
+
+/// Two spaces between the detail column and the source column, matching
+/// [`DETAIL_GAP`]: two meta columns beside each other need the same seam as the
+/// first one needs from the label, or the eye reads them as one string.
+const SOURCE_GAP: u16 = 2;
+
+/// The fewest cells a detail column may survive on, and the floor under
+/// [`CompletionList::layout`]'s step 2.
+///
+/// The detail is the one column allowed to elide, and the first version of that
+/// rule kept it whenever a *single* cell was left after the label. One cell is
+/// not a squeezed detail, it is the elision mark alone: [`Canvas::text_elided`]
+/// writes `room - 1` characters and then `⋯`, so at `room == 1` the row spends
+/// two gap cells and one content cell drawing a glyph that names nothing. That
+/// is precisely the squeeze §11 forbids — *"drop, never squeeze"* — one column
+/// over from where [`ListLayout`] argues the elision **is** allowed, and it was
+/// reachable on any 30–40 column split (measured against `rust-analyzer` at
+/// `cols=30`: `meth len   ⋯`).
+///
+/// Two, because the boundary that means something is *"at least one cell of the
+/// thing itself, beside the mark that says there is more"*. Below it the column
+/// is dropped and its cells go back to the row.
+const DETAIL_MIN: u16 = 2;
+
 /// The most rows of completions a list draws, however many it holds.
 ///
 /// **A passive float is the one float you did not ask for**, so it is the one
@@ -703,6 +738,27 @@ pub struct CompletionItemVm {
     /// The type or shape, right of the label column in meta-grey:
     /// `fn() -> RetryPolicy`, `Duration`. Absent for a server that sends none.
     pub detail: Option<String>,
+    /// What sort of thing it is, drawn as a fixed four-cell word left of the
+    /// label — `fn`, `strc`, `memb`. Absent for a server that sends no `kind`,
+    /// which draws as four blank cells so the labels still line up.
+    ///
+    /// [`CompletionKind`]'s own header argues why this is a word and not an
+    /// icon.
+    pub kind: Option<CompletionKind>,
+    /// Where it comes from, drawn dimmest and rightmost — the `src` column
+    /// `nvim-cmp` and `company-box` put a source name in.
+    ///
+    /// rust-analyzer is *documented* to fill it with an import path on an
+    /// auto-import row and this build has **not** reproduced that; see
+    /// `phosphor_core::request::Completion::source`, which carries the
+    /// measurement and the caveat. The widget draws whatever arrives.
+    ///
+    /// **The first column shed** when the float cannot hold every column; see
+    /// [`ListLayout`].
+    pub source: Option<String>,
+    /// The server tagged it deprecated, which draws as a struck-through label
+    /// receded one step down the neutral ramp.
+    pub deprecated: bool,
 }
 
 /// The completion session, as one frame needs it (`T038`).
@@ -756,6 +812,153 @@ pub struct CompletionList<'a> {
     vm: &'a CompletionVm,
 }
 
+/// A meta column's width in cells, counting an empty string as no column.
+///
+/// An empty detail is no detail: counting the gap in front of one buys two
+/// columns of nothing, and for a list whose labels are empty too that is the
+/// whole float.
+fn meta_cells(text: Option<&str>) -> u16 {
+    text.filter(|text| !text.is_empty()).map_or(0, cells)
+}
+
+/// The cells a column costs a row: its content plus the gap in front of it, and
+/// **zero for a column with no content**.
+///
+/// One function because the rule was written out four times — three inline in
+/// [`CompletionList::layout`] and a fourth as a closure in `desired_width` —
+/// and `nothing_is_shed_at_the_width_the_list_asked_for` existed partly to
+/// catch those copies drifting. That test is worth keeping either way (it is
+/// the one that pins `desired_width` against `layout`), but it should not have
+/// been the thing holding four copies of one rule together; `CP-4`'s review
+/// said so.
+///
+/// The zero case is load-bearing rather than tidy: counting the gap in front of
+/// an empty column buys two cells of nothing, and for a list whose labels are
+/// also empty that is the whole float.
+const fn column_block(column: u16, gap: u16) -> u16 {
+    if column == 0 {
+        0
+    } else {
+        column.saturating_add(gap)
+    }
+}
+
+/// How a deprecated row's label is drawn, and why it is two treatments.
+///
+/// **Struck through *and* receded**, on `T085`'s degradation principle rather
+/// than by belt and braces: `Modifier::CROSSED_OUT` is SGR 9, which not every
+/// emulator honours and which `phosphor-term`'s [`Capabilities`] cannot report
+/// on — there is no query for it the way there is for the kitty keyboard
+/// protocol. So the treatment that survives a terminal ignoring the escape is
+/// the one that carries the meaning on its own: the label drops a step down
+/// §1's neutral ramp (`text` → `prose`, `bright_text` → `text` on the selected
+/// row), which reads as *"this one is not the answer"* with no escape at all.
+///
+/// **§5's emphasis vocabulary does not name strikethrough** — `view::Emphasis`
+/// is plain, inverted, underline and undercurl, and the first is spoken for by
+/// the statusline's mode chip. Reported rather than folded in: the neutral
+/// step is inside the design language, the SGR is a fifth treatment nothing has
+/// blessed, and if it is unwanted this function is the one place it lives.
+///
+/// [`Capabilities`]: https://docs.rs/phosphor-term
+fn label_style(item: &CompletionItemVm, fg: Color, bg: Color, theme: &Theme) -> Style {
+    let base = Style::new().bg(bg);
+    if !item.deprecated {
+        return base.fg(fg);
+    }
+    let receded = if fg == theme.neutrals.bright_text {
+        theme.neutrals.text
+    } else {
+        theme.neutrals.prose
+    };
+    base.fg(receded).add_modifier(Modifier::CROSSED_OUT)
+}
+
+/// Where each of a completion row's four columns starts, once the shed order
+/// has been applied to the width the float actually has (`T038`).
+///
+/// # The shed order, which is Design Language §11 applied to a row
+///
+/// > "§11 — Narrow terminals **drop, never squeeze**. … Nothing ever wraps."
+///
+/// The statusline's own shed order is written out in §11; a four-column
+/// completion row needs one too, and this is it, **rightmost-first**:
+///
+///   1. **`source`** goes first, and goes *whole*. It is the meta column
+///      furthest from the text being typed, it is empty on most rows of most
+///      servers, and it is a **name** — `phosphor::net::ret⋯` names nothing,
+///      so there is no useful part of it to keep.
+///   2. **`detail`** goes second, and is the one column that takes whatever
+///      room is left and elides into it. `7c` draws it, a real
+///      `rust-analyzer` signature is 100 cells against a 72-cell float, and
+///      `fn(&mut Client, R⋯` still says *"a function that takes a Client"* —
+///      so a detail that had to fit whole would simply never be drawn in Rust.
+///      It is dropped only when there is no room after the label at all.
+///   3. **`kind`** goes third, whole: four fixed cells, and there is no useful
+///      half of `cnst`. Giving them back is the last thing that can be done
+///      without touching the label.
+///   4. **The label elides**, and only then. It is the text that gets inserted
+///      into the buffer, and an elided identifier is not that identifier —
+///      `⋯` in a label is a row whose meaning you cannot read.
+///
+/// What *"drop, never squeeze"* forbids here is squeezing the thing being
+/// **named**: three of the four columns are whole or absent, and the fourth is
+/// the last one before the label, with nothing further right to hand its room
+/// to — and it has a floor of its own, [`DETAIL_MIN`], because a one-cell
+/// detail column is not a squeezed detail, it is the elision mark alone.
+///
+/// `label_room` is what the label is drawn with. **The property that matters
+/// is `label_room >= widest label` whenever any meta column survives** — i.e.
+/// the label is never the thing that loses first — and
+/// `crates/phosphor-ui/tests/completion_shed.rs` asserts exactly that over
+/// generated item sets at every width.
+///
+/// # The order is a priority, not a monotone sequence
+///
+/// Recorded because it was found by trying to write it as one and is not
+/// obvious from the four steps above. Each step is its own threshold in
+/// `width`, and step 3 frees cells that step 2 can then spend, so the columns
+/// do **not** simply appear one after another as a float widens. With a kind
+/// column, a 10-cell label and an 8-cell detail: at 19 cells both the kind and
+/// the detail are drawn; at 18 the detail is gone; at 14 the kind is gone and
+/// the detail is back, because the label no longer starts five columns in.
+///
+/// That is the behaviour the steps describe — the kind is given back *to
+/// protect the label*, and whatever that frees goes to the next column down —
+/// but it is not what *"source → detail → kind"* sounds like, and a reader who
+/// assumed a monotone sequence would write a test that fails on a corner the
+/// widget is right about. The invariants that **do** hold at every width are
+/// the ones `completion_shed.rs` states: the label is never elided while a meta
+/// column survives, the source never survives a shed the detail did not, and no
+/// column is placed outside the body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ListLayout {
+    /// Column the kind starts at, or `None` when it has been shed. Always
+    /// [`CompletionKind::WIDTH`] wide when it is drawn, whatever the widest
+    /// abbreviation on screen happens to be.
+    ///
+    /// **`Some(0)` and not a `bool`**, so that the layout owns all four
+    /// placements the way it owns the other three. `render` used to compute it
+    /// as `label_at - (CompletionKind::WIDTH + KIND_GAP)`, arithmetic that can
+    /// only ever evaluate to zero — `label_at` *is* that sum when the column
+    /// survives — which is ceremony pretending to be a calculation. `CP-4`'s
+    /// review asked for one of the two honest forms; this is the one that
+    /// keeps the layout total.
+    pub kind_at: Option<u16>,
+    /// Column the label starts at, relative to the body area.
+    pub label_at: u16,
+    /// Cells the label may use before it is elided.
+    pub label_room: u16,
+    /// Column the detail starts at, or `None` when it has been shed.
+    pub detail_at: Option<u16>,
+    /// Cells a detail may use.
+    pub detail_room: u16,
+    /// Column the source starts at, or `None` when it has been shed.
+    pub source_at: Option<u16>,
+    /// Cells a source may use.
+    pub source_room: u16,
+}
+
 impl<'a> CompletionList<'a> {
     /// The list over one session.
     #[must_use]
@@ -763,16 +966,107 @@ impl<'a> CompletionList<'a> {
         Self { vm }
     }
 
-    /// Cells from the start of a row to the start of the detail column.
-    fn label_col(&self) -> u16 {
-        let widest = self
-            .vm
-            .items
-            .iter()
-            .map(|item| cells(&item.label))
-            .max()
-            .unwrap_or(0);
-        widest.saturating_add(DETAIL_GAP)
+    /// The widest each column's content is, in cells, before any shedding:
+    /// `(kind, label, detail, source)`.
+    ///
+    /// An **empty** detail or source counts as no column at all — counting the
+    /// gap in front of one buys two columns of nothing, and for a list whose
+    /// labels are empty too that is the whole float.
+    fn widths(&self) -> (u16, u16, u16, u16) {
+        let mut label = 0;
+        let mut detail = 0;
+        let mut source = 0;
+        let mut kind = 0;
+        for item in &self.vm.items {
+            label = label.max(cells(&item.label));
+            if item.kind.is_some() {
+                kind = CompletionKind::WIDTH;
+            }
+            detail = detail.max(meta_cells(item.detail.as_deref()));
+            source = source.max(meta_cells(item.source.as_deref()));
+        }
+        (kind, label, detail, source)
+    }
+
+    /// The row's columns at `width`, with the shed order applied.
+    ///
+    /// **Computed from the width the body was handed, not from the content**,
+    /// which is the half the first version of this widget did not have: it
+    /// placed the detail at *widest-label + 2* and let `text_elided` deal with
+    /// the overrun, so a long label squeezed the detail to an `⋯` instead of
+    /// dropping it. See [`ListLayout`] for the order and why it is that order.
+    #[must_use]
+    pub fn layout(&self, width: u16) -> ListLayout {
+        let (kind, label, detail, source) = self.widths();
+        let kind_block = column_block(kind, KIND_GAP);
+        let detail_block = column_block(detail, DETAIL_GAP);
+        let source_block = column_block(source, SOURCE_GAP);
+
+        // **Step 3 first, because it decides where the label starts** and the
+        // other two are measured from there. Fixed-width, so it is whole or
+        // absent; there is no useful half of `cnst`.
+        let keep_kind = kind_block > 0 && kind_block.saturating_add(label) <= width;
+        let label_at = if keep_kind { kind_block } else { 0 };
+        let label_end = label_at.saturating_add(label);
+
+        // **Step 1 — the source is whole or gone.** Unlike the detail it is a
+        // *name*: `phosphor::net::ret⋯` names nothing, where `fn(&mut Client,
+        // R⋯` still says *"a function that takes a Client"*. So it earns its
+        // columns only when the entire row fits, and it is the first thing off
+        // the screen otherwise.
+        let keep_source = source > 0
+            && kind_block
+                .saturating_add(label)
+                .saturating_add(detail_block)
+                .saturating_add(source_block)
+                <= width;
+        // **Step 2 — the detail takes what is left and elides into it.** That
+        // is not a squeeze of the *row*: what §11 forbids squeezing is the
+        // thing being named, and the detail is the last column before the
+        // label, so there is nothing further right to hand the room to. It is
+        // also the behaviour `tests/float_width.rs` has committed frames of
+        // since `CP-4` — a real `rust-analyzer` signature is 100 cells and a
+        // float is 72, so a detail that had to fit whole would never be drawn
+        // in Rust at all.
+        //
+        // **With a floor**, added at the `CP-4` review: `< width` kept the
+        // column whenever one cell survived, and one cell is the `⋯` on its
+        // own. See [`DETAIL_MIN`].
+        let keep_detail = detail > 0
+            && label_end
+                .saturating_add(DETAIL_GAP)
+                .saturating_add(DETAIL_MIN)
+                <= width;
+
+        let detail_at = keep_detail.then(|| label_end.saturating_add(DETAIL_GAP));
+        let source_at = keep_source.then(|| match detail_at {
+            Some(at) => at.saturating_add(detail).saturating_add(SOURCE_GAP),
+            None => label_end.saturating_add(SOURCE_GAP),
+        });
+        ListLayout {
+            // Zero, and the layout says so rather than `render` deriving it:
+            // the kind is the leftmost column, so it starts at the body edge.
+            kind_at: keep_kind.then_some(0),
+            label_at,
+            // Step 4, stated as *"and only then"*: while any meta column
+            // survives the label gets exactly the widest label's cells, so it
+            // is drawn whole and the columns line up. Once both are gone it
+            // takes everything that is left, and `⋯` is what happens after
+            // that.
+            label_room: if keep_detail || keep_source {
+                label
+            } else {
+                width.saturating_sub(label_at)
+            },
+            detail_at,
+            detail_room: detail_at.map_or(0, |at| {
+                source_at.map_or(width.saturating_sub(at), |next| {
+                    next.saturating_sub(SOURCE_GAP).saturating_sub(at)
+                })
+            }),
+            source_at,
+            source_room: source_at.map_or(0, |at| width.saturating_sub(at)),
+        }
     }
 
     /// Rows the documentation block occupies, rule included; zero when there is
@@ -827,32 +1121,23 @@ impl FloatBody for CompletionList<'_> {
     }
 
     fn desired_width(&self) -> u16 {
-        let label_col = self.label_col();
+        let (kind, label, detail, source) = self.widths();
+        // Every column at its natural width — what the list would like. The
+        // float caps this at `ANCHORED_WIDTH_PCT` and hands `render` whatever
+        // survived, which is where [`CompletionList::layout`] sheds.
+        let row = column_block(kind, KIND_GAP)
+            .saturating_add(label)
+            .saturating_add(column_block(detail, DETAIL_GAP))
+            .saturating_add(column_block(source, SOURCE_GAP));
+        // Only the doc rows that will be drawn: a float widened by the
+        // twentieth line of a doc comment it does not show is wider than
+        // anything on it.
         self.vm
-            .items
+            .documentation
             .iter()
-            .map(|item| {
-                item.detail
-                    .as_deref()
-                    // An empty detail is no detail: counting the gap in front
-                    // of one buys two columns of nothing, and for a list whose
-                    // labels are empty too that is the whole float.
-                    .filter(|detail| !detail.is_empty())
-                    .map_or(0, |detail| label_col.saturating_add(cells(detail)))
-                    .max(cells(&item.label))
-            })
-            // Only the rows that will be drawn: a float widened by the
-            // twentieth line of a doc comment it does not show is wider than
-            // anything on it.
-            .chain(
-                self.vm
-                    .documentation
-                    .iter()
-                    .take(MAX_DOC_ROWS as usize)
-                    .map(|line| cells(line)),
-            )
-            .max()
-            .unwrap_or(0)
+            .take(MAX_DOC_ROWS as usize)
+            .map(|line| cells(line))
+            .fold(row, u16::max)
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer, theme: &Theme, mood: Mood) {
@@ -868,7 +1153,7 @@ impl FloatBody for CompletionList<'_> {
             rows => rows,
         };
         let item_rows = area.height - doc_rows;
-        let label_col = self.label_col();
+        let layout = self.layout(area.width);
 
         let mut canvas = Canvas { buf, rect: area };
         let first = self.scroll(item_rows);
@@ -885,28 +1170,47 @@ impl FloatBody for CompletionList<'_> {
                 (theme.neutrals.text, ground)
             };
             canvas.fill_row(y, Style::new().bg(bg));
-            // **The label keeps the columns and the detail loses them**, which
-            // is §11's *"drop, never squeeze"* applied to a row rather than to
-            // a screen: the label is the text that gets inserted and the detail
-            // is meta about it. So the label is elided only when it alone
-            // overruns the float, and a label column wider than the whole body
-            // takes every detail off the row rather than shaving both.
-            canvas.text_elided(
-                area.x,
-                y,
-                label_col.min(area.width),
-                &item.label,
-                Style::new().fg(fg).bg(bg),
-            );
-            if let Some(detail) = &item.detail
-                && label_col < area.width
-            {
-                canvas.text_elided(
-                    area.x + label_col,
+            // **The label keeps the columns and the meta loses them**, which is
+            // §11's *"drop, never squeeze"* applied to a row rather than to a
+            // screen. [`CompletionList::layout`] has already decided which
+            // columns survive; this only draws them.
+            if let Some(at) = layout.kind_at {
+                canvas.text(
+                    area.x + at,
                     y,
-                    area.width - label_col,
+                    CompletionKind::WIDTH,
+                    // A row with no `kind` in a list that has one draws four
+                    // blanks, so the labels still line up under each other.
+                    item.kind.map_or("", CompletionKind::abbreviation),
+                    Style::new().fg(theme.neutrals.meta).bg(bg),
+                );
+            }
+            canvas.text_elided(
+                area.x + layout.label_at,
+                y,
+                layout.label_room,
+                &item.label,
+                label_style(item, fg, bg, theme),
+            );
+            if let (Some(at), Some(detail)) = (layout.detail_at, item.detail.as_deref()) {
+                canvas.text_elided(
+                    area.x + at,
+                    y,
+                    layout.detail_room,
                     detail,
                     Style::new().fg(theme.neutrals.meta).bg(bg),
+                );
+            }
+            if let (Some(at), Some(source)) = (layout.source_at, item.source.as_deref()) {
+                // Dimmest of the three, which is the hierarchy the shed order
+                // already states in colour: the first column to go is the one
+                // the eye reaches last. §1's neutral ramp, no new value.
+                canvas.text_elided(
+                    area.x + at,
+                    y,
+                    layout.source_room,
+                    source,
+                    Style::new().fg(theme.neutrals.line_numbers).bg(bg),
                 );
             }
         }
@@ -1948,6 +2252,7 @@ mod tests {
                 .map(|(label, detail)| CompletionItemVm {
                     label: (*label).to_owned(),
                     detail: detail.map(str::to_owned),
+                    ..CompletionItemVm::default()
                 })
                 .collect(),
             selected,

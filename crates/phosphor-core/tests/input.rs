@@ -441,6 +441,63 @@ fn insert_mode_types_text_and_esc_closes_the_undo_group() {
     assert_eq!(machine.mode(), EditMode::Normal);
 }
 
+/// **An unbound sequence in insert mode is typed forwards** (`CP-4`).
+///
+/// A key that starts a sequence is held until the sequence resolves, and an
+/// `Unbound` answer flushes the whole batch as text. Every Action in that batch
+/// is built against the snapshot the turn began with — the host applies them,
+/// the machine cannot — so a flush that asked `text.cursor()` per key stacked
+/// all of them at one offset and the buffer came out reversed. `a<u8>b` typed
+/// into the running binary wrote `a8>bu<`, which makes Rust untypeable.
+///
+/// `runtime/keymaps.scm` no longer makes `<` a prefix (that half is
+/// `phosphor-steel`'s `a_printable_character_is_not_a_prefix_of_a_bracketed_binding`),
+/// so this drives the shape a **user's** `init.scm` reintroduces the moment it
+/// binds `jk` to escape: a two-key insert prefix, and a second key that does
+/// not finish it.
+///
+/// **This bites:** put the flush back to `for typed in &keys { self.insert_key(*typed, text, …) }`
+/// against `text.cursor()` and the line reads `xj` instead of `jx`.
+#[test]
+fn an_unbound_sequence_in_insert_mode_types_its_keys_in_order() {
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+    // The binding a user writes on their first day. `support::table` is
+    // otherwise the shipped keymap, which has no insert-scope prefix at all —
+    // that is the property the steel-side test pins, and the reason this one
+    // has to add its own.
+    keymap.bind(Scope::Insert, "jk", Role::Escape);
+    let mut buffer = Buffer::new("");
+    buffer.at(1, 1);
+
+    // `j` waits for the `k` that never comes; `x` kills the sequence and both
+    // are text.
+    drive(&mut machine, &mut keymap, &mut buffer, "ijx");
+    assert_eq!(
+        buffer.content(),
+        "jx",
+        "the held key is typed first, not last"
+    );
+    assert_eq!(
+        buffer.cursor,
+        Position { line: 1, column: 3 },
+        "and the cursor is past both of them"
+    );
+
+    // Three keys and a newline in the middle, so the walk has to cross a line
+    // rather than only add columns.
+    let mut machine = Machine::new();
+    let mut buffer = Buffer::new("");
+    buffer.at(1, 1);
+    drive(&mut machine, &mut keymap, &mut buffer, "ij<cr>x");
+    assert_eq!(
+        buffer.content(),
+        "j\nx",
+        "a newline mid-batch moves the line"
+    );
+    assert_eq!(buffer.cursor, Position { line: 2, column: 2 });
+}
+
 #[test]
 fn o_opens_a_line_below_and_keeps_the_indent() {
     let mut machine = Machine::new();

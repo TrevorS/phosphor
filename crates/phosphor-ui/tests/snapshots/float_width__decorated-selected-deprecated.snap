@@ -1,0 +1,84 @@
+---
+source: crates/phosphor-ui/tests/float_width.rs
+expression: frame.to_text(buf)
+---
+screen decorated-selected-deprecated · phosphor dark · 120x10 cells
+  The same list as decorated-120 with the DEPRECATED row selected.
+  label_style recedes one step down §1's neutral ramp and which step
+    depends on where the row started: bright_text -> text when it is the
+    selected row, text -> prose otherwise. decorated-120 selects row 0 and
+    so only ever draws the second arm — swapping the two neutrals left
+    every committed frame byte-identical, which CP-4's review found by
+    reading the frame rather than by running anything.
+  The strikethrough is unchanged: SGR 9 is not universal, so the colour
+    is what carries the meaning where the escape is ignored (T085).
+
+text
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │                                                                                                                        │
+  1 │                                                                                                                        │
+  2 │  ┌──────────────────────────────────────────────────────────────────┐                                                  │
+  3 │  │  fn   retry_with_backoff  fn(&mut Client) -> Value  net::retry   │                                                  │
+  4 │  │  cnst retries_left        u32                                    │                                                  │
+  5 │  │  fn   retry_forever       fn(&mut Client) -> !      net::legacy  │                                                  │
+  6 │  │  meth 送 信 す る             fn(Addr) -> Result        送 信          │                                                  │
+  7 │  │  ──────────────────────────────────────────────────────────────  │                                                  │
+  8 │  │  Retries the request with exponential backoff.                   │                                                  │
+  9 │  └──────────────────────────────────────────────────────────────────┘                                                  │
+
+fg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │........................................................................................................................│
+  1 │........................................................................................................................│
+  2 │..wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww..................................................│
+  3 │..whhjjhhhhhhhhhhhhhhhhhhhhhhhjjjjjjjjjjjjjjjjjjjjjjjjhhkkkkkkkkkkhhhw..................................................│
+  4 │..whhjjjjhhhhhhhhhhhhhhhhhhhhhjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhw..................................................│
+  5 │..whhjjhhhhhhhhhhhhhhhhhhhhhhhjjjjjjjjjjjjjjjjjjjjhhhhhhkkkkkkkkkkkhhw..................................................│
+  6 │..whhjjjjhh.h.h.h.hhhhhhhhhhhhjjjjjjjjjjjjjjjjjjhhhhhhhhk.k.hhhhhhhhhw..................................................│
+  7 │..whhCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCChhw..................................................│
+  8 │..whhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhw..................................................│
+  9 │..wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww..................................................│
+
+bg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │........................................................................................................................│
+  1 │........................................................................................................................│
+  2 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..................................................│
+  3 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..................................................│
+  4 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..................................................│
+  5 │..xxxppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppxxx..................................................│
+  6 │..xxxxxxxxx.x.x.x.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.x.xxxxxxxxxx..................................................│
+  7 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..................................................│
+  8 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..................................................│
+  9 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..................................................│
+
+style
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │........................................................................................................................│
+  1 │........................................................................................................................│
+  2 │........................................................................................................................│
+  3 │........................................................................................................................│
+  4 │........................................................................................................................│
+  5 │..........sssssssssssss.................................................................................................│
+  6 │........................................................................................................................│
+  7 │........................................................................................................................│
+  8 │........................................................................................................................│
+  9 │........................................................................................................................│
+
+legend
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  k  #414b42  neutrals.line_numbers
+  p  #26332a  regions.selection
+  w  #2a3c2e  float.passive
+  x  #101410  float.body
+  C  #242a24  chrome.divider
+
+style
+  ~  undercurl — SGR 4:3 wrapped around the glyph, plus Modifier::UNDERLINED
+  _  Modifier::UNDERLINED alone (the degraded path)
+  s  Modifier::CROSSED_OUT — a deprecated completion, which also recedes one step down §1's neutral ramp so a terminal that ignores SGR 9 still says so

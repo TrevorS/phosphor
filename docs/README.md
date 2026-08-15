@@ -31,7 +31,7 @@ Then:
   published sources with `file:line` citations, the full dependency manifest with verified
   versions, and the hygiene tooling. **Read this before T001** — it inverts one recorded
   decision and uncovers unbudgeted work.
-- **[TASKS.md](TASKS.md)** — the plan decomposed into 103 tasks across the 9 phases, plus 9
+- **[TASKS.md](TASKS.md)** — the plan decomposed into 108 tasks across the 9 phases, plus 9
   verification-harness tasks, with **12 checkpoints** where work stops for manual verification.
   `T084`–`T089` were added by a review of these docs: six widget and primitive tasks the design
   requires — the `Float` chrome primitive, undercurl, the `HelpGrid`, region tints, the pane

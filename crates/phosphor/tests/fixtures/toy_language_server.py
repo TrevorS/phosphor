@@ -90,22 +90,37 @@ CAPABILITIES = {
     "definitionProvider": True,
 }
 
-# `7c`, verbatim: three labels, a meta detail column, and one row of prose.
+# `7c`, verbatim: three labels, a meta detail column, and one row of prose —
+# plus the three fields the protocol has always sent and this editor used to
+# throw away. `kind` is `CompletionItemKind`; `labelDetails.description` is the
+# "src" column, which the client asks for by announcing `labelDetailsSupport`
+# and which a server is entitled to withhold from one that does not;
+# `tags: [1]` is `Deprecated`.
+#
+# One row carries each so a frame assertion can name it: `default` is a
+# function from `retry::policy`, `default_delay` is a constant with no source,
+# and `defaults_for` is deprecated. A list where every row looked the same
+# would pass a renderer that drew the first row's decoration on all three.
 COMPLETIONS = [
     {
         "label": "default",
+        "kind": 3,
+        "labelDetails": {"description": "retry::policy"},
         "detail": "fn() -> RetryPolicy",
         "insertText": "default()",
         "documentation": "Returns the policy with 3 attempts, 200ms base, 1s cap.",
     },
     {
         "label": "default_delay",
+        "kind": 21,
         "detail": "Duration",
         "insertText": "default_delay",
         "documentation": "The base delay every attempt is measured from.",
     },
     {
         "label": "defaults_for",
+        "kind": 3,
+        "tags": [1],
         "detail": "fn(Kind) -> RetryPolicy",
         "insertText": "defaults_for",
         "documentation": "The policy this kind of request ships with.",
@@ -138,7 +153,28 @@ def publish(uri):
     )
 
 
+def offered(announced):
+    """The completion list, minus anything the client did not ask for.
+
+    **A real server withholds `labelDetails` from a client that did not
+    announce `completionItem.labelDetailsSupport`**, which is what makes the
+    announcement worth testing: the field is `@since 3.17` and the
+    specification makes sending it conditional on exactly that flag. So this
+    fixture withholds it too. Drop `label_details_support` from
+    `initialize_params` in `crates/phosphor-buffer/src/lsp.rs` and the `src`
+    column goes off the screen, which is a pty test failing rather than a
+    silently emptier float.
+    """
+    if announced:
+        return COMPLETIONS
+    return [
+        {key: value for key, value in item.items() if key != "labelDetails"}
+        for item in COMPLETIONS
+    ]
+
+
 def main():
+    label_details = False
     while True:
         message = read_message()
         if message is None:
@@ -147,6 +183,14 @@ def main():
         request_id = message.get("id")
 
         if method == "initialize":
+            label_details = bool(
+                message["params"]
+                .get("capabilities", {})
+                .get("textDocument", {})
+                .get("completion", {})
+                .get("completionItem", {})
+                .get("labelDetailsSupport")
+            )
             reply(
                 request_id,
                 {
@@ -184,7 +228,10 @@ def main():
                 },
             )
         elif method == "textDocument/completion":
-            reply(request_id, COMPLETIONS if MODE == "completion" else [])
+            reply(
+                request_id,
+                offered(label_details) if MODE == "completion" else [],
+            )
         elif method == "textDocument/hover":
             reply(
                 request_id,

@@ -252,6 +252,7 @@ impl Frame<'_> {
         let mut used: Vec<char> = Vec::new();
         let mut curl_colours: Vec<String> = Vec::new();
         let mut any_style = false;
+        let mut any_struck = false;
 
         let key_of = |colour: Color, used: &mut Vec<char>| -> char {
             if colour == Color::Reset {
@@ -293,6 +294,9 @@ impl Frame<'_> {
                     '~'
                 } else if cell.modifier.contains(Modifier::UNDERLINED) {
                     '_'
+                } else if cell.modifier.contains(Modifier::CROSSED_OUT) {
+                    any_struck = true;
+                    's'
                 } else if cell.modifier.contains(Modifier::REVERSED) {
                     'r'
                 } else if cell.modifier.contains(Modifier::BOLD) {
@@ -384,6 +388,20 @@ impl Frame<'_> {
                 "  ~  undercurl — SGR 4:3 wrapped around the glyph, plus Modifier::UNDERLINED"
             );
             let _ = writeln!(out, "  _  Modifier::UNDERLINED alone (the degraded path)");
+            // **Conditional where the two above are unconditional**, and the
+            // asymmetry is deliberate: `~` and `_` are one degradation path and
+            // have been in every committed legend since `T018`, so making them
+            // conditional now would rewrite frames that did not change. A line
+            // added later has to earn its place on the frames that use it, or
+            // the first new treatment churns forty snapshots to say nothing.
+            if any_struck {
+                let _ = writeln!(
+                    out,
+                    "  s  Modifier::CROSSED_OUT — a deprecated completion, which also \
+                     recedes one step down §1's neutral ramp so a terminal that ignores \
+                     SGR 9 still says so"
+                );
+            }
             for spelled in &curl_colours {
                 let name = index
                     .get(spelled)

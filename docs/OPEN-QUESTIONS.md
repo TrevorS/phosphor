@@ -51,6 +51,12 @@ that entry was a lie when it was written; it went wrong by standing still while 
 **Re-read an entry before quoting it**, and prefer the tree to the entry when they disagree — which
 is `CLAUDE.md`'s rule, and is now the fourth consecutive sweep to earn it.
 
+**And once more after `CP-4`'s manual half**, which added exactly one entry — §38, in its own
+group at the end. The five tasks that half produced are work rather than questions and live in
+[TASKS.md](TASKS.md)'s §`D`; what came here is the one thing among them that **two of those tasks
+cannot decide between them**, which is the only shape that belongs in this file. The pass also
+corrected the *"Five entries"* line on the group above, which had been six since §37 landed.
+
 ---
 
 ## Doc-versus-tree disagreements
@@ -627,6 +633,14 @@ tests; none is a defect; each is a place a vim user's hands will land differentl
    than a transcription, and the parameter's own description in `action.rs` says so. Worth a look
    at `CP-4` on the same grounds as the others: it is a spelling a person will eventually read.
 
+> **Item 1 was answered by `CP-4`, in a way this entry did not consider.** See §38: the mechanism
+> that landed is neither a role that reads host state nor a new scope — `accept-completion` grew a
+> fall-through argument, so the condition sits in the host and the alternative *text* sits in the
+> keymap, and a binding stays a fixed list. The recommendation below is left as written because it
+> was the reasoning available, and because the thing it got wrong is instructive: it framed the
+> choice as *"may a binding ask a question"* when the answer was *"widen what the capability
+> takes"*. Items 2 and 3 are untouched.
+
 *Recommendation: none of these is a build change today. Items 1 and 4 are one question wearing two
 hats — whether a binding may carry a **role** that reads host state — and answering it yes would
 close both and cost a change to the input machine. Item 2 is a `T026` special case and small. Item
@@ -770,6 +784,12 @@ The third and fourth were found by the review of that repair window, and both ar
 `$XDG_CONFIG_HOME/phosphor/`: what happens when a user puts an `init.scm` there, and what happens
 to the one form `7a` will write there. The fifth is what fixing the two unrunnable tapes revealed
 about the other thirty-one.
+
+> **Six, not five — §37 was appended here without the sentence above being touched.** Left as a
+> correction rather than a rewrite, because the drift is the same one §30 is about and a count in
+> prose that nothing recomputes is worth catching in the act. §37 is the statusline lying about
+> the cursor after a jump, and it belongs to this window by when it was found rather than by
+> subject.
 
 ### 32 · `6b` draws auto-persist, and `T101` removed it — ruled by Teej, 2026-08-14
 
@@ -1167,6 +1187,78 @@ a frame budget goes quietly, and `T079` exists because that budget is worth some
 `T086`'s neighbourhood. The cheap experiment first, and it is two runs: press `j`, read the
 position, then `gd`, read it again, on the same buffer. That settles which of the two causes it
 is before a line of it is written.*
+
+---
+
+## Raised by `CP-4`'s manual half
+
+One entry. The five tasks that half produced are in [TASKS.md](TASKS.md)'s §`D`; this is the one
+thing among them that is a **question** rather than work, because two of those tasks want the same
+key and neither may decide it alone.
+
+### 38 · Two tasks want `<tab>`, and a binding cannot ask which
+
+`T104` wants `<tab>` in insert mode to insert one indent level — that is the whole of the report
+*"tab only seems to go a space at a time when indenting"*. `T105` wants `<tab>` to take the
+selected completion, because that is the key every completion UI a person has used answers to and
+because `7c`'s no-footer exception means the float can only be driven by keys your hands already
+know. **The same key, the same scope, and the right answer depends on whether a list is open.**
+
+**Why it cannot be settled in `runtime/keymaps.scm`.** Read this session:
+`phosphor_core::input::table::Role`'s richest case is `Run(Vec<Action>)` — a fixed list of
+capabilities with their arguments baked in, and nothing that reads host state — and `Scope` is a
+five-value Rust enum (`Normal`, `Insert`, `Visual`, `OperatorPending`, `Object`) derived from the
+edit mode by `Scope::of`. The thing that knows a list is open is `Editing::completion` in
+`crates/phosphor/src/main.rs`, and no binding can ask it. So a keymap can give `<tab>` one meaning
+and only one.
+
+**This is §29 item 1 arriving a second time, from the other side.** That entry recorded `<C-x>`
+having to open the float because `<C-n>` could not both open and step, and its recommendation was
+*"rule item 1 first, because it is the only one that changes what a keymap **is**"*. Nothing ruled
+it, and the same wall is now load-bearing for a key a user pressed rather than for a divergence a
+reader might notice. `<CR>` is in exactly the same position — `Machine::insert_key` gives it
+`"\n"` — and so is every arrow key, which `runtime/keymaps.scm` binds in the `insert` scope to the
+`line-up`/`line-down` motions.
+
+**`T105`'s answer arrived while this was being written, and it changes the question rather than
+closing it.** The working tree carried it uncommitted, read this session:
+`accept-completion` (`crates/phosphor-core/src/action.rs`) grew two optional arguments —
+`then`, *"text to type after the accepted item"*, and `otherwise`, *"text to type when no row has
+been chosen; present is what makes a key fall through instead of accepting"* — and
+`Editing::accept` (`crates/phosphor/src/main.rs`) reads a new `Editing::chosen` field, written only
+by the `move-completion` arm. **Neither obvious mechanism was needed**: not a sixth `Scope`, not a
+conditional `Role`. The condition lives in the host, where the state is; the fall-through *text*
+lives in the keymap, where the key's meaning is; and a binding stays a fixed list of capabilities
+with their arguments. That is the cleanest form of *"the keymap is data"* this build has produced,
+and it settles `<space>` and `<CR>` outright.
+
+**It does not settle `<tab>`, and the reason is exact.** `otherwise` is an `Option<String>` — a
+*literal* — so `<tab>` can be bound as *accept if steered, otherwise type this text*. `T104`'s
+`<tab>` does not want text. It wants **one indent level**, which is a per-language value the
+keymap cannot name: today it is `utils::indent(&self.lang)` inside the vendored fork, and after
+`T104` it is whatever `set-option!` or `define-language!` holds. A keymap that spelled it as a
+literal would be four spaces frozen into `runtime/keymaps.scm` for every language, which is the
+Rust-table-in-scheme shape `T033` exists to forbid.
+
+**So the residue is one question, and it is narrow.** Either
+
+- **`otherwise` widens** from text to *a capability to run instead* — one argument becoming a
+  nested Action, which makes the fall-through general (any key, any alternative) and is a change
+  to how one capability's arguments are shaped rather than to the input machine; or
+- **the vocabulary gains an insert-mode indent** — a verb meaning *"one indent level here"*,
+  which `<tab>` names as its `otherwise` in whatever form that argument ends up taking, and which
+  `T104` needs a home for anyway once the unit stops being the fork's; or
+- **`<tab>` is given to one of them and the other gets a different key.** No mechanism at all, and
+  legitimate — several editors do exactly this — but it must be *chosen*, because the default
+  today is that `<tab>` types a character that renders in one cell and neither task's user gets
+  what they asked for.
+
+*Recommendation: rule the residue before `T104` is scheduled, not before `T105` — `T105` is
+unblocked and `<space>`/`<CR>` do not touch this. The first option is the one to weigh first: a
+nested Action in `otherwise` would also serve `<CR>` in the Picker (`T045`) and the prompt
+(`T058`), which are the same shape arriving later, so the cost amortises across three surfaces
+instead of being paid for one key. And whichever way it goes, `T104` and `T105` cannot run
+concurrently in one window under [TEAM.md](TEAM.md)'s rule 1: they write the same files.*
 
 ---
 

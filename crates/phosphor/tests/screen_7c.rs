@@ -162,10 +162,18 @@ fn layer() -> Runtime {
     runtime
 }
 
+/// One row as the **mockup** draws it — see the twin of this function in
+/// `crates/phosphor-ui/tests/screen_7c.rs` for why every field is spelled and
+/// `..CompletionItemVm::default()` is refused: a struct-update took `T106`'s
+/// two new columns silently, and left this frame byte-identical across the
+/// change it exists to police.
 fn item(label: &str, detail: &str) -> CompletionItemVm {
     CompletionItemVm {
         label: label.to_owned(),
         detail: Some(detail.to_owned()),
+        kind: None,
+        source: None,
+        deprecated: false,
     }
 }
 

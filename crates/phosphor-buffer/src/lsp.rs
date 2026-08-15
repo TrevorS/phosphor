@@ -135,7 +135,8 @@ use async_lsp::router::Router;
 use async_lsp::{LanguageServer as _, MainLoop, ServerSocket};
 use phosphor_core::action::{Action, LspAction};
 use phosphor_core::request::{
-    Diagnostic, Edit, FileEdits, FileSpan, LanguageId, LanguageSpec, Position, Severity, Span,
+    CompletionKind, Diagnostic, Edit, FileEdits, FileSpan, LanguageId, LanguageSpec, Position,
+    Severity, Span,
 };
 use tokio::io::{AsyncRead, ReadBuf};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -970,31 +971,112 @@ pub fn completions_from_lsp(response: &lsp_types::CompletionResponse) -> Vec<Com
     };
     items
         .iter()
-        .map(|item| Completion {
-            label: item.label.clone(),
-            detail: item.detail.clone().or_else(|| {
+        .map(|item| {
+            let detail = item.detail.clone().or_else(|| {
                 item.label_details
                     .as_ref()
                     .and_then(|details| details.detail.clone())
-            }),
-            documentation: item
-                .documentation
+            });
+            // **`description` and not `detail`**: the two halves of
+            // `labelDetails` are different things, and the `detail` half is
+            // read above as a fallback for the top-level `detail`.
+            //
+            // **And dropped when it repeats the detail beside it**, which is
+            // not defensive coding — it is what the one server anybody has
+            // measured actually sends. Against rust-analyzer 1.97.1, driven
+            // over a pipe with `labelDetailsSupport` announced, `main` comes
+            // back as `detail: "fn()"` **and** `labelDetails.description:
+            // "fn()"`, `assert!` as `macro_rules! assert` twice, `Vec` as
+            // `Vec<{unknown}, {unknown}>` twice. A row that drew both would
+            // spend the columns of a whole meta column repeating the one
+            // before it, and would spend them on every row of every list.
+            //
+            // The column is still worth having: the same field carries the
+            // import path on an auto-import row, which is the *"src"* every
+            // other editor draws in it — that case wants a workspace this
+            // measurement did not have (rust-analyzer answered no auto-import
+            // rows for a bare crate inside fifteen minutes of indexing), so it
+            // is recorded here as unverified rather than asserted.
+            let source = item
+                .label_details
                 .as_ref()
-                .map(documentation_lines)
-                .unwrap_or_default(),
-            insert: item
-                .insert_text
-                .clone()
-                .unwrap_or_else(|| item.label.clone()),
-            // Both default to the label, which is the specification's own rule
-            // for each: *"the label is used"* when the field is absent.
-            filter: item
-                .filter_text
-                .clone()
-                .unwrap_or_else(|| item.label.clone()),
-            sort: item.sort_text.clone().unwrap_or_else(|| item.label.clone()),
+                .and_then(|details| details.description.clone())
+                .filter(|description| !description.is_empty())
+                .filter(|description| Some(description) != detail.as_ref());
+            Completion {
+                label: item.label.clone(),
+                detail,
+                kind: item.kind.and_then(completion_kind),
+                source,
+                // **Both spellings, because both are live.** `tags` is 3.15's and
+                // is what rust-analyzer sends; the bare `deprecated` boolean it
+                // replaced is deprecated in the specification and still sent by
+                // servers older than that — and rust-analyzer sends *both*, which
+                // is what an `||` costs nothing to accept.
+                deprecated: item
+                    .tags
+                    .as_ref()
+                    .is_some_and(|tags| tags.contains(&lsp_types::CompletionItemTag::DEPRECATED))
+                    || item.deprecated.unwrap_or(false),
+                documentation: item
+                    .documentation
+                    .as_ref()
+                    .map(documentation_lines)
+                    .unwrap_or_default(),
+                insert: item
+                    .insert_text
+                    .clone()
+                    .unwrap_or_else(|| item.label.clone()),
+                // Both default to the label, which is the specification's own rule
+                // for each: *"the label is used"* when the field is absent.
+                filter: item
+                    .filter_text
+                    .clone()
+                    .unwrap_or_else(|| item.label.clone()),
+                sort: item.sort_text.clone().unwrap_or_else(|| item.label.clone()),
+            }
         })
         .collect()
+}
+
+/// LSP's `CompletionItemKind` number as the vocabulary spells it (`T038`).
+///
+/// **`None` for a number outside 1–25, and that is not defensive coding.**
+/// `lsp_types::CompletionItemKind` is a newtype over `i32` with twenty-five
+/// associated constants and no exhaustive match — the protocol reserves the
+/// space and a server may send `26` the day a future version defines it. An
+/// unknown kind draws as no kind, which is exactly what a server sending none
+/// draws as, and is the only reading that cannot be wrong.
+fn completion_kind(kind: lsp_types::CompletionItemKind) -> Option<CompletionKind> {
+    use lsp_types::CompletionItemKind as Wire;
+    Some(match kind {
+        Wire::TEXT => CompletionKind::Text,
+        Wire::METHOD => CompletionKind::Method,
+        Wire::FUNCTION => CompletionKind::Function,
+        Wire::CONSTRUCTOR => CompletionKind::Constructor,
+        Wire::FIELD => CompletionKind::Field,
+        Wire::VARIABLE => CompletionKind::Variable,
+        Wire::CLASS => CompletionKind::Class,
+        Wire::INTERFACE => CompletionKind::Interface,
+        Wire::MODULE => CompletionKind::Module,
+        Wire::PROPERTY => CompletionKind::Property,
+        Wire::UNIT => CompletionKind::Unit,
+        Wire::VALUE => CompletionKind::Value,
+        Wire::ENUM => CompletionKind::Enum,
+        Wire::KEYWORD => CompletionKind::Keyword,
+        Wire::SNIPPET => CompletionKind::Snippet,
+        Wire::COLOR => CompletionKind::Color,
+        Wire::FILE => CompletionKind::File,
+        Wire::REFERENCE => CompletionKind::Reference,
+        Wire::FOLDER => CompletionKind::Folder,
+        Wire::ENUM_MEMBER => CompletionKind::EnumMember,
+        Wire::CONSTANT => CompletionKind::Constant,
+        Wire::STRUCT => CompletionKind::Struct,
+        Wire::EVENT => CompletionKind::Event,
+        Wire::OPERATOR => CompletionKind::Operator,
+        Wire::TYPE_PARAMETER => CompletionKind::TypeParameter,
+        _ => return None,
+    })
 }
 
 /// The rows of `items` that `prefix` could still become, in the order the
@@ -1337,6 +1419,17 @@ pub struct Completion {
     /// What [`narrow`] orders by — `sortText`, or the label where the server
     /// sent none. Never shown.
     pub sort: String,
+    /// What sort of thing this is, when the server said and the number is one
+    /// the protocol has defined. See [`completion_kind`].
+    pub kind: Option<CompletionKind>,
+    /// `CompletionItemLabelDetails::description` — the *"src"* column. Empty
+    /// strings are read as absent, because a server that sends `""` is saying
+    /// the same thing as one that sends nothing and a column of nothing costs
+    /// the gap in front of it.
+    pub source: Option<String>,
+    /// Either spelling of *"do not use this"*: the 3.15 tag or the boolean it
+    /// replaced.
+    pub deprecated: bool,
 }
 
 /// One signature, as signature help gives it (`T039`).
@@ -2902,7 +2995,33 @@ fn initialize_params(spec: &ServerSpec, root: &Path) -> lsp_types::InitializePar
                 // resolve round-trip, and markdown is not claimed, so a server
                 // that can answer in plain text will.
                 synchronization: Some(lsp_types::TextDocumentSyncClientCapabilities::default()),
-                completion: Some(lsp_types::CompletionClientCapabilities::default()),
+                // **The two the decorated list needs, and they are announced
+                // because without them the fields are never sent.** This was
+                // `CompletionClientCapabilities::default()` — every field
+                // `None` — and `completions_from_lsp` read `labelDetails` and
+                // `tags` off answers that could not contain either. Measured
+                // against rust-analyzer 1.97.1: with `labelDetailsSupport`
+                // announced, an item comes back carrying
+                // `labelDetails.description`; the specification makes the
+                // server's obligation to send it conditional on exactly this
+                // flag (`CompletionItemLabelDetails`, *"@since 3.17"*), and
+                // `tagSupport` is the same contract one field over. A client
+                // that reads a field it never asked for is reading a field the
+                // server was told not to send.
+                completion: Some(lsp_types::CompletionClientCapabilities {
+                    completion_item: Some(lsp_types::CompletionItemCapability {
+                        label_details_support: Some(true),
+                        tag_support: Some(lsp_types::TagSupport {
+                            value_set: vec![lsp_types::CompletionItemTag::DEPRECATED],
+                        }),
+                        // The pre-3.15 spelling of the same fact. Cheap to
+                        // accept and the only thing a server older than tags
+                        // has to say it with — see `Completion::deprecated`.
+                        deprecated_support: Some(true),
+                        ..lsp_types::CompletionItemCapability::default()
+                    }),
+                    ..lsp_types::CompletionClientCapabilities::default()
+                }),
                 signature_help: Some(lsp_types::SignatureHelpClientCapabilities::default()),
                 hover: Some(lsp_types::HoverClientCapabilities::default()),
                 ..lsp_types::TextDocumentClientCapabilities::default()
@@ -3054,6 +3173,53 @@ mod tests {
         );
     }
 
+    /// One completion carrying nothing but the `kind` number `n`.
+    ///
+    /// **Built through serde, because there is no other way to build it.**
+    /// `lsp_types::CompletionItemKind` is a newtype whose field is private and
+    /// whose only constructors are twenty-five associated constants — so an
+    /// out-of-range kind, which is exactly what this pair of tests is about,
+    /// can only be spelled the way a server spells it: as a number on the
+    /// wire. That is also why these two live in this module rather than in
+    /// `tests/lsp_documents.rs` beside the rest of `completions_from_lsp`'s
+    /// coverage: `serde_json` is a dependency of the crate and not of its
+    /// integration tests.
+    fn kinded(n: i32) -> lsp_types::CompletionResponse {
+        serde_json::from_str(&format!(r#"[{{"label":"x","kind":{n}}}]"#))
+            .expect("a completion item with a bare kind number")
+    }
+
+    /// A `kind` the protocol has not defined is **no kind**, not a wrong one.
+    ///
+    /// Reachable from any server: the space above 25 is reserved and a future
+    /// protocol version will use it. A mapper that fell back to a nearby arm
+    /// would draw `tprm` beside a row that is something nobody has named yet.
+    #[test]
+    fn a_kind_outside_the_protocols_range_reads_as_none() {
+        assert_eq!(completions_from_lsp(&kinded(99))[0].kind, None);
+        assert_eq!(completions_from_lsp(&kinded(0))[0].kind, None);
+    }
+
+    /// **Every kind the protocol defines maps to one of ours**, walked rather
+    /// than spot-checked: the mapper is twenty-five arms and a typo in any of
+    /// them is a row labelled `strc` that is a `memb`.
+    ///
+    /// The two sides are joined by the *number*, which is what makes this a
+    /// check rather than a restatement of the mapper: `CompletionKind::ALL` is
+    /// declared in the protocol's own order, so the wire's `n` must become
+    /// `ALL[n - 1]` and nothing here repeats which name that is.
+    #[test]
+    fn every_protocol_kind_maps_to_the_vocabularys_own() {
+        for (index, kind) in CompletionKind::ALL.iter().enumerate() {
+            let number = i32::try_from(index).expect("25 fits") + 1;
+            assert_eq!(
+                completions_from_lsp(&kinded(number))[0].kind,
+                Some(*kind),
+                "protocol kind {number} is {kind:?}"
+            );
+        }
+    }
+
     /// One completion, spelled the way a server does when the four strings
     /// differ from each other.
     fn offered(label: &str, filter: &str, sort: &str) -> Completion {
@@ -3064,6 +3230,7 @@ mod tests {
             insert: label.to_owned(),
             filter: filter.to_owned(),
             sort: sort.to_owned(),
+            ..Completion::default()
         }
     }
 

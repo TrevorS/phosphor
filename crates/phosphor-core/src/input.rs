@@ -496,9 +496,7 @@ impl Machine {
             Resolution::Unbound => {
                 self.pending.keys.clear();
                 if scope == Scope::Insert {
-                    for typed in &keys {
-                        self.insert_key(*typed, text, out);
-                    }
+                    self.insert_keys(&keys, text, out);
                 } else {
                     out.push(Action::App(AppAction::ShowUnknownKeyHint {
                         key: key::notation_of(&keys),
@@ -1134,9 +1132,48 @@ impl Machine {
         self.pending = Pending::default();
     }
 
-    /// A key in insert or replace mode that no binding wanted: text.
-    fn insert_key(&mut self, pressed: Key, text: &dyn Text, out: &mut Vec<Action>) {
-        let cursor = text.cursor();
+    /// A whole unbound sequence in insert or replace mode: text.
+    ///
+    /// **The position walks and the snapshot does not**, which is the entire
+    /// reason this exists rather than a loop at the call site. `text` is the
+    /// buffer as it was when the turn began; the Actions being built have not
+    /// been applied to it and cannot be, because applying is the host's. So a
+    /// batch that asked `text.cursor()` for every key stacked all of them at
+    /// one offset, and the host applied them in order — which reverses them.
+    ///
+    /// `CP-4` typed `a<u8>b` into a Rust file one character at a time and the
+    /// buffer read `a8>bu<`. The sequence was pending because
+    /// `runtime/keymaps.scm` made `<` a prefix of every bracketed binding;
+    /// that is fixed there, and this is the other half — **a multi-key prefix
+    /// in the insert scope is a thing a user's `init.scm` may add at any time**
+    /// (`jk` for escape is the commonest binding in vim), so the flush has to
+    /// be right on its own.
+    ///
+    /// # What the walk can and cannot answer
+    ///
+    /// Insert, replace and `<del>` are exact: each is arithmetic on the
+    /// position, and the cursor after them is where the next key types. A
+    /// `<bs>` is exact while it stays on its line — [`back_span`] is pure
+    /// arithmetic above column 1 — and reads the *stale* line above when it
+    /// crosses one, which is a sequence no shipped binding can produce and the
+    /// one case a snapshot genuinely cannot answer.
+    fn insert_keys(&mut self, keys: &[Key], text: &dyn Text, out: &mut Vec<Action>) {
+        let mut at = text.cursor();
+        for pressed in keys {
+            self.insert_key(*pressed, text, &mut at, out);
+        }
+    }
+
+    /// One key of [`Machine::insert_keys`], typed at `at`, which it advances to
+    /// where the next key goes.
+    fn insert_key(
+        &mut self,
+        pressed: Key,
+        text: &dyn Text,
+        at: &mut Position,
+        out: &mut Vec<Action>,
+    ) {
+        let cursor = *at;
         let typed = match pressed.code {
             key::Code::Named(key::Named::Enter) => Some("\n".to_owned()),
             // A literal tab. What a tab *inserts* is an option two reasonable
@@ -1146,6 +1183,7 @@ impl Machine {
             key::Code::Named(key::Named::Backspace) => {
                 if let Some(span) = back_span(text, cursor) {
                     out.push(Action::Buffer(BufferAction::Delete { span }));
+                    *at = span.start;
                 }
                 None
             }
@@ -1164,6 +1202,7 @@ impl Machine {
             _ => pressed.typed().map(|character| character.to_string()),
         };
         let Some(typed) = typed else { return };
+        *at = after(cursor, &typed);
         if self.mode.get() == EditMode::Replace {
             out.push(Action::Buffer(BufferAction::Replace {
                 span: Span {
@@ -1285,6 +1324,30 @@ fn span_between(anchor: Position, cursor: Position, text: &dyn Text) -> Span {
 }
 
 /// One character back, crossing a line boundary — `<bs>`.
+/// Where the cursor lands after `typed` is written at `at`.
+///
+/// Position arithmetic and nothing else — it never reads the buffer, because
+/// the caller is building a batch against a snapshot that has not been written
+/// to yet ([`Machine::insert_keys`]). Columns are 1-based, so the column after
+/// a run with no newline in it is the old column plus the characters typed, and
+/// after one that ends a line it is the characters since the last `\n`, plus 1.
+fn after(at: Position, typed: &str) -> Position {
+    let breaks = u32::try_from(typed.matches('\n').count()).unwrap_or(0);
+    let tail = typed.rsplit('\n').next().unwrap_or_default();
+    let width = u32::try_from(tail.chars().count()).unwrap_or(0);
+    if breaks == 0 {
+        Position {
+            column: at.column + width,
+            ..at
+        }
+    } else {
+        Position {
+            line: at.line + breaks,
+            column: width + 1,
+        }
+    }
+}
+
 fn back_span(text: &dyn Text, cursor: Position) -> Option<Span> {
     if cursor.column > 1 {
         return Some(Span {

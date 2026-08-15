@@ -460,3 +460,61 @@ fn the_leader_tree_is_the_six_rows_3c_draws() {
         Resolution::Pending
     );
 }
+
+/// **A printable character is not a prefix of a bracketed binding**, and
+/// `CP-4` is why this is a test rather than an obvious property.
+///
+/// `phosphor/prefix?` compared canonical spellings with `starts-with?` — on
+/// *characters*. A canonical spelling is a concatenation of keys, and the
+/// character `<` spells itself, so `<` was a prefix of `<space>`, `<esc>`,
+/// `<C-x>` and every other bracketed row in its scope. Insert is where that
+/// turns from untidy into fatal: the machine answers [`Resolution::Pending`],
+/// holds the key, and flushes the whole batch as text when the sequence dies —
+/// so a Rust generic came out backwards. Typed one character at a time into the
+/// running binary, `a<u8>b` wrote `a8>bu<`.
+///
+/// The two halves are asserted separately because only the second is at risk
+/// from the fix: every ASCII character must be unbound-or-bound in the insert
+/// scope and **never pending**, while `g` in normal must still be pending —
+/// `gg` and `gc` are real sequences, and a "fix" that killed multi-key
+/// bindings would pass the first half on its own.
+///
+/// **This bites:** drop the `phosphor/boundary?` condition from
+/// `phosphor/prefix?` in `runtime/keymaps.scm` and `<` is Pending again.
+#[test]
+fn a_printable_character_is_not_a_prefix_of_a_bracketed_binding() {
+    let mut runtime = runtime();
+    for byte in 0x20_u8..0x7f {
+        let key = Key::char(char::from(byte));
+        let answer = keymap::resolve(&mut runtime, Scope::Insert, &[key]);
+        assert_ne!(
+            answer,
+            Resolution::Pending,
+            "{:?} is a whole key and insert mode is where it becomes text; a \
+             pending answer holds it back, and the flush that follows is out of \
+             order",
+            key.notation()
+        );
+    }
+
+    // The property this must not have bought: a sequence is still a sequence.
+    // `<space>` is the one that matters most — it is a *bracketed* key that is
+    // itself a proper prefix, so the boundary walk has to answer yes at the
+    // `>`, not only at a plain character.
+    for (scope, spelled) in [
+        (Scope::Normal, "g"),
+        (Scope::Normal, "]"),
+        (Scope::Normal, "<space>"),
+        (Scope::Visual, "g"),
+    ] {
+        assert_eq!(
+            keymap::resolve(
+                &mut runtime,
+                scope,
+                &parse_seq(spelled).expect("a spelling")
+            ),
+            Resolution::Pending,
+            "{spelled:?} still waits for the key that finishes it in {scope:?}"
+        );
+    }
+}

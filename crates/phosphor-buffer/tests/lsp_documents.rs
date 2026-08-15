@@ -26,7 +26,7 @@ use phosphor_buffer::lsp::{
     unwatched,
 };
 use phosphor_core::action::Action;
-use phosphor_core::request::{LanguageId, Position};
+use phosphor_core::request::{CompletionKind, LanguageId, Position};
 use proptest::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -612,8 +612,103 @@ fn a_completion_carries_the_columns_7c_draws() {
             // specification's own rule for each (`narrow`).
             filter: "default()".to_owned(),
             sort: "default()".to_owned(),
+            // The three decoration fields, absent because this item sends
+            // none. `a_completion_carries_its_kind_source_and_deprecation`
+            // is the same assertion with them present.
+            kind: None,
+            source: None,
+            deprecated: false,
         }]
     );
+}
+
+/// The three the protocol sends and this client used to discard: `kind`,
+/// `labelDetails.description` and the deprecation tag.
+///
+/// **`description`, not `detail`.** `CompletionItemLabelDetails` has two
+/// halves and they mean different things: `detail` is more of the signature
+/// and is already read as a fallback for the top-level `detail` above, while
+/// `description` is *"where this came from"* — the column `nvim-cmp` labels
+/// `src`. Reading the wrong half would put the same string in two columns.
+#[test]
+fn a_completion_carries_its_kind_source_and_deprecation() {
+    let response = lsp_types::CompletionResponse::Array(vec![lsp_types::CompletionItem {
+        label: "old_retry".to_owned(),
+        kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+        label_details: Some(lsp_types::CompletionItemLabelDetails {
+            detail: Some("(alias retry)".to_owned()),
+            description: Some("retry::legacy".to_owned()),
+        }),
+        detail: Some("fn() -> RetryPolicy".to_owned()),
+        tags: Some(vec![lsp_types::CompletionItemTag::DEPRECATED]),
+        ..lsp_types::CompletionItem::default()
+    }]);
+    let item = &completions_from_lsp(&response)[0];
+    assert_eq!(item.kind, Some(CompletionKind::Function));
+    assert_eq!(item.source.as_deref(), Some("retry::legacy"));
+    assert!(item.deprecated);
+    // The top-level `detail` still wins over `labelDetails.detail`, which is
+    // the rule that was already here — reasserted because `source` now reads
+    // the record beside it and a mapper that crossed the two would pass every
+    // other test in this file.
+    assert_eq!(item.detail.as_deref(), Some("fn() -> RetryPolicy"));
+}
+
+/// The pre-3.15 spelling, which is the only one a server older than tags has.
+///
+/// Separate from the test above because they are separate wire fields, and a
+/// client that read only `tags` would silently ignore every such server —
+/// silently, because the label still draws.
+#[test]
+fn the_deprecated_boolean_is_read_where_a_server_sends_no_tags() {
+    let response = lsp_types::CompletionResponse::Array(vec![lsp_types::CompletionItem {
+        label: "old_retry".to_owned(),
+        deprecated: Some(true),
+        ..lsp_types::CompletionItem::default()
+    }]);
+    assert!(completions_from_lsp(&response)[0].deprecated);
+}
+
+/// A `description` that repeats the detail beside it is no source column.
+///
+/// **Measured, not guessed.** Driven against rust-analyzer 1.97.1 over a pipe
+/// with `labelDetailsSupport` announced, this is what most rows look like:
+/// `main` answers `detail: "fn()"` and `labelDetails.description: "fn()"`,
+/// `assert!` answers `macro_rules! assert` in both. Drawing both would spend a
+/// whole meta column repeating the one before it — and would do it on nearly
+/// every row of nearly every Rust list, which is the opposite of decoration.
+#[test]
+fn a_description_that_repeats_the_detail_is_not_a_source() {
+    let response = lsp_types::CompletionResponse::Array(vec![lsp_types::CompletionItem {
+        label: "main".to_owned(),
+        detail: Some("fn()".to_owned()),
+        label_details: Some(lsp_types::CompletionItemLabelDetails {
+            detail: None,
+            description: Some("fn()".to_owned()),
+        }),
+        ..lsp_types::CompletionItem::default()
+    }]);
+    let item = &completions_from_lsp(&response)[0];
+    assert_eq!(item.detail.as_deref(), Some("fn()"));
+    assert_eq!(item.source, None, "the same string is not two columns");
+}
+
+/// An empty `description` is no source column.
+///
+/// A server that sends `""` is saying the same thing as one that sends
+/// nothing, and the difference on screen is two columns of gap in front of
+/// nothing on every row of the list.
+#[test]
+fn an_empty_description_is_no_source() {
+    let response = lsp_types::CompletionResponse::Array(vec![lsp_types::CompletionItem {
+        label: "retry".to_owned(),
+        label_details: Some(lsp_types::CompletionItemLabelDetails {
+            detail: None,
+            description: Some(String::new()),
+        }),
+        ..lsp_types::CompletionItem::default()
+    }]);
+    assert_eq!(completions_from_lsp(&response)[0].source, None);
 }
 
 #[test]

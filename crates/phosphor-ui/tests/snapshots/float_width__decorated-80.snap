@@ -1,0 +1,103 @@
+---
+source: crates/phosphor-ui/tests/float_width.rs
+expression: frame.to_text(buf)
+---
+screen decorated-80 · phosphor dark · 80x10 cells
+  CP-4: 'do we have plans to decorate the auto complete with things like
+    src and meta info about each item like in common lsp implementations
+    in emacs and vim?'. Four columns now: kind, label, detail, source —
+    the shape nvim-cmp+lspkind, corfu+kind-icon, company-box and VS Code
+    all share, with the kind left and the meta dimmed on the right.
+  The kind is a WORD (fn, cnst, meth) and not an icon. §2's glyph lexicon
+    is ten entries, Nerd-Font-free, and none of them is a completion
+    kind — inventing twenty-five would be inventing a second lexicon, and
+    four ASCII letters cannot have the cells-vs-chars bug this repo has
+    shipped three times.
+  SHED ORDER (§11 'drop, never squeeze'): source → detail → kind → and
+    only then the label elides. At 120 all four fit; at 80 the source is
+    gone, the detail has taken what is left and elides into it, and the
+    label has lost nothing.
+  Three of the four columns are whole or absent. The detail is the one
+    that elides, because it is the last column before the label and has
+    nothing further right to hand its room to — and because a real
+    rust-analyzer signature is 100 cells against a 72-cell float, so a
+    detail that had to fit whole would never be drawn in Rust at all.
+    A source is a NAME and net::ret⋯ names nothing, which is why that
+    one goes whole.
+  The deprecated row (retry_forever) is struck through AND receded one
+    step down §1's neutral ramp, on T085's degradation principle: SGR 9
+    is not universal and phosphor-term cannot report on it, so the colour
+    carries the meaning where the escape is ignored.
+  7c itself draws NEITHER of the two new columns. Adding them is a design
+    change, flagged rather than folded in.
+
+text
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │                                                                                │
+  1 │                                                                                │
+  2 │  ┌──────────────────────────────────────────────┐                              │
+  3 │  │  fn   retry_with_backoff  fn(&mut Client) ⋯  │                              │
+  4 │  │  cnst retries_left        u32                │                              │
+  5 │  │  fn   retry_forever       fn(&mut Client) ⋯  │                              │
+  6 │  │  meth 送 信 す る             fn(Addr) -> Resu⋯  │                              │
+  7 │  │  ──────────────────────────────────────────  │                              │
+  8 │  │  Retries the request with exponential back⋯  │                              │
+  9 │  └──────────────────────────────────────────────┘                              │
+
+fg
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │................................................................................│
+  1 │................................................................................│
+  2 │..wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww..............................│
+  3 │..whhjjhhhmmmmmmmmmmmmmmmmmmhhjjjjjjjjjjjjjjjjjhhw..............................│
+  4 │..whhjjjjhhhhhhhhhhhhhhhhhhhhhjjjhhhhhhhhhhhhhhhhw..............................│
+  5 │..whhjjhhhiiiiiiiiiiiiihhhhhhhjjjjjjjjjjjjjjjjjhhw..............................│
+  6 │..whhjjjjhh.h.h.h.hhhhhhhhhhhhjjjjjjjjjjjjjjjjjhhw..............................│
+  7 │..whhCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCChhw..............................│
+  8 │..whhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhw..............................│
+  9 │..wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww..............................│
+
+bg
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │................................................................................│
+  1 │................................................................................│
+  2 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+  3 │..xxxppppppppppppppppppppppppppppppppppppppppppxxx..............................│
+  4 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+  5 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+  6 │..xxxxxxxxx.x.x.x.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+  7 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+  8 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+  9 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+
+style
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │................................................................................│
+  1 │................................................................................│
+  2 │................................................................................│
+  3 │................................................................................│
+  4 │................................................................................│
+  5 │..........sssssssssssss.........................................................│
+  6 │................................................................................│
+  7 │................................................................................│
+  8 │................................................................................│
+  9 │................................................................................│
+
+legend
+  h  #c6cec6  neutrals.text = syntax.text
+  i  #9aa39a  neutrals.prose
+  j  #59635a  neutrals.meta = syntax.comment
+  m  #e8f0e8  neutrals.bright_text
+  p  #26332a  regions.selection
+  w  #2a3c2e  float.passive
+  x  #101410  float.body
+  C  #242a24  chrome.divider
+
+style
+  ~  undercurl — SGR 4:3 wrapped around the glyph, plus Modifier::UNDERLINED
+  _  Modifier::UNDERLINED alone (the degraded path)
+  s  Modifier::CROSSED_OUT — a deprecated completion, which also recedes one step down §1's neutral ramp so a terminal that ignores SGR 9 still says so

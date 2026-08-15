@@ -990,6 +990,8 @@ actions! {
         AcceptCompletion = "accept-completion" [S4 / "T038" / Deny]
             "accepts a completion" {
             index: u32 = "which item, 1-based; 0 is whichever row is selected, which is the only thing a keymap can name",
+            then: Option<String> = "text to type after the accepted item — the space the `<space>` key leaves behind",
+            otherwise: Option<String> = "text to type when no row has been chosen; present is what makes a key fall through instead of accepting",
         }
         CancelCompletion = "cancel-completion" [S4 / "T038" / Deny]
             "dismisses the completion float" {
@@ -1685,6 +1687,8 @@ mod tests {
     /// every arrow key or draw the first item's prose under all of them.
     #[test]
     fn each_completion_carries_its_own_documentation_through_the_wire() {
+        use crate::request::CompletionKind;
+
         let action = Action::Lsp(LspAction::IngestCompletions {
             items: vec![
                 Completion {
@@ -1692,12 +1696,18 @@ mod tests {
                     detail: Some("fn() -> RetryPolicy".to_owned()),
                     documentation: vec!["Returns the policy with 3 attempts.".to_owned()],
                     insert: "default()".to_owned(),
+                    kind: Some(CompletionKind::Function),
+                    source: Some("retry".to_owned()),
+                    deprecated: false,
                 },
                 Completion {
                     label: "default_delay".to_owned(),
                     detail: Some("Duration".to_owned()),
                     documentation: vec!["The base delay between attempts.".to_owned()],
                     insert: "default_delay".to_owned(),
+                    kind: Some(CompletionKind::Constant),
+                    source: None,
+                    deprecated: true,
                 },
             ],
             at: Position {

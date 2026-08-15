@@ -1609,6 +1609,183 @@ mod driven {
         }
     }
 
+    /// **Enter and space still work in a buffer that has no language server**,
+    /// which is most buffers and every buffer before `S4`.
+    ///
+    /// Not a duplicate of the two guard tests over the toy server: those run
+    /// with a float open and unchosen, and this one runs where there is no
+    /// completion machinery at all — no server, no session, nothing for
+    /// `accept-completion` to look at. Both reach the same `otherwise` arm and
+    /// the second is the one that would have gone unnoticed, because a
+    /// regression here breaks *typing* rather than completion and no completion
+    /// test would see it.
+    ///
+    /// This file has no other test that presses <kbd>enter</kbd> in insert
+    /// mode: every `\r` in it terminates an ex line, which is a different
+    /// scope.
+    #[test]
+    fn enter_and_space_are_still_text_in_a_buffer_with_no_server() {
+        let scratch = Scratch::new("insert-text-keys");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press(b"A");
+        editor.press_quietly(b" beta\rgamma");
+        editor.press_quietly(b"\x1b");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "alpha beta\ngamma\n",
+            "space typed a space and enter split the line, with no server in sight"
+        );
+    }
+
+    /// **A Rust generic types forwards** — `CP-4`, in the first minute of being
+    /// the user.
+    ///
+    /// `phosphor/prefix?` compared canonical key spellings with `starts-with?`,
+    /// on characters. The character `<` spells itself, so it was a string
+    /// prefix of `<space>`, `<esc>`, `<C-x>` and every other bracketed row in
+    /// the insert scope: the machine answered `Pending`, held the key, and
+    /// flushed the batch as text when the sequence died — with every Action in
+    /// the batch built against one stale cursor, so they came out reversed.
+    /// Typed one character at a time into the running binary, `a<u8>b` wrote
+    /// `a8>bu<` and `pub fn probe() { let v: Vec<u8> = Vec::new(); v.` wrote
+    /// `…let v: Vec8> = Vec::new(); v.u<`.
+    ///
+    /// **This is the outcome test, and it needs both halves broken to go red**
+    /// — measured, by planting each mutation on its own and then together.
+    /// `runtime/keymaps.scm` no longer calls `<` a prefix, so no insert
+    /// sequence is pending and the flush never sees more than one key;
+    /// `Machine::insert_keys` walks the position across a batch, so a batch is
+    /// in order even when one forms. Either fix alone rescues this string. The
+    /// isolating tests are `phosphor-steel`'s
+    /// `a_printable_character_is_not_a_prefix_of_a_bracketed_binding` and
+    /// `phosphor-core`'s `an_unbound_sequence_in_insert_mode_types_its_keys_in_order`,
+    /// and each of those was watched going red on its own mutation. With both
+    /// planted this reads `let v: Vec8> = Vec::new();u<`, which is what a user
+    /// gets.
+    ///
+    /// The fixture is `.txt` and the text is Rust: the defect is the keymap's,
+    /// so no server is wanted here — and a `.rs` file starts `rust-analyzer`,
+    /// whose unasked frames break the counted-frames discipline this test is
+    /// leaning on.
+    #[test]
+    fn a_rust_generic_types_forwards_in_insert_mode() {
+        let scratch = Scratch::new("insert-angle-brackets");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press(b"i");
+        editor.press(b"let v: Vec<u8> = Vec::new();");
+        editor.press(b"\x1b");
+        editor.press(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "let v: Vec<u8> = Vec::new();\n",
+            "every character landed where it was typed, in the order it was typed"
+        );
+    }
+
+    /// **Enter in insert mode still scrolls, which is the regression binding
+    /// `<cr>` nearly shipped** (`CP-4` review).
+    ///
+    /// A `<cr>` with no float open is an `accept-completion` whose `otherwise`
+    /// is a newline, and `moves_cursor` did not name that Action — so
+    /// `Editing::apply` skipped the reveal and every newline past the last
+    /// visible row walked the cursor off the bottom of the screen. On the
+    /// installed binary at 80x24 the statusline read `31:1` over a viewport
+    /// still showing lines 1..23.
+    ///
+    /// **Read off the replayed grid, not off the transcript.** A frame is a
+    /// diff, and typing a word at the end of a line redraws one cell per key —
+    /// [`Editor::press_until`] on `"deep"` fails even when it *is* on screen,
+    /// because the four characters arrive in four frames with cursor moves
+    /// between them (observed here before this test was rewritten). [`Screen`]
+    /// replays the whole stream onto a grid the size of [`SCREEN`], so
+    /// *"which row is this word on"* is answerable and *"it is on no row"* is
+    /// the failure. The file read afterwards pins what was typed as well as
+    /// where it landed.
+    #[test]
+    fn enter_in_insert_mode_still_scrolls_the_viewport_after_it() {
+        let scratch = Scratch::new("insert-enter-reveal");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "top\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press(b"A");
+        // Forty, against a thirty-row [`SCREEN`]: the cursor ends ten rows
+        // below anything the opening frame could show.
+        editor.press_quietly(&[b'\r'; 40]);
+
+        // **Asserted before another key is typed**, and that is not fussiness:
+        // any ordinary insert is a `Buffer::Insert`, which `moves_cursor` has
+        // always named — so typing one letter first reveals the cursor and
+        // hides the defect completely. Measured: with the `Action::Lsp` arm
+        // removed, a version of this test that typed a word before looking
+        // passed.
+        let screen = editor.screen();
+        let rows: Vec<String> = (0..SCREEN.ws_row).map(|y| screen.line(y)).collect();
+        assert!(
+            !rows.iter().any(|row| row.contains("top")),
+            "the viewport never followed the newlines: line 1 is still drawn with the \
+             cursor on line 41. Rows: {rows:#?}"
+        );
+
+        editor.press_quietly(b"deep");
+        editor.press_quietly(b"\x1b");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            format!("top{}deep\n", "\n".repeat(40)),
+            "forty newlines and a word, all of them where they were typed"
+        );
+    }
+
+    /// **`R` is still vim's `R`** — the other half of the same `CP-4` finding.
+    ///
+    /// `Scope::of` folds `EditMode::Replace` into the insert scope, so the
+    /// `<space>` and `<cr>` rows bind in replace mode too, where the loop's
+    /// typing gate (`EditMode::Insert`) guarantees no float can ever be open.
+    /// The `otherwise` fall-through therefore fires on every one of them, and
+    /// while it spliced rather than overwrote, `R` was quietly `i`: this same
+    /// script wrote `XY Zdef` and left the `d` alive.
+    ///
+    /// Nothing else in this file presses `R`, and the machine-level tests drive
+    /// their own table rather than `runtime/keymaps.scm` — which is why a
+    /// keymap row changed the meaning of a mode with every gate green.
+    #[test]
+    fn replace_mode_still_overwrites_with_space_bound_in_the_insert_scope() {
+        let scratch = Scratch::new("replace-overwrites");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "abcdef\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press(b"R");
+        editor.press(b"XY Z");
+        editor.press(b"\x1b");
+        editor.press(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "XY Zef\n",
+            "four keys replaced four characters — the space overwrote `c`, it did not push it right"
+        );
+    }
+
     #[test]
     fn an_operator_leaves_the_cursor_where_the_next_key_can_prove_it() {
         let scratch = Scratch::new("operator-cursor");
@@ -1848,6 +2025,155 @@ mod driven {
         assert_eq!(
             written, "let base = default_delay\n",
             "the accepted row replaced the prefix under the cursor, and nothing else"
+        );
+        editor.quit();
+    }
+
+    /// **`CP-4`, verbatim:** *"i like being able to hit space to select and put
+    /// a space after or enter to select without a space after"*.
+    ///
+    /// Four tests, because the two keys have two behaviours each and the pair
+    /// nobody asked for is the pair that decides whether the keys are usable.
+    /// `T038`'s float is raised by **typing**, so it is open for most of the
+    /// time you are in insert mode: a `<space>` that accepted whatever was
+    /// highlighted would complete a word every time you finished one, and
+    /// `<cr>` would stop making newlines. So each key only acts on a row the
+    /// user steered to with `<C-n>`, and otherwise types what it always typed.
+    ///
+    /// This one is the fall-through: **the float is open and untouched**, which
+    /// is the state a typist is in for most of a word.
+    ///
+    /// The assertion is the file rather than a frame, for [`printable`]'s
+    /// reason: a frame is a diff, and a space typed at the end of a line
+    /// redraws one cell that was already blank.
+    #[test]
+    fn space_types_a_space_while_the_completion_float_is_untouched() {
+        let (scratch, runtime, file) = toy("space-through", "completion", "let base = def\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        // The float is up — and stays up, unchosen, under the space.
+        editor.press_until(b"\x18", "default_delay");
+        editor.press_quietly(b" ");
+        editor.press_quietly(b"\x1b");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the buffer was written"),
+            "let base = def \n",
+            "space over an unchosen list types a space — it does not accept"
+        );
+    }
+
+    /// …and once a row **has** been chosen, the same key accepts it and leaves
+    /// a space behind, which is the half Teej asked for.
+    ///
+    /// The row is the *second* one, so a host that accepted a fixed row would
+    /// write `default()` and this would read it.
+    #[test]
+    fn space_accepts_a_chosen_completion_and_leaves_a_space() {
+        let (scratch, runtime, file) = toy("space-accept", "completion", "let base = def\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        editor.press_until(b"\x18", "3 attempts");
+        // The prose under the rule is per item, so this is the wait for the
+        // selection having actually moved rather than for the key having been
+        // written to the pty.
+        editor.press_until(b"\x0e", "The base delay");
+        editor.press_quietly(b" ");
+        editor.press_quietly(b"\x1b");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the buffer was written"),
+            "let base = default_delay \n",
+            "space accepted the row `<C-n>` chose, and left one space after it"
+        );
+    }
+
+    /// The same pair for `<cr>`, whose fall-through is a newline — and losing
+    /// newlines in insert mode is the failure that makes this guard worth its
+    /// complexity.
+    #[test]
+    fn enter_makes_a_newline_while_the_completion_float_is_untouched() {
+        let (scratch, runtime, file) = toy("enter-through", "completion", "let base = def\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        editor.press_until(b"\x18", "default_delay");
+        editor.press_quietly(b"\r");
+        editor.press_quietly(b"\x1b");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the buffer was written"),
+            "let base = def\n\n",
+            "enter over an unchosen list still splits the line"
+        );
+    }
+
+    /// …and on a chosen row it accepts with **no** space, which is the whole
+    /// difference between the two keys.
+    ///
+    /// Read against the `<space>` test above rather than alone: the same
+    /// keystrokes with the same fixture differ by exactly one trailing space,
+    /// so `then` is pinned from both sides.
+    #[test]
+    fn enter_accepts_a_chosen_completion_with_no_space_after() {
+        let (scratch, runtime, file) = toy("enter-accept", "completion", "let base = def\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        editor.press_until(b"\x18", "3 attempts");
+        editor.press_until(b"\x0e", "The base delay");
+        editor.press_quietly(b"\r");
+        editor.press_quietly(b"\x1b");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the buffer was written"),
+            "let base = default_delay\n",
+            "enter accepted rather than splitting the line, and added nothing after"
+        );
+    }
+
+    /// **The decoration, from a keystroke** — the `CP-4` half that was *"do we
+    /// have plans to decorate the auto complete with things like src and meta
+    /// info about each item"*.
+    ///
+    /// Every column here is a field the protocol has always sent and this
+    /// editor used to throw away, and each one has to survive a different part
+    /// of the path: `cnst` is `CompletionItemKind` `21` through
+    /// `completions_from_lsp`'s twenty-five-arm mapper and
+    /// `CompletionKind::abbreviation`; `retry::policy` is
+    /// `labelDetails.description`, which the fixture **withholds** unless the
+    /// client announced `labelDetailsSupport` — so this is also the test that
+    /// the announcement in `initialize_params` is really sent.
+    ///
+    /// Deprecation is not asserted here and cannot be: it is a style, and a
+    /// pty transcript run through [`printable`] has no styles in it. The
+    /// golden frame at `crates/phosphor-ui/tests/screen_7c.rs` is where that
+    /// lives.
+    #[test]
+    fn the_completion_list_draws_the_kind_and_source_columns() {
+        let (scratch, runtime, file) = toy("decorated", "completion", "let base = de\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        let frame = editor.press_until(b"\x18", "default_delay");
+        assert!(
+            shows(&frame, "cnst"),
+            "`default_delay` is `CompletionItemKind` 21, which draws as `cnst`; frame was: {frame}"
+        );
+        assert!(
+            shows(&frame, "retry::policy"),
+            "`labelDetails.description` is the `src` column, and the fixture only sends it \
+             to a client that announced `labelDetailsSupport`; frame was: {frame}"
         );
         editor.quit();
     }

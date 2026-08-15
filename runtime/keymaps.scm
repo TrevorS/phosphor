@@ -229,15 +229,50 @@
   (and (equal? (phosphor/scope-of entry) scope)
        (equal? (phosphor/keys-of entry) keys)))
 
+;; does `at` fall *between two keys* of the canonical spelling `canon`? walked
+;; the way `phosphor/keys` writes it and `parse_seq` reads it back: a `<…>` is
+;; one key, and a `<` with no `>` after it is the character — `<w` is two keys,
+;; dedent then a word.
+(define (phosphor/boundary? canon at)
+  (let loop ([from 0])
+    (cond
+      [(= from at) #t]
+      [(>= from (string-length canon)) #f]
+      [(equal? (substring canon from (+ from 1)) "<")
+       (let scan ([to (+ from 1)])
+         (cond
+           ;; no `>` before the end: the `<` was the character, so the next
+           ;; boundary is one along rather than at the end of the string.
+           [(>= to (string-length canon)) (loop (+ from 1))]
+           [(equal? (substring canon to (+ to 1)) ">") (loop (+ to 1))]
+           [else (scan (+ to 1))]))]
+      [else (loop (+ from 1))])))
+
 ;; is some longer sequence bound under `keys` in `scope`? this is what makes
 ;; `SPC` pending rather than unbound, and what makes a leader group a group.
+;;
+;; **a prefix is counted in keys, not in characters**, and that third condition
+;; is what says so. a canonical spelling is a concatenation of keys, so a bare
+;; `starts-with?` made the printable character `<` a prefix of `<space>`,
+;; `<esc>`, `<C-x>` and every other bracketed binding in its scope. in insert
+;; that is fatal rather than untidy: the machine holds the key waiting for the
+;; rest of a sequence that never comes, then flushes the whole batch as text.
+;; `CP-4` typed `a<u8>b` into a rust file and the buffer read `a8>bu<`, which
+;; makes the language untypeable. `phosphor-steel`'s
+;; `a_printable_character_is_not_a_prefix_of_a_bracketed_binding` reads this
+;; back from the shipped table.
+;;
+;; the `starts-with?` stays in front of it because it is the cheap half: this
+;; walks the whole table on every keystroke, and only the handful of entries
+;; that already share a leading substring pay for the boundary walk.
 (define (phosphor/prefix? scope keys)
   (let loop ([entries phosphor/keymap])
     (cond
       [(null? entries) #f]
       [(and (equal? (phosphor/scope-of (car entries)) scope)
             (starts-with? (phosphor/keys-of (car entries)) keys)
-            (> (string-length (phosphor/keys-of (car entries))) (string-length keys)))
+            (> (string-length (phosphor/keys-of (car entries))) (string-length keys))
+            (phosphor/boundary? (phosphor/keys-of (car entries)) (string-length keys)))
        #t]
       [else (loop (cdr entries))])))
 
@@ -780,6 +815,62 @@
 ;; there is. `<C-e>` is bound to a scroll in normal and visual and to this in
 ;; insert; that is not a collision — the scroll rows are declared for those two
 ;; scopes only, and vim gives `<C-e>` the same double life.
+;;
+;; ---------------------------------------------------------------------------
+;; `<space>` and `<cr>`, and the guard that makes them bindable
+;; ---------------------------------------------------------------------------
+;;
+;; reported at `CP-4`: *"i like being able to hit space to select and put a
+;; space after or enter to select without a space after"*. both are here, and
+;; the four vim keys above are untouched — a vim user's hands already know
+;; them, and the point of these two is the hands that do not.
+;;
+;; **bound naively they are unusable**, and that is the whole design problem.
+;; `T038`'s float is raised by *typing*, so it is open for most of the time you
+;; are in insert mode: a `<space>` that accepted whatever was highlighted would
+;; complete a word every time you finished one, and `<cr>` would stop making
+;; newlines. every editor that offers these keys has the same guard and
+;; `nvim-cmp` spells it `select = false` — **the key acts only on a row the
+;; user steered to**, and otherwise falls through to what it would have typed.
+;;
+;; **the guard cannot be here, and the fall-through cannot be anywhere else.**
+;; a keymap is data: a binding names a capability and its arguments and cannot
+;; ask whether a row is selected — the same constraint the `<C-x>` note above
+;; is about. so the *condition* is the host's (`Editing::chosen`, written by
+;; `move-completion` and by nothing else) and the *text* is this file's,
+;; because nothing above knows which key was pressed. `otherwise` carries it:
+;;
+;;   `<space>` — `then " "` accept and leave a space; `otherwise " "` type one
+;;   `<cr>`    — no `then` at all;                    `otherwise "\n"` newline
+;;
+;; and `<C-y>` passes **neither**, which is what keeps vim's meaning exact:
+;; pressing it *is* the choosing, so it accepts whatever is highlighted whether
+;; or not you have moved. one capability, three keys, three readings of it.
+;;
+;; **to turn the guard off, delete the `"otherwise"` pair.** teej asked for
+;; space and enter to accept, not for *"accept only when explicitly selected"* —
+;; the guard is a judgement made on top of the report, and it is reversible in
+;; one place, per key, with no rust:
+;;
+;;   `(key/cmd "accept-completion" "index" 0 "then" " ")`   — space always accepts
+;;   `(key/cmd "accept-completion" "index" 0)`              — `<cr>` always accepts
+;;
+;; that is what `<C-y>` already does, one line up, so the behaviour is not
+;; hypothetical. the argument for keeping the guard is in the paragraph above
+;; and in `OPEN-QUESTIONS.md` §38; the argument against it is that it is
+;; paternalistic, and this is the sentence that makes it a setting rather than
+;; a decision.
+;;
+;; `<cr>` and not `<C-m>`: `<cr>` is the canonical spelling rust produces for
+;; the enter key (`Key::notation`), and `<C-j>`/`0x0a` is deliberately still
+;; unbound for the reason two paragraphs up.
+;;
+;; **these two rows also bind in replace mode**, because `Scope::of` folds
+;; `EditMode::Replace` into the insert scope — vim's `:imap` does the same. no
+;; float can be open there (the loop's completion trigger is gated on insert),
+;; so the fall-through always fires, and `Editing::accept` types it the way the
+;; mode types: overwriting, not inserting. `CP-4` found that the hard way, with
+;; `R` quietly turned into `i`.
 (keymap-set-rows!
  '("insert")
  (list
@@ -787,6 +878,12 @@
   (list "<C-n>" (key/run (key/cmd "move-completion" "delta" 1)) "next completion")
   (list "<C-p>" (key/run (key/cmd "move-completion" "delta" -1)) "previous completion")
   (list "<C-y>" (key/run (key/cmd "accept-completion" "index" 0)) "accept the completion")
+  (list "<space>"
+        (key/run (key/cmd "accept-completion" "index" 0 "then" " " "otherwise" " "))
+        "accept a chosen completion, and a space after it")
+  (list "<cr>"
+        (key/run (key/cmd "accept-completion" "index" 0 "otherwise" "\n"))
+        "accept a chosen completion, with no space after it")
   (list "<C-e>" (key/run (key/cmd "cancel-completion")) "dismiss the completions")
   (list "<C-s>" (key/run (key/cmd "request-signature-help")) "what does this call take")))
 

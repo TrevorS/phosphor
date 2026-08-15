@@ -124,10 +124,33 @@ fn split(area: Rect) -> (Rect, Rect) {
     (body, status)
 }
 
+/// One row as the **mockup** draws it: a label and a dimmed detail, and
+/// nothing else on the row.
+///
+/// **Every field is spelled, and `..CompletionItemVm::default()` is refused
+/// here.** `T106` gave the ViewModel a `kind` and a `source` column, and the
+/// first version of this fixture took the update by adding a struct-update
+/// `..default()` — which left every row `kind: None, source: None` and made
+/// this frame *byte-identical* across the change that added two columns to the
+/// widget. A golden frame that cannot move when the widget grows is not a
+/// conformance check any more, and `CP-4`'s review said so.
+///
+/// The `None`s are still the right values: screen `7c` in `TUI Mockups.dc.html`
+/// is three rows of `label` + dimmed `detail` (`default() / default_delay /
+/// deserialize`) with a rule before the doc line — **no kind column and no
+/// source column**. The new columns are drawn in
+/// `crates/phosphor-ui/tests/float_width.rs`'s `decorated-80`/`decorated-120`
+/// frames, which say in their own commit note that `7c` draws neither and that
+/// this is a design change flagged rather than folded in. What the spelling
+/// buys is that the **next** field added to the ViewModel breaks this file
+/// rather than passing through it.
 fn item(label: &str, detail: &str) -> CompletionItemVm {
     CompletionItemVm {
         label: label.to_owned(),
         detail: Some(detail.to_owned()),
+        kind: None,
+        source: None,
+        deprecated: false,
     }
 }
 
@@ -374,9 +397,17 @@ prop_compose! {
             items: labels
                 .iter()
                 .enumerate()
+                // Spelled out for [`item`]'s reason: this generator produces
+                // `7c`'s two-column row on purpose, and a field added to the
+                // ViewModel must break here rather than arrive as a silent
+                // `None`. The four-column row is generated in
+                // `crates/phosphor-ui/tests/completion_shed.rs`.
                 .map(|(i, label)| CompletionItemVm {
                     label: label.clone(),
                     detail: details.get(i).cloned().flatten(),
+                    kind: None,
+                    source: None,
+                    deprecated: false,
                 })
                 .collect(),
             selected,

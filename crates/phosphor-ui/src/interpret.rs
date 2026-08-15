@@ -1334,6 +1334,7 @@ mod tests {
         crate::float::CompletionItemVm {
             label: label.to_owned(),
             detail: detail.map(str::to_owned),
+            ..crate::float::CompletionItemVm::default()
         }
     }
 
