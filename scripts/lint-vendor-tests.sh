@@ -65,10 +65,27 @@ for fork in "${FORKS[@]}"; do
     fi
 
     log="$(mktemp)"
+    # **Headless, and that is not a preference.** The fork's `default` is
+    # `["crossterm", "clipboard", "grammars-all"]` — it reproduces upstream's
+    # dependency set exactly, which is the point of PATCH 2/3 — and `clipboard`
+    # pulls `arboard`, which links X11/Wayland on Linux. So a bare `cargo test`
+    # here passes on a developer's mac and, on CI, fails to build the very test
+    # binary this lint exists to count: `change_events` reported *no tests* and
+    # the lint fired for the right reason with the wrong cause. Found by
+    # pushing, which is the only machine that has ever run it on Linux.
+    #
+    # `crossterm` stays because `tests/input.rs` and `tests/folding.rs` do not
+    # compile without it. What is left is the configuration phosphor actually
+    # consumes (`default-features = false` + `grammars-phosphor`), which is
+    # also what `just vendor-build-headless` proves is buildable in both
+    # directions — so this runs the fork the way we ship it rather than the way
+    # upstream defaults it.
+    features="crossterm,grammars-phosphor"
     # Run, THEN read the status. A pipe here would report the pipe's exit code,
     # which is how this repo has twice called a red check green.
     set +e
-    cargo test --manifest-path "$manifest" >"$log" 2>&1
+    cargo test --manifest-path "$manifest" \
+        --no-default-features --features "$features" >"$log" 2>&1
     rc=$?
     set -e
 
@@ -76,7 +93,8 @@ for fork in "${FORKS[@]}"; do
         echo "lint-vendor-tests: ${fork}'s own suite failed (cargo exited ${rc})"
         echo "  Every hunk under vendor/ is phosphor's to carry, and so is every"
         echo "  test that proves one. Reproduce with:"
-        echo "      cargo test --manifest-path ${manifest}"
+        echo "      cargo test --manifest-path ${manifest} \\"
+        echo "          --no-default-features --features ${features}"
         echo
         sed 's/^/    /' "$log" | tail -40
         rm -f "$log"

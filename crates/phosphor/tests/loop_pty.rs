@@ -2005,6 +2005,24 @@ mod driven {
         // tell from the row it replaced. `x` is how this harness asks where the
         // cursor is, and the answer is in the file it writes.
         editor.press_quietly(b"gd");
+        // **`gd` is asynchronous and `x` is not.** The jump is a request to the
+        // server, answered on the runtime thread and delivered through the
+        // event queue; `press_quietly` returns as soon as the key is written.
+        // So without this wait the two race, and the loser is silent: `x`
+        // deletes at wherever the cursor still is. CI caught it — the file came
+        // back `"the first line edite\n…"` (the `d` taken from line 1) instead
+        // of `"…edited\nhe definition…"` (the `t` taken from line 2), which is
+        // the same test passing and failing for the same reason on two
+        // machines.
+        //
+        // [`Editor::settle`] rather than a text match, and the sibling test
+        // shows why the usual tool does not fit: `gd_opens_the_file_the_server_named…`
+        // waits on the *target file's* text appearing, which is proof precisely
+        // because the jump crosses files. Here it does not — every line is
+        // already on screen — so there is no string whose arrival means the
+        // answer landed. Waiting for the editor to stop drawing does, and it
+        // costs 250 ms of quiet rather than a guess about what redraws.
+        editor.settle();
         editor.press_quietly(b"x");
         editor.press_quietly(b":w\r");
         let written = fs::read_to_string(&file).expect("the buffer was written");
