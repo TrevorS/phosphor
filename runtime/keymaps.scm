@@ -769,14 +769,45 @@
  '("normal" "insert" "visual" "operator-pending" "object")
  (list (list "<esc>" (key/escape) "cancel")))
 
-;; insert mode is text, with four exceptions that are not.
+;; insert mode is text, with exceptions that are not: the four arrows here, the
+;; six lsp keys below, and `<tab>`.
+;;
+;; `<tab>` — reported at `CP-4` as *"tab only seems to go a space at a time when
+;; indenting"*. it was unbound, so it reached `Machine::insert_key`'s literal
+;; `"\t"` arm and the renderer drew that in one cell; both halves are `T104`.
+;; `insert-indent` types **one indent level at the cursor**, advancing to the
+;; next tabstop rather than typing a fixed number of spaces — so `<tab>` after
+;; `ab` lands on column 4 exactly as a real tab would, and a file indented by
+;; pressing this key draws the same as one indented with `\t`.
+;;
+;; **it names no width, and that is the point.** how wide a level is comes from
+;; `(set-option! "tab-width" …)` / `(set-option! "expand-tab" …)` in `init.scm`
+;; and from the `indent` a `define-language!` declares — so `<tab>` in a yaml
+;; buffer types two spaces and in a rust buffer types four, with nothing here
+;; changing. a keymap that spelled the width would be four spaces frozen into
+;; this file for every language, which is the rust-table-in-scheme shape `T033`
+;; exists to forbid.
+;;
+;; **it does not accept a completion, and that was a decision.**
+;; `OPEN-QUESTIONS.md` §38 is *"two tasks want `<tab>`"*: `T105` wanted it to
+;; take the highlighted row, `T104` wanted an indent level, and a binding cannot
+;; ask which because it cannot read whether a list is open. §38's third option
+;; — *"give it to one of them, and the other gets a different key"* — is the one
+;; taken, and the residue is small enough to say exactly: `<space>`, `<cr>` and
+;; `<C-y>` already accept (three keys, one of them vim's own), so completion
+;; loses nothing it did not have; indenting had no key at all. reversing it
+;; needs the mechanism §38's first option describes — `otherwise` widening from
+;; *text to type* to *a capability to run* — because `insert-indent` is now a
+;; capability that argument could name, which is the one thing that was missing
+;; when §38 was written.
 (keymap-set-rows!
  '("insert")
  (list
   (list "<left>" (key/motion "char-left") "left")
   (list "<right>" (key/motion "char-right") "right")
   (list "<up>" (key/motion "line-up") "up a line")
-  (list "<down>" (key/motion "line-down") "down a line")))
+  (list "<down>" (key/motion "line-down") "down a line")
+  (list "<tab>" (key/run (key/cmd "insert-indent")) "indent one level")))
 
 ;; ---------------------------------------------------------------------------
 ;; the language server — T036, T038, T039

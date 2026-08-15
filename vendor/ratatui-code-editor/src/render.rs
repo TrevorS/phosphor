@@ -4,6 +4,8 @@ use crate::editor::Editor;
 use crate::phosphor::cell_style;
 // PHOSPHOR PATCH 6 — the cell budget a `↪` continuation spends before its text.
 use crate::phosphor::soft_wrap::CONTINUATION_PREFIX;
+// PHOSPHOR PATCH 11 — a tab's width is a function of the column it starts at.
+use crate::phosphor::tabs;
 use crate::types::VisualRow;
 use crate::view::View;
 use ratatui_core::buffer::Buffer;
@@ -99,6 +101,21 @@ impl Widget for &Editor {
         // once per frame, not once per cell: the answer cannot change mid-frame.
         let styled_spans = self.styled_spans();
         let underline_capability = self.underline_capability();
+
+        // PHOSPHOR PATCH 11 — the tabstop, resolved once per frame. Read off
+        // the live buffer even for diff ghosts: the two `Code`s are kept in
+        // step by `Editor::set_tab_width`, and one tabstop per frame is what
+        // makes a ghost row and its partner line up column for column.
+        let tab_width = code.tab_width();
+        // PHOSPHOR PATCH 11 — where the previous drawn row left the line, as
+        // `(line_idx, char_col, visual_col)`. A wrapped line's rows arrive in
+        // order and each one starts where the last ended, so the base column
+        // below is usually an addition rather than a walk of the line prefix —
+        // which at fifty rows into one long line is fifty walks per frame. Only
+        // set when a row consumed every grapheme it was given, so a row that
+        // stopped at the screen edge carries nothing and the next one measures
+        // for itself.
+        let mut carried: Option<(usize, usize, usize)> = None;
 
         // draw lines, syntax highlighting, selection and marks in a single unified loop
         for visual_row_idx in self.offset_y..total_visual_lines {
@@ -303,11 +320,33 @@ impl Widget for &Editor {
                 let mut x = 0;
                 let mut byte_idx_in_rope = start_byte;
                 let mut char_col = start_col;
+                // PHOSPHOR PATCH 11 — the display column this row's first
+                // grapheme sits at *in the line*, which is what a tabstop is
+                // measured against. Not the screen column: a `↪` continuation
+                // and a horizontally scrolled row both start their text at
+                // screen column zero, and aligning their tabs to the screen
+                // would put the same tab in two different places depending on
+                // where the viewport was.
+                //
+                // Carried from the row above when that row was the previous
+                // segment of this same line — see `carried`. Ghost rows read a
+                // different `Code`, so they neither take the carry nor leave
+                // one.
+                let base_col = match carried {
+                    Some((carried_line, carried_col, visual))
+                        if !is_ghost && carried_line == line_idx && carried_col == start_col =>
+                    {
+                        visual
+                    }
+                    _ => source_code.char_col_to_visual(line_idx, start_col),
+                };
 
                 // 3. Single loop over the graphemes of the line
                 for g in RopeGraphemes::new(&visible_chars) {
                     let (g_width, g_bytes) = grapheme_width_and_bytes_len(g);
                     let (_, g_chars) = grapheme_width_and_chars_len(g);
+                    // PHOSPHOR PATCH 11 — see VENDOR.md.
+                    let g_width = tabs::cells(g, g_width, base_col + x, tab_width);
 
                     if x >= width {
                         break;
@@ -397,13 +436,35 @@ impl Widget for &Editor {
                     }
 
                     // Draw character
+                    //
+                    // PHOSPHOR PATCH 11 — a tab paints every cell it spends,
+                    // not one. Blank cells would be cheaper and would be wrong:
+                    // the style carries a diff background, a selection and the
+                    // word highlight, and a tab inside a selected run has to be
+                    // selected for its whole width. The trailing-whitespace mark
+                    // stays one dot at the tab's first cell — vim's `trail`
+                    // marks the character, not the space it occupies.
                     let display_g = if is_trailing_ws {
-                        WHITESPACE_MARK.to_string()
+                        let mut mark = WHITESPACE_MARK.to_string();
+                        mark.push_str(&" ".repeat(g_width.saturating_sub(1)));
+                        mark
+                    } else if tabs::is_tab(g) {
+                        " ".repeat(g_width)
                     } else {
+                        // Upstream's substitution kept, and it is no longer
+                        // dead: `is_tab` is a *lone* tab, so a cluster that
+                        // begins with one and continues into a combining mark
+                        // is not one — and a raw `\t` written into a cell is
+                        // interpreted by the terminal rather than drawn.
                         g.to_string().replace('\t', " ")
                     };
                     if start_x < area.right() {
-                        buf.set_string(start_x, draw_y, &display_g, style);
+                        // PHOSPHOR PATCH 11 — clamped, because a tab near the
+                        // right edge is the one grapheme that can be asked to
+                        // paint past both the text column's budget and the
+                        // area itself.
+                        let room = (width - x).min((area.right() - start_x) as usize);
+                        let _ = buf.set_stringn(start_x, draw_y, &display_g, room, style);
                         // PHOSPHOR PATCH 5 — undercurl has no ratatui
                         // `Modifier`, so where the terminal has it the SGR pair
                         // rides in the cell's symbol. A no-op everywhere else,
@@ -423,6 +484,13 @@ impl Widget for &Editor {
                     byte_idx_in_rope += g_bytes;
                     char_col += g_chars;
                 }
+
+                // PHOSPHOR PATCH 11 — only a row that reached its own end knows
+                // where the line has got to: the loop breaks at `x >= width`,
+                // and a row that stopped there has painted fewer cells than its
+                // span spends.
+                carried = (!is_ghost && char_col == end_col)
+                    .then_some((line_idx, char_col, base_col + x));
 
                 // PHOSPHOR PATCH 7 — `8e`: a collapsed fold marks its header
                 // line inline, after the code — `▸⋯ 13 lines` in meta-gray —

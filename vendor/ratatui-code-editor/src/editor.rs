@@ -2,12 +2,14 @@ use crate::actions::*;
 use crate::click::{ClickKind, ClickTracker};
 use crate::code::Code;
 use crate::code::{EditBatch, Operation};
-use crate::code::{RopeGraphemes, grapheme_width, grapheme_width_and_chars_len};
+use crate::code::{RopeGraphemes, grapheme_width_and_chars_len};
 use crate::selection::{Selection, SelectionSnap};
 use crate::types::{CodeFoldingOptions, DiffOptions, HightlightCache, Theme, VisualRow, LineDiffCache};
 // PHOSPHOR PATCH 6 — the row-stream contract, and PATCH 7's marker glyphs.
 use crate::types::RowSpan;
 // PHOSPHOR PATCH 8 — the `┊` rows interleaved into that stream.
+// PHOSPHOR PATCH 11 — a tab's width is a function of the column it starts at.
+use crate::phosphor::tabs;
 use crate::phosphor::virtual_text::VirtualLine;
 use crate::utils;
 use crate::view::{View, ViewMode};
@@ -332,8 +334,15 @@ impl Editor {
         let mut current_col = 0;
         let mut char_idx = start_col;
         let visible_chars = self.code.char_slice(char_start, char_end);
+        // PHOSPHOR PATCH 11 — the row's first grapheme sits this far into the
+        // line, in cells. `current_col` is relative to the row (it is compared
+        // against `clicked_col`, which is too) and a tabstop is absolute, so
+        // the walk needs both.
+        let base_col = self.code.char_col_to_visual(clicked_row, start_col);
         for g in RopeGraphemes::new(&visible_chars) {
             let (g_width, g_chars) = grapheme_width_and_chars_len(g);
+            // PHOSPHOR PATCH 11 — see VENDOR.md.
+            let g_width = tabs::cells(g, g_width, base_col + current_col, self.code.tab_width());
             if current_col + g_width > clicked_col {
                 break;
             }
@@ -356,7 +365,10 @@ impl Editor {
         let line = self
             .code
             .char_slice(line_start_char, line_start_char + line_len);
-        let visual_width: usize = RopeGraphemes::new(&line).map(grapheme_width).sum();
+        // PHOSPHOR PATCH 11 — was a grapheme sum, which measures a tab as one
+        // cell and so declared a click *inside* a tab-indented line to be past
+        // its end, snapping the cursor to the newline.
+        let visual_width = self.code.char_col_to_visual(clicked_row, line_len);
 
         if clicked_col + self.offset_x >= visual_width {
             let mut end_idx = line.len_chars();
@@ -478,8 +490,12 @@ impl Editor {
     }
 
     pub fn set_original_code(&mut self, content: &str) -> Result<()> {
-        let original = Code::new(content, self.code_ref().lang(), None)
+        let mut original = Code::new(content, self.code_ref().lang(), None)
             .or_else(|_| Code::new(content, "text", None))?;
+        // PHOSPHOR PATCH 11 — a fresh `Code` starts at the default tabstop, and
+        // a ghost row measured against a different stop than the row beside it
+        // is a diff whose columns do not line up.
+        original.set_tab_width(self.code.tab_width());
         self.highlights_cache.borrow_mut().clear();
         self.line_diff_cache.borrow_mut().clear();
         self.original_code = Some(original);
@@ -906,6 +922,37 @@ impl Editor {
         self.view.soft_wrap()
     }
 
+    // ------------------------------------------------------------------
+    // PHOSPHOR PATCH 11 — the tabstop.
+    // ------------------------------------------------------------------
+
+    /// Sets how many cells a `\t` advances to, for this buffer and for the
+    /// original it is diffed against.
+    ///
+    /// Rebuilds the row stream when the stop changes, and nothing else: a
+    /// wider tab moves the column every wrap point is measured at, so a stale
+    /// stream would wrap in the wrong place until the next resize. Same shape
+    /// and same reason as [`Editor::set_soft_wrap`].
+    ///
+    /// The diff original is set alongside because a ghost row is drawn against
+    /// the *live* buffer's stop ([`crate::render`]), and a ghost whose own
+    /// `Code` measured tabs differently would place its columns somewhere the
+    /// renderer does not draw them.
+    pub fn set_tab_width(&mut self, tab_width: usize) {
+        let changed = self.code.set_tab_width(tab_width);
+        if let Some(original) = self.original_code.as_mut() {
+            original.set_tab_width(tab_width);
+        }
+        if changed {
+            self.rebuild_view();
+        }
+    }
+
+    /// How many cells a `\t` advances to.
+    pub fn tab_width(&self) -> usize {
+        self.code.tab_width()
+    }
+
     /// What a visual row draws — see [`RowSpan`]. `None` for rows that are not
     /// a slice of the current buffer (fold separators, diff ghosts).
     pub fn row_span(&self, visual_row: usize) -> Option<RowSpan> {
@@ -1287,9 +1334,6 @@ impl Editor {
         if cursor_visual_line >= self.offset_y
             && cursor_visual_line < self.offset_y + area.height as usize
         {
-            let line_start_char = self.code.line_to_char(cursor_line);
-            let line_len = self.code.line_len(cursor_line);
-
             let max_x = (area.width as usize).saturating_sub(line_number_width);
             // PHOSPHOR PATCH 6 — wrapped rows have no horizontal offset; the
             // segment's own start is what the cursor is relative to.
@@ -1299,20 +1343,13 @@ impl Editor {
             };
             let prefix_cells = wrap_span.map_or(0, |span| span.prefix_cells);
 
-            let cursor_visual_col: usize = {
-                let slice = self.code.char_slice(
-                    line_start_char,
-                    line_start_char + cursor_char_col.min(line_len),
-                );
-                RopeGraphemes::new(&slice).map(grapheme_width).sum()
-            };
-
-            let offset_visual_col: usize = {
-                let slice = self
-                    .code
-                    .char_slice(line_start_char, line_start_char + start_col.min(line_len));
-                RopeGraphemes::new(&slice).map(grapheme_width).sum()
-            };
+            // PHOSPHOR PATCH 11 — both were grapheme sums, which measure a tab
+            // as one cell; `Code::char_col_to_visual` is the same walk with the
+            // tabstop in it. Routed through it rather than repeating the rule
+            // here, so the column the cursor is *drawn* at cannot disagree with
+            // the column every motion computes.
+            let cursor_visual_col = self.code.char_col_to_visual(cursor_line, cursor_char_col);
+            let offset_visual_col = self.code.char_col_to_visual(cursor_line, start_col);
 
             let relative_visual_col = cursor_visual_col.saturating_sub(offset_visual_col);
             // PHOSPHOR PATCH 6 — past the `↪ ` marker on a continuation row.

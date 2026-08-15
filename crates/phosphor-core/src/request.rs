@@ -1519,6 +1519,32 @@ pub struct LanguageSpec {
     pub lsp_command: Vec<String>,
     /// The line-comment prefix, for `toggle-comment`.
     pub comment_prefix: Option<String>,
+    /// What one indent level *is*, literally — `>`, `<` and `<tab>` all shift
+    /// by this (`T104`).
+    ///
+    /// A string and not a width, because the two things a language differs on
+    /// are how *wide* a level is and whether it is made of spaces or a tab, and
+    /// one literal says both: `"    "` is Rust, `"\t"` is Go. That is the same
+    /// shape as [`LanguageSpec::comment_prefix`] — a per-language literal an
+    /// editing verb splices — which is what made this a field rather than a
+    /// mechanism.
+    ///
+    /// Absent means *the global answer*: `expand-tab` and `tab-width`, set in
+    /// `runtime/init.scm`. Precedence is the declaration's, on vim's rule that
+    /// an `ftplugin` beats a global `set` — the narrower statement wins,
+    /// exactly the way this build already resolves a keymap scope over the
+    /// all-scopes row.
+    ///
+    /// **Not a replacement for the tabstop.** How wide a `\t` *renders* stays
+    /// global (`tab-width`): a tabstop is a property of the terminal grid and
+    /// of files that mix languages through injections, not of the language the
+    /// buffer is declared as.
+    ///
+    /// **One tab, or a run of spaces.** A literal that says neither of the two
+    /// things above is refused by [`crate::language::Languages::declare`] —
+    /// see [`crate::language::Invalid::Indent`] for the three that used to get
+    /// through and what each of them did to `>` and `<tab>` separately.
+    pub indent: Option<String>,
 }
 
 wire_record!(LanguageSpec {
@@ -1526,6 +1552,7 @@ wire_record!(LanguageSpec {
     grammar: Option<String> = "tree-sitter grammar name; absent, or unknown to this build, means second tier",
     lsp_command: Vec<String> = "language server command and arguments; empty means none",
     comment_prefix: Option<String> = "line-comment prefix, for toggle-comment",
+    indent: Option<String> = "what one indent level is, literally; absent means the global expand-tab/tab-width answer",
 });
 
 /// How much of the promise a language gets (`T037`).

@@ -1260,6 +1260,29 @@ nested Action in `otherwise` would also serve `<CR>` in the Picker (`T045`) and 
 instead of being paid for one key. And whichever way it goes, `T104` and `T105` cannot run
 concurrently in one window under [TEAM.md](TEAM.md)'s rule 1: they write the same files.*
 
+**RULED by the third option, in `T104`, 2026-08-15.** `<tab>` in the insert scope runs
+`insert-indent` (`runtime/keymaps.scm`), and completion keeps `<C-y>`, `<space>` and `<CR>`.
+`T105` had already landed by then and had **not** taken `<tab>`, so nothing was taken away from
+it: the two keys `CP-4` asked for are bound, `<C-y>` is vim's own, and indenting had no key at
+all. The recommendation above says to weigh the first option first, and it was weighed and not
+taken — widening `otherwise` from `Option<String>` to a nested Action is a change to how a
+capability's arguments are *shaped*, and shaping it for a key that already has three alternatives
+is paying the cost before the surfaces that amortise it (`T045`, `T058`) exist to share it.
+
+**The residue is smaller than it was, and it is worth stating what changed.** §38's second option
+— *"the vocabulary gains an insert-mode indent, a verb meaning 'one indent level here'"* — **has
+happened**: `Buffer::InsertIndent` (`insert-indent`) is a declared capability with no arguments,
+because the width it types comes from `set-option!` and `define-language!` rather than from its
+caller. So the day somebody wants tab-to-accept, the fall-through has a verb to name and the only
+open piece is the argument's *type*. Before `T104` there was nothing to name.
+
+**What is still true and still unruled** is §29 item 1's underlying question, which this did not
+answer: a keymap remains data that cannot read host state, and every conditional key in this
+build is a condition in the host with its text in the binding. That shape has now settled three
+keys (`<space>`, `<CR>`, and `<C-y>` by passing neither argument) and refused a fourth. If a
+fourth arrives — the Picker's `<CR>`, the prompt's — the argument for widening `otherwise` gets
+its second and third surfaces and should be re-weighed then.
+
 ---
 
 ## Repair pass — queued work, not questions

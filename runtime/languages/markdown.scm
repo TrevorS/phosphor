@@ -17,4 +17,11 @@
   (hash "extensions" '("md" "markdown")
         "grammar" "markdown"
         "lsp_command" '()
-        "comment_prefix" void))
+        "comment_prefix" void
+        ;; two spaces, and here the width is grammar rather than taste: a nested
+        ;; list item has to be indented past its parent's marker, `- ` is two
+        ;; cells, and four would over-indent every level. commonmark's own rule
+        ;; is worse than taste in the other direction too — four spaces at the
+        ;; start of a line is a *code block*, so `>` with a four-space unit on
+        ;; an unindented paragraph turns prose into code.
+        "indent" "  "))

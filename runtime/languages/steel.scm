@@ -33,4 +33,6 @@
   (hash "extensions" '("scm")
         "grammar" "scheme"
         "lsp_command" '()
-        "comment_prefix" ";;"))
+        "comment_prefix" ";;"
+        ;; two spaces, which is every scheme's convention and this file's own.
+        "indent" "  "))

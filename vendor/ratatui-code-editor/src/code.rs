@@ -1,4 +1,6 @@
 use crate::history::History;
+// PHOSPHOR PATCH 11 — see VENDOR.md.
+use crate::phosphor::tabs;
 use crate::selection::Selection;
 use crate::utils::{calculate_end_position, comment as lang_comment, count_indent_units, indent};
 use anyhow::{Result, anyhow};
@@ -81,6 +83,13 @@ pub struct Code {
     // may shorten the rope past an earlier edit's offset, which is a wrong
     // line number at best and a panic at worst.
     batch_changes: Vec<(usize, usize, usize, usize, String)>,
+    // PHOSPHOR PATCH 11 — see VENDOR.md. The tabstop every width walk in this
+    // crate measures a `\t` against. On `Code` rather than on `Editor` because
+    // `char_col_to_visual` and `visual_to_char_col` are this type's and are two
+    // of the five walks: a field on the editor would leave them measuring a tab
+    // as one cell while the renderer drew it as four, and a cursor placed by
+    // one and drawn by the other would sit in the wrong column.
+    tab_width: usize,
     custom_highlights: Option<HashMap<String, String>>,
 }
 
@@ -107,6 +116,8 @@ impl Code {
             change_callback: None,
             // PHOSPHOR PATCH 10 — see VENDOR.md.
             batch_changes: Vec::new(),
+            // PHOSPHOR PATCH 11 — see VENDOR.md.
+            tab_width: crate::phosphor::tabs::DEFAULT_TAB_WIDTH,
             custom_highlights,
         };
 
@@ -391,14 +402,31 @@ impl Code {
         self.content.byte_to_char(byte_idx)
     }
 
+    // PHOSPHOR PATCH 11 — see VENDOR.md. The tabstop a `\t` in this buffer
+    // measures to. `set_tab_width` answers whether it changed, so the caller
+    // that owns the row stream (`Editor::set_tab_width`) can rebuild it only
+    // when it has to — the same shape `View::set_soft_wrap` already uses.
+    pub fn tab_width(&self) -> usize {
+        self.tab_width
+    }
+
+    pub fn set_tab_width(&mut self, tab_width: usize) -> bool {
+        let tab_width = tab_width.max(1);
+        let changed = self.tab_width != tab_width;
+        self.tab_width = tab_width;
+        changed
+    }
+
     pub fn char_col_to_visual(&self, line_idx: usize, char_col: usize) -> usize {
         let line_start = self.line_to_char(line_idx);
         let line_len = self.line_len(line_idx);
         let limit = char_col.min(line_len);
         let slice = self.char_slice(line_start, line_start + limit);
-        RopeGraphemes::new(&slice)
-            .map(|g| grapheme_width_and_chars_len(g).0)
-            .sum()
+        // PHOSPHOR PATCH 11 — a fold rather than a sum, because a tab's width
+        // is a function of the column it starts at and a `map` cannot see one.
+        RopeGraphemes::new(&slice).fold(0, |col, g| {
+            col + tabs::cells(g, grapheme_width_and_chars_len(g).0, col, self.tab_width)
+        })
     }
 
     pub fn visual_to_char_col(&self, line_idx: usize, visual_col: usize) -> usize {
@@ -410,6 +438,8 @@ impl Code {
         let mut char_col = 0;
         for g in RopeGraphemes::new(&slice) {
             let (g_width, g_chars) = grapheme_width_and_chars_len(g);
+            // PHOSPHOR PATCH 11 — see VENDOR.md.
+            let g_width = tabs::cells(g, g_width, current_visual, self.tab_width);
             if current_visual + g_width > visual_col {
                 break;
             }

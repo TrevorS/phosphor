@@ -12,4 +12,7 @@
   (hash "extensions" '("yaml" "yml")
         "grammar" "yaml"
         "lsp_command" '("yaml-language-server" "--stdio")
-        "comment_prefix" "#"))
+        "comment_prefix" "#"
+        ;; two spaces. yaml is the one language where the width is not taste:
+        ;; a block sequence under a mapping key is unreadable at four.
+        "indent" "  "))

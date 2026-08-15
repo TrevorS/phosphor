@@ -17,4 +17,10 @@
   (hash "extensions" '("json")
         "grammar" "json"
         "lsp_command" '("vscode-json-language-server" "--stdio")
-        "comment_prefix" void))
+        "comment_prefix" void
+        ;; two spaces, and this is the one language where the value is written
+        ;; by machines more often than by hands: `JSON.stringify(x, null, 2)` is
+        ;; the idiom, `npm` writes `package.json` with two, and an editor that
+        ;; shifted with four would make every hand edit a diff against the tool
+        ;; that wrote the file.
+        "indent" "  "))

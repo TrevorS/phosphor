@@ -24,4 +24,8 @@
   (hash "extensions" '("csv")
         "grammar" void
         "lsp_command" '()
-        "comment_prefix" void))
+        "comment_prefix" void
+        ;; two spaces. a csv has no indentation to speak of; this is what `>`
+        ;; does if you press it, and matching the other second-tier files is
+        ;; less surprising than the global 4.
+        "indent" "  "))

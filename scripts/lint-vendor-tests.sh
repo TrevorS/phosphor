@@ -12,13 +12,14 @@
 # member list (root `Cargo.toml`, deliberately — membership would put upstream
 # code inside `cargo fmt --check` and `clippy -D warnings`). `just test` is
 # `cargo nextest run --workspace`, so it compiles `ratatui-code-editor` as a
-# dependency and never builds its tests. The fork carries nine phosphor patches
-# (VENDOR.md numbers them 1, 2 and 4-10) laid over thirty-two upstream tests
+# dependency and never builds its tests. The fork carries ten phosphor patches
+# (VENDOR.md numbers them 1, 2 and 4-11) laid over thirty-two upstream tests
 # (`code.rs` 11, `diff.rs` 5, `tests/` 16 — recounted against `git show 40ff181`),
 # and until this script nothing in CI had
 # ever executed one of them — the seam that stops our lints at the fork boundary
 # was also stopping our test runner. `tests/change_events.rs` is the first test
-# file phosphor has written here; the other four are upstream's, unmodified.
+# file phosphor has written here and `tests/tabs.rs` (patch 11, `T104`) is the
+# second; the other four are upstream's, unmodified.
 #
 # SCOPED TO ONE FORK, and the reason is measured rather than assumed:
 # `vendor/ratatui-markdown` cannot be tested standalone at all. It carries no
@@ -38,9 +39,16 @@
 #
 # NOT VACUOUS. An empty test file compiles, runs nothing, and exits 0 — which is
 # how this check would rot into a no-op — so a green `cargo` is not the verdict.
-# `tests/change_events.rs` must appear in the output AND report at least one
-# test passed. Emptying it, renaming it or deleting it all fail here. Proven by
-# planting each of the three, plus a one-token mutation of the fix itself.
+# **Every phosphor-written test file** must appear in the output AND report at
+# least one test passed. Emptying one, renaming it or deleting it all fail here.
+# Proven by planting each of the three, plus a one-token mutation of the fix
+# itself.
+#
+# The list below is the guard's own non-vacuity, so it has to grow with the
+# files. It named `change_events` alone for one window after `tests/tabs.rs`
+# landed — the whole `T104` regression suite, which `just test` cannot see —
+# and the gate line said so out loud (`8 suites green, 5 of them in
+# change_events`) without anything reading it.
 #
 # Exit 0 = the fork's suite ran and passed, exit 1 = it did not.
 
@@ -50,8 +58,9 @@ cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 FORKS=(ratatui-code-editor)
 
-# The test binary whose absence means the guard is gone rather than green.
-REQUIRED_BINARY="change_events"
+# The test binaries whose absence means the guard is gone rather than green —
+# every `tests/*.rs` phosphor wrote in this fork. The other four are upstream's.
+REQUIRED_BINARIES=(change_events tabs)
 
 status=0
 
@@ -114,31 +123,41 @@ for fork in "${FORKS[@]}"; do
         continue
     fi
 
-    # How many tests the required binary actually ran. Zero — or no such binary
-    # — is the failure mode this block exists for, and it is not the same
-    # question as "did cargo exit 0": an empty test file compiles and passes.
-    # `Doc-tests` legitimately reports zero here and is not counted.
-    required_passed="$(
-        awk -v want="tests/${REQUIRED_BINARY}.rs" '
-            index($0, "Running " want) { armed = 1; next }
-            armed && /^test result:/ { print $4; exit }
-        ' "$log"
-    )"
+    # How many tests each required binary actually ran. Zero — or no such
+    # binary — is the failure mode this block exists for, and it is not the
+    # same question as "did cargo exit 0": an empty test file compiles and
+    # passes. `Doc-tests` legitimately reports zero here and is not counted.
+    tally=""
+    vacuous=0
+    for required in "${REQUIRED_BINARIES[@]}"; do
+        required_passed="$(
+            awk -v want="tests/${required}.rs" '
+                index($0, "Running " want) { armed = 1; next }
+                armed && /^test result:/ { print $4; exit }
+            ' "$log"
+        )"
 
-    if [ -z "$required_passed" ] || [ "$required_passed" -eq 0 ]; then
-        echo "lint-vendor-tests: ${fork}'s suite ran, but tests/${REQUIRED_BINARY}.rs"
-        echo "  contributed ${required_passed:-no} tests. Those are T102's regression"
-        echo "  tests — the undo crash that reached the shipping binary. Emptying,"
-        echo "  renaming or deleting them silently removes the only thing standing"
-        echo "  between that panic and a green gate."
+        if [ -z "$required_passed" ] || [ "$required_passed" -eq 0 ]; then
+            echo "lint-vendor-tests: ${fork}'s suite ran, but tests/${required}.rs"
+            echo "  contributed ${required_passed:-no} tests. Those are phosphor's own"
+            echo "  regression tests for a patch this fork carries — T102's undo crash"
+            echo "  that reached the shipping binary, T104's tabstop. Emptying, renaming"
+            echo "  or deleting them silently removes the only thing standing between"
+            echo "  those and a green gate, because just test cannot see this fork."
+            vacuous=1
+            continue
+        fi
+        tally="${tally}${tally:+, }${required_passed} in ${required}"
+    done
+
+    if [ "$vacuous" -ne 0 ]; then
         status=1
         rm -f "$log"
         continue
     fi
 
     binaries="$(grep -cE '^test result: ok\.' "$log" || true)"
-    echo "lint-vendor-tests: ${fork} — ${binaries} suites green," \
-        "${required_passed} of them in ${REQUIRED_BINARY}"
+    echo "lint-vendor-tests: ${fork} — ${binaries} suites green, ${tally}"
     rm -f "$log"
 done
 

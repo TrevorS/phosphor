@@ -405,7 +405,7 @@ built on an unverified foundation.
 > Windows A and B are complete: the workspace, both vendored forks, three structural lints proven
 > to bite, the grammar ABI check, the whole S1 widget layer, the S1 host, and a calibrated tape
 > harness. **Window C is built** — `spine` and `harness` — and `CP-2`'s mechanical half is
-> green: 215 capabilities, three doors derived from one table, 645 door checks walked end to
+> green: 216 capabilities, three doors derived from one table, 648 door checks walked end to
 > end, Steel booted from `runtime/`, the REPL live, and the statusline composed in the editor
 > layer. **Window D's S3 half is built too**, across two concurrent runs and a repair pass, and
 > **`CP-3` has passed, both halves** — the mechanical half green at 639 tests and 14 lints, and

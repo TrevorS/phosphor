@@ -1176,9 +1176,15 @@ impl Machine {
         let cursor = *at;
         let typed = match pressed.code {
             key::Code::Named(key::Named::Enter) => Some("\n".to_owned()),
-            // A literal tab. What a tab *inserts* is an option two reasonable
-            // users differ on, which makes it `T033`'s `set-option!` rather than
-            // a number invented here.
+            // A literal tab, and this arm is now the **fallback** rather than
+            // the answer. `T104` bound `<tab>` in the insert scope to
+            // `insert-indent`, which types one indent level at the cursor from
+            // `set-option!`'s `tab-width`/`expand-tab` and the language's own
+            // `indent` — the option the previous version of this comment
+            // deferred to and which did not exist when it was written. So the
+            // machine only sees this key in a layer that has *unbound* it, and
+            // a literal tab is the right thing to type there: it is what the
+            // key is, and the renderer draws it at the tabstop either way.
             key::Code::Named(key::Named::Tab) => Some("\t".to_owned()),
             key::Code::Named(key::Named::Backspace) => {
                 if let Some(span) = back_span(text, cursor) {

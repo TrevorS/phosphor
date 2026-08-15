@@ -12,3 +12,5 @@ pub mod cell_style;
 pub(crate) mod soft_wrap;
 // PHOSPHOR PATCH 8 — the placement rule behind `VisualRow::Virtual`.
 pub mod virtual_text;
+// PHOSPHOR PATCH 11 — the one place a tab's column-dependent width is computed.
+pub mod tabs;

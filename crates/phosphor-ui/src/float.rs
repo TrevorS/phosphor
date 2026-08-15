@@ -1122,12 +1122,25 @@ impl FloatBody for CompletionList<'_> {
 
     fn desired_width(&self) -> u16 {
         let (kind, label, detail, source) = self.widths();
+        // **A detail asks for [`DETAIL_MIN`] even when its content is
+        // narrower**, because that is the width [`CompletionList::layout`]
+        // will keep it at: `keep_detail` drops any column that cannot hold the
+        // floor. Without this a one-cell detail asked for three columns and was
+        // then shed at three — the two functions disagreeing by one, which is
+        // the drift `nothing_is_shed_at_the_width_the_list_asked_for` exists to
+        // catch and which it did, latent since the `CP-4` review added the
+        // floor to `layout` alone.
+        let detail_span = if detail == 0 {
+            0
+        } else {
+            detail.max(DETAIL_MIN)
+        };
         // Every column at its natural width — what the list would like. The
         // float caps this at `ANCHORED_WIDTH_PCT` and hands `render` whatever
         // survived, which is where [`CompletionList::layout`] sheds.
         let row = column_block(kind, KIND_GAP)
             .saturating_add(label)
-            .saturating_add(column_block(detail, DETAIL_GAP))
+            .saturating_add(column_block(detail_span, DETAIL_GAP))
             .saturating_add(column_block(source, SOURCE_GAP));
         // Only the doc rows that will be drawn: a float widened by the
         // twentieth line of a doc comment it does not show is wider than

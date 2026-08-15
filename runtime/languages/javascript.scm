@@ -14,4 +14,10 @@
   (hash "extensions" '("js" "mjs" "cjs")
         "grammar" "javascript"
         "lsp_command" '("typescript-language-server" "--stdio")
-        "comment_prefix" "//"))
+        "comment_prefix" "//"
+        ;; two spaces. prettier's default and unopinionated in the one place
+        ;; this ecosystem has no opinions left — the language nests deeply by
+        ;; construction (a callback inside a `.then` inside a method inside a
+        ;; class is four levels before any of it says anything), and four spaces
+        ;; a level puts the body of that at column 16.
+        "indent" "  "))

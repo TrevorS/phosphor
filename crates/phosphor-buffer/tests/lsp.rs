@@ -226,6 +226,7 @@ fn a_declaration_overrides_the_command_and_inherits_the_root_markers() {
             "rust-analyzer".to_owned(),
         ],
         comment_prefix: Some("//".to_owned()),
+        indent: None,
     };
     let spec = ServerSpec::from_language_spec(&language("rust"), &declared).expect("a command");
     assert_eq!(spec.command, "my-wrapper");
@@ -249,6 +250,7 @@ fn a_declaration_with_no_command_is_second_tier() {
         grammar: None,
         lsp_command: Vec::new(),
         comment_prefix: None,
+        indent: None,
     };
     assert!(ServerSpec::from_language_spec(&language("text"), &declared).is_none());
 }

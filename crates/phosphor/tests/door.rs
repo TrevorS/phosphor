@@ -185,18 +185,55 @@ fn a_malformed_call_is_a_diagnostic_and_prints_no_result() {
     assert!(!out.stderr.is_empty(), "the error went nowhere");
 }
 
+/// **A bare `phosphor` is refused by the terminal now, not by the parser** —
+/// `T107`.
+///
+/// This test was called `the_host_still_needs_a_file_and_the_door_does_not` and
+/// asserted *"no file and no expression is usage"*. `T107` deleted the
+/// constraint it was named for — `Cli::path`'s
+/// `required_unless_present_any` — and left the name, the message and the
+/// assertion in place: `run` pipes stdout, so a bare `phosphor` kept exiting
+/// non-zero and the test kept passing for a reason it never claimed.
+///
+/// So it asserts the *reason*. Run this session against `target/debug/phosphor`
+/// with stdin and stdout redirected: exit 1, stdout empty, stderr
+/// `phosphor: terminal i/o failed: Device not configured (os error 6)`. Before
+/// `T107` the same call was clap's exit 2 with *"the following required
+/// arguments were not provided"*, which is what the second assertion refuses to
+/// let come back. `main::dropping_the_required_file_left_every_other_invocation
+/// _alone` is the parse-level half; this is the one that says a bare
+/// invocation reaches the loop.
 #[test]
-fn the_host_still_needs_a_file_and_the_door_does_not() {
+fn a_bare_phosphor_is_refused_by_the_terminal_rather_than_by_the_parser() {
     let bare = run(&[]);
-    assert!(!bare.status.success(), "no file and no expression is usage");
+    assert!(
+        !bare.status.success(),
+        "a pipe is not a terminal, so the editor cannot start on one"
+    );
+    assert!(
+        bare.stdout.is_empty(),
+        "nothing was drawn to a stdout that is not a screen"
+    );
+    let complaint = String::from_utf8_lossy(&bare.stderr);
+    assert!(
+        complaint.contains("terminal"),
+        "a bare phosphor got as far as the terminal: {complaint:?}"
+    );
+    assert!(
+        !complaint.contains("required arguments"),
+        "clap refused it before the loop ever saw it — `T107`'s deletion came back: \
+         {complaint:?}"
+    );
+}
 
-    let file = scratch("host").with_extension("rs");
-    fs::write(&file, "fn main() {}\n").expect("write");
-    // Not run — opening it would take the terminal. What is under test is that
-    // the *parser* accepts the host's line unchanged now that 215 subcommands
-    // sit beside it, which `--help` exercises without drawing a frame.
+/// The host's own command line still parses with the generated verbs beside it.
+///
+/// `--help` rather than an open, because opening would take the terminal and
+/// what is under test is the *parser*: 216 subcommands sit next to the host's
+/// flags and clap has to keep telling them apart.
+#[test]
+fn the_hosts_flags_still_parse_beside_the_generated_verbs() {
     let help = run(&["--help"]);
-    let _ = fs::remove_file(&file);
     assert!(help.status.success());
     let printed = String::from_utf8_lossy(&help.stdout);
     assert!(printed.contains("--theme"), "the host's flags survived");

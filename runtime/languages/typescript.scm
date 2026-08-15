@@ -18,4 +18,11 @@
   (hash "extensions" '("ts" "mts" "cts")
         "grammar" "typescript"
         "lsp_command" '("typescript-language-server" "--stdio")
-        "comment_prefix" "//"))
+        "comment_prefix" "//"
+        ;; two spaces, for javascript.scm's reason and one more: a generic
+        ;; signature wrapped across lines indents *inside* an already-nested
+        ;; declaration, so this language reaches further right than the one it
+        ;; extends. the two files must agree whatever the value — a `.ts` and a
+        ;; `.js` in the same project shifting by different amounts is the kind
+        ;; of surprise a per-language field is most likely to produce.
+        "indent" "  "))

@@ -244,6 +244,48 @@ fn the_declared_fields_cross_the_barrier_intact() {
     assert_eq!(csv.comment_prefix, None);
 }
 
+/// **`T104`'s per-language indent, over all twelve rather than a spot check.**
+///
+/// This is the assertion the shipped tree earns and no unit test can: before
+/// `T104` the unit was a `match` on the **grammar** name inside
+/// `vendor/ratatui-code-editor`'s `utils::indent`, and these twelve values
+/// reproduce what it answered **exactly** — four for the four it named, two for
+/// everything else, including `steel` (whose grammar is `scheme`) and `csv`
+/// (which names none). So the answer moved out of the fork and into the layer
+/// with no language's behaviour changing, and that is only checkable by
+/// enumerating them.
+///
+/// `None` is not a hole here: it is *"take the global answer"*, which
+/// `runtime/init.scm` sets to four spaces. Four of the twelve say it.
+#[test]
+fn every_shipped_language_declares_the_indent_it_used_to_be_given() {
+    let (_runtime, recorder) = booted();
+    let languages = recorder.languages();
+
+    for (language, expected) in [
+        ("rust", None),
+        ("python", None),
+        ("toml", None),
+        ("html", None),
+        ("typescript", Some("  ")),
+        ("javascript", Some("  ")),
+        ("steel", Some("  ")),
+        ("markdown", Some("  ")),
+        ("json", Some("  ")),
+        ("csv", Some("  ")),
+        ("yaml", Some("  ")),
+        ("css", Some("  ")),
+    ] {
+        let id = LanguageId(language.to_owned());
+        assert!(languages.get(&id).is_some(), "{language} is declared");
+        assert_eq!(
+            languages.indent(&id),
+            expected,
+            "{language}'s indent is not what its file declares"
+        );
+    }
+}
+
 /// Three of the twelve declare no server, and that is the shape
 /// `define-language!` had to accept.
 ///
@@ -537,10 +579,10 @@ fn the_repl_refuses_a_declaration_that_could_never_match() {
     );
 }
 
-/// Which of the four keys may be left out, stated rather than discovered.
+/// Which of the five keys may be left out, stated rather than discovered.
 ///
-/// `grammar` and `comment_prefix` are `Option<String>` and so are omissible;
-/// `extensions` and `lsp_command` are `Vec<String>` and are not, because
+/// `grammar`, `comment_prefix` and `indent` are `Option<String>` and so are
+/// omissible; `extensions` and `lsp_command` are `Vec<String>` and are not, because
 /// `Wire::REQUIRED` is `false` only for `Option`. That reads as an
 /// inconsistency from the REPL — `lsp_command`'s own doc says *"empty means
 /// none"*, which sounds like *"leave it out"* — so what makes it acceptable is
@@ -551,8 +593,13 @@ fn the_repl_refuses_a_declaration_that_could_never_match() {
 /// the door cannot decode never becomes an Action, so the *form* is refused,
 /// where a decoded declaration the table rejects is a value —
 /// [`the_repl_refuses_a_declaration_that_could_never_match`] is that one.
+///
+/// **The count was two until `T104` added `indent`.** Each string below omits
+/// exactly one optional key and names the other two, so a fourth optional key
+/// arriving without a case here leaves an assertion nobody makes rather than a
+/// test that quietly still passes.
 #[test]
-fn the_two_optional_keys_are_the_two_optional_types() {
+fn the_three_optional_keys_are_the_three_optional_types() {
     let (mut runtime, _recorder) = booted();
 
     let declare = |runtime: &mut Runtime, keys: &str| {
@@ -560,14 +607,15 @@ fn the_two_optional_keys_are_the_two_optional_types() {
     };
 
     for omitted in [
-        r##""extensions" '("pr") "lsp_command" '() "comment_prefix" "#""##,
-        r#""extensions" '("pr") "grammar" void "lsp_command" '()"#,
+        r##""extensions" '("pr") "lsp_command" '() "comment_prefix" "#" "indent" "  ""##,
+        r#""extensions" '("pr") "grammar" void "lsp_command" '() "indent" "  ""#,
+        r##""extensions" '("pr") "grammar" void "lsp_command" '() "comment_prefix" "#""##,
     ] {
         let outcome = declare(&mut runtime, omitted);
         assert!(
             matches!(&outcome, Outcome::Done(receipt)
                 if receipt.value == Value::Text("#ok".to_owned())),
-            "grammar and comment_prefix may simply be left out: {outcome:?}"
+            "grammar, comment_prefix and indent may simply be left out: {outcome:?}"
         );
     }
 

@@ -14,4 +14,7 @@
   (hash "extensions" '("py" "pyi")
         "grammar" "python"
         "lsp_command" '("pyright-langserver" "--stdio")
-        "comment_prefix" "#"))
+        "comment_prefix" "#"
+        ;; nothing declared: four spaces, off init.scm — PEP 8's own unit, and
+        ;; the global default is already it.
+        "indent" void))

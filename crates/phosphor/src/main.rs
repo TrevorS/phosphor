@@ -55,7 +55,7 @@
 //! # `T023` — the CLI door, alongside the host
 //!
 //! [`door`] is the other half of this file's job and does not touch the loop at
-//! all. `phosphor --eval '(…)'` and the 215 generated capability verbs return
+//! all. `phosphor --eval '(…)'` and the 216 generated capability verbs return
 //! **before** [`Term`] is constructed: no alternate screen, no raw mode, no
 //! frame. That is a requirement, not an accident — `V006` seeds tape fixtures
 //! through `--eval` with no test-only backdoor, which needs the door to work
@@ -224,15 +224,18 @@ mod lsp;
     // commands" two windows after they landed.
     long_about = "Opens one file and draws it: the buffer, and whatever \
                   runtime/statusline.scm composed on the last row — every frame inside a \
-                  synchronized-output block.\n\nModes, counts, named registers, operators and \
+                  synchronized-output block. With no file, the same editor over an empty \
+                  buffer with no name; `:write <path>` gives it one.\n\nModes, counts, \
+                  named registers, operators and \
                   text objects are the input machine's (T026); the keymap is asked of \
                   runtime/keymaps.scm on every keystroke and the seed table behind it is \
                   empty (T033). `:write`, `:quit`, `:help` and `:repl` are ex commands; \
                   `ZQ` or `ctrl-c` leaves. There is no agent session yet."
 )]
 struct Cli {
-    /// File to open. Not needed with `--eval`, `--repl` or a capability verb.
-    #[arg(value_name = "FILE", required_unless_present_any = ["eval", "repl"])]
+    /// File to open. With none, an empty buffer with no name — `:write <path>`
+    /// gives it one (T107).
+    #[arg(value_name = "FILE")]
     path: Option<PathBuf>,
 
     /// Open the Steel REPL (`6b`) on the frame — the primary extension
@@ -320,6 +323,126 @@ fn completion_floor(host: &AppHost) -> usize {
         .map_or(COMPLETION_MIN_CHARS_DEFAULT, |least| {
             usize::try_from(least).unwrap_or(0)
         })
+}
+
+// ---------------------------------------------------------------------------
+// `T104` — what one indent level is
+// ---------------------------------------------------------------------------
+
+/// How many cells a `\t` advances to. `runtime/init.scm` sets it.
+const TAB_WIDTH: &str = "tab-width";
+
+/// Whether one indent level is spaces (`#t`) or a real tab. Vim's `expandtab`,
+/// spelled the way this build spells option names.
+const EXPAND_TAB: &str = "expand-tab";
+
+/// What [`TAB_WIDTH`] is worth to a layer that never sets it.
+///
+/// Four, which is `CP-4`'s own words — *"i'd default to rendering at 4 with a
+/// tab-width option"* — and is what `utils::indent` already gave the languages
+/// it named. Eight is the terminal's historical stop and nothing in this build
+/// is a terminal emulator; four is what an editor shows.
+const TAB_WIDTH_DEFAULT: usize = 4;
+
+/// One indent level, resolved (`T104`).
+///
+/// # Why this exists at all, and what it replaced
+///
+/// `Editing::indent` used to ask `Code::indent`, which is
+/// `vendor/ratatui-code-editor`'s `utils::indent` — a `match` on the *grammar
+/// name* giving four spaces to eleven languages, a literal tab to `go` and
+/// `c_sharp`, and two spaces to everything else. Three things were wrong with
+/// that and only the first is visible: nothing a user writes could change it,
+/// the `\t` arm was unreachable because nothing in `runtime/languages/`
+/// declares `go`, and a *grammar* is not a language — `steel` names the
+/// `scheme` grammar, `csv` names none, and both landed on the same arm as a
+/// file nobody declared. The unit is the editor layer's now, and the fork's
+/// table has no phosphor caller.
+///
+/// # Two knobs, not vim's four
+///
+/// `tab-width` and `expand-tab`, plus the per-language `indent` literal.
+/// **`shiftwidth` is deliberately absent**: vim needs one because a file can
+/// mix tabs and spaces and *"how far `>>` shifts"* is then a different question
+/// from *"how wide a tab draws"*. Here one unit answers `>`, `<` and `<tab>`
+/// together, which is what every modern editor ships as a single *tab size*,
+/// and splitting it is an addition rather than a correction if somebody wants
+/// it. **`softtabstop` is absent too, and it is the one with a live gap**: it
+/// is what makes `<bs>` eat a whole spaces-indent rather than one space, and
+/// `<bs>` reaches [`phosphor_core::input::Machine`]'s `back_span`, which
+/// deletes one grapheme. That is a `<bs>` behaviour and this is the `<tab>`
+/// task; it is named here so it is absent rather than forgotten.
+#[derive(Debug, Clone)]
+struct IndentStyle {
+    /// What one level is, literally — what `>` splices and `<` removes.
+    unit: String,
+    /// Cells a `\t` renders to, which the fork's renderer is told per pass.
+    tab_width: usize,
+}
+
+impl IndentStyle {
+    /// The text `<tab>` types at display column `col`.
+    ///
+    /// **A tab press advances to the next stop, it does not type a fixed
+    /// width.** With a four-space unit, `<tab>` after `ab` types two spaces and
+    /// lands on column 4 — the same column a real tab would have reached, which
+    /// is the whole point of the option being one number: a file indented by
+    /// pressing `<tab>` and a file indented with `\t` draw identically.
+    ///
+    /// A tab unit types a tab and lets the renderer do the arithmetic.
+    fn typed_at(&self, col: usize) -> String {
+        if self.unit.starts_with('\t') {
+            return "\t".to_owned();
+        }
+        let width = self.width();
+        " ".repeat(width - (col % width))
+    }
+
+    /// Cells one level occupies — the tabstop for a tab unit, the literal's own
+    /// display width otherwise. Never zero: a level of no cells would make
+    /// [`IndentStyle::typed_at`] divide by zero and `<` a no-op that looked
+    /// like a bug.
+    fn width(&self) -> usize {
+        if self.unit.starts_with('\t') {
+            self.tab_width.max(1)
+        } else {
+            self.unit.chars().count().max(1)
+        }
+    }
+}
+
+/// [`IndentStyle`] for `language`, read from the layer on every pass.
+///
+/// **Read per use, never snapshotted.** `T037` shipped a bug where a table was
+/// read once at boot and `T101`'s review caught the same shape a second time,
+/// so this is a function of the host rather than a field somebody initialises:
+/// `(set-option! "tab-width" 8)` typed at the REPL changes the next frame.
+///
+/// **Precedence: the declaration beats the option.** That is vim's rule for
+/// `ftplugin` over a global `set`, and it is the rule this build already
+/// follows everywhere a scope and an all-scopes row disagree — the narrower
+/// statement wins. A language that declares nothing takes the global answer,
+/// which is what all four of `rust`, `python`, `toml` and `html` do.
+fn indent_style(
+    host: &AppHost,
+    languages: &Languages,
+    language: Option<&LanguageId>,
+) -> IndentStyle {
+    let tab_width = host
+        .number(TAB_WIDTH)
+        .and_then(|width| usize::try_from(width).ok())
+        .filter(|width| *width > 0)
+        .unwrap_or(TAB_WIDTH_DEFAULT);
+    let declared = language.and_then(|language| languages.indent(language));
+    let unit = match declared {
+        Some(unit) => unit.to_owned(),
+        // `expand-tab` unset is spaces, because a build whose renderer had to
+        // guess is the state `CP-4` reported, and spaces are what eleven of the
+        // twelve shipped languages want.
+        None if host.flag(EXPAND_TAB) == Some(false) => "\t".to_owned(),
+        None => " ".repeat(tab_width),
+    };
+    IndentStyle { unit, tab_width }
 }
 
 // ---------------------------------------------------------------------------
@@ -1454,11 +1577,12 @@ fn dispatch(matches: &ArgMatches) -> Result<ExitCode, Box<dyn Error>> {
         return Ok(door::run(&call, Some(&mut Vm(&mut runtime)))?);
     }
 
-    // `required_unless_present_any` is what makes this total: clap has already
-    // refused a command line with none of a file, `--eval` and `--repl`.
-    if cli.path.is_none() && !cli.repl {
-        return Err("give a file to open, an expression to evaluate, or --repl".into());
-    }
+    // No file is a command line, not a mistake (`T107`). The argument used to
+    // carry `required_unless_present_any = ["eval", "repl"]` and this used to be
+    // a second refusal behind it, so `phosphor` answered clap's *"the following
+    // required arguments were not provided"* and exited `2` — a usage error for
+    // the most ordinary thing you can type. [`run`] opens an empty buffer with
+    // no name instead.
     run(&cli)?;
     Ok(ExitCode::SUCCESS)
 }
@@ -1523,9 +1647,13 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 Some(file.clone()),
             )
         }
-        // `--repl` with no file. The REPL is a surface of its own and `6b`
-        // draws no buffer behind it; an empty buffer is what `esc` lands on,
-        // and the statusline says so by drawing no file segment at all.
+        // **No file at all** — `--repl`, and since `T107` a bare `phosphor`.
+        // One arm for both, because they are the same buffer: `"text"` is the
+        // grammar for a name no declaration claims and a buffer with no name
+        // claims none either, so the language machinery degrades through the
+        // path it already had ([`adopt`] returns `None` and `grammar_of` is
+        // never asked). The statusline says so by drawing no file segment at
+        // all — see the notice below for why that is the whole answer.
         None => (buffer("text", "", &theme)?, None),
     };
     let (dirty, edits) = dirty_flag(&mut editor);
@@ -1580,7 +1708,18 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // A journal that could not be opened outranks *"new file"* for the reason
     // the `:e` arm gives: one row, two true things, and the surprising one has
     // to be the one said out loud.
-    let mut notice: Option<String> = restore_note.or_else(|| fresh.as_deref().map(new_file));
+    //
+    // **The third rung is `T107`'s** and it is last because it is the least
+    // surprising of the three. `IMPLEMENTATION-PLAN.md`'s third invariant is
+    // *nothing moves unless you asked*, not *nothing is said*: a bare
+    // `phosphor` has no surface in front of it explaining itself the way
+    // `--repl` does, so the one row of chrome says what this buffer is and what
+    // turns it into a file. `Surface::Buffer` is the guard rather than
+    // `cli.repl`, because a boot fault and the `--float` fixture are also
+    // surfaces that answer the question themselves.
+    let mut notice: Option<String> = restore_note
+        .or_else(|| fresh.as_deref().map(new_file))
+        .or_else(|| (editing.file.is_none() && matches!(surface, Surface::Buffer)).then(no_file));
 
     // `T035`'s latch, and the row it produced. The latch is per *session*,
     // which is what makes it the loop's and not the buffer's; the row lives
@@ -1670,6 +1809,16 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // Free when the width has not changed, and it moves no viewport.
             soft_wrap::wrap_to(&mut editing.editor, body);
         }
+        // `T104` — what one indent level is, and how wide a `\t` draws. Both
+        // are read per pass for the reason `soft-wrap` and the completion floor
+        // are: the option is the editor layer's, `(set-option! …)` at the REPL
+        // has to reach the next keystroke, and a value cached at boot would
+        // make the setting a fact about the last restart. `set_tab_width` is
+        // free when the number has not moved and rebuilds the row stream when
+        // it has, because a wider tab moves every wrap point.
+        editing.indent_style = indent_style(&host, &host.languages(), editing.language.as_ref());
+        editing.editor.set_tab_width(editing.indent_style.tab_width);
+
         // `8e`'s whitespace marks are INSERT-only, and the mode is the
         // machine's — the first thing in this loop that is not hardcoded.
         //
@@ -2242,6 +2391,13 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         if let Some(language) = editing.restart.take() {
             servers.restart(&language);
             notice = Some(format!("restarting {}'s language server", language.0));
+        }
+        // `T107` — an Action that succeeded and has something to say anyway.
+        // Drained before the refusal below because the two cannot both be set
+        // by one key and the order should still be the honest one: a refusal is
+        // what the key *did*, and a note is a caveat on what it did.
+        if let Some(note) = editing.note.take() {
+            notice = Some(note);
         }
         // `T098` — a key that was refused says why, the way an ex line does.
         if let Some(refusal) = editing.refused.take() {
@@ -3087,6 +3243,112 @@ impl Timeline {
         Ok(timeline)
     }
 
+    /// Gives a detached history somewhere to write itself, now that the buffer
+    /// has a file (`T107`).
+    ///
+    /// Answers whatever the row has to say about it. A failure leaves the
+    /// timeline exactly as it was — the caller has already written the text to
+    /// disk, so a failure here costs the *history* and never the file. That is
+    /// [`Timeline::opened`]'s rule (*"a history is not the file"*) at the other
+    /// end of a buffer's life.
+    ///
+    /// # Why the tree is replayed rather than the log simply opened
+    ///
+    /// A scratch buffer arrives here with a tree the journal has never seen,
+    /// and [`journal::undo::History`]'s fold requires node ids to be **dense
+    /// and in creation order** (`FoldError::OutOfOrder`). Appending only what
+    /// happens *after* the write would hand a fresh log a `Node { id: 7 }` as
+    /// its first record, which the fold refuses and [`Timeline::append`] then
+    /// answers by dropping the log — a history that silently stops persisting,
+    /// which is the exact failure this whole subsystem is least able to notice.
+    /// So the seed is the whole tree, in the same record sequence
+    /// `History::snapshot` writes on a compaction, and everything typed into
+    /// the scratch buffer survives the next open rather than only what follows
+    /// the save.
+    ///
+    /// # A journal that is already there is replaced, and the row says so
+    ///
+    /// **The first version of this left it alone and that was a corruption**,
+    /// found by the test that now pins the fix. `:write <path>` onto an
+    /// existing file replaces its bytes wholesale, so the tree under that key
+    /// describes text that is gone — and a tree that is merely *stale* is worse
+    /// than one that is missing, because nothing downstream can tell. The
+    /// measurement: a file holding `owned\n` with one saved edit, written over
+    /// by a scratch buffer holding `new`, reopened, `u` — and the buffer became
+    /// `ew`, because undo applied the inverse of an edit against text that no
+    /// longer existed. [`Timeline::open_at`]'s own rule is the one being
+    /// followed here (*"a tree that matches disk nowhere is not a history of
+    /// this file at all, and is dropped"*); it only checks the case where
+    /// `saved` is absent, and this is the case where `saved` is present and
+    /// wrong.
+    ///
+    /// So the old journal goes and the row says it went, because a history
+    /// disappearing silently is the half a person would want back. **A journal
+    /// belonging to a *different* file still stops this**: that is Q1's
+    /// collision guard, the same check and the same sentence
+    /// [`Timeline::open_at`] uses, and deleting somebody else's history over a
+    /// hash collision is not a thing a save may do.
+    fn attach(&mut self, file: &Path) -> Option<String> {
+        // **Said out loud rather than branched on.** This read
+        // `if self.log.is_some() { return None; }`, which looked like a real
+        // case and was none: [`Editing::write`] is the only caller and it calls
+        // this behind `!named`, while `run` pairs a `Timeline::opened` log with
+        // a file and `Timeline::detached`'s `None` with no file — so a buffer
+        // reaching here has no journal by construction. The other direction
+        // (`opened` failing and answering `detached()`) leaves the file set, so
+        // `named` is true and this is not called at all.
+        debug_assert!(
+            self.log.is_none(),
+            "a buffer with no file name had a journal open on it"
+        );
+        match self.attach_at(file) {
+            Ok(note) => note,
+            Err(reason) => Some(reason),
+        }
+    }
+
+    fn attach_at(&mut self, file: &Path) -> Result<Option<String>, String> {
+        let canonical = journal_key(file)?;
+        let origin = canonical.to_string_lossy().to_string();
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let dir = journal::workspace_dir(&root).map_err(|error| error.to_string())?;
+        let path = journal::undo_path(&dir, &canonical);
+        let (log, _recovery) =
+            Log::<wire_undo::History>::open(&path).map_err(|error| error.to_string())?;
+        if log.state().origin().is_some_and(|owner| owner != origin) {
+            return Err(format!(
+                "{}: an undo journal for another file lives here",
+                path.display()
+            ));
+        }
+        // `nodes()` is never empty — index `0` is the root — so *more than the
+        // root* is what "this key already holds a history" means. `origin` is
+        // checked too, because a journal whose only record is its own origin is
+        // still one this session did not write.
+        let occupied = log.state().nodes().len() > 1 || log.state().origin().is_some();
+        drop(log);
+        if occupied {
+            std::fs::remove_file(&path).map_err(|error| error.to_string())?;
+        }
+        let (mut log, _recovery) =
+            Log::<wire_undo::History>::open(&path).map_err(|error| error.to_string())?;
+        for record in seeding(&self.tree, origin) {
+            log.append(record).map_err(|error| error.to_string())?;
+        }
+        self.log = Some(log);
+        // **No path in front of it**, unlike every other notice this file
+        // composes. §11's rule is that the statusline truncates from the right
+        // and never wraps, and the path here is one the user typed a keystroke
+        // ago — leading with it costs exactly the half of the sentence that
+        // says what happened. Measured: at 120 columns a path-prefixed version
+        // of this row was shed mid-clause, leaving a fact about the file where
+        // the consequence should have been.
+        Ok(occupied.then(|| {
+            "undo history replaced — the one here described the text this write overwrote"
+                .to_owned()
+        }))
+    }
+
     /// Appends a record, and drops the log if the write fails.
     ///
     /// A journal that cannot be written is not a reason to stop editing, and it
@@ -3150,6 +3412,52 @@ fn journalled(
         before: caret_out(change.before),
         after: caret_out(change.after),
     }
+}
+
+/// A whole live tree as the records that reproduce it (`T107`).
+///
+/// **The order is `journal::undo::History::snapshot`'s and that is not a
+/// coincidence** — it is the one sequence the fold is known to accept, because
+/// it is what every compaction already writes and what every reopen already
+/// reads. Two things in it are easy to get wrong from first principles and are
+/// therefore copied rather than re-derived:
+///
+/// * **Replaying the nodes leaves every branch point pointing at its newest
+///   child**, because the fold sets `redo_child` as each node arrives. So a
+///   `Redo` record is needed exactly where the live tree's `redo_child` is not
+///   its last child, and nowhere else.
+/// * **The trailing `Cursor` re-points the path** from the newest leaf back to
+///   where the buffer actually is. Without it a scratch buffer that was undone
+///   before it was saved would reopen at the wrong node.
+///
+/// No `Saved` record: [`Editing::write`] appends one the moment this returns,
+/// and it is the whole reason the journal is opened at that instant.
+fn seeding(tree: &UndoTree, origin: String) -> Vec<wire_undo::Record> {
+    let id_of = |index: usize| NodeId(u64::try_from(index).unwrap_or(u64::MAX));
+    let mut out = vec![wire_undo::Record::Origin { path: origin }];
+    for (index, node) in tree.nodes().iter().enumerate().skip(1) {
+        // Only the root has no parent and no change, and `skip(1)` is past it.
+        // A `continue` here would leave a gap in the ids and the fold would
+        // refuse the next record, so this is unreachable rather than lenient.
+        let (Some(parent), Some(change)) = (node.parent, node.change.as_ref()) else {
+            continue;
+        };
+        out.push(journalled(id_of(index), parent, change));
+    }
+    for (index, node) in tree.nodes().iter().enumerate() {
+        if let Some(child) = node.redo_child
+            && node.children.last() != Some(&child)
+        {
+            out.push(wire_undo::Record::Redo {
+                node: id_of(index).0,
+                child: child.0,
+            });
+        }
+    }
+    out.push(wire_undo::Record::Cursor {
+        to: tree.current().0,
+    });
+    out
 }
 
 fn caret_out(caret: Caret) -> wire_undo::Caret {
@@ -3267,6 +3575,16 @@ struct Editing {
     /// into the notice by the loop, which is where "what the last thing you did
     /// answered" already lives.
     refused: Option<Refusal>,
+    /// Something true the last Action could not say through its [`Outcome`].
+    ///
+    /// **One writer, and `T107` is why it exists**: `:write <path>` at a buffer
+    /// with no file *succeeds* and may still fail to give that buffer's history
+    /// somewhere to live ([`Timeline::attach`]). A [`Refusal`] would be a lie —
+    /// the text is on disk — and silence would be the failure mode `T030`'s
+    /// journal is least able to notice, so the surprising half rides the notice
+    /// row beside [`Editing::refused`], the way [`Timeline::opened`]'s already
+    /// does at startup.
+    note: Option<String>,
     /// A key nothing was bound to (`T035`). Drained by the loop, because
     /// *"once per session, never again"* is session state and this struct is
     /// per buffer.
@@ -3293,6 +3611,18 @@ struct Editing {
     /// no comment syntax, and `gc` in one must do nothing rather than corrupt
     /// the file.
     comment_prefix: Option<String>,
+    /// What one indent level is, for `>`, `<` and `<tab>` (`T104`).
+    ///
+    /// **Refreshed by the loop on every pass, not set when the buffer opens**,
+    /// and the two neighbours above show why the difference matters:
+    /// [`Editing::comment_prefix`] is deliberately fixed at open, because
+    /// re-deriving it under the cursor would change what `gc` inserts halfway
+    /// through a session. An indent unit is the opposite — it comes from
+    /// `set-option!` as well as from the declaration, and `(set-option!
+    /// "tab-width" 8)` typed at the REPL has to reach the very next `>>`. So
+    /// this field is a per-pass copy of [`indent_style`]'s answer and never a
+    /// snapshot of it.
+    indent_style: IndentStyle,
     /// `T038`/`T039`'s ask: which *"tell me about this place"* request the last
     /// key made. Drained by the loop, which is the only thing holding the
     /// servers.
@@ -3469,10 +3799,18 @@ impl Editing {
             prompt: None,
             help: None,
             refused: None,
+            note: None,
             unknown: None,
             language: None,
             server: None,
             comment_prefix: None,
+            // The shipped defaults, which the loop overwrites before the first
+            // key is handled. Not an `Option`: `>` with nothing set has to mean
+            // something, and *four spaces* is the answer this build documents.
+            indent_style: IndentStyle {
+                unit: " ".repeat(TAB_WIDTH_DEFAULT),
+                tab_width: TAB_WIDTH_DEFAULT,
+            },
             lookup: None,
             restart: None,
             question: None,
@@ -3582,6 +3920,10 @@ impl Editing {
             }
             Action::Buffer(BufferAction::Indent { target, delta }) => {
                 self.indent(target, *delta);
+                done()
+            }
+            Action::Buffer(BufferAction::InsertIndent {}) => {
+                self.insert_indent();
                 done()
             }
             Action::Buffer(BufferAction::JoinLines { target }) => {
@@ -4011,7 +4353,20 @@ impl Editing {
     /// what makes `[+]` mean *"different from the file"* rather than
     /// *"touched"*: undoing back past a write makes the buffer clean again,
     /// because [`UndoTree::is_modified`] is node identity and not a flag.
+    ///
+    /// # `:write <path>` at a buffer that had no file — `T107`
+    ///
+    /// The refusal below is the whole of what `:write` could do at a buffer
+    /// with no name, and it is unchanged: there is nothing to write to, and
+    /// guessing a name is the one thing an editor must not do with a person's
+    /// text. What is new is the line after the write — the moment a buffer
+    /// **gains** its first file is the moment its history gains somewhere to
+    /// live, and until `T107` that moment passed silently. A scratch buffer
+    /// written to `notes.md` kept undoing for the rest of the session and then
+    /// reopened with an empty history, which is the one failure `T030`'s
+    /// journal exists to prevent and the one shape nothing was watching.
     fn write(&mut self, path: Option<&Path>) -> Result<(), String> {
+        let named = self.file.is_some();
         let target = path
             .map(Path::to_path_buf)
             .or_else(|| self.file.clone())
@@ -4019,6 +4374,15 @@ impl Editing {
         let code = self.editor.code_ref();
         let text = code.slice(0, code.len_chars());
         std::fs::write(&target, text).map_err(|error| format!("{}: {error}", target.display()))?;
+        // **After the write and before `mark_saved`.** After, because
+        // [`journal_key`] canonicalizes and a journal keyed on a path that does
+        // not exist yet is keyed on a guess; before, because the `Saved` record
+        // three lines down is the first thing this history should say about
+        // disk, and a journal attached after it would never record the save it
+        // was opened by.
+        if !named {
+            self.note = self.timeline.attach(&target);
+        }
         self.timeline.tree.mark_saved();
         let node = self.timeline.tree.saved().map(|node| node.0);
         self.timeline.append(wire_undo::Record::Saved { node });
@@ -4628,15 +4992,60 @@ impl Editing {
         Ok(())
     }
 
+    /// Types one indent level at the cursor — what `<tab>` does in insert mode
+    /// (`T104`).
+    ///
+    /// **Not [`Editing::indent`] with a one-line target.** That shifts the
+    /// whole line from wherever the caret is, which is vim's `<C-t>`; `<Tab>`
+    /// types at the cursor, and mid-line those are different edits.
+    ///
+    /// The column is a **display** column, not a character count
+    /// (`Code::char_col_to_visual`), which is the arithmetic this repo has
+    /// shipped three bugs from: press `<tab>` after a CJK character and the
+    /// stop it advances to is measured from the two cells that character
+    /// occupies, not from the one `char` it is.
+    ///
+    /// **In `R` this overwrites, exactly as [`Editing::accept`]'s fall-through
+    /// does.** `Scope::of` folds `EditMode::Replace` into the insert scope, so
+    /// the `<tab>` row binds in `R` too — and a version of this that always
+    /// spliced made `R` into `i` for one more key, which is the third time this
+    /// window found that shape (`<space>`, `<cr>`, and now this).
+    ///
+    /// **One character, not one level.** `R<Tab>` over `abcdefgh` with a
+    /// four-cell stop gives `    bcdefgh`: the tab spends four cells and
+    /// consumes one character, so the line grows. Measured against
+    /// `nvim -u NONE` with `set expandtab tabstop=4 softtabstop=0` this
+    /// session, which is where the earlier claim that vim inserts here came
+    /// from and did not survive being run.
+    fn insert_indent(&mut self) {
+        let cursor = self.editor.get_cursor();
+        let code = self.editor.code_ref();
+        let line = code.char_to_line(cursor);
+        let column = code.char_col_to_visual(line, cursor - code.line_to_char(line));
+        let typed = self.indent_style.typed_at(column);
+        let over = if self.mode == EditMode::Replace {
+            self.line_end(cursor).min(cursor + 1)
+        } else {
+            cursor
+        };
+        self.begin();
+        self.splice(cursor, over, &typed);
+        self.commit();
+    }
+
     /// Shifts whole lines by one indent level, as `>` and `<` mean it.
     ///
     /// One batch for the whole range ([`Editing::begin`] is re-entrant), so
     /// `>` over ten lines is one undo step rather than ten.
+    ///
+    /// **The unit is [`Editing::indent_style`]'s and no longer the fork's.**
+    /// It was `Code::indent` — a `match` on the grammar name inside
+    /// `vendor/ratatui-code-editor` that nothing a user writes could reach.
     fn indent(&mut self, target: &Target, delta: i64) {
         let Some((from, to)) = self.target_range(target) else {
             return;
         };
-        let unit = self.editor.code_ref().indent();
+        let unit = self.indent_style.unit.clone();
         let first = self.editor.code_ref().char_to_line(from);
         let last = self
             .editor
@@ -4897,6 +5306,9 @@ impl Session<'_> {
     /// what makes `.` correct: a replay resolves its spans against the buffer as
     /// it is when the replayed key arrives, not as it was when `.` was pressed.
     fn key(&mut self, pressed: Key) {
+        // One key is one sentence, and it is the **first** one — see the write
+        // below, which is the only thing that reads this.
+        let mut said = false;
         let mut queue = std::collections::VecDeque::from([(pressed, 0_u8)]);
         while let Some((pressed, depth)) = queue.pop_front() {
             let emitted = {
@@ -4911,11 +5323,22 @@ impl Session<'_> {
                     // and that is why a deferred binding read as a broken one —
                     // the ex line has always spoken its refusals and a keystroke
                     // never did, so `q` bound to something unbuilt looked
-                    // exactly like `q` bound to nothing. Last refusal wins: one
-                    // key is one sentence, and the last Action is the one that
-                    // failed to finish what the key asked for.
-                    if let Outcome::Refused(refusal) = self.editing.apply(&action) {
+                    // exactly like `q` bound to nothing.
+                    //
+                    // **First refusal wins, and it used to be the last.** A
+                    // `key/run` row is several Actions and the later ones fail
+                    // *because* the earlier one did: `ZZ` is `save-buffer` then
+                    // `quit`, so on a buffer with no name it said `unsaved work
+                    // — force it or save first` and swallowed `no file name —
+                    // :write <path>`, which is the half that says what to type.
+                    // Found by hand at `CP-4`. [`submit_ex`] has always taken
+                    // the first — it is a `find_map` — so `:wq` and `ZZ` are
+                    // the same Action list and were answering differently.
+                    if let Outcome::Refused(refusal) = self.editing.apply(&action)
+                        && !said
+                    {
                         self.editing.refused = Some(refusal);
+                        said = true;
                     }
                     continue;
                 };
@@ -4952,9 +5375,12 @@ impl Session<'_> {
                     // of succeeding silently, which is the failure the whole
                     // deferred-keys section exists to end.
                     InputAction::SetMacroRecording { .. } => {
-                        self.editing.refused = Some(Refusal::NotYetImplemented {
-                            task: action.spec().since.task,
-                        });
+                        if !said {
+                            self.editing.refused = Some(Refusal::NotYetImplemented {
+                                task: action.spec().since.task,
+                            });
+                            said = true;
+                        }
                     }
                 }
             }
@@ -5002,6 +5428,11 @@ const fn moves_cursor(action: &Action) -> bool {
                 | BufferAction::Delete { .. }
                 | BufferAction::Replace { .. }
                 | BufferAction::Paste { .. }
+                // `T104`. `CP-4` found `accept-completion` missing from this
+                // list and the symptom was that enter stopped scrolling — you
+                // type where you cannot see. `insert-indent` writes at the
+                // cursor and moves it, so it belongs here for the same reason.
+                | BufferAction::InsertIndent { .. }
         ) | Action::History(HistoryAction::Undo { .. } | HistoryAction::Redo { .. })
             | Action::Lsp(LspAction::AcceptCompletion { .. })
     )
@@ -5627,6 +6058,24 @@ fn new_file(file: &Path) -> String {
     format!("{}: new file — :w creates it", file.display())
 }
 
+/// What the first frame of a bare `phosphor` says (`T107`).
+///
+/// **Not `[No Name]`, and the difference is the point.** vim names the absence
+/// and stops; the one question a person has at a buffer with no file is what
+/// turns it into one, and §6's rule is that the UI teaches the whole command
+/// — *"never cryptic contractions"*. So this is the same sentence
+/// [`Editing::write`] refuses with, said before it is asked rather than after,
+/// and typing `:write` at this buffer produces no new information.
+///
+/// It rides the notice row, so the next keystroke spends it. That is deliberate
+/// — §6 is telegraphic and this is an opening line, not a state — and it is why
+/// the *statusline* is left drawing nothing where a file would go: a permanent
+/// `[No Name]` would be a segment saying the same thing every frame for the
+/// rest of the session.
+fn no_file() -> String {
+    "no file — :write <path> creates one".to_owned()
+}
+
 /// The grammar the fork should parse `path` with, off the declarations
 /// (`T037`).
 ///
@@ -5670,8 +6119,18 @@ fn grammar_of<'a>(languages: &'a Languages, path: &Path) -> &'a str {
 /// Rust file does not start a second rust-analyzer; it re-roots the one that is
 /// running, which is what a different project root would need anyway.
 ///
-/// A buffer with no file — `--repl`, and `C-c buffer` — tells no server
-/// anything. There is no document to open: a server addresses files.
+/// A buffer with no file — `--repl`, `C-c buffer`, and since `T107` a bare
+/// `phosphor` — tells no server anything. There is no document to open: a
+/// server addresses files.
+///
+/// **And it stays that way until the buffer is opened again.** `:write
+/// notes.rs` gives a scratch buffer a name; it does not re-run this, so the
+/// language, the grammar and the server are still the ones a nameless buffer
+/// had. That is deliberate rather than pending: adopting a grammar means
+/// rebuilding the `Editor` the way the `open-file` arm does, which throws away
+/// the cursor and the selection of a buffer the user is still in the middle of.
+/// `:e` on the file the write just created is the door that already exists, and
+/// it costs one command rather than a surprise.
 ///
 /// # The table is asked for again at every open, and that is `T037`'s criterion
 ///
@@ -5779,11 +6238,16 @@ mod tests {
     use phosphor_core::input::text::Text as _;
     use phosphor_ui::float::{CompletionList, FloatBody as _, anchored_wrap_cols};
 
+    use phosphor_core::language::Languages;
+    use phosphor_core::request::LanguageId;
+
     use super::{
-        AppHost, COMPLETION_MIN_CHARS, COMPLETION_MIN_CHARS_DEFAULT, Editing, ExStep, Intent, Key,
-        Layer, Lookup, Machine, Outstanding, Repl, ReplStep, Session, StatusVm, Surface, Table, Vm,
-        WireCompletion, boot, buffer, closes_surface, completion_floor, decode, deliver, ex_key,
-        grammar_of, is_press, repl_key, server_chip, split, submit_ex, vm,
+        AppHost, COMPLETION_MIN_CHARS, COMPLETION_MIN_CHARS_DEFAULT, Caret, Cli,
+        CommandFactory as _, EXPAND_TAB, Editing, ExStep, FromArgMatches as _, IndentStyle, Intent,
+        Key, Layer, Lookup, Machine, NodeId, Outstanding, Repl, ReplStep, Session, StatusVm,
+        Surface, TAB_WIDTH, Table, UndoTree, Vm, WireCompletion, boot, buffer, closes_surface,
+        completion_floor, decode, deliver, door, ex_key, grammar_of, indent_style, is_press,
+        repl_key, restored, seeding, server_chip, split, submit_ex, vm, wire_undo,
     };
 
     fn event(code: KeyCode) -> KeyEvent {
@@ -6430,11 +6894,23 @@ mod tests {
 
     impl Typed {
         fn on(text: &str) -> Self {
+            Self::with_dirty(text, false)
+        }
+
+        /// The same buffer with the loop's dirty flag already raised, which is
+        /// what a `quit` that is not forced reads. `Typed::on`'s flag is `false`
+        /// and stays false — nothing in these tests owns the other end of that
+        /// `Rc` — so a test about *refusing to leave* has to set it here.
+        fn unsaved(text: &str) -> Self {
+            Self::with_dirty(text, true)
+        }
+
+        fn with_dirty(text: &str, dirty: bool) -> Self {
             let theme = super::builtin("phosphor-dark").expect("a shipped theme");
             let mut editing = Editing::new(
                 buffer("text", text, &theme).expect("a buffer"),
                 None,
-                std::rc::Rc::new(std::cell::Cell::new(false)),
+                std::rc::Rc::new(std::cell::Cell::new(dirty)),
             );
             editing.area = Rect::new(0, 0, 80, 24);
             let (layer, _host) = booted();
@@ -6464,6 +6940,34 @@ mod tests {
         fn content(&self) -> String {
             self.editing.editor.get_content()
         }
+    }
+
+    /// **`ZZ` on a buffer with no name says what would give it one** — found by
+    /// hand at `CP-4`.
+    ///
+    /// `ZZ` is one row and two Actions, `save-buffer` then `quit`, and both
+    /// refuse here: the buffer has no file and the work is unsaved. The notice
+    /// slot holds one sentence, and it used to hold the **last** — *"unsaved
+    /// work — force it or save first"*, which tells a person to do the thing
+    /// they just tried and never names the command that would do it.
+    ///
+    /// The same two Actions through the ex line ([`submit_ex`], a `find_map`)
+    /// have always answered with the first, so `:wq` and `ZZ` were two doors
+    /// onto one list giving different answers. This is the keystroke door
+    /// agreeing.
+    ///
+    /// **This bites:** drop the `&& !said` from [`Session::key`]'s refusal
+    /// write and this reads `unsaved work — force it or save first`.
+    #[test]
+    fn zz_with_nothing_to_write_to_names_the_write_and_not_the_quit() {
+        let mut typed = Typed::unsaved("precious");
+        typed.keys("ZZ");
+        assert_eq!(
+            typed.editing.refused.as_ref().map(answer::why).as_deref(),
+            Some("no file name — :write <path>"),
+            "the cause, not the consequence"
+        );
+        assert!(!typed.editing.quit, "and it is still open to be saved in");
     }
 
     #[test]
@@ -6745,6 +7249,228 @@ mod tests {
         );
     }
 
+    // -- `T104` — what one indent level is ----------------------------------
+
+    /// A `Languages` table with one declaration, so a test can say what the
+    /// language declares without booting a layer.
+    fn declaring(language: &str, indent: Option<&str>) -> (Languages, LanguageId) {
+        let mut languages = Languages::new(["rust"]);
+        let id = LanguageId(language.to_owned());
+        languages
+            .declare(
+                id.clone(),
+                phosphor_core::request::LanguageSpec {
+                    extensions: vec!["zz".to_owned()],
+                    grammar: None,
+                    lsp_command: Vec::new(),
+                    comment_prefix: None,
+                    indent: indent.map(str::to_owned),
+                },
+            )
+            .expect("a declaration these tests wrote");
+        (languages, id)
+    }
+
+    /// The three answers `>` can get, and which one wins.
+    ///
+    /// **The precedence is the assertion.** Every line below sets `tab-width`
+    /// to 8, so a resolver that ignored the declaration would answer eight
+    /// spaces in all three cases and a resolver that ignored the option would
+    /// answer four — neither passes.
+    #[test]
+    fn a_declaration_beats_the_option_and_the_option_beats_the_default() {
+        let host = AppHost::new(None);
+        let set = |key: &str, value: Value| {
+            drop(ask(
+                &host,
+                Action::Runtime(RuntimeAction::SetOption {
+                    key: key.to_owned(),
+                    value,
+                }),
+            ));
+        };
+
+        // Nothing set anywhere: the documented default, and the literal rather
+        // than the constant, because the number is the decision.
+        let (languages, id) = declaring("toy", None);
+        assert_eq!(indent_style(&host, &languages, Some(&id)).unit, "    ");
+
+        // The option alone.
+        set(TAB_WIDTH, Value::Int(8));
+        assert_eq!(indent_style(&host, &languages, Some(&id)).unit, "        ");
+
+        // `expand-tab` off is a real tab, whatever the width — the width is
+        // then how wide it *draws*, which is the tab_width the fork is told.
+        set(EXPAND_TAB, Value::Bool(false));
+        let style = indent_style(&host, &languages, Some(&id));
+        assert_eq!(style.unit, "\t");
+        assert_eq!(style.tab_width, 8);
+
+        // And a declaration beats both of them, in either direction: a
+        // narrower unit than the global, in a build set to tabs.
+        let (declared, declared_id) = declaring("toy", Some("  "));
+        assert_eq!(
+            indent_style(&host, &declared, Some(&declared_id)).unit,
+            "  "
+        );
+
+        // A file no declaration claims takes the global answer rather than
+        // falling over — second tier is a normal state.
+        assert_eq!(indent_style(&host, &declared, None).unit, "\t");
+    }
+
+    /// **`<tab>` advances to a stop; it does not type a fixed count.** Two
+    /// characters in, a four-cell unit types two spaces — the difference
+    /// between a tabstop and a substitution, and the reason a file indented by
+    /// pressing this key draws the same as one indented with `\t`.
+    #[test]
+    fn a_tab_press_types_the_cells_left_to_the_next_stop() {
+        let style = IndentStyle {
+            unit: "    ".to_owned(),
+            tab_width: 4,
+        };
+        assert_eq!(style.typed_at(0), "    ");
+        assert_eq!(style.typed_at(1), "   ");
+        assert_eq!(style.typed_at(2), "  ");
+        assert_eq!(style.typed_at(3), " ");
+        assert_eq!(style.typed_at(4), "    ");
+
+        // A tab unit types one character and lets the renderer do it.
+        let tabs = IndentStyle {
+            unit: "\t".to_owned(),
+            tab_width: 4,
+        };
+        assert_eq!(tabs.typed_at(0), "\t");
+        assert_eq!(tabs.typed_at(3), "\t");
+
+        // A two-space unit stops every two columns, not every four: one press
+        // is one *level*, and the level is what was declared.
+        let narrow = IndentStyle {
+            unit: "  ".to_owned(),
+            tab_width: 4,
+        };
+        assert_eq!(narrow.typed_at(1), " ");
+        assert_eq!(narrow.typed_at(2), "  ");
+    }
+
+    /// **`<tab>` through the shipped keymap**, which is the half a unit test of
+    /// [`IndentStyle`] cannot reach: `runtime/keymaps.scm` has to bind the key
+    /// in the insert scope, or it falls through to `Machine::insert_key`'s
+    /// literal `"\t"` and this reads one character instead of four.
+    #[test]
+    fn tab_types_one_indent_level_through_the_shipped_keymap() {
+        assert_eq!(Typed::on("").keys("i<tab>x").content(), "    x");
+        // Two characters in, the stop is two cells away — not another four.
+        assert_eq!(Typed::on("ab").keys("A<tab>x").content(), "ab  x");
+    }
+
+    /// **Cells, not characters.** `漢` is one `char` and two columns, so the
+    /// stop after it is two cells away. A column counted in `char`s would type
+    /// three spaces and leave the `x` at column 4 rather than 4 cells in.
+    #[test]
+    fn a_tab_after_a_wide_character_advances_by_cells() {
+        assert_eq!(Typed::on("漢").keys("A<tab>x").content(), "漢  x");
+    }
+
+    /// **`R` is still vim's `R`, for the third key this window has had to teach
+    /// it.** `Scope::of` folds `EditMode::Replace` into the insert scope, so
+    /// the `<tab>` row binds there too, and
+    /// [`Editing::insert_indent`] spliced unconditionally — which made `R` into
+    /// `i` exactly as the `<space>` and `<cr>` fall-through had before it.
+    ///
+    /// The two cases are the whole behaviour: a tab spends the cells left to
+    /// the stop, and consumes **one character** doing it. Measured against
+    /// `nvim -u NONE` with `set expandtab tabstop=4 softtabstop=0` this
+    /// session: `R<Tab>` over `abcdefgh` gives `····bcdefgh` and `Rx<Tab>`
+    /// gives `x···cdefgh`, both reproduced below.
+    ///
+    /// **This bites:** drop the `EditMode::Replace` arm from `insert_indent`
+    /// and the first case keeps its `a` (`    abcdefgh`) and the second its `b`
+    /// (`x   bcdefgh`) — the line grows by a whole level and nothing is
+    /// replaced, which is `i`.
+    #[test]
+    fn a_tab_in_replace_mode_overwrites_the_character_it_lands_on() {
+        assert_eq!(
+            Typed::on("abcdefgh").keys("R<tab>").content(),
+            "    bcdefgh"
+        );
+        // And from column 1, where a stop and a fixed four cannot be confused:
+        // three spaces, one character eaten.
+        assert_eq!(
+            Typed::on("abcdefgh").keys("Rx<tab>").content(),
+            "x   cdefgh"
+        );
+    }
+
+    /// **A tab at the end of a line in `R` appends rather than eating the
+    /// newline**, which is [`Editing::line_end`]'s clamp and the same rule
+    /// [`Editing::accept`] follows. Without it the `\n` is the character under
+    /// the cursor and `R<Tab>` at the end of a line joins it to the next one.
+    #[test]
+    fn a_tab_in_replace_mode_at_the_end_of_a_line_keeps_the_newline() {
+        // `Rxy` overwrites both characters and leaves the caret *on* the
+        // newline, which is the only place the clamp is load-bearing. Without
+        // it the tab eats the `\n` and joins the two lines: `xy  cd`.
+        assert_eq!(
+            Typed::on("ab\ncd\n").keys("Rxy<tab>").content(),
+            "xy  \ncd\n"
+        );
+    }
+
+    /// **`>` shifts by the same unit `<tab>` types**, which is the whole of
+    /// *"the unit comes from something a user set"*: both read
+    /// [`Editing::indent_style`], and nothing reads `Code::indent` any more.
+    ///
+    /// `>` is pressed here for the first time in this build's history — the arm
+    /// and the binding both existed and `TASKS.md` records that no test in
+    /// `crates/phosphor/tests/` or `crates/phosphor-core/tests/` had ever typed
+    /// one.
+    #[test]
+    fn the_shift_operator_uses_the_unit_the_layer_set() {
+        let mut typed = Typed::on("a\nb\n");
+        typed.editing.indent_style = IndentStyle {
+            unit: "  ".to_owned(),
+            tab_width: 4,
+        };
+        assert_eq!(typed.keys(">>").content(), "  a\nb\n");
+        // And `<` takes the same unit back off, so the pair is symmetric under
+        // a setting neither of them names.
+        assert_eq!(typed.keys("<<").content(), "a\nb\n");
+
+        // A tab unit writes a tab, which is what a `go` declaration would get.
+        let mut tabs = Typed::on("a\n");
+        tabs.editing.indent_style = IndentStyle {
+            unit: "\t".to_owned(),
+            tab_width: 4,
+        };
+        assert_eq!(tabs.keys(">>").content(), "\ta\n");
+    }
+
+    /// **The option names are one string on both sides of the barrier.**
+    /// Renaming a constant without renaming it in `runtime/init.scm` leaves the
+    /// layer setting a key nothing reads and the width silently back at its
+    /// Rust default — the same silent-revert shape
+    /// `the_completion_floor_falls_back_and_reads_only_counts` guards, and the
+    /// same one `CP-4` reported.
+    #[test]
+    fn the_shipped_layer_sets_the_indent_options_this_file_reads() {
+        let init = std::fs::read_to_string(tree().join("init.scm"))
+            .expect("the shipped layer is where the workspace keeps it");
+        for option in [TAB_WIDTH, EXPAND_TAB] {
+            assert!(
+                init.contains(&format!("(set-option! \"{option}\"")),
+                "runtime/init.scm does not set {option}"
+            );
+        }
+        // And the key is bound, or none of the above is reachable by typing.
+        let keymaps = std::fs::read_to_string(tree().join("keymaps.scm"))
+            .expect("the shipped keymap is where the workspace keeps it");
+        assert!(
+            keymaps.contains(r#"(list "<tab>" (key/run (key/cmd "insert-indent"))"#),
+            "runtime/keymaps.scm does not bind <tab>"
+        );
+    }
+
     /// **A scripted selection does not anchor the next visual mode** (`CP-4`
     /// review).
     ///
@@ -7008,6 +7734,64 @@ mod tests {
             "the viewport followed the cursor down; it was still on row {} \
              with the cursor on line 31, which is eight rows below a 10-row window",
             editing.editor.get_offset_y()
+        );
+        assert!(
+            editing
+                .editor
+                .get_visible_cursor(&editing.area)
+                .is_some_and(|(_, y)| u32::from(y) < u32::from(editing.area.height)),
+            "and the cursor is on screen rather than below it"
+        );
+    }
+
+    /// **`<tab>` reveals the row it pushed the cursor onto** — the third arm of
+    /// [`moves_cursor`] `CP-4` is responsible for, and the one nothing pressed.
+    ///
+    /// `insert-indent` writes at the cursor and moves it, so it was added to
+    /// `moves_cursor` by analogy with `accept-completion` above — and deleting
+    /// `| BufferAction::InsertIndent { .. }` left the whole suite green.
+    ///
+    /// **Soft wrap is what makes the arm reachable, and it is not decoration.**
+    /// [`Editing::reveal`] emits `RevealRow`, and `Viewport::scrolled`'s arm for
+    /// it touches `top_row` alone — there is no horizontal reveal in this build
+    /// — so with wrapping off a `<tab>` cannot change the cursor's visual row
+    /// and the arm has nothing to do. With wrapping on it can: a tab past the
+    /// wrap width puts the caret on a continuation row that did not exist
+    /// before the key, and if that row is below the viewport you type where you
+    /// cannot see, which is the `CP-4` symptom exactly.
+    ///
+    /// **This bites:** drop the `InsertIndent` arm from `moves_cursor` and the
+    /// viewport stays at row 0 with the cursor on row 5 of a 5-row window.
+    #[test]
+    fn a_tab_that_wraps_the_line_reveals_the_row_it_made() {
+        use phosphor_core::action::BufferAction;
+
+        // Five rows of window over six short lines, so row 0 is the top and the
+        // fifth line is the last row that fits.
+        let text: String = std::iter::repeat_n("abcdefgh\n", 6).collect();
+        let mut editing = editing(&text);
+        editing.area = Rect::new(0, 0, 20, 5);
+        editing.editor.set_soft_wrap(Some(10));
+        editing.mode = phosphor_core::request::EditMode::Insert;
+        // End of the fifth line — visual row 4, the bottom of the window. Nine
+        // chars a line, eight of them text.
+        editing.editor.set_cursor(4 * 9 + 8);
+        assert_eq!(editing.editor.get_offset_y(), 0, "nothing has scrolled yet");
+
+        // Two tabs: the first fills the line to exactly ten cells and the
+        // second is the one that has to wrap.
+        for _ in 0..2 {
+            drop(editing.apply(&Action::Buffer(BufferAction::InsertIndent {})));
+        }
+
+        assert!(
+            editing.editor.visual_len_lines() > 6,
+            "the line never wrapped, so this asserts nothing about a revealed row"
+        );
+        assert!(
+            editing.editor.get_offset_y() > 0,
+            "the viewport stayed on row 0 while the tab pushed the caret onto a \
+             continuation row below a five-row window"
         );
         assert!(
             editing
@@ -8109,6 +8893,63 @@ mod tests {
         );
     }
 
+    /// **An `indent` that says neither of the two things it is for is refused
+    /// at the door**, which is the only place it can be.
+    ///
+    /// The field's argument (`LanguageSpec::indent`) is that one literal says
+    /// *width* and *tabs-vs-spaces* together. A literal saying neither was
+    /// accepted and then read differently by each of its two readers:
+    /// [`IndentStyle::typed_at`] pads to the next stop for anything not
+    /// starting with `\t`, [`Editing::indent`] splices the literal — so `" \t"`
+    /// gave `>` a space-tab and `<tab>` two spaces, `""` gave `>` a no-op and
+    /// `<tab>` one space, and `"\t\t"` gave `>` two tabs and `<tab>` one.
+    /// `IndentStyle::width` counts `chars`, so `"　"` (one ideographic space,
+    /// two cells) measured one.
+    ///
+    /// All four are refused here, and the legal three are declared afterwards
+    /// so this cannot pass by refusing everything.
+    ///
+    /// **This bites:** delete the `Invalid::Indent` arm from
+    /// `Languages::declare` and the first four assertions fail.
+    #[test]
+    fn an_indent_that_says_neither_width_nor_whitespace_is_refused() {
+        let (mut layer, host) = booted();
+        let declared = |layer: &mut Layer, indent: &str| {
+            layer.evaluate(&format!(
+                r##"(define-language! "zz"
+                      (hash "extensions" '("zz") "grammar" void "lsp_command" '()
+                            "comment_prefix" void "indent" "{indent}"))"##
+            ))
+        };
+        // The last is one ideographic space, written as itself: `\t` reaches
+        // Steel as an escape (the legal `"\t"` below is accepted, which proves
+        // it) and a `\u{…}` spelling would only prove that Steel does not read
+        // one.
+        for unit in ["", " \\t", "\\t\\t", "\u{3000}"] {
+            let outcome = declared(&mut layer, unit);
+            assert!(
+                refused(&outcome).is_some_and(|why| why.contains("neither one tab nor a run")),
+                "indent {unit:?} was accepted: {outcome:?}"
+            );
+        }
+        assert_eq!(
+            host.languages().len(),
+            12,
+            "no refused declaration reached the table"
+        );
+
+        // And the three legal shapes land, so the guard is a rule rather than a
+        // wall: two spaces, four spaces, one tab.
+        for unit in ["  ", "    ", "\\t"] {
+            let outcome = declared(&mut layer, unit);
+            assert!(
+                matches!(outcome, Outcome::Done(_)),
+                "indent {unit:?} is legal and was refused: {outcome:?}"
+            );
+        }
+        assert_eq!(host.languages().len(), 13, "one thirteenth, redeclared");
+    }
+
     /// The two refusals `Languages::declare` owes, reaching the REPL through
     /// the shipping arm. Both are declarations that would *land* and then
     /// never match a file, which is worse than a refusal.
@@ -8138,6 +8979,141 @@ mod tests {
             host.languages().len(),
             12,
             "neither refusal mutates the table"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // `T107` — a buffer with no file
+    // -----------------------------------------------------------------------
+
+    /// **The seed folds back into the tree it came from**, which is the law
+    /// `journal::Folded` states for `snapshot` — *"a `snapshot` that loses
+    /// something loses it permanently and silently"*.
+    ///
+    /// [`seeding`] is the one place in this build that writes a whole tree into
+    /// a journal that has never seen it, and a pty test cannot reach the shape
+    /// that breaks it: the tree below has a **branch point whose redo pointer
+    /// is on its older child, off the path to the cursor**, which takes a
+    /// checkpoint walk to produce and survives only if `seeding` says both of
+    /// the two things replaying the nodes alone cannot say.
+    ///
+    /// Both bite, and each on its own line:
+    ///
+    /// * Drop the `Redo` loop and `node 1` comes back pointing at `3` — the
+    ///   fold points every branch at its newest child as the nodes arrive, and
+    ///   nothing on the path to `4` ever revisits `1`. A redo in the next
+    ///   session would then walk into the wrong branch.
+    /// * Drop the trailing `Cursor` and the buffer comes back at `4`'s newest
+    ///   sibling rather than where it was left.
+    ///
+    /// The origin is checked too, because [`Timeline::open_at`] refuses a
+    /// journal whose origin is not the file it was opened for — a seed that
+    /// wrote the wrong one would produce a history that opens exactly once.
+    #[test]
+    fn the_seed_a_scratch_buffer_writes_folds_back_into_the_tree_it_came_from() {
+        use phosphor_buffer::undo::Edit as TreeEdit;
+        use phosphor_core::journal::Folded as _;
+
+        let at = |offset| Caret {
+            offset,
+            selection: None,
+        };
+        let commit = |tree: &mut UndoTree, from: usize, text: &str| {
+            tree.record(at(from), TreeEdit::insert(from, text));
+            tree.commit(at(from + text.len()))
+                .expect("a committed node")
+        };
+
+        let mut tree = UndoTree::new();
+        let one = commit(&mut tree, 0, "a");
+        let two = commit(&mut tree, 1, "b");
+        tree.goto(one);
+        commit(&mut tree, 1, "c");
+        // Back onto the *older* child, which is what leaves `one`'s redo
+        // pointer somewhere the newest-child rule would never put it…
+        tree.goto(two);
+        // …and then away from that subtree entirely, so nothing on the path to
+        // the cursor ever passes through `one` again to correct it.
+        tree.goto(NodeId::ROOT);
+        let four = commit(&mut tree, 0, "d");
+        commit(&mut tree, 1, "e");
+        // And the cursor is left one step back from the newest node, which is
+        // the other thing replaying alone gets wrong: a fold that has just read
+        // the nodes is sitting on the last one it read.
+        tree.goto(four);
+
+        let mut folded = wire_undo::History::default();
+        for record in seeding(&tree, "/tmp/scratch.txt".to_owned()) {
+            folded
+                .apply(record)
+                .expect("the fold accepts its own shape");
+        }
+        assert_eq!(folded.origin(), Some("/tmp/scratch.txt"));
+
+        let rebuilt = restored(folded).expect("the seed restores");
+        assert_eq!(rebuilt.nodes(), tree.nodes(), "every node, and every link");
+        assert_eq!(rebuilt.current(), tree.current(), "and where the buffer is");
+    }
+
+    /// **`:write` at a buffer with no file refuses, and says what would work.**
+    ///
+    /// The unit half of the pty test with the same subject: this one pins the
+    /// sentence, and the pty one pins that it is the sentence a person meets
+    /// rather than clap's.
+    ///
+    /// [`editing`] builds a buffer with `file: None`, which is exactly what a
+    /// bare `phosphor` opens.
+    #[test]
+    fn writing_a_buffer_with_no_file_refuses_by_naming_the_whole_command() {
+        let mut editing = editing("typed into a scratch buffer");
+        assert_eq!(
+            editing.write(None),
+            Err("no file name — :write <path>".to_owned())
+        );
+        assert!(
+            editing.timeline.log.is_none(),
+            "a refused write opened a journal anyway"
+        );
+    }
+
+    /// **Every command line that worked still parses to what it did**, and the
+    /// bare one now parses at all.
+    ///
+    /// `T107` deleted `required_unless_present_any = ["eval", "repl"]` from the
+    /// file argument, which is the one constraint standing between these five
+    /// invocations and each other. A parse test rather than a pty one because
+    /// four of the five never reach a terminal, and because what regressed
+    /// would regress *in clap* — `--eval` still refusing a file beside it is
+    /// the half a permissive change is most likely to take with it.
+    #[test]
+    fn dropping_the_required_file_left_every_other_invocation_alone() {
+        let parse = |argv: &[&str]| {
+            door::parser(Cli::command())
+                .try_get_matches_from(argv)
+                .map(|matches| Cli::from_arg_matches(&matches).expect("the shape is Cli's"))
+        };
+
+        let bare = parse(&["phosphor"]).expect("a bare phosphor parses");
+        assert_eq!(bare.path, None);
+        assert!(!bare.repl && bare.eval.is_none());
+
+        assert_eq!(
+            parse(&["phosphor", "notes.md"])
+                .expect("a file parses")
+                .path,
+            Some(PathBuf::from("notes.md"))
+        );
+        assert!(parse(&["phosphor", "--repl"]).expect("--repl parses").repl);
+        assert_eq!(
+            parse(&["phosphor", "--eval", "(+ 1 2)"])
+                .expect("--eval parses")
+                .eval
+                .as_deref(),
+            Some("(+ 1 2)")
+        );
+        assert!(
+            parse(&["phosphor", "--eval", "(+ 1 2)", "notes.md"]).is_err(),
+            "--eval and a file are still refused together"
         );
     }
 

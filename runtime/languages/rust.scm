@@ -16,4 +16,7 @@
   (hash "extensions" '("rs")
         "grammar" "rust"
         "lsp_command" '("rust-analyzer")
-        "comment_prefix" "//"))
+        "comment_prefix" "//"
+        ;; nothing declared: four spaces, off `expand-tab`/`tab-width` in
+        ;; init.scm, which is what rustfmt writes.
+        "indent" void))

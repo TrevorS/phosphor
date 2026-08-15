@@ -12,4 +12,6 @@
   (hash "extensions" '("toml")
         "grammar" "toml"
         "lsp_command" '("taplo" "lsp" "stdio")
-        "comment_prefix" "#"))
+        "comment_prefix" "#"
+        ;; nothing declared: four spaces, off init.scm.
+        "indent" void))

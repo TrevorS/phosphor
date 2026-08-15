@@ -518,12 +518,104 @@ carrying nine patches over thirty-two upstream tests, none of which anything her
 of the three tests named for the defect fails on the unpatched crate: two panic inside `ropey`,
 the third reports a column one to the right of the truth.
 
-**Both counts were wrong and are recomputed here.** The headings above number 1, 2, 4–10 —
-nine entries, not ten. And `grep -c '#\[test\]'` over the fork this session gives 42: `code.rs`
-11, `diff.rs` 5, `tests/{editor,diff_focus,input}` 3 each and `tests/folding` 7 — thirty-two
-upstream — plus phosphor's own `src/phosphor/cell_style.rs` 5 (patch 5) and this file's 5.
+**Both counts were wrong and are recomputed here.** The headings above numbered 1, 2, 4–10 —
+nine entries, not ten — and are **ten** now that patch 11 has landed. And
+`grep -r '#\[test\]' src tests | wc -l` over the fork this session gives **55**: `code.rs` 11,
+`diff.rs` 5, `tests/{editor,diff_focus,input}` 3 each and `tests/folding` 7 — thirty-two
+upstream — plus phosphor's own `src/phosphor/cell_style.rs` 5 (patch 5), `tests/change_events.rs`
+5 (patch 10), and `src/phosphor/tabs.rs` 5 with `tests/tabs.rs` 8 (patch 11).
 `git show 40ff181:src/code.rs` and `:src/diff.rs` carry the same 11 and 5, so no inline test
 here is ours. "Thirty-seven" counted `cell_style.rs`'s five as upstream's.
+
+---
+
+### 11 · A tab advances to the next tabstop
+
+**Files:** `src/phosphor/tabs.rs` (**new**, the whole rule plus five inline tests),
+`src/phosphor/mod.rs` (one `pub mod`), `src/code.rs` (one field, one initialiser, one
+import, an accessor pair, and the two width walks `char_col_to_visual` /
+`visual_to_char_col`), `src/render.rs` (one import, the per-frame stop, the row's base
+column and the carry that usually supplies it, one line in the grapheme loop, and the
+glyph the loop paints), `src/editor.rs`
+(one import, `set_tab_width` / `tab_width`, one line in `set_original_code`, the click
+walk and its end-of-line width, and the cursor's two column sums), `src/phosphor/soft_wrap.rs`
+(one carried base column and one line in `segments`, plus two inline tests),
+`tests/tabs.rs` (**new**, ten tests).
+**Upstreamable: yes, and it should be** — a renderer that cannot draw a tab is a bug in
+anyone's editor, and nothing here is phosphor-specific. Upstreaming it would move
+`phosphor/tabs.rs` inline; it lives under `phosphor/` for the reason at the top of this
+file, so the seam is one line per call site rather than a rewrite of five walks.
+
+Upstream measures every grapheme with `unicode_width`. `unicode-width` 0.2.2's
+`tables::width_in_str` answers `1` for every `c <= '\u{A0}'` that is not `\n` or `\r`,
+so `\t` measured **one cell** — and `impl Widget for &Editor` then drew
+`g.to_string().replace('\t', " ")`, one space, whatever the column. A tab-indented file
+rendered with one column of indent per level. `CP-4` reported it as *"tab only seems to
+go a space at a time when indenting"* (`T104`).
+
+**A tab's width is not a property of the tab**, which is why this could not be a wider
+`grapheme_width`: it is `tab_width - (col % tab_width)`, a function of the display column
+the tab starts at. Every walk that measures a line therefore has to carry its running
+column into `tabs::cells`, and there are **five** of them — the two on `Code`, the
+renderer's grapheme loop, `Editor::cursor_from_mouse`, and `soft_wrap::segments`. The
+cursor's own column sums were a sixth and are now routed through `Code::char_col_to_visual`
+instead, which is the same walk with the stop in it; that is a deletion, not an addition.
+
+**The stop lives on `Code`, not on `Editor`.** `char_col_to_visual` and `visual_to_char_col`
+are `Code`'s, and they are what every motion, every click and the wrap engine measure
+against. A field on the editor would have left them answering 1 for a tab the renderer
+painted 4 cells wide — a cursor placed by one and drawn by the other, which is the
+class of bug this patch is fixing rather than one to introduce. `Editor::set_tab_width`
+sets both buffers (the live one and the diff original) and rebuilds the row stream only
+when the value moved, the shape `set_soft_wrap` already uses.
+
+**A tab paints every cell it spends.** Blank cells would be cheaper and wrong: the
+composed style carries the diff background, the selection and the word highlight, so a
+tab inside a selected run has to be selected across its whole width. The write is
+`set_stringn`-clamped, because a tab near the right edge is the one grapheme that can be
+asked to paint past both the text column's budget and the area. That clamp applies to
+every grapheme, not only tabs, and it closes a second overrun upstream had: `set_string`
+stops at the *buffer* edge, so a two-cell CJK grapheme with one cell of text column left
+painted into whatever the host had composed to the right of the editor. It is now
+dropped, which is what `x >= width` already does to the grapheme after it.
+`a_wide_grapheme_with_one_cell_left_stays_inside_the_area` is that second change's own
+test, and it is the one test in the file that renders into a buffer **wider** than the
+area — every other one draws into a buffer exactly the editor's size, where the buffer
+edge and the area edge are the same line and the overrun cannot be seen.
+
+**`soft_wrap::segments` carries its base column rather than recomputing it.** The first
+version of this patch opened each segment with
+`code.char_col_to_visual(line_idx, seg_start)`, which is a grapheme walk of the whole
+line prefix — once per segment, so a rebuild became quadratic in a single line's length.
+`phosphor-ui/benches/soft_wrap.rs` is written to assert exactly that shape and measured
+`1454x` between 5,000 short lines and one line of 400,000 characters (15.0 s per rebuild
+against 11 ms), `B2: FAIL`. The segments partition the line, so the next one starts
+`spent` cells further along and the walk is unnecessary: carried, the same table reads
+`1.9x` and `B2: PASS`. `spent` is not `used` — a row that breaks at a space discards the
+graphemes it walked past, and the two inline tests in that module are the difference,
+one of which fails if the walked total is carried instead.
+
+**The renderer carries its base column the same way**, and for the same reason at a
+smaller scale: `char_col_to_visual(line_idx, start_col)` once per *drawn* row is bounded
+by the screen height rather than by the line, but fifty rows fifty thousand characters
+into one wrapped line is still fifty walks of that prefix every frame. A wrapped line's
+rows arrive in order and each starts where the last ended, so the walk is needed only for
+the first row of a run — which is what a viewport scrolled into the middle of a long line
+has. The carry is dropped for ghost rows (a different `Code`) and for any row that
+stopped at the screen edge before consuming its span, because such a row has painted
+fewer cells than the span spends and does not know where the line got to.
+`a_tab_on_a_continuation_row_measures_from_the_line_and_not_the_row` asserts both halves —
+the same tab, drawn as the third row and then as the first after a scroll, at the same
+column — and it fails on a carry that drops the base and on a fallback that measures from
+the row.
+
+`tests/tabs.rs` is the regression suite and nine of its ten tests fail on the unpatched
+crate (the tenth is the area clamp above, which upstream does not have the tabs to reach).
+Each one reads the **drawn buffer** rather than a width function, deliberately: a
+helper that answered 4 while the renderer painted 1 would satisfy arithmetic and none of
+the report. Three of the ten are the arithmetic that goes wrong quietly — a tab
+finishing the column it starts in rather than expanding to a fixed count, a tab after CJK
+measuring from the *cells* those characters left behind, and the wrap point counting them.
 
 ---
 

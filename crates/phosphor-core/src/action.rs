@@ -329,6 +329,23 @@ actions! {
             target: Target = "what to shift",
             delta: i64 = "levels, negative to dedent",
         }
+        // `T104`, and it is a second verb rather than an argument on `indent`
+        // because the two answer different questions. `indent` shifts *lines*
+        // by a level and is what `>>` and `>ap` mean; this types whitespace at
+        // the **cursor**, which is what `<tab>` means in the middle of a line.
+        // Binding `<tab>` to `indent` would have shifted the whole line from
+        // wherever the caret happened to be, which is vim's `<C-t>` and not
+        // vim's `<Tab>`.
+        //
+        // No arguments, and that is the design rather than an omission: how
+        // wide one level is comes from `set-option!` and `define-language!`
+        // (`Editing::indent_style`), so a keymap naming a width here would be
+        // four spaces frozen into `runtime/keymaps.scm` for every language —
+        // the Rust-table-in-scheme shape `T033` exists to forbid, and exactly
+        // what `OPEN-QUESTIONS.md` §38 says a literal fall-through cannot do.
+        InsertIndent = "insert-indent" [S4 / "T104" / Allow]
+            "types one indent level at the cursor, advancing to the next tabstop" {
+        }
         JoinLines = "join-lines" [S3 / "T026" / Allow]
             "joins the lines of a target onto one" {
             target: Target = "what to join",

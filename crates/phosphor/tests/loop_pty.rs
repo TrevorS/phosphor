@@ -124,6 +124,41 @@ mod driven {
         /// would write into it. [`config_home`] derives one nothing else
         /// shares from the state home every caller already passes.
         fn open(file: &Path, state: &Path, runtime: &Path) -> Self {
+            Self::started(Some(file), state, runtime, &[])
+        }
+
+        /// The same editor with **no file argument at all** — `T107`.
+        ///
+        /// Not a variant of [`Editor::open`] with an empty path: the whole
+        /// point is the argv, and a `phosphor ""` would be a file named the
+        /// empty string. Until `T107` this command line did not reach the loop
+        /// — clap answered *"the following required arguments were not
+        /// provided: <FILE>"* and exited `2` — so a test that spawns it and
+        /// waits for a frame is the reachability proof, in the sense
+        /// `loop_pty`'s own header means it.
+        fn bare(state: &Path, runtime: &Path) -> Self {
+            Self::started(None, state, runtime, &[])
+        }
+
+        /// `phosphor --float informational` — no file either, and a surface in
+        /// front of it.
+        ///
+        /// The **negative** half of `T107`'s notice: the same buffer with no
+        /// name, guarded out of saying so because the float explains itself.
+        ///
+        /// `--float` and not `--repl`, and the difference was measured rather
+        /// than assumed. The REPL is drawn over the statusline's row, so it
+        /// swallows the notice whether or not the guard is there and a test
+        /// written against it passes on a broken build — observed, with the
+        /// guard planted out. `T084`'s fixture float is centred and leaves that
+        /// row visible: with the guard dropped the last row of the frame reads
+        /// `no file — :write <path> creates one`, which is what makes this the
+        /// surface that can fail.
+        fn floated(state: &Path, runtime: &Path) -> Self {
+            Self::started(None, state, runtime, &["--float", "informational"])
+        }
+
+        fn started(file: Option<&Path>, state: &Path, runtime: &Path, flags: &[&str]) -> Self {
             let binary = PathBuf::from(env!("CARGO_BIN_EXE_phosphor"));
             let (master, slave_path) = open_pty();
             let slave = OpenOptions::new()
@@ -135,17 +170,35 @@ mod driven {
             // platforms and is the fd the child asks anyway.
             tcsetwinsize(&slave, SCREEN).expect("the pty takes a window size");
 
-            let child = Command::new(binary)
-                .arg(file)
-                .env("PHOSPHOR_RUNTIME", runtime)
-                .env("XDG_STATE_HOME", state)
-                .env("XDG_CONFIG_HOME", config_home(state))
-                .env("TERM", "xterm-256color")
-                .stdin(Stdio::from(slave.try_clone().expect("the slave clones")))
-                .stdout(Stdio::from(slave.try_clone().expect("the slave clones")))
-                .stderr(Stdio::from(slave))
-                .spawn()
-                .expect("the shipping binary starts");
+            // **The `Command` is scoped, and that is load-bearing.** It owns
+            // the three `Stdio` slots, which own the slave fds — so a `Command`
+            // that outlives the spawn keeps this side of the pty open, and the
+            // rule two comments down ("nothing on this side may hold a slave fd
+            // open") quietly stops holding. The symptom is not a failure, it is
+            // a **hang**: a child that exits without drawing leaves
+            // [`Editor::await_frames`] to time out correctly and then
+            // [`Editor::drop`] to block forever in `reader.join()`, because the
+            // reader is waiting on an end-of-file that cannot arrive. Measured
+            // while planting a mutation against `T107` — restoring the required
+            // FILE argument turned four tests that should fail in 30 s into a
+            // run that never ended.
+            let child = {
+                let mut command = Command::new(binary);
+                if let Some(file) = file {
+                    command.arg(file);
+                }
+                command.args(flags);
+                command
+                    .env("PHOSPHOR_RUNTIME", runtime)
+                    .env("XDG_STATE_HOME", state)
+                    .env("XDG_CONFIG_HOME", config_home(state))
+                    .env("TERM", "xterm-256color")
+                    .stdin(Stdio::from(slave.try_clone().expect("the slave clones")))
+                    .stdout(Stdio::from(slave.try_clone().expect("the slave clones")))
+                    .stderr(Stdio::from(slave))
+                    .spawn()
+                    .expect("the shipping binary starts")
+            };
 
             // Nothing on this side may hold a slave fd open, or the master
             // never sees end-of-file when the child exits.
@@ -1809,6 +1862,277 @@ mod driven {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // `T104` — a tab renders at a tabstop, and `<tab>` does something
+    // -----------------------------------------------------------------------
+
+    /// `<tab>`, once, in the running binary. One byte, one frame.
+    const TAB: &[u8] = b"\t";
+
+    /// Where a character sits on the drawn row, or `None` if it is not there.
+    ///
+    /// Columns are absolute screen columns and the gutter is deliberately not
+    /// subtracted: the assertions below compare two rows of *one* frame against
+    /// each other, so whatever the gutter costs cancels, and a test that
+    /// hardcoded its width would break on a change that has nothing to do with
+    /// tabs.
+    fn column_of(screen: &Screen, row: u16, character: char) -> Option<usize> {
+        screen
+            .line(row)
+            .chars()
+            .position(|drawn| drawn == character)
+    }
+
+    /// **The report, through the shipping binary.** *"tab only seems to go a
+    /// space at a time when indenting"* — a file whose lines begin with a real
+    /// `\t` drew one column of indent per level, because the renderer replaced
+    /// every tab with a single space.
+    ///
+    /// The assertion is a **comparison between rows of one frame**, which is
+    /// what makes it a tabstop test rather than an arithmetic one: row 0 is
+    /// four literal spaces and row 1 is one `\t`, so a build that draws tabs
+    /// correctly puts both `x`s in the same column and the old build put them
+    /// three apart. Row 2 is the same tab after three characters — a *fixed*
+    /// four-space expansion would push it to column 7 where the stop is 4.
+    #[test]
+    fn a_file_of_tabs_draws_at_the_tabstop() {
+        let scratch = Scratch::new("tab-render");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "    x\n\tx\nabc\tx\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let screen = editor.screen();
+        let spaces = column_of(&screen, 0, 'x').expect("row 0 draws its x");
+        let tabbed = column_of(&screen, 1, 'x').expect("row 1 draws its x");
+        let after_abc = column_of(&screen, 2, 'x').expect("row 2 draws its x");
+        editor.quit();
+
+        assert_eq!(
+            tabbed,
+            spaces,
+            "a leading tab and four leading spaces have to reach the same column; \
+             rows were {:?} and {:?}",
+            screen.line(0),
+            screen.line(1)
+        );
+        assert_eq!(
+            after_abc,
+            spaces,
+            "a tab three characters in finishes the column it starts in rather than \
+             adding a fixed four; row was {:?}",
+            screen.line(2)
+        );
+    }
+
+    /// **`<tab>` in insert mode advances to the tabstop**, read off the saved
+    /// file rather than off the frame — `press_quietly`'s doc says why a frame
+    /// is the wrong place to look for an edit, and a file is unambiguous about
+    /// *how many* spaces landed.
+    ///
+    /// Two presses at two columns, because one cannot tell a tabstop from a
+    /// substitution: at column 0 a stop and a fixed four-space expansion agree,
+    /// and at column 2 they do not.
+    ///
+    /// This also proves the key is **bound**. Unbound it reaches
+    /// `Machine::insert_key`'s literal `"\t"` arm and the file holds a tab
+    /// character, which is neither of the strings below.
+    #[test]
+    fn tab_in_insert_mode_advances_to_the_tabstop() {
+        let scratch = Scratch::new("tab-insert");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "ab\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // At the end of `ab`: two cells to the stop.
+        editor.press(b"A");
+        editor.press(TAB);
+        editor.press(b"x");
+        editor.press(b"\x1b");
+        // And at the start of the line: a whole stop.
+        editor.press(b"I");
+        editor.press(TAB);
+        editor.press(b"\x1b");
+        editor.press(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "    ab  x\n",
+            "<tab> types the cells left to the next stop, not a fixed count"
+        );
+    }
+
+    /// **Cells, not characters.** `漢` is one `char` and two columns, so the
+    /// stop after it is two cells away. A column counted in `char`s types three
+    /// spaces here, which is the confusion this repo has shipped three bugs
+    /// from — and it is invisible in every ASCII test above.
+    #[test]
+    fn a_tab_after_cjk_advances_by_cells_in_the_running_binary() {
+        let scratch = Scratch::new("tab-cjk");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "漢\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press(b"A");
+        editor.press(TAB);
+        editor.press(b"x");
+        editor.press(b"\x1b");
+        editor.press(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "漢  x\n",
+            "the stop after a two-cell character is two cells away, not three"
+        );
+    }
+
+    /// **`R` is still vim's `R` when the key is `<tab>`** — the third key this
+    /// window has had to teach it, after `<space>` and `<cr>`.
+    ///
+    /// Same seam as `replace_mode_still_overwrites_with_space_bound_in_the_
+    /// insert_scope` above and the same reason it needs a pty: `Scope::of`
+    /// folds `EditMode::Replace` into the insert scope, so the `<tab>` row
+    /// binds in `R` too, and only `runtime/keymaps.scm` driving the running
+    /// binary says so.
+    ///
+    /// The expected text is `nvim -u NONE`'s, with
+    /// `set expandtab tabstop=4 softtabstop=0`, run this session: `Rx<Tab>`
+    /// over `abcdefgh` gives `x···cdefgh` — the tab spends the three cells left
+    /// to the stop and consumes one character doing it, so the line grows by
+    /// two. A version that spliced leaves the `b` alive and reads
+    /// `x   bcdefgh`.
+    #[test]
+    fn replace_mode_still_overwrites_with_tab_bound_in_the_insert_scope() {
+        let scratch = Scratch::new("replace-overwrites-tab");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "abcdefgh\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press(b"R");
+        editor.press(b"x");
+        editor.press(TAB);
+        editor.press(b"\x1b");
+        editor.press(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "x   cdefgh\n",
+            "the tab overwrote `b` and spent the three cells to the stop; it did not push \
+             the rest of the line right"
+        );
+    }
+
+    /// **`>` shifts by the same unit `<tab>` types, and a declaration beats the
+    /// option.**
+    ///
+    /// `>` had an arm and a binding since `T026` and **nothing had ever pressed
+    /// it** — `TASKS.md`'s `T104` entry records that no test in
+    /// `crates/phosphor/tests/` or `crates/phosphor-core/tests/` types one,
+    /// which is how the unit stayed hardcoded inside the vendored fork through
+    /// a green gate. This is the first press.
+    ///
+    /// **Two buffers, one session, one option value**, which is what makes it a
+    /// precedence test: `start.txt` is claimed by no declaration and takes
+    /// `init.scm`'s four, and `sample.zz` is claimed by a `define-language!`
+    /// typed into this session's REPL that says two. A build reading one source
+    /// gives the same answer twice.
+    ///
+    /// The declaration road is `a_language_declared_at_the_repl_is_live_in_the_
+    /// same_session`'s, and so is the way it waits: `press_until` on text that
+    /// exists only after the step completed, never `press_quietly` — an `:e`
+    /// draws the ex line, pauses, then swaps the buffer, and settling returns
+    /// in the gap.
+    #[test]
+    fn the_shift_operator_shifts_by_the_unit_a_declaration_named() {
+        let scratch = Scratch::new("shift-unit");
+        let runtime = copy_layer(&scratch.path);
+        let plain = scratch.path.join("start.txt");
+        fs::write(&plain, "nothing to do with it\n").expect("a fixture");
+        let declared = scratch.path.join("sample.zz");
+        fs::write(&declared, "local x = 1\n").expect("a fixture");
+
+        let editor = Editor::open(&plain, &scratch.state(), &runtime);
+        // No declaration claims `.txt`, so this is the global answer. Counted
+        // presses, not `press_until`: a frame is a **diff**, and a shift
+        // redraws only the columns that moved — the whole shifted line is
+        // never on the wire to match against. `.txt` declares no server, so
+        // nothing else is drawing and one frame per key holds.
+        editor.press(b">");
+        editor.press(b">");
+        editor.press(b":w\r");
+
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(
+            b"(define-language! \"zz\" (hash \"extensions\" (list \"zz\") \
+              \"grammar\" void \"lsp_command\" (list) \"comment_prefix\" void \
+              \"indent\" \"  \"))\r",
+            "#ok",
+        );
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+        editor.press_until(
+            format!(":e {}\r", declared.display()).as_bytes(),
+            "local x = 1",
+        );
+        editor.press(b">");
+        editor.press(b">");
+        editor.press(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&plain).expect("the file survives"),
+            "    nothing to do with it\n",
+            "a buffer no declaration claims took init.scm's four"
+        );
+        assert_eq!(
+            fs::read_to_string(&declared).expect("the file survives"),
+            "  local x = 1\n",
+            "and the declaration's own two beat it, in the same session"
+        );
+    }
+
+    /// **The option is live from the REPL, not only at boot.**
+    ///
+    /// `T037` shipped a bug where a table was read once and cached, and
+    /// `T101`'s review caught the same shape a second time — so the assertion
+    /// worth making is not *"the option works"* but *"the option works after
+    /// the editor has already drawn frames with the old value"*. The first
+    /// `>>` here is against the shipped four; the second is against eight, set
+    /// by typing at the REPL in the same session. A width read once at boot
+    /// puts four on both lines.
+    #[test]
+    fn the_tab_width_is_live_from_the_repl() {
+        let scratch = Scratch::new("tab-width-live");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "a\nb\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press(b">");
+        editor.press(b">");
+
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(b"(set-option! \"tab-width\" 8)\r", "#ok");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        editor.press(b"j");
+        editor.press(b">");
+        editor.press(b">");
+        editor.press(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "    a\n        b\n",
+            "the second shift took the eight typed at the REPL"
+        );
+    }
+
     impl Editor {
         /// [`Editor::open`] with `$PHOSPHOR_KEYBOARD` forced, which is the only
         /// way to test both sides of `T027` on one machine.
@@ -3459,5 +3783,270 @@ mod driven {
             "esc left the drag's highlight drawn"
         );
         editor.quit();
+    }
+
+    // -----------------------------------------------------------------------
+    // `T107` — a buffer with no file
+    // -----------------------------------------------------------------------
+
+    /// **`phosphor` with no argument opens an editor**, and the first row of
+    /// chrome says what turns the buffer into a file.
+    ///
+    /// The reachability half is the whole test and it is why this is a pty test
+    /// rather than a parse test: until `T107` this argv never reached the loop
+    /// at all — clap refused it and the process exited `2` — so *"a frame was
+    /// drawn"* is the claim, and typing into that
+    /// frame and finding the bytes on disk is the proof it is an editor and not
+    /// a picture of one.
+    ///
+    /// **What a generator cannot produce here** is the first line. `no file —
+    /// :write <path> creates one` is composed by `main::no_file` and drawn on
+    /// the notice row; nothing in the layer, the keymap or the ViewModel names
+    /// it, and no other command line puts it on a frame.
+    #[test]
+    fn a_bare_phosphor_opens_a_buffer_and_says_what_would_give_it_a_file() {
+        let scratch = Scratch::new("t107-bare");
+        let runtime = copy_layer(&scratch.path);
+        let editor = Editor::bare(&scratch.state(), &runtime);
+
+        assert!(
+            shows(&editor.tail(), "no file — :write <path> creates one"),
+            "the first frame said nothing about having no file: {}",
+            editor.tail()
+        );
+
+        let file = scratch.path.join("typed.txt");
+        editor.press(b"i");
+        editor.press(b"alpha");
+        editor.press(b"\x1b");
+        editor.press(format!(":w {}\r", file.display()).as_bytes());
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("`:write <path>` created the file"),
+            "alpha",
+            "what was typed into a buffer with no name reached the path it was given"
+        );
+    }
+
+    /// **A surface that explains itself is not told it has no file** — the
+    /// negative half of `T107`'s notice, and the half nothing asserted.
+    ///
+    /// The guard is `matches!(surface, Surface::Buffer)` beside
+    /// `editing.file.is_none()`, argued at length in two doc comments
+    /// (*"`--repl`, the boot float and the `--float` fixture — all of which
+    /// explain themselves — stay silent"*) and, until this, checked by nothing:
+    /// `a_bare_phosphor_opens_a_buffer_and_says_what_would_give_it_a_file`
+    /// presses the positive case only, and dropping the guard left the whole
+    /// suite green. `--repl` is the same buffer with the same `file: None`, so
+    /// the *only* thing standing between it and the notice is the surface.
+    ///
+    /// The float's own footer is waited for first, so this is an assertion
+    /// about a frame that was drawn — *"the notice is absent"* is worth nothing
+    /// on a frame that never arrived. [`Editor::floated`] says why the fixture
+    /// float is the surface that can fail here and `--repl` is not.
+    ///
+    /// **This bites:** drop `&& matches!(surface, Surface::Buffer)` from the
+    /// notice in `run` and the last row of this frame reads `no file — :write
+    /// <path> creates one` under a float that is already explaining itself.
+    #[test]
+    fn a_float_over_a_nameless_buffer_says_nothing_about_the_missing_file() {
+        let scratch = Scratch::new("t107-float-silent");
+        let runtime = copy_layer(&scratch.path);
+        let editor = Editor::floated(&scratch.state(), &runtime);
+
+        let first = editor.tail();
+        assert!(
+            shows(&first, "esc close"),
+            "the fixture float never drew, so there is no frame to find the notice absent \
+             from: {first}"
+        );
+        assert!(
+            !shows(&first, "no file"),
+            "the float explains itself and was told about its missing file anyway: {first}"
+        );
+        editor.quit();
+    }
+
+    /// **An editor you cannot leave is the worst version of this feature.**
+    ///
+    /// `ZQ` at a buffer with no file and unsaved work in it, which is the state
+    /// a bare `phosphor` is in the moment anybody types. Unsaved is the half
+    /// that matters: `quit` refuses on `WouldLoseWork` and `ZQ` is the forcing
+    /// spelling, so a scratch buffer that had no forced exit would be a trap
+    /// with no way out at all — there is no file to `:write` to.
+    ///
+    /// [`Editor::quit`] asserts the exit status, so a child still on the
+    /// alternate screen fails here rather than hanging the suite.
+    #[test]
+    fn a_bare_phosphor_with_unsaved_work_is_still_quittable() {
+        let scratch = Scratch::new("t107-quit");
+        let runtime = copy_layer(&scratch.path);
+        let editor = Editor::bare(&scratch.state(), &runtime);
+
+        editor.press(b"i");
+        editor.press(b"unsaved");
+        editor.quit();
+    }
+
+    /// **`:write` with nothing to write to refuses in this editor's voice**,
+    /// which is §6's — lowercase, telegraphic, and naming the whole command
+    /// rather than a contraction.
+    ///
+    /// The refusal itself predates `T107` (`Editing::write` has always answered
+    /// it) and was unreachable from a bare `phosphor`, because a bare
+    /// `phosphor` did not run. What is pinned here is that it is what the user
+    /// meets — not clap's *"the following required arguments were not
+    /// provided"*, which is what the same mistake used to produce one layer
+    /// earlier and in a different voice.
+    #[test]
+    fn write_with_no_path_refuses_by_naming_the_command_that_would_work() {
+        let scratch = Scratch::new("t107-refusal");
+        let runtime = copy_layer(&scratch.path);
+        let editor = Editor::bare(&scratch.state(), &runtime);
+
+        editor.press(b"i");
+        editor.press(b"x");
+        editor.press(b"\x1b");
+        let drawn = editor.press_until(b":w\r", "no file name — :write <path>");
+        assert!(
+            !shows(&drawn, "required arguments"),
+            "the editor answered in clap's voice: {drawn}"
+        );
+        editor.quit();
+    }
+
+    /// **`:write <path>` gives a scratch buffer a history, not only a file.**
+    ///
+    /// Two child processes and one journal, the same shape as
+    /// [`undo_survives_quitting_and_reopening`] — except that the first session
+    /// starts with *no journal at all*, because a buffer with no file has
+    /// nothing to key one on. `Timeline::attach` opens one at the moment the
+    /// buffer gains a name and seeds it with the tree the scratch session
+    /// already built, so the second session undoes into edits made before the
+    /// file existed.
+    ///
+    /// **This is the test the whole `Timeline::attach` path exists for, and it
+    /// is the one that bites.** Deleting the `attach` call leaves every other
+    /// `T107` test green — the file is still written, the editor still quits,
+    /// the refusal is unchanged — and this one fails with `alpha` still on
+    /// disk, because the second session restores nothing and `u` has no history
+    /// to walk.
+    ///
+    /// The two-step undo is deliberate: `ZED` is one group and `alpha` is
+    /// another, so a single `u` proves the *newest* node survived and the
+    /// second proves the seed carried the node underneath it rather than only
+    /// the save.
+    #[test]
+    fn a_scratch_buffer_written_to_a_path_undoes_into_it_after_a_restart() {
+        let scratch = Scratch::new("t107-history");
+        let runtime = copy_layer(&scratch.path);
+        let state = scratch.state();
+        let file = scratch.path.join("grown.txt");
+
+        // Session one: two insert groups typed into a buffer with no file, then
+        // the write that gives it one.
+        let first = Editor::bare(&state, &runtime);
+        first.press(b"i");
+        first.press(b"alpha");
+        first.press(b"\x1b");
+        first.press(b"A");
+        first.press(b"ZED");
+        first.press(b"\x1b");
+        first.press(format!(":w {}\r", file.display()).as_bytes());
+        first.quit();
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file exists"),
+            "alphaZED",
+            "both groups reached disk"
+        );
+
+        // Session two: a fresh process on the file the scratch buffer became,
+        // undoing into a history no session of *this* file ever recorded.
+        let second = Editor::open(&file, &state, &runtime);
+        second.press(b"u");
+        second.press(b":w\r");
+        second.press(b"u");
+        second.press(b":w\r");
+        second.quit();
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "",
+            "the second session walked the scratch buffer's own history"
+        );
+    }
+
+    /// **A `:write <path>` that overwrites a file replaces that file's undo
+    /// history, and says so.**
+    ///
+    /// This test was written to pin the opposite behaviour and **found the
+    /// defect instead**, which is why it is here in this shape. Leaving the
+    /// existing journal alone sounds like the conservative answer — it is
+    /// somebody's undo history and this is only a save — and what it actually
+    /// produces is a tree describing bytes the write has just replaced. Undo in
+    /// the next session then applies the inverse of an edit against text that
+    /// no longer exists: measured, `owned\n` with one saved edit, written over
+    /// by a scratch buffer holding `new`, reopened, `u` — and the buffer became
+    /// **`ew`**.
+    ///
+    /// So the seed replaces it, the third session below undoes into *this*
+    /// buffer's history rather than into the old one, and the row says a
+    /// history went. Both halves are asserted because either alone passes over
+    /// the bug: the notice alone would pass with the stale journal still there,
+    /// and the undo alone would pass with the replacement done silently.
+    ///
+    /// This is also the only test that reaches `Editing::note` at all, and
+    /// therefore the only one that proves the loop drains it — delete the drain
+    /// and the row stays blank while everything else about the write still
+    /// works.
+    #[test]
+    fn writing_over_a_file_replaces_the_undo_history_that_was_under_it() {
+        let scratch = Scratch::new("t107-occupied");
+        let runtime = copy_layer(&scratch.path);
+        let state = scratch.state();
+        let file = scratch.path.join("owned.txt");
+        fs::write(&file, "owned\n").expect("a fixture");
+
+        // A session on the file itself, which is what puts a journal under its
+        // key. Nothing about this session is scratch.
+        let owner = Editor::open(&file, &state, &runtime);
+        owner.press(b"i");
+        owner.press(b"X");
+        owner.press(b"\x1b");
+        owner.press(b":w\r");
+        owner.quit();
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "Xowned\n"
+        );
+
+        // …and then a nameless buffer told to write over it.
+        let scratchpad = Editor::bare(&state, &runtime);
+        scratchpad.press(b"i");
+        scratchpad.press(b"new");
+        scratchpad.press(b"\x1b");
+        scratchpad.press_until(
+            format!(":w {}\r", file.display()).as_bytes(),
+            "undo history replaced",
+        );
+        scratchpad.quit();
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "new",
+            "the write itself is an ordinary write"
+        );
+
+        // A third session on the file: `u` walks the *scratch* buffer's history
+        // — one insert of `new` into an empty buffer — and not the owner's,
+        // whose single edit would have deleted a character it never wrote.
+        let again = Editor::open(&file, &state, &runtime);
+        again.press(b"u");
+        again.press(b":w\r");
+        again.quit();
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "",
+            "undo walked the history the write installed, not the one it invalidated"
+        );
     }
 }

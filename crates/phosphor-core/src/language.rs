@@ -78,11 +78,13 @@ pub struct Languages {
 
 /// Why a declaration was refused (`T037`).
 ///
-/// Two shapes, and both of them are declarations that *land* and then never
-/// match a file — which is worse than a refusal, because the road up from
-/// second tier is a road you walk once and the failure is silent at the far
-/// end of it. `define-language!` is a capability, so the host turns one of
-/// these into a `Refusal` and the REPL prints it under the form you just typed.
+/// Three shapes, and every one of them is a declaration that *lands* and is
+/// then silently wrong — two that never match a file, one that matches and is
+/// read differently by each of its readers. Silent is the whole reason these
+/// are refusals: the road up from second tier is a road you walk once and the
+/// failure is at the far end of it. `define-language!` is a capability, so the
+/// host turns one of these into a `Refusal` and the REPL prints it under the
+/// form you just typed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Invalid {
     /// The language name was empty or all whitespace. It would still win an
@@ -92,6 +94,23 @@ pub enum Invalid {
     /// one spelling that can never match: [`Path::extension`] answers `rs`,
     /// never `.rs`, and never a two-part `tar.gz`.
     DottedExtension(String),
+    /// An `indent` that is neither one tab nor a run of spaces.
+    ///
+    /// **The field's whole argument is that one literal says two things** — how
+    /// wide a level is *and* whether it is spaces or a tab
+    /// ([`crate::request::LanguageSpec::indent`]) — so a literal saying neither
+    /// is refused here rather than answered differently by each reader. It was
+    /// answered differently: the host's `IndentStyle::typed_at` treats anything
+    /// not starting with `\t` as spaces and pads to the next stop, while
+    /// `Editing::indent` splices the literal, so `" \t"` gave `>` a space-tab
+    /// and `<tab>` two spaces; `""` gave `>` a no-op and `<tab>` one space; and
+    /// `"\t\t"` gave `>` two tabs and `<tab>` one. `IndentStyle::width` counts
+    /// `chars`, so a two-cell unit measured one.
+    ///
+    /// One tab rather than any run of tabs, because one unit answers `>`, `<`
+    /// **and** `<tab>` here — there is no `shiftwidth` — and `<tab>` can only
+    /// ever type one stop.
+    Indent(String),
 }
 
 impl fmt::Display for Invalid {
@@ -102,6 +121,12 @@ impl fmt::Display for Invalid {
                 f,
                 "extension `{extension}` has a dot in it; write it the way \
                  `Path::extension` answers, without one"
+            ),
+            Self::Indent(indent) => write!(
+                f,
+                "indent {indent:?} is neither one tab nor a run of spaces; one level has to \
+                 say its width and its whitespace in one literal — write \"    \", \"  \" or \
+                 \"\\t\", or leave it void for the global answer"
             ),
         }
     }
@@ -169,6 +194,11 @@ impl Languages {
         if let Some(dotted) = spec.extensions.iter().find(|e| e.contains('.')) {
             return Err(Invalid::DottedExtension(dotted.clone()));
         }
+        if let Some(indent) = spec.indent.as_deref()
+            && !legible_indent(indent)
+        {
+            return Err(Invalid::Indent(indent.to_owned()));
+        }
         match self.declared.iter_mut().find(|(name, _)| *name == language) {
             Some((_, existing)) => Ok(Some(core::mem::replace(existing, spec))),
             None => {
@@ -179,6 +209,11 @@ impl Languages {
     }
 
     /// What was declared for `language`, or [`None`] if nothing was.
+    ///
+    /// This is deliberately **not** where a bad `indent` is caught: [`Invalid`]
+    /// says why the door is the only place that can be, and a getter answering
+    /// `None` for a declaration somebody made would be the silent-revert shape
+    /// the option constants are guarded against.
     #[must_use]
     pub fn get(&self, language: &LanguageId) -> Option<&LanguageSpec> {
         self.declared
@@ -253,6 +288,19 @@ impl Languages {
         self.get(language)?.comment_prefix.as_deref()
     }
 
+    /// What one indent level is in `language`, where the declaration said
+    /// (`T104`).
+    ///
+    /// [`None`] is the ordinary case and is not a failure: it means *"the
+    /// global answer"*, which the host composes from `expand-tab` and
+    /// `tab-width`. Eight of the shipped twelve declare a literal because
+    /// their communities settled on two spaces and the global default is four;
+    /// the other four say nothing and take it.
+    #[must_use]
+    pub fn indent(&self, language: &LanguageId) -> Option<&str> {
+        self.get(language)?.indent.as_deref()
+    }
+
     /// Every declaration, in declaration order.
     pub fn iter(&self) -> impl Iterator<Item = (&LanguageId, &LanguageSpec)> {
         self.declared.iter().map(|(name, spec)| (name, spec))
@@ -306,6 +354,17 @@ impl Languages {
             })
             .collect()
     }
+}
+
+/// Whether an `indent` literal says both of the things it is supposed to say.
+///
+/// One tab, or one-or-more spaces, and nothing else — [`Invalid::Indent`] has
+/// the argument and the three literals that used to get through. Deliberately
+/// **not** "any whitespace": an ideographic space is two cells wide and one
+/// `char`, so a unit made of them would draw at twice the width every reader of
+/// this field computes.
+fn legible_indent(indent: &str) -> bool {
+    indent == "\t" || (!indent.is_empty() && indent.chars().all(|c| c == ' '))
 }
 
 // ---------------------------------------------------------------------------
@@ -418,6 +477,7 @@ mod tests {
             grammar: grammar.map(str::to_owned),
             lsp_command: command.iter().map(|a| (*a).to_owned()).collect(),
             comment_prefix: Some("//".to_owned()),
+            indent: None,
         }
     }
 

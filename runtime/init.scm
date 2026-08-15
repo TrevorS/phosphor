@@ -82,3 +82,39 @@
 ;; `<C-x>` is unaffected in either direction: asking is asking, and it answers
 ;; on an empty line.
 (set-option! "completion-min-chars" 2)
+
+;; how many cells a tab is worth — the tabstop. this is **two answers in one
+;; number** and that is deliberate: it is how wide a `\t` in the file *draws*,
+;; and it is how wide one indent level is when levels are made of spaces.
+;;
+;; **CP-4 found the first half missing entirely**: the renderer replaced every
+;; tab with a single space, so a tab-indented file showed one column of indent
+;; per level — *"tab only seems to go a space at a time when indenting"*. there
+;; was no option to set, either; nothing in the build knew what a tabstop was.
+;;
+;; four, because that is what was asked for and because it is what the vendored
+;; editor's own hardcoded table already gave rust, python, toml and html. set it
+;; to 8 for the terminal's historical stop, or 2 if you want everything narrow.
+(set-option! "tab-width" 4)
+
+;; whether one indent level is spaces or a real tab — vim's `expandtab`.
+;;
+;; `#t` is spaces, `tab-width` of them. `#f` makes `>`, `<` and `<tab>` all
+;; write a literal `\t`, which still *draws* at `tab-width` because that is what
+;; a tabstop is.
+;;
+;; **this is the global answer and a language may override it.** the `indent`
+;; field of `define-language!` says what one level is for that language,
+;; literally — `"  "` for the eight of the shipped twelve whose communities
+;; settled on two spaces — and a declaration beats this pair, the way vim's
+;; `ftplugin` beats a global `set`. a language declaring `"indent" "\t"` gets
+;; tabs in a build where everything else gets spaces, which is what go wants and
+;; is why the field is a string rather than a width.
+;;
+;; vim's other two knobs are deliberately absent. `shiftwidth` exists because a
+;; file can mix tabs and spaces and *"how far `>>` shifts"* is then a different
+;; question from *"how wide a tab draws"*; here one unit answers both, which is
+;; what every modern editor ships as a single tab size. `softtabstop` is what
+;; makes `<bs>` eat a whole spaces-indent — a backspace behaviour, and a real
+;; gap rather than a rejected one.
+(set-option! "expand-tab" #t)

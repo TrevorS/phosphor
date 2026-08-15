@@ -103,6 +103,7 @@ S4 T039 request-signature-help
 S4 T040 diagnostics
 S4 T040 ingest-diagnostics
 S4 T082 align-columns
+S4 T104 insert-indent
 S5 T041 block-regions
 S5 T041 declare-regions
 S5 T041 drop-regions

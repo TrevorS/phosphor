@@ -73,7 +73,7 @@ would have gone on passing while twelve unchecked files shipped.
 `languages/` **is** the bundled set. `phosphor_core::language::Languages` is an empty
 table that `define-language!` fills, and it ships with no list in it — so the twelve are
 not privileged, and the thirteenth you type at `:repl` takes the same path they did
-(`T037`, and `CP-4`'s manual half). `languages/README.md` has the four fields and why
+(`T037`, and `CP-4`'s manual half). `languages/README.md` has the five fields and why
 three of the twelve declare no server.
 
 ## The keymap is live because it is only here

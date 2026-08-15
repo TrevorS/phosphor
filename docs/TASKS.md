@@ -19,12 +19,13 @@ never executed and says so at the task.
 rulings came out of the manual half; three amend design docs and are tabled in
 [§5](IMPLEMENTATION-PLAN.md#5-decisions).
 
-**Window C is built and its mechanical half is green.** The `Action` vocabulary is 215
+**Window C is built and its mechanical half is green.** The `Action` vocabulary is 216
 capabilities generated from one table, the three doors are total functions over it, and the
-parity test walks all 645 door checks end to end. (`208`/`624` until `S3` added
+parity test walks all 648 door checks end to end. (`208`/`624` until `S3` added
 `Buffer::SetCase`, `209`/`627` until the repair window added `set-macro-recording`, `register`
-and `place-anchor`, and `212`/`636` until `S4` added the three `ingest-` verbs the asynchronous
-LSP transport needs; the count is `scripts/lint-one-registry.sh`'s, which reads the tables in
+and `place-anchor`, `212`/`636` until `S4` added the three `ingest-` verbs the asynchronous
+LSP transport needs, and `215`/`645` until `T104` added `insert-indent`; the count is
+`scripts/lint-one-registry.sh`'s, which reads the tables in
 `crates/phosphor-core/src/{action,query}.rs` — do not compute it by hand. All six prose citations
 of `208` are fixed, and `scripts/doc_claims.py` section 5 now recomputes both numbers and fails on
 a stale one, so this paragraph cannot go quietly wrong again — as it just did not, when the three
@@ -2484,9 +2485,11 @@ the two that are new surfaces rather than repairs**: `T107` and `T108` name thin
 graph names at all, while `T104` extends `T026`'s operator machine and `T033`'s keymap and
 `T105`/`T106` extend a ticked `T038`.
 
-> **The review of this section found a defect older than any of it, and two the section caused.**
-> Recorded here rather than as tasks, because they are fixes rather than work: adding rows to this
-> graph moves counts `scripts/lint-doc-claims.py` recomputes, and none of these is a surface.
+> **The review of this section found a defect older than any of it, and four the section caused**
+> — the last two by the review *of* the fixes, which is the same seam catching the same shape a
+> second time. Recorded here rather than as tasks, because they are fixes rather than work: adding
+> rows to this graph moves counts `scripts/lint-doc-claims.py` recomputes, and none of these is a
+> surface.
 >
 > * **A literal `<` made Rust untypeable, and it predates `S4`.** `phosphor/prefix?` in
 >   `runtime/keymaps.scm` compared canonical key spellings with `starts-with?` — on *characters*.
@@ -2512,10 +2515,28 @@ graph names at all, while `T104` extends `T026`'s operator machine and `T033`'s 
 >   `XY Zef`. `Editing` now keeps the mode the machine reports and the fall-through types the way
 >   the mode types.
 >
-> All three are the same shape and it is worth naming: **a keymap row changed the meaning of keys
+> * **`R` stopped overwriting a second time, for `<tab>`.** The fix above taught
+>   `Editing::accept`'s fall-through to keep the mode, and `T104`'s new `insert-indent` — a
+>   different function reached by the same folded scope — spliced unconditionally. So `R<tab>`
+>   was `i<tab>`: `abcdefgh` became `    abcdefgh` where vim replaces one character and gives
+>   `    bcdefgh`. Found by hand in the installed binary at the review, and the doc comment that
+>   said *"vim's `R` does the same thing with `<Tab>`"* was the load-bearing claim — checked
+>   against `nvim -u NONE` with `set expandtab tabstop=4 softtabstop=0` and false: `Rx<Tab>` over
+>   `abcdefgh` gives `x···cdefgh`, one character eaten. `Editing::insert_indent` takes `accept`'s
+>   own mode arm now, with the newline clamp that keeps `R<tab>` at the end of a line from
+>   joining it to the next.
+> * **`ZZ` told you to save and hid the way to do it.** Not a keymap row's meaning but a keymap
+>   row's *shape*: `ZZ` is two Actions, `save-buffer` then `quit`, and on a buffer with no name
+>   both refuse. The notice slot holds one sentence and `Session::key` kept the **last**, so the
+>   editor said `unsaved work — force it or save first` and swallowed `no file name — :write
+>   <path>` — the half that says what to type. `submit_ex` is a `find_map` and has always kept
+>   the first, so `:wq` and `ZZ` were two doors onto one Action list answering differently. The
+>   keystroke door keeps the first now.
+>
+> All five are the same shape and it is worth naming: **a keymap row changed the meaning of keys
 > nobody was testing.** The machine-level tests drive their own transcribed table, the widget tests
 > hand-build ViewModels, and `runtime/keymaps.scm` reaches the buffer only through a pty. That seam
-> is where all three lived.
+> is where all five lived.
 
 **One key is contested by two of them.** `T104` wants `<tab>` to mean *one indent level* and
 `T105` wants it to mean *take this completion* — the same key, in the same scope, with the answer
@@ -2524,7 +2545,7 @@ depending on whether a list is open. `T105`'s mechanism (a fall-through argument
 fall-through it takes is literal text and an indent level is a per-language value a keymap cannot
 name. Neither task may decide it alone; it is [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s §38.
 
-- [ ] **T104 · `<tab>`, and what one indent level is**
+- [x] **T104 · `<tab>`, and what one indent level is**
   Reported at `CP-4`: *"tab only seems to go a space at a time when indenting"*. **Four things are
   true underneath that one sentence and not one of them is a missing binding**, so the report is
   worth taking apart before it is fixed.
@@ -2578,6 +2599,111 @@ name. Neither task may decide it alone; it is [OPEN-QUESTIONS.md](OPEN-QUESTIONS
   and something has to replace it, because a value declared in scheme cannot reach `Code::indent`
   without either a fork patch or the host computing the unit itself and never asking.
   **Contested with `T105` on `<tab>`** — see §38.
+
+  > **What landed, and the three rulings the entry above refused to make.**
+  >
+  > **Rendering is a fork patch, `VENDOR.md` §11, and it is upstream-shaped.** A tab's width is
+  > `tab_width - (col % tab_width)` — a function of the column it starts at, which is why it
+  > could not be folded into `grapheme_width` and why every measuring walk had to carry its
+  > running column into `phosphor::tabs::cells`. There were **five**: `Code::char_col_to_visual`
+  > and `Code::visual_to_char_col`, the renderer's grapheme loop, `Editor::cursor_from_mouse`,
+  > and `soft_wrap::segments`. `Editor::get_visible_cursor` was a sixth and is now routed
+  > through `char_col_to_visual` instead, so the column the cursor is *drawn* at cannot disagree
+  > with the column every motion computes. The stop lives on `Code`, not `Editor`, because two of
+  > the five walks are `Code`'s.
+  >
+  > **Spaces or tabs, and per-language or global: both, and the declaration wins.** Global is
+  > `(set-option! "tab-width" 4)` and `(set-option! "expand-tab" #t)` in `init.scm`; per-language
+  > is a fifth `define-language!` field, `indent`, holding **what one level is, literally** — a
+  > string, because that says width *and* tabs-vs-spaces in one value and a number cannot say the
+  > second. Precedence is vim's `ftplugin`-beats-`set`. `shiftwidth` is deliberately absent (one
+  > unit answers `>`, `<` and `<tab>` here, which is what modern editors ship as a single *tab
+  > size*); `softtabstop` is absent and is a **real gap** — `<bs>` still deletes one grapheme,
+  > which is a `<bs>` behaviour and not this task's.
+  >
+  > **The fork's table stops being the answer, and no *declared* language's behaviour changed.**
+  > The twelve shipped declarations reproduce `utils::indent`'s answers exactly — four spaces for
+  > `rust`, `python`, `toml` and `html` (declared `void`, so the global), two for the other eight
+  > — and `every_shipped_language_declares_the_indent_it_used_to_be_given` enumerates all twelve
+  > rather than spot-checking. `Code::indent` now has no phosphor caller.
+  >
+  > **The thirteenth case is every other file, and it moved from two spaces to four.** This
+  > sentence is the correction of the one above, which read *"no language's behaviour changed"*
+  > and covered only the twelve — while the case it left out is the majority one. `utils::indent`'s
+  > `_` arm gave **two spaces** to everything `grammar_of` answered `"text"` for, which is every
+  > file no declaration claims: `.sh`, `.c`, `.go`, `.lua`, `.txt`, `.log`, and the scratch buffer
+  > `T107` just made reachable. After the change `adopt` leaves `editing.language` `None` for those
+  > and `indent_style` falls to `None => " ".repeat(tab_width)` — `init.scm`'s **four**. It is
+  > deliberate and asserted rather than accidental (`the_shift_operator_shifts_by_the_unit_a_
+  > declaration_named`: *"a buffer no declaration claims took init.scm's four"*), and it is
+  > reversible in one line of scheme, `(set-option! "tab-width" 2)`. `csv` is the one that would
+  > have drifted with them and does not, because it declares `"  "` rather than `void`.
+  >
+  > **§38 is ruled by its third option and the residue is named.** `<tab>` means one indent
+  > level; completion keeps `<C-y>`, `<space>` and `<cr>`, which are the keys `CP-4` actually
+  > asked for. Reversing it needs §38's *first* option — `otherwise` widening from *text to type*
+  > to *a capability to run* — and that is now a smaller change than it was, because
+  > `insert-indent` is the capability such an argument would name. See §38 for the whole ruling.
+  >
+  > **Two things the review of this entry found, and neither was a gate failure.**
+  >
+  > *The rebuild went quadratic in one line's length.* `soft_wrap::segments` opened each segment
+  > with `code.char_col_to_visual(line_idx, seg_start)` — a grapheme walk of the whole prefix,
+  > once per segment — so a minified line paid for its own length again for every row it wrapped
+  > to. `phosphor-ui/benches/soft_wrap.rs`'s second table is written to assert exactly that
+  > property and read `1454x` between 5,000 short lines and one line of 400,000 (15.0 s per
+  > rebuild against 11 ms), `B2: FAIL`, exit 101. **`just bench` is deliberately outside `gate`,
+  > which is why *"`just gate` green — 1129 tests, 18 lints"* was true and missed it.** The
+  > segments partition the line, so the fix is carrying the column the loop already computes:
+  > `1.9x` and `B2: PASS`. `impl Widget for &Editor` had the smaller version of the same shape —
+  > once per *drawn* row, bounded by screen height rather than by the line — and takes the same
+  > carry, with the walk kept for the first row of a run because a viewport scrolled into the
+  > middle of a wrapped line has no row above it.
+  >
+  > *A declared `indent` that says neither of the two things it is for was accepted.* The field's
+  > argument is that one literal says width **and** tabs-vs-spaces; `IndentStyle::typed_at` and
+  > `Editing::indent` then read a literal saying neither differently, so `" \t"` gave `>` a
+  > space-tab and `<tab>` two spaces, `""` gave `>` a no-op and `<tab>` one space, `"\t\t"` gave
+  > `>` two tabs and `<tab>` one, and a two-cell ideographic space measured one.
+  > `Languages::declare` refuses all four now — one tab, or a run of spaces — beside the two
+  > refusals it already owed, which is the door `runtime/languages/README.md` already says
+  > validates a declaration rather than two call sites disagreeing behind it.
+  >
+  > **One defect found in passing and fixed, in a file this task does not own.**
+  > `CompletionList::desired_width` did not count `DETAIL_MIN`, so a list whose widest detail is
+  > **one cell** asked for three columns and `layout` then shed the detail at three. Latent since
+  > the `CP-4` review added the floor to `layout` alone; found by
+  > `nothing_is_shed_at_the_width_the_list_asked_for` during this task's gate run, which is
+  > exactly the drift that property exists to catch. The failing seed is committed in
+  > `completion_shed.proptest-regressions`.
+
+  > **Scope**
+  > - Files: `vendor/ratatui-code-editor/src/phosphor/tabs.rs` (+112/-0, new),
+  >   `vendor/ratatui-code-editor/tests/tabs.rs` (+157/-0, new),
+  >   `vendor/ratatui-code-editor/src/{code,editor,render,phosphor/soft_wrap,phosphor/mod}.rs`
+  >   (+168/-40), `vendor/ratatui-code-editor/VENDOR.md` (§11),
+  >   `crates/phosphor/src/main.rs` (+382/-13), `crates/phosphor-core/src/{action,request,language,input}.rs`
+  >   (+65/-6), `crates/phosphor/tests/loop_pty.rs` (+233/-0),
+  >   `crates/phosphor-steel/tests/shipped_languages.rs` (+62/-11),
+  >   `crates/phosphor-ui/src/float.rs` (+15/-3), `runtime/init.scm`, `runtime/keymaps.scm`,
+  >   all twelve `runtime/languages/*.scm` + both READMEs
+  > - Named units: 1 capability (`insert-indent`), 1 `LanguageSpec` field (`indent`) with
+  >   `Languages::indent`, 1 struct (`IndentStyle`) with `typed_at`/`width`, 1 resolver
+  >   (`indent_style`), 1 method (`Editing::insert_indent`), 1 fork module
+  >   (`phosphor::tabs`: `is_tab`, `stop`, `cells`), 2 fork accessors
+  >   (`Editor::set_tab_width`, `Editor::tab_width`), 6 fork call sites, 1 keymap row,
+  >   2 options, **25 tests**: 12 in the workspace (1117 → 1129) and 13 in the fork
+  >   (`tests/tabs.rs` 8, `src/phosphor/tabs.rs` 5), which `just test` does not run and
+  >   `scripts/lint-vendor-tests.sh` does
+  > - Verification: `just gate` green — 1129 tests, 18 lints; **eight planted mutations**, each
+  >   watched red against a named test — the render seam, `Code::char_col_to_visual`, the
+  >   soft-wrap seam, `Editing::indent`'s unit source, `IndentStyle::typed_at`'s stop
+  >   arithmetic, `Editing::insert_indent`'s column measured in chars rather than cells, the
+  >   declaration lookup in `indent_style`, and the `<tab>` row deleted from `keymaps.scm`
+  > - Risk: public API yes (a capability and a `LanguageSpec` field — both additive, both
+  >   optional at the wire door) · data migration no · cross-module yes (`phosphor-core`
+  >   vocabulary, the host, the fork, the layer) · reversible yes (the binding is one line of
+  >   scheme; the options have documented defaults) · external blocker no
   *Done when:* a tab renders at a tabstop this build can name rather than in one cell, `<tab>` in
   insert mode inserts one indent level rather than one character, `>` and `<` shift by that same
   unit, the unit comes from something a user set rather than from `utils::indent`, and **a pty
@@ -2783,7 +2909,7 @@ name. Neither task may decide it alone; it is [OPEN-QUESTIONS.md](OPEN-QUESTIONS
   hand-built `CompletionVm`. **Not before the `7c` drawing is amended**, and not with a fifth
   emphasis the view tree cannot name. *Needs:* T036, T038
 
-- [ ] **T107 · A buffer with no file — `phosphor` with no argument** 📌
+- [x] **T107 · A buffer with no file — `phosphor` with no argument** 📌
   Teej at `CP-4`: *"we need a scratch buffer when no file is specified mode if thats not already
   on the roadmap"*. **Most of it is already there and one line refuses it.**
   **What refuses.** `Cli::path` in `crates/phosphor/src/main.rs` is
@@ -2821,6 +2947,101 @@ name. Neither task may decide it alone; it is [OPEN-QUESTIONS.md](OPEN-QUESTIONS
   *Done when:* `phosphor` with no argument opens an editable buffer, `:w` without a path refuses
   in §6's voice rather than clap's, `:w <path>` gives it a file and a history from that point, and
   a pty test starts the binary with no argument and types into it. *Needs:* T030, T033
+
+  > **What landed, the four questions answered in the code, and one corruption the tests found.**
+  >
+  > **The entry was right that most of it existed, and one of its citations is wrong.** `write` is
+  > `Editing::write`, not `AppHost::write` — checked this session; the enclosing `impl` is
+  > `Editing` and `AppHost` has no such method. Everything else it claims about the tree held.
+  >
+  > **What was deleted.** `Cli::path`'s `required_unless_present_any = ["eval", "repl"]`, and with
+  > it `dispatch`'s second refusal behind it (*"give a file to open, an expression to evaluate, or
+  > --repl"*), which was unreachable prose guarding a case clap had already refused. The `None`
+  > arm of `run`'s `match &cli.path` now serves `--repl` and a bare `phosphor` from one line and
+  > needed nothing added to it: `Timeline::detached`, `adopt` returning `None`, `grammar_of` never
+  > being asked and the statusline's absent file segment were all already correct for a buffer
+  > with no name. `--help`'s `long_about` says so now, which is the claim a keystroke can disprove.
+  >
+  > * **What the statusline says: nothing, and the first row says the rest.** Not vim's
+  >   `[No Name]`. `status/file` in `runtime/statusline.scm` already answers a void `file` with
+  >   `'()` and that is the editor layer's decision, not Rust's — the change here would have been
+  >   *giving* the layer a name to draw, and the name it would draw says the same thing every
+  >   frame for the rest of the session. What a person actually needs is the *verb*, once: the
+  >   notice row carries `no file — :write <path> creates one` on the first frame, which is the
+  >   same sentence `:write` refuses with, said before it is asked. Guarded on `Surface::Buffer`,
+  >   so `--repl`, the boot float and the `--float` fixture — all of which explain themselves —
+  >   stay silent. **Reversible in one function** (`main::no_file`) if `[No Name]` is wanted; that
+  >   is a layer change plus an `Option<PathBuf>` on `StatusFile`, and it was not made here.
+  > * **What `:w` does: exactly what it did.** `no file name — :write <path>` is `Editing::write`'s
+  >   own refusal, unchanged, and it is §6's voice already — lowercase, em dash for cause, and the
+  >   whole command rather than a contraction. What changed is that it is now reachable: before
+  >   `T107` the same mistake produced clap's *"the following required arguments were not
+  >   provided"* one layer earlier. The ex line has parsed `:w <path>` since `T033`
+  >   (`runtime/keymaps.scm` passes `rest` as `"path"`).
+  > * **Undo and the journal: `Timeline::detached` was half of it.** A scratch buffer undid all
+  >   session and reopened with nothing, because the moment a buffer *gains* its first file was
+  >   the moment nothing was watching. `Timeline::attach` opens a journal at that instant and
+  >   seeds it with `seeding(&tree, origin)` — the whole tree, in `History::snapshot`'s own record
+  >   order, because the fold requires dense ids and appending only what follows the save would
+  >   hand a fresh log a `Node { id: 7 }`, which it refuses and `Timeline::append` answers by
+  >   silently dropping the log.
+  > * **The language degrades and does not retroactively upgrade.** `adopt` keys on the extension
+  >   and answers `None` for a buffer with no file, which was already true and is now reachable.
+  >   `:w notes.rs` does **not** re-run it: adopting a grammar means rebuilding the `Editor` the
+  >   way the `open-file` arm does, which discards the cursor and the selection of a buffer the
+  >   user is in the middle of. `:e` on the file the write just created is the existing door.
+  >   Recorded in `adopt`'s header, not left to be discovered.
+  >
+  > **The corruption, which a test written to pin the opposite behaviour found.** The first
+  > version of `attach` left an existing journal alone when `:write <path>` overwrote a file that
+  > had one — conservative-sounding, and wrong: the tree under that key describes bytes the write
+  > just replaced, and a *stale* history is worse than a missing one because nothing downstream
+  > can tell. Measured through the pty: `owned\n` with one saved edit, written over by a scratch
+  > buffer holding `new`, reopened, `u` — and the buffer became **`ew`**, undo applying the
+  > inverse of an edit against text that no longer existed. The journal is replaced now and the
+  > row says a history went, which is `Timeline::open_at`'s own rule (*"a tree that matches disk
+  > nowhere is not a history of this file at all, and is dropped"*) applied to the case where
+  > `saved` is present and wrong rather than absent. Q1's collision guard still stops it: a
+  > journal whose origin is a *different* file is refused, not deleted.
+  >
+  > **A harness hang, introduced and fixed while planting a mutation.** `Editor::started` held the
+  > `Command` alive past the spawn, which holds this side's pty slave fds open — so a child that
+  > exits without drawing left `await_frames` to time out correctly and then `Drop` to block
+  > forever in `reader.join()`, waiting on an end-of-file that cannot arrive. Found by restoring
+  > the required FILE argument to watch four tests go red and getting a run that never ended
+  > instead. The `Command` is scoped now and the comment says why.
+  >
+  > **Eight tests, each watched failing on its own mutation.** Five drive the binary on a pty
+  > (`loop_pty.rs`: `a_bare_phosphor_opens_a_buffer_and_says_what_would_give_it_a_file`,
+  > `a_bare_phosphor_with_unsaved_work_is_still_quittable`,
+  > `write_with_no_path_refuses_by_naming_the_command_that_would_work`,
+  > `a_scratch_buffer_written_to_a_path_undoes_into_it_after_a_restart`,
+  > `writing_over_a_file_replaces_the_undo_history_that_was_under_it`) and three are `main.rs`'s
+  > (`the_seed_a_scratch_buffer_writes_folds_back_into_the_tree_it_came_from`, whose tree has a
+  > branch point a pty cannot reach; `writing_a_buffer_with_no_file_refuses_by_naming_the_whole_command`;
+  > `dropping_the_required_file_left_every_other_invocation_alone`, which is the guard on
+  > `phosphor <file>`, `--repl`, `--eval` and `--eval` beside a file still meaning what they did).
+  >
+  > **A ninth test was left asserting the constraint this task deleted**, found by the review and
+  > not by a gate. `door.rs`'s `the_host_still_needs_a_file_and_the_door_does_not` was named for
+  > `Cli::path`'s `required_unless_present_any` and asserted *"no file and no expression is
+  > usage"*; it kept passing because `run` puts stdout on a pipe, so a bare `phosphor` now fails
+  > on the **terminal** instead of on clap. Measured: exit 1, stdout empty, stderr
+  > `phosphor: terminal i/o failed: Device not configured (os error 6)`. Passing for a reason it
+  > does not claim is the worst state a test can be in, so it says the new reason —
+  > `a_bare_phosphor_is_refused_by_the_terminal_rather_than_by_the_parser`, which fails if
+  > `required arguments` ever comes back — and the `--help` half it was bundled with is its own
+  > test.
+  >
+  > **A tenth pins the notice's guard from the other side.** `main::no_file` is guarded on
+  > `Surface::Buffer` and argued at length in two doc comments; nothing checked the negative case,
+  > and dropping the guard left the suite green. `--repl` cannot see it (the REPL draws over the
+  > statusline's row and swallows the notice whether or not the guard is there — observed with
+  > the guard planted out), so the fixture float is the surface that can fail:
+  > `a_float_over_a_nameless_buffer_says_nothing_about_the_missing_file`.
+  >
+  > **`7d` is untouched**, as the entry asks. Nothing here reads a session, counts a repo or lists
+  > a verb; `T057` still owns the dashboard and can build it over this buffer.
 
 - [ ] **T108 · The file browser — netrw → vinegar → oil.nvim** 📌
   Teej at `CP-4`: *"lets start scouting ahead for what we will need for a netrw inspired vim

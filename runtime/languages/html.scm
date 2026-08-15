@@ -11,4 +11,6 @@
   (hash "extensions" '("html" "htm")
         "grammar" "html"
         "lsp_command" '("vscode-html-language-server" "--stdio")
-        "comment_prefix" void))
+        "comment_prefix" void
+        ;; nothing declared: four spaces, off init.scm.
+        "indent" void))

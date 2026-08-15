@@ -43,10 +43,15 @@ would be reformatting the forks, which permanently breaks `just vendor-diff`. Us
 A PreToolUse hook blocks the `--all` form.
 
 `just tapes` and `just tape <id>` regenerate the Tier-2 capture library — every screen, or one.
-`just tapes-diff` and `just tape-diff <id>` capture fresh and diff against the committed
-reference *without* overwriting it, which is the pair CI runs and the one you want when the
-question is *"did this change the screen?"* rather than *"bless this change."* All four need the
-`phosphor` binary on `$PATH` — `just install` puts it there.
+`just tapes-diff` and `just tape-diff <id>` capture fresh and diff against the **committed blob,
+read straight out of git**, which is the pair CI runs and the one you want when the question is
+*"did this change the screen?"* rather than *"bless this change."* **They overwrite the tracked
+PNGs under `tapes/artifacts/` while doing it** — every tape screenshots to the same fixed path
+(`tapes/diff-tapes.sh`'s own header: *"capturing fresh always overwrites the file a plain
+`git diff` would show you were the reference"*), which is exactly why the reference comes from
+`git show` — so a run leaves the working tree dirty and `git checkout -- tapes` puts it back.
+This paragraph read *"without overwriting it"* until `CP-4`'s review ran the command and the tree
+disagreed with it. All four need the `phosphor` binary on `$PATH` — `just install` puts it there.
 
 ## Version control
 

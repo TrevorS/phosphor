@@ -12,4 +12,10 @@
   (hash "extensions" '("css")
         "grammar" "css"
         "lsp_command" '("vscode-css-language-server" "--stdio")
-        "comment_prefix" void))
+        "comment_prefix" void
+        ;; two spaces. a rule body is one level deep and nesting is the
+        ;; exception, so the width buys nothing and the cost of four shows up in
+        ;; the nested cases that do exist — media queries and `@supports`, where
+        ;; a selector is already indented before its first declaration. prettier
+        ;; and stylelint both default here.
+        "indent" "  "))
