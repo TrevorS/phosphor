@@ -284,6 +284,34 @@ mod driven {
         /// a word that shares a prefix redraws only the suffix — `ault_delay`
         /// reaches the transcript and `let base = default_delay` never does.
         /// The assertion for those belongs on the file, after `:w`.
+        ///
+        /// # This is not a wait for anything asynchronous
+        ///
+        /// It settles, and [`Editor::settle`] means *no new frame for 250 ms* —
+        /// which an operation can satisfy **while still in progress**. Waiting
+        /// for a language server is quiet. An `:e` draws the ex line, pauses,
+        /// then swaps the buffer. In both cases this returns in the gap, the
+        /// next line of the test runs against the old state, and the failure
+        /// surfaces somewhere else entirely: a `gcgc` that commented the buffer
+        /// you had already left looks exactly like `gc` being broken.
+        ///
+        /// Four of the five CI failures in the `S4` window were this, written by
+        /// three different agents and by the root agent fixing them. Every one
+        /// passed locally, because the race needs a machine slow enough to lose
+        /// it and a developer's is not.
+        ///
+        /// **Wait on the thing you mean instead**, in rough order of preference:
+        ///
+        /// * [`Editor::press_until`] on text that exists *only* after the step
+        ///   completed — the target file's contents for a cross-file jump, the
+        ///   comment prefix for a `gc`. It is the strongest option because it is
+        ///   also the assertion, and it fails with the frames it drew.
+        /// * [`Screen::replayed`]'s `row` for a cursor move, when nothing new is
+        ///   drawn to match on. `since` cannot see it — that runs the bytes
+        ///   through `printable` and strips the escape that carries the answer.
+        /// * Nothing on the statusline: it is cached, and its key does not
+        ///   include the cursor, so a jump can leave `1:1` on screen. Matching a
+        ///   position there hangs for the full timeout.
         fn press_quietly(&self, keys: &[u8]) {
             (&*self.master)
                 .write_all(keys)
