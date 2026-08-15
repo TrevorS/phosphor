@@ -1137,6 +1137,39 @@ version of the bulk approval, and it is indistinguishable afterwards from having
 
 ---
 
+### 37 · The statusline can say `1:1` while the cursor is on line 2
+
+**Found sideways, and recorded late.** Chasing a flaky pty test in the `S4` window, a wait was
+written on the statusline redrawing the cursor position after a `gd` jump. It hung for the
+harness's full 30 seconds. Reading the session transcript back, `1:1` is the **only** position
+the statusline drew in a run where the cursor demonstrably ended on line 2 — the `x` that
+followed deleted a character from that line, and the file it wrote proves where the cursor was.
+
+**The cause is a cache whose key does not include the cursor.** The buffer is drawn live from
+`&Editor` every frame; `status_cache` is the statusline's alone, which an earlier reviewer had
+already established while ruling out a different hypothesis. A jump moves the cursor without
+touching anything the key covers, so the cached row survives and the position on it is stale.
+
+**This is a product defect rather than a harness quirk, and that distinction is why this entry
+exists.** A person reads the position to know where they are; one that lies after a jump is
+worse than one that is absent, and `gd` is the motion most likely to leave you unsure. It was
+written into a comment in `crates/phosphor/tests/loop_pty.rs` and nowhere else — which is how
+the four register entries that turned out to be wrong about their own cause got that way. A
+finding that lives in one file's comment is a finding nobody audits.
+
+**Not asserted: the extent.** Only `gd` was observed. Whether every cursor motion is affected, or
+only those arriving through the event queue rather than in a keystroke's own frame, has not been
+measured — and the difference decides what this is: the second would make it a symptom of the
+queue rather than of the cache. **Measure before fixing.** A cache key widened on a guess is how
+a frame budget goes quietly, and `T079` exists because that budget is worth something.
+
+*Recommendation: it needs a task, and it belongs with whoever next owns the statusline —
+`T086`'s neighbourhood. The cheap experiment first, and it is two runs: press `j`, read the
+position, then `gd`, read it again, on the same buffer. That settles which of the two causes it
+is before a line of it is written.*
+
+---
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no
