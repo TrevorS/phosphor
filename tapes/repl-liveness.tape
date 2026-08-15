@@ -12,7 +12,13 @@
 #
 #   1. a plain buffer, NORMAL mode — the "before" state, and proof this is
 #      one continuous process, not two recordings spliced together.
-#   2. `:` opens the REPL (`runtime/keymaps.scm`'s one seeded binding).
+#   2. `:repl` opens the REPL — `runtime/keymaps.scm`'s `(ex-set! "repl" …)`,
+#      which is `6b`'s own spelling for it. **Not a bare `:`**: this tape said
+#      `:` opened the REPL and typed exactly that, which was true only while
+#      there was no ex prompt. `:` binds to `open-prompt kind ex` today, so
+#      the wait for a REPL chip could never be satisfied and every frame here
+#      was unproducible — and `run-tapes.sh`'s `set -e` made that one broken
+#      tape stop the whole library.
 #   3. `(keymap-set! "gz" (lambda () (open-repl!)))`, submitted — binds a key
 #      that was UNBOUND a moment ago, in the same live session.
 #   4. `esc` closes the REPL — back to the plain buffer, NORMAL mode again.
@@ -74,7 +80,8 @@ Wait+Screen@10s /(?m)^ (NORMAL|N)\b/
 Sleep 500ms
 Screenshot "artifacts/repl-liveness-1-before.png"
 
-Type ":"
+Type ":repl"
+Enter
 Wait+Screen@10s /(?m)^ (REPL|R)\b/
 
 Type `(keymap-set! "gz" (lambda () (open-repl!)))`

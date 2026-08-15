@@ -19,9 +19,16 @@
 # harness does not own `runtime/**` (TEAM.md).
 #
 # Sentinels wait on a word unique to each answer (`T041`, `region-author`,
-# `claude`, `place-watch`) rather than a generic prompt glyph, so a tape that
+# `claude`, `T077`) rather than a generic prompt glyph, so a tape that
 # raced ahead of the VM would time out instead of screenshotting a partial
 # session.
+#
+# The fourth sentinel was `place-watch`, which stopped appearing at `§8` and
+# took this tape — and, through `run-tapes.sh`'s `set -e`, every tape after it
+# in the glob — out of `just tapes` without anything saying so. It waited on an
+# error message: the pre-`§8` answer was Steel's `TypeMismatch` *naming the
+# capability*. Now the call decodes and the editor declines in its own voice,
+# so the word to wait on is the task the refusal names.
 
 Output "artifacts/6b.gif"
 
@@ -52,7 +59,7 @@ Wait+Screen@10s /claude/
 
 Type `(watch-place "src/retry.rs:24" 'delay)`
 Enter
-Wait+Screen@10s /place-watch/
+Wait+Screen@10s /T077/
 # Settle guard for the screenshot pipeline, not a sync primitive — see
 # 1a.tape's header for the full finding and why this isn't V004's Sleep.
 Sleep 500ms

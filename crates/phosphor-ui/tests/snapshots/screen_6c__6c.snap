@@ -1,0 +1,111 @@
+---
+source: crates/phosphor-ui/tests/screen_6c.rs
+expression: frame.to_text(&buf)
+---
+screen 6c · phosphor dark · 100x12 cells
+  THE ROW THIS FRAME EXISTS FOR is line 64: an unseen claude edit and a
+    diagnostic on the same row. §3's ladder is 'trouble > attention >
+    claude', so the bar is trouble-red — 6c itself draws that row's bar
+    green, which is the one place the mockup and §3 disagree. Flagged in
+    the T040 report, not folded in.
+  Lines 62-63 carry the same unseen edit with no diagnostic, and are
+    claude-green; the ┊ rows between them carry no bar at all, because an
+    overlay is not a state (§3 rows 18 and 20).
+  The ■ row is a row of its own. 6c draws `■ E0308: …` INLINE, after the
+    code on line 64; the fork inserts a virtual row UNDER the row showing
+    its anchor (VENDOR.md patch 8) and end-of-line virtual text is a patch
+    nobody has written. T040's own wording is '■ rows via VirtualText'.
+  `E0308:` is the server's diagnostic code and request::Diagnostic has no
+    field for one, so the row carries the message alone.
+  The statusline has no `■ 1`. StatusLineVm carries no diagnostic count
+    (T025 composes the line in Steel from that VM), so the count is a
+    contract for whoever owns it — see the T040 report.
+  6c's closing summary row ('1 diagnostic · claude sees what LSP sees —
+    :c fix routes it with the anchor attached') routes a verb that lands
+    at S6.
+  The thread's three rows and the anchor's tint are fixtures for T068 and
+    T087, standing in for the store exactly as golden_frames.rs's own
+    counters do.
+
+text
+     0         1         2         3         4         5         6         7         8         9
+     0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │  61  impl RetryPolicy {                                                                            │
+  1 │  62      pub fn next_delay(&self, attempt: u32) -> Duration {                                      │
+  2 │      ┊ ⚓  thread · was retry_with_backoff:19-21 · followed node fn:next_delay                      │
+  3 │      ┊ you: collapse these arms — use the shared backoff helper                                    │
+  4 │      ┊ ✻ claude: collapsed — and hoisted into next_delay during the split                          │
+  5 │  63          let exp = self.base_delay * 2u32.pow(attempt);                                        │
+  6 │  64          jitter(exp.min(self.max_delay))                                                       │
+  7 │      ┊ ■ expected Duration, found u128                                                             │
+  8 │  65      }                                                                                         │
+  9 │  66  }                                                                                             │
+ 10 │  67                                                                                                │
+ 11 │ NORMAL  src/retry.rs                                                 ✻ claude idle 2 unseen │ 64:9 │
+
+fg
+     0         1         2         3         4         5         6         7         8         9
+     0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │..kk..bbbbheeeeeeeeeeehh............................................................................│
+  1 │..kk..hhhhbbbhbbhffffffffffhbbbbbhhhhhhhhhhheeehhhhheeeeeeeehh......................................│
+  2 │..kk..jjj.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj......................│
+  3 │..kk..jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj....................................│
+  4 │..kk..jjaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..........................│
+  5 │..kk..hhhhhhhhbbbhhhhhhhbbbbhhhhhhhhhhhhhheeeehfffhhhhhhhhhh........................................│
+  6 │..kk..hhhhhhhhffffffhhhhhfffhbbbbhhhhhhhhhhhh.......................................................│
+  7 │..kk..jjddddddddddddddddddddddddddddddd.............................................................│
+  8 │..kk..hhhhh.........................................................................................│
+  9 │..kk..h.............................................................................................│
+ 10 │..kk................................................................................................│
+ 11 │gggggggghhhhhhhhhhhhh.................................................aaaaaaaaaaaaajjjjjjjjjjjjjjjj.│
+
+bg
+     0         1         2         3         4         5         6         7         8         9
+     0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  1 │agggggnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnngggggggggggggggggggggggggggggggggggggg│
+  2 │ggggggggg.gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  3 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  4 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  5 │aggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  6 │dggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  7 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  8 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  9 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 10 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 11 │aaaaaaaayyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy│
+
+style
+     0         1         2         3         4         5         6         7         8         9
+     0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │....................................................................................................│
+  1 │......~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~......................................│
+  2 │....................................................................................................│
+  3 │....................................................................................................│
+  4 │....................................................................................................│
+  5 │....................................................................................................│
+  6 │..............~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~.......................................................│
+  7 │....................................................................................................│
+  8 │....................................................................................................│
+  9 │....................................................................................................│
+ 10 │....................................................................................................│
+ 11 │....................................................................................................│
+
+legend
+  a  #3ddc97  actors.claude
+  b  #82aecd  actors.you = syntax.keyword
+  d  #d97b6c  actors.trouble = regions.failure_undercurl
+  e  #cfa86a  actors.transient = syntax.ty = syntax.constant = syntax.string = syntax.number
+  f  #9ec98c  actors.steel = syntax.function
+  g  #0c0f0c  neutrals.ground = chrome.mode_chip_fg = chrome.tab_bar
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  k  #414b42  neutrals.line_numbers
+  n  #141d16  regions.anchor
+  y  #1a201a  chrome.statusline
+
+style
+  ~  undercurl — SGR 4:3 wrapped around the glyph, plus Modifier::UNDERLINED
+  _  Modifier::UNDERLINED alone (the degraded path)
+     underline colour #2a5c44  regions.anchor_undercurl
+     underline colour #d97b6c  actors.trouble

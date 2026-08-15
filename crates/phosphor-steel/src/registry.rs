@@ -140,7 +140,7 @@ fn apply(host: &Arc<dyn Host>, log: &ReceiptLog, call: &Call) -> Result<SteelVal
     let capability = request.action.spec().name;
     let answer = outcome_value(&outcome);
     log.push(capability, outcome);
-    Ok(answer)
+    answer
 }
 
 /// Answers a query, or raises.
@@ -154,8 +154,17 @@ fn answer(host: &Arc<dyn Host>, call: &Call) -> Result<SteelVal, SteelErr> {
 }
 
 /// An [`Outcome`] as scheme sees it — see [`OK`] and [`REFUSED`].
-fn outcome_value(outcome: &Outcome) -> SteelVal {
-    match outcome {
+///
+/// # Errors
+///
+/// [`Outcome::Raised`] does not become a value. This module's own rule is
+/// *refusals are values; errors are errors*, and a host that answers a raise is
+/// reporting an error — so it re-raises, and scheme unwinds exactly as it would
+/// have if the capability had raised in the first place (`T100`). No host
+/// produces one today; the arm exists because the rule decides it, not because
+/// a caller does.
+fn outcome_value(outcome: &Outcome) -> Result<SteelVal, SteelErr> {
+    Ok(match outcome {
         Outcome::Done(receipt) => match &receipt.value {
             Value::Null => SteelVal::SymbolV(OK.into()),
             value => to_steel(value),
@@ -168,7 +177,10 @@ fn outcome_value(outcome: &Outcome) -> SteelVal {
             .into_iter()
             .collect(),
         ),
-    }
+        Outcome::Raised(raised) => {
+            return Err(SteelErr::new(ErrorKind::Generic, raised.why()));
+        }
+    })
 }
 
 /// Why an Action did not happen, in the product's voice.

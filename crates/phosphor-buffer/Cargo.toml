@@ -14,6 +14,24 @@ ratatui-code-editor = { workspace = true, features = ["grammars-phosphor"] }
 ropey.workspace = true
 tree-sitter.workspace = true
 
+# `T036` — the language server. The four below are this module's whole cost and
+# they are all reachable from `src/lsp.rs` alone; nothing else in the crate
+# knows a runtime exists.
+#
+# `phosphor-core` is new to this crate and is the direction that was always
+# allowed: `phosphor-core` is dependency-free at the floor, so buffer → core is
+# the only edge that can exist between them. It is here because the LSP client
+# is a **producer for the binary's event queue**, whose payload is an `Action`
+# (`crates/phosphor/src/events.rs`), and because `Position`'s own doc names this
+# crate as where the UTF-16 conversion lives: *"Byte offsets stay inside
+# `phosphor-buffer`, and the UTF-16 conversion the LSP wants stays at that seam
+# (`T036`)"*.
+async-lsp.workspace = true
+phosphor-core.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
 # `T083` — the grammar ABI check, and nothing else, needs the grammar crates by
 # name. They are dev-dependencies **here only**, deliberately not in the root
 # `[workspace.dependencies]`: the root manifest is `spine`'s, and keeping eleven
@@ -37,6 +55,15 @@ tree-sitter.workspace = true
 #     `crossterm` is only "wait for a keypress, then quit".
 crossterm.workspace = true
 phosphor-term = { path = "../phosphor-term" }
+# `T082`'s benchmark measures the parse and its column model **together**,
+# because that pair is what opening a CSV costs and the pair spans the seam: the
+# parser is this crate's and `Layout` is `phosphor-ui`'s, since display width is
+# a rendering question. There is no third place for a benchmark over two crates,
+# so it lives with the parser and reaches the surface here. Dev-only, so no
+# shipping edge exists from the buffer engine to a widget crate — and
+# `scripts/lint-no-store-mutation.sh` check 2 is about the other direction
+# (`phosphor-ui`'s own dependencies), which this does not touch.
+phosphor-ui = { path = "../phosphor-ui" }
 # `tests/undo_properties.rs` states `T029`'s laws over generated edit sequences
 # rather than six hand-built groups — the boundaries an undo tree breaks at are
 # between records, and a property reaches them. `SPIKES.md`'s hygiene table
@@ -60,6 +87,16 @@ tree-sitter-scheme = "0.24.7"
 tree-sitter-toml-ng = "0.7.0"
 tree-sitter-typescript = "0.23.2"
 tree-sitter-yaml = "0.7.2"
+
+# `T082`. `harness = false` is not optional and the failure without it is
+# SILENT: cargo autodiscovers `benches/csv.rs` under libtest's harness, it
+# compiles, `just bench` reports it, and it runs zero measurements — the same
+# trap `phosphor-ui/Cargo.toml` records for `soft_wrap`. What this one asserts
+# is that the column model is flat past `MAX_COLUMN_CELLS`, which is the
+# difference between opening a file with one base64 blob in it and hanging.
+[[bench]]
+name = "csv"
+harness = false
 
 [features]
 default = []

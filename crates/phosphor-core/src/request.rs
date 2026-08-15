@@ -975,6 +975,87 @@ wire_record!(Diagnostic {
     source: Option<String> = "which server or linter said it",
 });
 
+// ---------------------------------------------------------------------------
+// What a language server answers with (`T038`, `T039`)
+// ---------------------------------------------------------------------------
+
+/// A half-open range of **characters** inside a piece of text (`T039`).
+///
+/// Not a [`Span`], which is a rectangle of a *buffer*: this indexes into one
+/// string — a signature label — and there is no line to name. Characters
+/// rather than bytes or cells because a door may not be made to count UTF-8,
+/// and rather than UTF-16 because that encoding stops at the LSP seam
+/// (`phosphor-buffer`'s `lsp` module converts there, so nothing above it knows
+/// UTF-16 exists).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CharRange {
+    /// First character inside the range, 0-based.
+    pub start: u32,
+    /// First character after it.
+    pub end: u32,
+}
+
+wire_record!(CharRange {
+    start: u32 = "first character inside the range, 0-based",
+    end: u32 = "first character after the range",
+});
+
+/// One completion a server offered (`T038`).
+///
+/// Same shape and same name as `phosphor-buffer`'s `lsp::Completion`, on the
+/// [`Diagnostic`] precedent: the client type is the *server's* answer parsed,
+/// this one is the answer as a door speaks it, and the host's mapping between
+/// them is a rename with no decisions in it. Merging them would put
+/// `lsp_types` in this crate's dependency line, which is what the seam exists
+/// to prevent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Completion {
+    /// What the list shows — `default()`, `default_delay` (`7c`).
+    pub label: String,
+    /// The type or shape, drawn in meta-grey right of the label column.
+    pub detail: Option<String>,
+    /// Documentation for **this** item, one row per line (§11: nothing wraps).
+    ///
+    /// Per item rather than per list because `move-completion` changes which
+    /// prose is on screen without asking the server again. A list that carried
+    /// one documentation block would either re-request on every arrow key or
+    /// show the first item's prose under every other item.
+    pub documentation: Vec<String>,
+    /// What to type when this item is accepted.
+    pub insert: String,
+}
+
+wire_record!(Completion {
+    label: String = "what the list shows",
+    detail: Option<String> = "the type or shape, drawn right of the label",
+    documentation: Vec<String> = "this item's documentation, one row per line",
+    insert: String = "what to type when it is accepted",
+});
+
+/// One signature, as signature help gives it (`T039`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signature {
+    /// The callable as the server spells it —
+    /// `fn fetch_json(url: &str) -> Result<Value, FetchError>`.
+    pub label: String,
+    /// The parameter the cursor is inside, as a range into [`label`].
+    ///
+    /// Absent when the server named none, which is not the same as *"no
+    /// signature"* — the line still draws, nothing is emphasised in it.
+    ///
+    /// [`label`]: Signature::label
+    pub active: Option<CharRange>,
+    /// Documentation for the active parameter, or for the signature, one row
+    /// per line.
+    pub documentation: Vec<String>,
+}
+
+wire_record!(Signature {
+    label: String = "the callable as the server spells it",
+    active: Option<CharRange> = "the parameter the cursor is inside, as characters into the label",
+    documentation: Vec<String> = "documentation, one row per line",
+});
+
 /// One edit in a replayable batch (`T029`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Edit {
@@ -1193,12 +1274,26 @@ wire_record!(FileEdits {
 /// and being folklore.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanguageSpec {
-    /// File extensions, without the dot.
+    /// File extensions, without the dot — the spelling [`std::path::Path::extension`]
+    /// answers in. `phosphor_core::language::Languages::declare` refuses a
+    /// dotted one rather than accepting an extension that can never match.
     pub extensions: Vec<String>,
-    /// The tree-sitter grammar's name or path. Absent means second tier — no
-    /// node anchoring, no watches, and the editor says so honestly.
+    /// The tree-sitter grammar's name, as the host's grammar table spells it.
+    /// Absent means second tier — and so does a name that table does not carry,
+    /// which is [`Tier`]'s business rather than this field's.
+    ///
+    /// A *name*, not a path: nothing in this build loads a grammar from disk,
+    /// and saying "or path" here promised a road that does not exist.
     pub grammar: Option<String>,
-    /// The language server command and its arguments. Empty means none.
+    /// The language server command and its arguments. `'()` is *no server*, and
+    /// is an honest answer for a language none exists for.
+    ///
+    /// Required at the door even so, unlike `grammar` and `comment_prefix`:
+    /// [`crate::value::Wire::REQUIRED`] is `false` only for
+    /// `Option<T>`, so a list omitted is a list missing. Serverlessness is
+    /// worth spelling out anyway — `runtime/languages/README.md` asks for
+    /// `void` over omission on the same grounds — and the refusal names the
+    /// field.
     pub lsp_command: Vec<String>,
     /// The line-comment prefix, for `toggle-comment`.
     pub comment_prefix: Option<String>,
@@ -1206,9 +1301,42 @@ pub struct LanguageSpec {
 
 wire_record!(LanguageSpec {
     extensions: Vec<String> = "file extensions, without the dot",
-    grammar: Option<String> = "tree-sitter grammar name or path; absent means second tier",
+    grammar: Option<String> = "tree-sitter grammar name; absent, or unknown to this build, means second tier",
     lsp_command: Vec<String> = "language server command and arguments; empty means none",
     comment_prefix: Option<String> = "line-comment prefix, for toggle-comment",
+});
+
+/// How much of the promise a language gets (`T037`).
+///
+/// The Component Breakdown makes this a two-valued thing on purpose: *"There is
+/// no in-between: we do not ship half-tuned grammars that anchor wrongly and
+/// erode trust in the anchor promise."* So there is no `Partial`, and the
+/// discriminator is a single fact — whether **this build can parse the
+/// language**.
+///
+/// That fact is not readable from a [`LanguageSpec`], which is why there is no
+/// `Tier::of(&LanguageSpec)`: a declaration names its grammar as a string, and
+/// a `Tier::of` that trusted the string answered `first-class` for names
+/// nothing can load. `phosphor_core::language::Languages::tier` is the one
+/// definition, because the table is the only thing holding both halves.
+///
+/// A blessed server is **not** part of it. `csv` and `markdown` are declared
+/// with no language server at all — one because none exists, one because the
+/// design gives it a bespoke surface — so tying the tier to the server would
+/// demote them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    /// Bundled grammar: node anchoring, structural text objects, watches.
+    FirstClass,
+    /// Plain text with line-based regions. The whole agent loop still works —
+    /// it is a store feature, not a language feature — and anchors fall back to
+    /// line + content matching.
+    SecondTier,
+}
+
+wire_choice!(Tier {
+    FirstClass => "first-class",
+    SecondTier => "second-tier",
 });
 
 /// Narrows a query or a navigation Action to a subset of regions.
@@ -1358,6 +1486,72 @@ mod tests {
         let encoded = target.to_value();
         assert_eq!(encoded.tag(), Some("explicit"));
         assert_eq!(Target::from_value(&encoded).unwrap(), target);
+    }
+
+    /// Character offsets do not go backwards past the start of a string, and
+    /// the wire is signed — so the range check is the payload type's job
+    /// ([`crate::value::Value::Int`]'s docs say exactly that). A [`CharRange`]
+    /// widened to `i64` would let a server's arithmetic bug through as a
+    /// negative highlight start, which the widget would then index with.
+    #[test]
+    fn a_character_range_refuses_a_negative_offset() {
+        let backwards = Value::Record(
+            crate::value::Args::new()
+                .with("start", Value::Int(-1))
+                .with("end", Value::Int(4)),
+        );
+        let error = CharRange::from_value(&backwards).unwrap_err();
+        assert!(
+            matches!(error, crate::value::WireError::Field { field: "start", .. }),
+            "the error has to name the field, not just the range: {error:?}"
+        );
+    }
+
+    /// `detail` is what a server *may* send, so a completion arrives without
+    /// one rather than with an empty one. A required `detail` would make every
+    /// server that omits it decode as an argument error instead of a row.
+    #[test]
+    fn a_completion_without_a_detail_omits_it_rather_than_requiring_it() {
+        let terse = Value::Record(
+            crate::value::Args::new()
+                .with("label", Value::Text("default".to_owned()))
+                .with(
+                    "documentation",
+                    Value::List(vec![Value::Text("Returns the policy.".to_owned())]),
+                )
+                .with("insert", Value::Text("default()".to_owned())),
+        );
+        let completion = Completion::from_value(&terse).unwrap();
+        assert_eq!(completion.detail, None);
+        assert_eq!(completion.documentation.len(), 1);
+        assert_eq!(completion.insert, "default()");
+    }
+
+    /// The two shapes signature help actually arrives in, and they are not the
+    /// same value: a server that named no active parameter still sent a
+    /// signature, and the line still draws with nothing emphasised in it.
+    #[test]
+    fn a_signature_round_trips_with_and_without_an_active_parameter() {
+        let emphasised = Signature {
+            label: "fn fetch_json(url: &str) -> Result<Value, FetchError>".to_owned(),
+            active: Some(CharRange { start: 14, end: 22 }),
+            documentation: vec!["The URL to fetch.".to_owned()],
+        };
+        let plain = Signature {
+            active: None,
+            ..emphasised.clone()
+        };
+
+        assert_eq!(
+            Signature::from_value(&emphasised.to_value()).unwrap(),
+            emphasised
+        );
+        assert_eq!(Signature::from_value(&plain.to_value()).unwrap(), plain);
+        assert_ne!(
+            emphasised.to_value(),
+            plain.to_value(),
+            "an absent active parameter must not encode as the same record as a present one"
+        );
     }
 
     /// A union that declares no spelling is unchanged by the macro's new arm.

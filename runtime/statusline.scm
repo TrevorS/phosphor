@@ -19,6 +19,7 @@
 ;;   ask_pending a queued ask is waiting (Q9)
 ;;   unseen      unseen regions in this file
 ;;   vcs         "jj ✓", or void outside a repo
+;;   server      "rust-analyzer ✓", or void where the language declares none
 ;;   cursor      (hash "line" … "col" …), or void
 ;;   hints       the keys this surface teaches
 ;;
@@ -58,8 +59,15 @@
 ;; two rungs are contractions rather than drops — `6 unseen` becomes `●6`, `✻
 ;; claude idle` becomes `✻` — and a segment that contracts never drops, which is
 ;; how §11's last-standing set (`✻` / `●n` / `!`) is written here.
+;;
+;; `server` is one of those contractions, and it is a contraction for a reason
+;; the others do not have. 7c draws `rust-analyzer ✓` where 8d draws `jj ✓`, so
+;; it sits beside the vcs chip — but a *failed* server says so here and nowhere
+;; else in the editor, and a rung that dropped it would make the one place that
+;; information exists the first thing a narrow terminal throws away. What goes
+;; is the failure's own sentence; `name ✗` stays.
 (define phosphor/status-ladder
-  '(hints counter-words vcs cursor session-prose mode-word file-path dirty file))
+  '(hints counter-words server vcs cursor session-prose mode-word file-path dirty file))
 
 ;; §5: "mode chip (bg = mode color, the only inverted text on screen)". the word
 ;; and the actor field it sits on, per mode. a surface gets a chip of its own —
@@ -172,6 +180,18 @@
       [(equal? (substring path (- at 1) at) "/") (substring path at (string-length path))]
       [else (loop (- at 1))])))
 
+;; the name and its mark — `rust-analyzer ✓`, `tsserver ✗` — off the front of a
+;; server chip whose tail is a failure's own sentence. §11 contracts it to this
+;; rather than dropping it: the sentence is the OS's words about why a server is
+;; not running, which is worth the row it costs but not the whole row.
+(define (status/chip-head chip)
+  (let loop ([at 0] [spaces 0])
+    (cond
+      [(>= at (string-length chip)) chip]
+      [(equal? (substring chip at (+ at 1)) " ")
+       (if (>= spaces 1) (substring chip 0 at) (loop (+ at 1) (+ spaces 1)))]
+      [else (loop (+ at 1) spaces)])))
+
 ;; `12:1` (`1a`, `8e`).
 (define (status/place cursor)
   (string-append (number->string (hash-try-get cursor "line"))
@@ -265,6 +285,7 @@
 ;; the counter group — the only place a `│` appears.
 (define (status/counters vm)
   (let ([unseen (hash-try-get vm "unseen")]
+        [server (status/present? (hash-try-get vm "server"))]
         [vcs (status/present? (hash-try-get vm "vcs"))]
         [cursor (status/present? (hash-try-get vm "cursor"))])
     (status/first-joins-with-a-gap
@@ -274,6 +295,12 @@
           (list (status/segment 'counter-words
                                 (view/counter 'unseen unseen void 'meta)
                                 (view/counter 'unseen unseen "unseen" 'meta)
+                                'bar))
+          '())
+      (if server
+          (list (status/segment 'server
+                                (view/label (status/chip-head server) 'meta 'plain)
+                                (view/label server 'meta 'plain)
                                 'bar))
           '())
       (if vcs

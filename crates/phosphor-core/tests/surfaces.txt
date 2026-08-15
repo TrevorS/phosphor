@@ -87,15 +87,17 @@ S3 T099 register
 S3 T099 set-macro-recording
 S4 T036 apply-workspace-edit
 S4 T036 request-definition
-S4 T036 request-references
 S4 T036 restart-language-server
 S4 T037 define-language
 S4 T037 languages
 S4 T037 toggle-comment
 S4 T038 accept-completion
 S4 T038 cancel-completion
+S4 T038 ingest-completions
 S4 T038 move-completion
 S4 T038 request-completion
+S4 T039 ingest-hover
+S4 T039 ingest-signature-help
 S4 T039 request-hover
 S4 T039 request-signature-help
 S4 T040 diagnostics
@@ -128,6 +130,7 @@ S5 T046 invalidate-picker-source
 S5 T046 open-picker
 S5 T047 cycle-picker-source
 S5 T047 picker-accept
+S5 T047 request-references
 S5 T048 arch
 S5 T048 open-arch
 S5 T049 goto-sequence

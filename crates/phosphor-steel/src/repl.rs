@@ -226,6 +226,10 @@ impl Repl {
         match &runtime.take_receipts().last()?.outcome {
             Outcome::Done(receipt) => receipt.note.clone(),
             Outcome::Refused(refusal) => Some(format!("not persisted — {}", why(refusal))),
+            // `T100`. Same sentence opener, because what a reader needs is the
+            // same fact — the write did not happen — and the half after the
+            // dash is the enum's own, not a second phrasing of it.
+            Outcome::Raised(raised) => Some(format!("not persisted — {}", raised.why())),
         }
     }
 
@@ -622,8 +626,15 @@ mod tests {
             repl.insert(character);
         }
         let entry = repl.submit(&mut runtime).expect("a form was typed");
-        assert_eq!(entry.answered.head, "#refused");
-        assert!(entry.answered.note.is_some(), "a refusal says why");
+        // `T100`: `#raised`, not `#refused`. Nothing declined this — the form
+        // ran and blew up, and `6b`'s `⇒` line now says which of the two
+        // happened instead of calling both a refusal.
+        assert_eq!(entry.answered.head, crate::answer::RAISED);
+        assert_eq!(
+            entry.answered.note.as_deref(),
+            Some("cannot parse — Unexpected EOF"),
+            "the whole sentence, so steel's `Error: Parse:` envelope coming back fails here"
+        );
     }
 
     #[test]

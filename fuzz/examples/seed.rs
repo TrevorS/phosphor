@@ -268,6 +268,60 @@ fn key_notation_seeds(root: &Path) {
     }
 }
 
+/// The CSV fixtures, each prefixed with the delimiter byte the target reads.
+///
+/// `crates/phosphor-buffer/tests/fixtures/csv/` is already the case list —
+/// `tests/csv.rs` asserts what every one of those files parses to — so the
+/// corpus is that list rather than a second one that drifts away from it. The
+/// prefix is `csv_parse`'s input framing: byte 0 is the delimiter, so a `.tsv`
+/// fixture seeds a tab and the fuzzer starts from a corpus that already knows
+/// the delimiter is a parameter.
+///
+/// Plus [`EXTRA_CSV_SEEDS`] — malformed one-liners short enough that a mutation
+/// would have to be lucky to rediscover them inside a 200-byte file.
+fn csv_parse_seeds(root: &Path) {
+    println!("seeds/csv_parse:");
+    let dir = root.join("crates/phosphor-buffer/tests/fixtures/csv");
+    let mut entries: Vec<PathBuf> = fs::read_dir(&dir)
+        .expect("the csv fixture directory exists")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect();
+    entries.sort();
+    for path in entries {
+        let name = path
+            .file_name()
+            .expect("a fixture has a name")
+            .to_string_lossy()
+            .into_owned();
+        let delimiter = if name.ends_with(".tsv") { b'\t' } else { b',' };
+        let mut bytes = vec![delimiter];
+        bytes.extend_from_slice(&fs::read(&path).expect("a fixture is readable"));
+        write("csv_parse", &name, &bytes);
+    }
+    for (name, body) in EXTRA_CSV_SEEDS {
+        let mut bytes = vec![b','];
+        bytes.extend_from_slice(body.as_bytes());
+        write("csv_parse", name, &bytes);
+    }
+}
+
+/// The pathological one-liners, each named for what it is.
+///
+/// Every entry is a branch of `quoted_field_at` or a boundary of `parse`.
+/// `three-quotes` is the shape that breaks a scanner looking two bytes ahead
+/// instead of consuming pairs; `blank-lines` is the difference between one
+/// trailing terminator and two, which is the whole of `to_csv`'s inverse law.
+const EXTRA_CSV_SEEDS: [(&str, &str); 8] = [
+    ("bare-quote", "\""),
+    ("three-quotes", "\"\"\""),
+    ("unterminated", "a,\"never closed"),
+    ("tail-after-quote", "\"ab\"cd,x"),
+    ("blank-lines", "a\n\n\n"),
+    ("crlf-mix", "a,b\r\nc,d\ne,f\r\n"),
+    ("lone-cr", "a\rb,c"),
+    ("all-delimiters", ",\t;|\n,\t;|"),
+];
+
 /// The shipped themes, verbatim.
 fn theme_load_seeds(root: &Path) {
     println!("seeds/theme_load:");
@@ -289,6 +343,326 @@ fn theme_load_seeds(root: &Path) {
     }
 }
 
+/// One LSP frame: the header a server writes, and the body it counted.
+///
+/// The length comes from the body rather than from a literal for
+/// `journal_records`'s reason — a hand-written count is a second implementation
+/// of the framing, and getting it wrong would silently seed the corpus with the
+/// malformation the pathological seeds already cover deliberately.
+fn frame(body: &str) -> String {
+    format!("Content-Length: {}\r\n\r\n{body}", body.len())
+}
+
+/// A JSON-RPC notification, as a server sends it.
+fn notification(method: &str, params: &serde_json::Value) -> String {
+    frame(&serde_json::json!({"jsonrpc": "2.0", "method": method, "params": params}).to_string())
+}
+
+/// A JSON-RPC response to request `id`.
+fn response(id: i64, result: &serde_json::Value) -> String {
+    frame(&serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string())
+}
+
+/// Real traffic, plus the malformations a mutation would have to be lucky to
+/// find — `lsp_wire`'s corpus.
+///
+/// The real half is **derived**, in the sense `journal_open`'s is: every body
+/// is a real `lsp_types` value serialized by the same `serde` impls `async-lsp`
+/// writes with, so a field that moves upstream moves the seeds with it. What is
+/// hand-written is the malformed half, and it has to be: a malformation is
+/// exactly a shape no serializer produces. Same call as `EXTRA_CSV_SEEDS`.
+fn lsp_wire_seeds() {
+    use phosphor_buffer::lsp::lsp_types;
+
+    println!("seeds/lsp_wire:");
+
+    let range = |line: u32, from: u32, to: u32| lsp_types::Range {
+        start: lsp_types::Position {
+            line,
+            character: from,
+        },
+        end: lsp_types::Position {
+            line,
+            character: to,
+        },
+    };
+    let diagnostics = |items: Vec<lsp_types::Diagnostic>| {
+        notification(
+            "textDocument/publishDiagnostics",
+            &serde_json::to_value(lsp_types::PublishDiagnosticsParams {
+                uri: lsp_types::Url::parse("file:///tmp/main.rs").expect("a file url"),
+                diagnostics: items,
+                version: None,
+            })
+            .expect("diagnostics serialize"),
+        )
+    };
+    let diagnostic = |range: lsp_types::Range, message: &str| lsp_types::Diagnostic {
+        range,
+        message: message.to_owned(),
+        ..lsp_types::Diagnostic::default()
+    };
+
+    // rust-analyzer's opening move, and the one field `sync_kind` reads.
+    let ready = lsp_types::InitializeResult {
+        capabilities: lsp_types::ServerCapabilities {
+            text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Kind(
+                lsp_types::TextDocumentSyncKind::INCREMENTAL,
+            )),
+            completion_provider: Some(lsp_types::CompletionOptions::default()),
+            hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
+            ..lsp_types::ServerCapabilities::default()
+        },
+        server_info: Some(lsp_types::ServerInfo {
+            name: "rust-analyzer".to_owned(),
+            version: Some("1.0.0".to_owned()),
+        }),
+    };
+    write(
+        "lsp_wire",
+        "initialize-result",
+        response(
+            0,
+            &serde_json::to_value(&ready).expect("a capability set serializes"),
+        )
+        .as_bytes(),
+    );
+
+    // Two diagnostics, one of them with an astral character before the column
+    // so the UTF-16 seam is in the corpus from the first exec.
+    write(
+        "lsp_wire",
+        "diagnostics",
+        diagnostics(vec![
+            lsp_types::Diagnostic {
+                severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+                source: Some("rustc".to_owned()),
+                ..diagnostic(range(0, 4, 8), "cannot find value `🦀` in this scope")
+            },
+            diagnostic(range(1, 0, 0), "unused import"),
+        ])
+        .as_bytes(),
+    );
+
+    // The reproducer. `character` is a `u32` on the wire, so `u32::MAX`
+    // deserialises — and `column_from_utf16` carried the excess through with a
+    // plain `+`. See `lsp_wire.rs`'s header; this file is why the target finds
+    // it in one exec rather than never.
+    write(
+        "lsp_wire",
+        "diagnostics-ceiling",
+        diagnostics(vec![diagnostic(range(0, u32::MAX, u32::MAX), "")]).as_bytes(),
+    );
+
+    // An empty list is how a server says "this file is clean", and it is the
+    // frame the editor sees most often.
+    write(
+        "lsp_wire",
+        "diagnostics-empty",
+        diagnostics(Vec::new()).as_bytes(),
+    );
+
+    let completions = lsp_types::CompletionList {
+        is_incomplete: true,
+        items: vec![
+            lsp_types::CompletionItem {
+                label: "default".to_owned(),
+                sort_text: Some("ffffffff7fffffffdefault".to_owned()),
+                detail: Some("fn() -> Self".to_owned()),
+                documentation: Some(lsp_types::Documentation::MarkupContent(
+                    lsp_types::MarkupContent {
+                        kind: lsp_types::MarkupKind::Markdown,
+                        value: "Returns the \"default value\".\n\n# Examples\n".to_owned(),
+                    },
+                )),
+                ..lsp_types::CompletionItem::default()
+            },
+            lsp_types::CompletionItem {
+                label: "deserialize".to_owned(),
+                filter_text: Some("deserialize".to_owned()),
+                insert_text: Some("deserialize(${1:deserializer})".to_owned()),
+                ..lsp_types::CompletionItem::default()
+            },
+        ],
+    };
+    write(
+        "lsp_wire",
+        "completion-list",
+        response(
+            1,
+            &serde_json::to_value(lsp_types::CompletionResponse::List(completions))
+                .expect("a completion list serializes"),
+        )
+        .as_bytes(),
+    );
+
+    // Both parameter-label shapes in one signature: offsets (UTF-16 units into
+    // the label, which `parameter_range` converts) and the text form it has to
+    // find instead.
+    let help = lsp_types::SignatureHelp {
+        signatures: vec![lsp_types::SignatureInformation {
+            label: "fn add(left: u32, right: u32) -> u32".to_owned(),
+            documentation: None,
+            parameters: Some(vec![
+                lsp_types::ParameterInformation {
+                    label: lsp_types::ParameterLabel::LabelOffsets([7, 17]),
+                    documentation: None,
+                },
+                lsp_types::ParameterInformation {
+                    label: lsp_types::ParameterLabel::Simple("right: u32".to_owned()),
+                    documentation: None,
+                },
+            ]),
+            active_parameter: Some(1),
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(0),
+    };
+    write(
+        "lsp_wire",
+        "signature-help",
+        response(
+            2,
+            &serde_json::to_value(&help).expect("a signature serializes"),
+        )
+        .as_bytes(),
+    );
+
+    let hover = lsp_types::Hover {
+        contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+            kind: lsp_types::MarkupKind::Markdown,
+            value: "```rust\nfn main()\n```\n\n---\n\nThe entry point.\n".to_owned(),
+        }),
+        range: None,
+    };
+    write(
+        "lsp_wire",
+        "hover-markup",
+        response(
+            3,
+            &serde_json::to_value(&hover).expect("a hover serializes"),
+        )
+        .as_bytes(),
+    );
+
+    // The `LocationLink` shape, which rust-analyzer sends whenever the client
+    // advertises link support — and this client does.
+    let places = lsp_types::GotoDefinitionResponse::Link(vec![lsp_types::LocationLink {
+        origin_selection_range: None,
+        target_uri: lsp_types::Url::parse("file:///tmp/lib.rs").expect("a file url"),
+        target_range: lsp_types::Range::default(),
+        target_selection_range: lsp_types::Range::default(),
+    }]);
+    write(
+        "lsp_wire",
+        "definition-link",
+        response(
+            4,
+            &serde_json::to_value(&places).expect("a link serializes"),
+        )
+        .as_bytes(),
+    );
+
+    let edit = lsp_types::WorkspaceEdit {
+        changes: Some(
+            [(
+                lsp_types::Url::parse("file:///tmp/main.rs").expect("a file url"),
+                vec![lsp_types::TextEdit {
+                    range: lsp_types::Range::default(),
+                    new_text: "renamed".to_owned(),
+                }],
+            )]
+            .into_iter()
+            .collect(),
+        ),
+        document_changes: None,
+        change_annotations: None,
+    };
+    write(
+        "lsp_wire",
+        "workspace-edit",
+        response(5, &serde_json::to_value(&edit).expect("an edit serializes")).as_bytes(),
+    );
+
+    // A session, not a message: four frames back to back is the only seed that
+    // teaches the fuzzer a body *ends*, which is the whole of `FrameScan`'s job.
+    let session = format!(
+        "{}{}{}{}",
+        response(0, &serde_json::to_value(&ready).expect("serializes")),
+        notification(
+            "window/logMessage",
+            &serde_json::json!({"type": 3, "message": "loading"})
+        ),
+        diagnostics(vec![diagnostic(range(0, 0, 1), "x")]),
+        response(3, &serde_json::to_value(&hover).expect("serializes")),
+    );
+    write("lsp_wire", "session", session.as_bytes());
+
+    for (name, body) in EXTRA_LSP_SEEDS {
+        write("lsp_wire", name, body.as_bytes());
+    }
+
+    // A long header line, past `MAX_HEADER_BYTES` (8 KiB) — the slow abort
+    // `FrameScan::push` refuses. Generated rather than written out because
+    // eight thousand `x`s is not a reviewable literal.
+    let mut forever = String::from("Content-Length: ");
+    forever.push_str(&"9".repeat(9_000));
+    write("lsp_wire", "header-forever", forever.as_bytes());
+
+    // EOF at every offset of the shortest legal frame. A server that dies
+    // mid-message stops at *some* byte, and which byte decides whether the
+    // client is waiting on a header, a length, a blank line or a body — four
+    // states this walks through one at a time. Twenty-two files, each of them
+    // trivially reviewable, and cheaper than hoping a mutation truncates.
+    let shortest = frame("{}");
+    for cut in 0..shortest.len() {
+        write(
+            "lsp_wire",
+            &format!("eof-{cut:02}"),
+            shortest[..cut].as_bytes(),
+        );
+    }
+}
+
+/// The malformed frames, each named for what it is.
+///
+/// Every one is a review question `T036` was asked and could not answer from
+/// the code: a header that never ends, a length that lies in each direction, a
+/// length that is not a number, no length at all, two lengths, a body that is
+/// not JSON, JSON that is not a message, an id nothing asked for, a lone `\r`,
+/// and UTF-8 that a read boundary can fall inside. The target varies the read
+/// size itself, which is what turns the last one into a split.
+const EXTRA_LSP_SEEDS: [(&str, &str); 13] = [
+    ("truncated-header", "Content-Len"),
+    ("length-lies-long", "Content-Length: 40\r\n\r\n{}"),
+    (
+        "length-lies-short",
+        "Content-Length: 1\r\n\r\n{\"jsonrpc\":\"2.0\"}",
+    ),
+    ("length-zero", "Content-Length: 0\r\n\r\n"),
+    ("length-negative", "Content-Length: -1\r\n\r\n{}"),
+    ("length-absurd", "Content-Length: 999999999999999\r\n\r\n"),
+    (
+        "length-missing",
+        "Content-Type: application/vscode-jsonrpc\r\n\r\n{}",
+    ),
+    (
+        "length-duplicated",
+        "Content-Length: 2\r\nContent-Length: 16\r\n\r\n{\"jsonrpc\":\"2\"}\r\n",
+    ),
+    ("body-not-json", "Content-Length: 5\r\n\r\nhello"),
+    ("json-not-a-message", "Content-Length: 7\r\n\r\n[1,2,3]"),
+    (
+        "id-nobody-asked",
+        "Content-Length: 40\r\n\r\n{\"jsonrpc\":\"2.0\",\"id\":9999,\"result\":null}",
+    ),
+    ("lone-cr", "Content-Length: 2\rContent-Length: 2\r\n\r\n{}"),
+    (
+        "utf8-astral",
+        "Content-Length: 26\r\n\r\n{\"jsonrpc\":\"2.0\",\"m\":\"🦀\"}",
+    ),
+];
+
 fn main() {
     let root = repo_root();
     let scratch = std::env::temp_dir().join("phosphor-fuzz-seed");
@@ -298,6 +672,8 @@ fn main() {
     journal_records_seeds(&scratch);
     key_notation_seeds(&root);
     theme_load_seeds(&root);
+    csv_parse_seeds(&root);
+    lsp_wire_seeds();
 
     let _ = fs::remove_dir_all(&scratch);
     println!("\nseeds written under {}/seeds", env!("CARGO_MANIFEST_DIR"));

@@ -30,8 +30,11 @@ on it. The plan's phrase, and the reason the discipline below is not optional.
 - **`just vendor-diff ratatui-code-editor`** prints everything below and nothing else. A hunk
   with no entry here is the fork silently becoming a rewrite — add the entry or drop the hunk.
 - **Minimal-diff discipline.** Phosphor *additions* go in a `phosphor/` module inside `src/`,
-  with the smallest possible edit at the seam that calls into it. Patches 1–3 needed no such
-  module — each is a gate over code that already existed. S1 created it, and it now holds
+  with the smallest possible edit at the seam that calls into it. Patches 1 and 2 needed no
+  such module — each is a gate over code that already existed. (**There is no patch 3.** The
+  numbering is stable on purpose: entries are cited by number from `TASKS.md` and from the
+  source, so a gap is cheaper than a renumber. This bullet said *"Patches 1–3"* until the
+  review of the `CP-4` repair window counted the headings.) S1 created it, and it now holds
   `cell_style` (patch 5, undercurl) and `soft_wrap` (patch 6). A new addition belongs there
   too: a seam line in an upstream file is a merge conflict forever, a file upstream does not
   have is not.
@@ -426,34 +429,6 @@ it would otherwise stall on a row that holds no cursor.
 
 ---
 
-## Known divergence between upstream and what we need — *not yet patched*
-
-Recorded here so the next person reading `vendor-diff` knows what is coming, from the `T008`
-spike ([SPIKES.md](../../docs/SPIKES.md)):
-
-- ~~**No soft-wrap anywhere in the crate.**~~ — **closed by patch 6.** `VisualRow::Wrapped` is a
-  variant of the row stream, and `RowSpan` is the contract every consumer of that stream reads.
-- **Marks are `(start, end, Color)` with no id and no style**, replaced wholesale
-  (`editor.rs`). Carries region tints; cannot carry the gutter contract. ~~or undercurl~~ —
-  **the undercurl half is closed by patch 5**, which puts styled spans beside the marks rather
-  than inside them. Marks still have no id and no priority, and the state column is still
-  phosphor's own overpaint (`T031`).
-- ~~**The gutter is not injectable**~~ — **closed by patch 4.** The compose-around still stands
-  (`set_left_code_padding` plus an inset `Rect`, and phosphor overpaints the state bar and the
-  `~` rows), but the line-number style and the digit floor are now theme-driven rather than
-  literals.
-- ~~**Virtual text is absent, but `VisualRow` is the hook**~~ — **closed by patch 8.**
-  `VisualRow::Virtual` is a variant of the row stream, and the arms patch 6 predicted
-  (`line_for_visual_row`, `visual_row_for_position`, `row_span`, `is_changed` and the renderer's
-  match) are the arms it added.
-- **`mod diff` is private and the diff is a mode of the `Editor`, not a component.** `DiffBody`
-  (`T063`) is built on `similar` instead.
-- **Upstream's `Action` trait collides by name with phosphor's `Action` enum.** Cosmetic; worth
-  a rename in the fork before the two ever appear in one file.
-- **`crossterm` is off in our build** (the fork's `crossterm` feature gates
-  `editor_crossterm.rs`). Input is phosphor's — `T026` — so we do not want upstream's key
-  handling. Revisit only if something in S1 turns out to need that module.
-
 ### 9 · `Editor::input` and `Editor::mouse` are deleted
 
 **Files:** `src/editor.rs` (two public methods removed, one orphan silenced).
@@ -482,3 +457,105 @@ thing to everything downstream.
 with a pointer here, rather than a deletion, because it is upstream's own working code and the
 day phosphor wants click-to-fold it is what that feature starts from. `T016` owns folding; the
 fold *gutter* it targets is off (§4), so nothing calls this today.
+
+---
+
+### 10 · Change events are recorded when the edit happens, not when the batch commits
+
+**Files:** `src/code.rs` (one field, one initialiser, one line in `tx`, one block each in
+`insert` and `remove`, `notify_changes` rewritten and its argument dropped),
+`tests/change_events.rs` (**new**, five tests).
+**Upstreamable: yes, and it should be** — this is a defect in upstream's own code that any
+consumer setting a change callback will hit. Nothing here is phosphor-specific; the patch is
+portable verbatim and survives `just vendor-pull` as a conflict at worst.
+
+`Code::notify_changes` took the finished batch's `edits` and turned each `start` into a
+`(row, col)` **at commit time**, against the rope as it stood when everything had already been
+applied. That is only correct for a batch whose offsets still address the finished text. An
+undo step is exactly the batch where they do not: inverting a change reverses the edit order,
+so the *first* edit reported carries the *highest* offset and the rope it is measured against
+is the shortest it will ever be.
+
+Two consequences, and phosphor shipped both:
+
+* **A panic.** `Code::point` calls `Rope::char_to_line`, which unwraps. Open a file, type two
+  characters at the end, press `u` — the inverse batch removes at offsets 6 then 5, the rope
+  finishes five characters long, and `point(6)` panics inside `ropey`. Reproduced against the
+  real binary through a pty: `exit=101`, *"Char index out of bounds: char index 6, Rope/RopeSlice
+  char length 5"*. One character does not do it and neither does a group whose highest offset
+  survives; **two or more edits whose top offset outlives the final length** is the shape.
+* **Silently wrong positions when it does not panic.** A descending batch that stays in range
+  still reports the line and column the offset has *afterwards*. **Latent in phosphor, live for
+  everyone else** — and the distinction is worth stating precisely rather than dramatising.
+  `track_dirty` (`crates/phosphor/src/main.rs`) installs the only callback this binary sets and
+  it takes `|_|`: it raises a dirty flag and bumps an edit counter, and the positions are thrown
+  away. `T038`'s `didChange` carries the whole document (`phosphor-buffer/src/lsp.rs`,
+  `sync_kind` defaults to `FULL` and the `INCREMENTAL` shape covers the entire previous text), so
+  no wrong range has ever left this editor. Upstream's own `examples/lsp` forwards the tuples
+  straight into a change notification, which is whose bug this is.
+
+**The fix is to record the event where the information exists.** `insert` and `remove` compute
+their `(row, col)` before touching the rope and push the finished change tuple onto
+`Code::batch_changes`, under the same `applying_history` guard that decides whether the edit
+joins the batch at all; `commit` hands that vector to the callback and `notify_changes` no
+longer reconstructs anything. `tx` clears it, so an abandoned batch leaves nothing behind.
+
+**Deliberately guarded on `change_callback.is_some()`**, which keeps upstream's cost profile
+exactly: no callback, no per-edit rope lookup and no `String` clone. The one behavioural edge
+that buys is that a callback installed *mid-batch* now learns only about the edits after it was
+installed, rather than about all of them. No caller does that — phosphor's `track_dirty` and
+upstream's own `examples/lsp` both set it once at construction.
+
+**Not fixed at our call site, on purpose.** The obvious phosphor-side workaround is to replay an
+undo step as one `apply_batch` per edit, which costs a tree-sitter reparse per edit on batched
+operators (`Editor::apply_batch` ends in `reset_highlight_cache`). The bug is upstream's and so
+is the fix.
+
+`tests/change_events.rs` is the regression suite, and `scripts/lint-vendor-tests.sh` is what
+makes it run: `[workspace] exclude` keeps this fork out of `cargo nextest run --workspace`, so
+until `T102` nothing in `just gate` had ever executed a single test in this directory — a fork
+carrying nine patches over thirty-two upstream tests, none of which anything here ran. Each
+of the three tests named for the defect fails on the unpatched crate: two panic inside `ropey`,
+the third reports a column one to the right of the truth.
+
+**Both counts were wrong and are recomputed here.** The headings above number 1, 2, 4–10 —
+nine entries, not ten. And `grep -c '#\[test\]'` over the fork this session gives 42: `code.rs`
+11, `diff.rs` 5, `tests/{editor,diff_focus,input}` 3 each and `tests/folding` 7 — thirty-two
+upstream — plus phosphor's own `src/phosphor/cell_style.rs` 5 (patch 5) and this file's 5.
+`git show 40ff181:src/code.rs` and `:src/diff.rs` carry the same 11 and 5, so no inline test
+here is ours. "Thirty-seven" counted `cell_style.rs`'s five as upstream's.
+
+---
+
+## Known divergence between upstream and what we need — *not yet patched*
+
+Recorded here so the next person reading `vendor-diff` knows what is coming, from the `T008`
+spike ([SPIKES.md](../../docs/SPIKES.md)).
+
+**This section moved below the patches, and a numbered entry does not belong in it.** §9 and §10
+were both filed under this heading while being landed, tested patches — §9 set the precedent and
+§10 followed it — so a reader scanning headings concluded the undo fix was unpatched. A new
+divergence is a bullet here; a patch is a `### n` above, wherever it was written.
+
+- ~~**No soft-wrap anywhere in the crate.**~~ — **closed by patch 6.** `VisualRow::Wrapped` is a
+  variant of the row stream, and `RowSpan` is the contract every consumer of that stream reads.
+- **Marks are `(start, end, Color)` with no id and no style**, replaced wholesale
+  (`editor.rs`). Carries region tints; cannot carry the gutter contract. ~~or undercurl~~ —
+  **the undercurl half is closed by patch 5**, which puts styled spans beside the marks rather
+  than inside them. Marks still have no id and no priority, and the state column is still
+  phosphor's own overpaint (`T031`).
+- ~~**The gutter is not injectable**~~ — **closed by patch 4.** The compose-around still stands
+  (`set_left_code_padding` plus an inset `Rect`, and phosphor overpaints the state bar and the
+  `~` rows), but the line-number style and the digit floor are now theme-driven rather than
+  literals.
+- ~~**Virtual text is absent, but `VisualRow` is the hook**~~ — **closed by patch 8.**
+  `VisualRow::Virtual` is a variant of the row stream, and the arms patch 6 predicted
+  (`line_for_visual_row`, `visual_row_for_position`, `row_span`, `is_changed` and the renderer's
+  match) are the arms it added.
+- **`mod diff` is private and the diff is a mode of the `Editor`, not a component.** `DiffBody`
+  (`T063`) is built on `similar` instead.
+- **Upstream's `Action` trait collides by name with phosphor's `Action` enum.** Cosmetic; worth
+  a rename in the fork before the two ever appear in one file.
+- **`crossterm` is off in our build** (the fork's `crossterm` feature gates
+  `editor_crossterm.rs`). Input is phosphor's — `T026` — so we do not want upstream's key
+  handling. Revisit only if something in S1 turns out to need that module.

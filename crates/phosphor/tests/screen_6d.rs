@@ -161,6 +161,7 @@ fn status_vm() -> StatusVm {
         ask_pending: false,
         unseen: 0,
         vcs: None,
+        server: None,
         cursor: None,
         hints: Vec::new(),
     }

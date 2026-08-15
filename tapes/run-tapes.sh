@@ -6,14 +6,17 @@
 # that V002/V003 add) are convention for `Source`d fragments, not standalone
 # tapes, and are skipped.
 #
-# `set -euo pipefail` means the first tape that fails stops the run right
-# there — deliberate (fail loud, don't paper over a broken capture with a
-# partial "success"), but it does mean `just tapes` won't tell you about
-# tape #7's problem until #1-6 pass. Not a concern while every real tape is
-# expected to fail (see tapes/README.md's "Screen library convention" —
-# Window B ships the harness before Window C ships anything for it to
-# capture); worth revisiting if that ever hides real regressions once some
-# tapes pass and others don't.
+# **Every tape runs, and the run still fails.** This used to stop at the first
+# broken tape under `set -e` — "fail loud, don't paper over a partial success" —
+# with the note that it was worth revisiting once some tapes passed and others
+# did not. That day arrived and nobody revisited: `6b.tape` waited on a word
+# `§8` had stopped drawing, `6b` sorts fifth in the glob, and the twenty-odd
+# tapes after it — including all six of `CP-4`'s — had not been recorded for
+# three commits. One broken tape hid the library.
+#
+# So a failure is collected rather than fatal: the exit status is still
+# non-zero and the names are repeated at the end, which is the "fail loud" the
+# original wanted without the "and stop looking" it also bought.
 #
 # An empty library (no *.tape files at all, `_`-prefixed or not) is still
 # success, not a no-op error — see the branch below.
@@ -39,7 +42,18 @@ if [[ ${#to_run[@]} -eq 0 ]]; then
   exit 0
 fi
 
+failed=()
 for tape in "${to_run[@]}"; do
   echo "phosphor tapes: recording ${tape}"
-  vhs "${tape}"
+  if ! vhs "${tape}"; then
+    failed+=("${tape}")
+  fi
 done
+
+if (( ${#failed[@]} > 0 )); then
+  echo "phosphor tapes: ${#failed[@]} of ${#to_run[@]} tapes failed to record:"
+  printf 'phosphor tapes:   %s\n' "${failed[@]}"
+  exit 1
+fi
+
+echo "phosphor tapes: ${#to_run[@]} tapes recorded"

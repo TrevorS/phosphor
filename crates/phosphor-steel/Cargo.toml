@@ -12,5 +12,25 @@ version.workspace = true
 phosphor-core.workspace = true
 steel-core.workspace = true
 
+# `tests/steel_grammar.rs`, and nothing else. `T037` declares `steel` first
+# class on a grammar this repo does not write — `tree-sitter-scheme` parses
+# *scheme*, and `IMPLEMENTATION-PLAN.md` says the quiet part out loud: *"verify
+# it parses real `runtime/*.scm` before committing to it. Steel is a Scheme
+# dialect, not Scheme."* `T083` verified it against one hand-written fixture;
+# this verifies it against the tree we actually ship, on every gate, so a form
+# somebody adds tomorrow that the grammar cannot read is a red test rather than
+# a buffer that quietly stops highlighting.
+#
+# Dev-only, so the Steel barrier is untouched: `scripts/lint-the-steel-barrier.sh`
+# reads `[dependencies]`, and the rule it enforces — this crate reaches
+# `phosphor-core` and the VM — is a rule about what the *editor layer* links, not
+# about what a test binary parses. Same shape as `phosphor-core`'s `proptest`
+# line and `phosphor-buffer`'s eleven grammar crates, and the versions are
+# `SPIKES.md`'s manifest: `tree-sitter-scheme` 0.24.7 against the 0.26 runtime,
+# which is the pair `T083` cleared.
+[dev-dependencies]
+tree-sitter.workspace = true
+tree-sitter-scheme = "0.24.7"
+
 [lints]
 workspace = true

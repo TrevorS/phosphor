@@ -20,3 +20,14 @@
 # `.claude/worktrees/*/target`. Ignoring them outright is the honest state:
 # they are scratch checkouts and their commits live on master or nowhere.
 /.claude/worktrees/
+
+# CPython bytecode. `S4` put a python fixture in a tests/ directory for the
+# first time — `crates/phosphor/tests/fixtures/toy_language_server.py`, the
+# language server the pty tests drive — and running it leaves a `__pycache__`
+# beside it. Untracked, invisible to `just gate`, and a blanket `git add -A`
+# would have committed a 7 KB `.pyc` built for whichever interpreter happened
+# to run. `scripts/lint-repo-hygiene.sh` would not have caught it: it bans
+# tracked files over 1 MB, and this is 7 KB of the wrong thing rather than too
+# much of the right one.
+__pycache__/
+*.pyc

@@ -3,7 +3,7 @@
 Derived from [TASKS.md](TASKS.md) and [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).
 Five teammates, owning crates rather than features, gated by the twelve checkpoints.
 
-**107 of 109 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
+**110 of 112 tasks are assigned**, each to exactly one owner. The two unassigned are `T008` and
 `T009` — the dependency spikes, already complete ([SPIKES.md](SPIKES.md)). `T005` is the single
 deliberate co-ownership and is called out where it appears.
 
@@ -17,7 +17,7 @@ Computed from `TASKS.md`, the longest-path wave widths are:
 
 ```
 wave    0   1   2   3    4    5    6    7   8   9  10
-tasks   2   5   8   6   15   24   20   14   9   3   1
+tasks   2   5   8   6   15   24   21   15   10   3   1
 ```
 
 By the graph, wave 4 is 15-wide and includes `T050` (ACP session client, S6) and `T069`
@@ -33,8 +33,8 @@ Three other numbers worth carrying:
 
 | | |
 |---|---|
-| `T001` gates **99 of 109** tasks | The workspace skeleton is the whole build's front door. |
-| `T019` gates **70** | The `Action` enum. The plan calls it "reversible: no in practice." |
+| `T001` gates **102 of 112** tasks | The workspace skeleton is the whole build's front door. |
+| `T019` gates **73** | The `Action` enum. The plan calls it "reversible: no in practice." |
 | `T041` has **14 direct dependents** | Store core — the second serialisation point. |
 
 And the shape that matters most for staffing: **waves 0–3 are 2, 5, 8 and 6 tasks wide.** The
@@ -328,6 +328,16 @@ built on an unverified foundation.
 | **G** | `CP-8a/b/c` | agent, store, surface | T063–T073 |
 | **H** | `CP-9` | agent, harness | T074–T077 |
 
+> **Window D's `S4` half ran with `harness` absent, and the row above is the plan rather than the
+> record.** No `7c` tape and no diagnostics tape exist in `tapes/` (listed 2026-08-14), so `CP-4`'s
+> *"VHS produces"* half is unproduced. This is not a blocked task — `V006`, `V008` and `V009` are
+> each unticked for their own reasons, recorded at each of them, and none of them is *"capture this
+> window's screens"*. Producing a checkpoint's tapes under `V005`'s convention is **standing work
+> rather than a numbered task**, which the note further down already says of Windows E onward; what
+> `S4` shows is that it is true one window earlier. **A standing instruction is the one kind of work
+> no agent's prompt names**, and this run's prompts named files. That is rule 2 one layer over: work
+> nobody is assigned is work nobody does, and the gate stays green while it does not happen.
+>
 > **Window D runs with four, not five.** The table said *all five* until the `CP-3` audit
 > checked it against the task lists: `agent` owns `T050`–`T070` and `T074`–`T077`, and **not one
 > of them falls in Window D**. The live roles are `spine`, `surface`, `store` and `harness`.
@@ -369,14 +379,35 @@ built on an unverified foundation.
 > Windows A and B are complete: the workspace, both vendored forks, three structural lints proven
 > to bite, the grammar ABI check, the whole S1 widget layer, the S1 host, and a calibrated tape
 > harness. **Window C is built** — `spine` and `harness` — and `CP-2`'s mechanical half is
-> green: 212 capabilities, three doors derived from one table, 636 door checks walked end to
+> green: 215 capabilities, three doors derived from one table, 645 door checks walked end to
 > end, Steel booted from `runtime/`, the REPL live, and the statusline composed in the editor
 > layer. **Window D's S3 half is built too**, across two concurrent runs and a repair pass, and
 > **`CP-3` has passed, both halves** — the mechanical half green at 639 tests and 14 lints, and
 > Teej's manual half on **2026-08-13** with **no findings**. The verdict is written at the
 > checkpoint in [TASKS.md](TASKS.md), which is the rule below being obeyed rather than restated.
-> `S4` is unblocked; a second repair window runs between the two, on debt this build had already
-> written down.
+> A second repair window ran between the two, on debt this build had already written down.
+>
+> **Window D's `S4` half is built too, and `CP-4` is outstanding.** `T036`, `T037`, `T038` and
+> `T039` are ticked; `T040` and `T082` are deliberately not, each for a reason written at the task
+> — `T040`'s criterion says *"against other states"* and there is one source of gutter regions
+> until `T041`, and `T082`'s `align-columns` has no honest arm and, unusually, **no creditor to be
+> re-homed to**. The mechanical half is green at **983 tests and 17 lints**. `CP-4`'s manual half
+> has not run and no verdict is recorded anywhere — the mechanical half is written *at the
+> checkpoint* in [TASKS.md](TASKS.md), item by item, on the rule below.
+>
+> **This is the first window run with rule 2 in force, and it is the reason to keep it.** A wiring
+> agent ran last, after every builder, and twelve of the `Lsp` domain's fourteen capabilities are
+> named by the binary — every one of them declared and dead to the keyboard when the builders
+> finished. Running `CP-4`'s checklist against the *running binary* then found a second class of
+> defect no builder's gate could have reached, each now pressed by a test in
+> `crates/phosphor/tests/loop_pty.rs`: `gd` discarded unsaved work
+> (`a_jump_out_of_a_dirty_buffer_refuses_rather_than_discarding_it`), a failed server was silent
+> on every surface (`a_server_that_cannot_start_says_so_on_the_statusline`), a language declared
+> at the `:repl` only took effect after a restart
+> (`a_language_declared_at_the_repl_is_live_in_the_same_session`), a burst of typing painted a
+> denial on the statusline (`a_burst_of_typing_never_says_the_editor_denied_something`), and two
+> of the twelve languages shipped with a server that could not `initialize`. **Every one is a
+> composition defect**, invisible to a green crate and to every widget test in the repository.
 >
 > That bookkeeping gap is closed. `TASKS.md` now carries `CP-2 · **PASSED**` and dates the verdict
 > to 2026-08-12, where it belonged all along: the manual half was run and answered in conversation,

@@ -1,7 +1,7 @@
 # fuzz — the parsers that read bytes we did not write
 
-Four cargo-fuzz targets. The test each one had to pass to exist here is narrow
-and worth restating, because it is what keeps this directory from becoming four
+Six cargo-fuzz targets. The test each one had to pass to exist here is narrow
+and worth restating, because it is what keeps this directory from becoming six
 corpora nobody looks at:
 
 > **Does this code read bytes chosen by someone other than us?**
@@ -43,6 +43,14 @@ does exactly that.
 | `journal_records` | record payloads, framed by the real writer | the deep half — `decode` and `History::apply` — which raw file bytes cannot reach, because coverage feedback cannot solve a CRC-32 |
 | `key_notation` | `runtime/*.scm` notation, and `.`'s replay | nothing generated reaches `input/key.rs` today |
 | `theme_load` | a user's base16 `.theme` file | nothing generated reaches `phosphor-ui`'s theme loader today |
+| `csv_parse` | a delimited file, delimiter and all | the parse and the column model together, against bytes no writer produced |
+| `lsp_wire` | a language server's stdout | the only input here written by **a program we did not write**; nothing generated reaches `lsp.rs`'s framing or its decode path today |
+
+`csv_parse` was missing from this table — and from the count above, which read
+"four" — from the commit that added it (`0c12f68`) until this one, while it was
+declared, sourced, seeded and running the whole time. The lint checks that a
+target exists; nothing checks that this file mentions it, which is worth
+knowing before trusting a count in prose.
 
 Two targets were considered and one was dropped:
 
@@ -65,16 +73,27 @@ Two targets were considered and one was dropped:
 
 The seeds are *derived*, by `examples/seed.rs`, from files this repo already has:
 journals written by the real writer, the string literals in `runtime/*.scm` that
-`parse_seq` reads as a short sequence, and the six shipped `.theme` files copied
-verbatim. Regenerate with `scripts/fuzz.sh seed`. A hand-built blob would rot
-silently the first time a format moved, and the fuzzer would keep reporting green
-over bytes it could no longer parse.
+`parse_seq` reads as a short sequence, the six shipped `.theme` files copied
+verbatim, and the CSV fixtures `tests/csv.rs` already asserts against. `lsp_wire`
+has no file to derive from — a language server's stdout is not in this repo — so
+its real half is derived from the *types* instead: every body is a real
+`lsp_types` value serialized by the same `serde` impls `async-lsp` writes with,
+which moves with the protocol crate the same way a journal seed moves with the
+journal writer. Regenerate with `scripts/fuzz.sh seed`. A hand-built blob would
+rot silently the first time a format moved, and the fuzzer would keep reporting
+green over bytes it could no longer parse.
+
+Two targets keep hand-written seeds as well, and both are the same case:
+`EXTRA_CSV_SEEDS` and `EXTRA_LSP_SEEDS` are *malformations*, and a malformation
+is precisely the shape no serializer produces. They are short enough to read and
+each is named for the question it asks.
 
 ## What running them found
 
-Both findings are in `phosphor-core`, which is `spine`'s; each target's header
-carries the full diagnosis, and each is filed as a request rather than fixed
-here.
+Three findings. The first two are in `phosphor-core`, which is `spine`'s, and
+are filed as requests rather than fixed here; the third is in
+`phosphor-buffer`'s LSP client and is fixed. Each target's header carries the
+full diagnosis.
 
 1. **`Decoder::u64` accepts non-canonical LEB128**, so the journal codec is not
    injective. Payload `[5, 17, 188, 0]` decodes to `Record::Redo { node: 17,
@@ -97,4 +116,26 @@ here.
    **`key_notation` reproduces this in seconds and is deliberately not weakened
    to get past it.**
 
+3. **`column_from_utf16` overflowed on a position a server can legally send.**
+   `Position::character` is a `u32`, so `4294967295` deserialises, and the
+   *past the end* case carried the excess through as `column + (character -
+   units)` — `1 + u32::MAX` against any all-BMP line, `""` included. `attempt to
+   add with overflow` on the LSP task in every build with overflow checks on:
+   the editor keeps running and stops receiving diagnostics from that server,
+   with nothing said about why. One `publishDiagnostics` frame does it.
+   **Fixed** — the addition saturates —
+   `crates/phosphor-buffer/src/lsp.rs::column_from_utf16`, pinned by
+   `lsp::tests::a_wire_position_at_the_u32_ceiling_does_not_overflow`, with
+   `seeds/lsp_wire/diagnostics-ceiling` keeping the reproducer in the corpus.
+   The same shape was hardened in `utf16_from_column`, which the wire does not
+   feed.
+
 `journal_open` (1.3M runs) and `theme_load` (10.5M runs) found nothing.
+
+`lsp_wire` reached the third finding **from its own seed corpus**, before
+libFuzzer had mutated anything — which is the argument for seeding written out
+as a result: the fix's absence was proven by reverting it and watching the run
+die on `seeds/lsp_wire/diagnostics-ceiling` in under a second. With the fix in,
+5.28M runs in 601 seconds found nothing further, and no law tripped: not the
+read-size invariance, not the desync check against `async-lsp`'s own framing
+rules, not decode totality.

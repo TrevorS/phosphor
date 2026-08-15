@@ -378,10 +378,16 @@ NUMBER = r"\d+|" + "|".join(sorted(NUMBER_WORDS, key=len, reverse=True))
 # claim. Both rules together are what keep the historical aside in the same
 # sentence from matching: `(It said "six" until the count was ten behind` has a
 # quote after "six" and "behind" after "ten", so neither is a live claim.
+#
+# Case-insensitive, because prose starts sentences. `CLAUDE.md` opened one with
+# "Seventeen now" while eighteen existed, and the first draft of this file's
+# `CLAUDE.md` support read straight past `Seventeen lints now` — a check that
+# only sees lowercase claims is a check that misses the ones a writer
+# emphasised.
 LINT_COUNT_PATTERNS = [
-    re.compile(rf"\b({NUMBER})\s+exist now\b"),
-    re.compile(rf"\b({NUMBER})\s+(?:structural\s+)?lints?\b"),
-    re.compile(rf"\b({NUMBER})\s+lint scripts?\b"),
+    re.compile(rf"\b({NUMBER})\s+exist now\b", re.I),
+    re.compile(rf"\b({NUMBER})\s+(?:structural\s+)?lints?\b", re.I),
+    re.compile(rf"\b({NUMBER})\s+lint scripts?\b", re.I),
 ]
 
 # A YAML comment wraps across lines exactly as a Rust doc comment does, and for
@@ -389,15 +395,33 @@ LINT_COUNT_PATTERNS = [
 # continuations before matching, or a rewrap moves "sixteen" and "exist now"
 # onto different lines and the check goes quietly blind.
 YAML_CONTINUATION_RE = re.compile(r"\n[ \t]*#[ \t]?")
+WHITESPACE_RE = re.compile(r"\s+")
+
+# **`CLAUDE.md` is read here too, and it is the reason this list is a list.**
+# This section globbed the workflows alone, so when the eighteenth lint landed
+# it forced `ci.yml`'s count and left `CLAUDE.md`'s "Seventeen now" standing —
+# in the file every agent reads on entry, in the paragraph that calls a stale
+# count "the last unchecked count anyone has found in this repo". A section
+# whose own subject is uncounted prose cannot be scoped to one directory.
+CLAIM_FILES = sorted(pathlib.Path(".github/workflows").glob("*.yml")) + [
+    pathlib.Path("CLAUDE.md")
+]
 
 workflow_claims = 0
-for path in sorted(pathlib.Path(".github/workflows").glob("*.yml")):
-    text = YAML_CONTINUATION_RE.sub(" ", path.read_text(encoding="utf-8", errors="replace"))
+for path in CLAIM_FILES:
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    # Markdown wraps at a column too; there is no comment marker to strip, so
+    # the whole file is flattened rather than the continuations.
+    text = (
+        WHITESPACE_RE.sub(" ", raw)
+        if path.suffix == ".md"
+        else YAML_CONTINUATION_RE.sub(" ", raw)
+    )
     bad = []
     for pattern in LINT_COUNT_PATTERNS:
         for match in pattern.finditer(text):
             workflow_claims += 1
-            token = match.group(1)
+            token = match.group(1).lower()
             found = NUMBER_WORDS.get(token, None)
             if found is None:
                 found = int(token)

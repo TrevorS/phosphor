@@ -50,20 +50,23 @@
 //! | `question` | `QuestionBody` | `T059` |
 //! | `transcript` | `TranscriptPane` | `T054` |
 //! | `prompt` | `PromptLine` | `T058` |
-//! | `completion` | the passive float, in [`crate::float`] | `T038` |
-//! | `signature` | with completion at S4, in [`crate::float`] | `T039` |
 //! | `watch` | `WatchOverlay` | `T076` |
 //!
-//! Every other kind draws. The three that arrived most recently are `gutter`
+//! Every other kind draws. The two that arrived most recently are `completion`
+//! ([`crate::float::CompletionList`], `T038`) and `signature`
+//! ([`crate::float::SignatureBody`], `T039`); before them, `gutter`
 //! ([`crate::gutter`], `T031`), `virtual-text` ([`crate::virtual_text`],
 //! `T032`) and `key-hints` ([`crate::key_hints`], `T034` / `T086`) — each in an
 //! arm of its own, which is what the split below bought: five widget tasks
 //! landing in five places instead of colliding in one shared arm. The rest stay
 //! grouped in a single arm and split the same way when their phase arrives.
 //!
-//! `completion` and `signature` get no new module: the completion list *is* a
-//! float in the passive mood, which `T038` adds to [`crate::float`], and `T039`
-//! renders signature help through the same chrome.
+//! `completion` and `signature` got no new module, exactly as this table used to
+//! say they would: the completion list *is* a float in the passive mood, which
+//! `T038` added to [`crate::float`], and `T039` renders signature help through
+//! the same chrome. Both read their session off [`Resources`] rather than off
+//! the node, because `view.rs` gives neither kind any props — *"there is one
+//! active completion session and the store holds it"*.
 //!
 //! [`Density::Footer`] *inside a float* is not this table's business either
 //! way — it renders through [`crate::float::FloatFooter`] and the float's own
@@ -99,7 +102,8 @@ use ratatui_core::widgets::Widget;
 
 use crate::buffer_view::{BufferView, Editor, StateMark};
 use crate::float::{
-    Float as UiFloat, FloatBody, FloatFooter, FloatHeader, FloatSlot, FooterHint, Mood as UiMood,
+    Anchor, CompletionList, CompletionVm, Float as UiFloat, FloatBody, FloatFooter, FloatHeader,
+    FloatSlot, FooterHint, Mood as UiMood, SignatureBody, SignatureVm,
 };
 use crate::status_line::{SessionState as UiSessionState, Spinner, format_elapsed};
 use crate::theme::Theme;
@@ -137,6 +141,29 @@ pub trait Resources: core::fmt::Debug {
     fn state_marks(&self, buffer: BufferId) -> &[StateMark] {
         let _ = buffer;
         &[]
+    }
+
+    /// The live completion session, or `None` when there is not one (`T038`).
+    ///
+    /// **This is the door [`Node::Completion`] reads through, and it has to be
+    /// a door rather than a prop**: `view.rs` gives that kind no props at all —
+    /// *"there is one active completion session and the store holds it —
+    /// composition decides only where it goes"* — so the tree says *whether*
+    /// the list is on screen and this says what is in it. Same seam
+    /// [`Resources::editor`] already is, and the same reason: a widget crate
+    /// cannot read the store.
+    ///
+    /// A tree that composes the node while this answers `None` draws nothing,
+    /// which is `query.rs`'s *"an absent thing answers empty"* — a stale
+    /// composition must never be able to break a frame.
+    fn completion(&self) -> Option<&CompletionVm> {
+        None
+    }
+
+    /// The live signature-help or hover answer (`T039`). Same contract as
+    /// [`Resources::completion`], one node kind over.
+    fn signature(&self) -> Option<&SignatureVm> {
+        None
     }
 }
 
@@ -514,12 +541,30 @@ impl Ctx<'_> {
                 crate::key_hints::KeyHints::new(hints, *density, theme).render(area, buf);
             }
 
-            // `T038`, into `crate::float` — the passive mood, not a module of
-            // its own.
-            Node::Completion {} => self.defer(node.tag()),
+            // `T038`, drawn by `crate::float::CompletionList` — the passive
+            // mood, not a module of its own. The node carries nothing, so the
+            // session comes off `Resources`; an absent one draws nothing rather
+            // than reserving a rectangle.
+            //
+            // The float chrome around it is `Ctx::float`'s, and the two meet
+            // only through `Mood::Passive` — a completion list composed *not*
+            // in a float still draws here, as a bare list, which is what a
+            // `Node` promises anywhere it is put.
+            Node::Completion {} => {
+                let Some(vm) = self.interp.resources.completion() else {
+                    return;
+                };
+                CompletionList::new(vm).render(area, buf, theme, UiMood::Passive);
+            }
 
-            // `T039`, into `crate::float` alongside the completion list.
-            Node::Signature {} => self.defer(node.tag()),
+            // `T039`, drawn by `crate::float::SignatureBody` alongside the
+            // completion list. Signature help and hover are one body; see it.
+            Node::Signature {} => {
+                let Some(vm) = self.interp.resources.signature() else {
+                    return;
+                };
+                SignatureBody::new(vm).render(area, buf, theme, UiMood::Passive);
+            }
 
             // Deferred past Window D. Grouped, and split one kind at a time the
             // way the five above were, as each phase arrives.
@@ -654,40 +699,94 @@ impl Ctx<'_> {
         }
     }
 
-    /// The one float, over a dimmed ground (§9).
+    /// The one float, over a dimmed ground (§9) — except the passive one, which
+    /// dims nothing (`Mood::dims`).
     fn float(&self, float: &ViewFloat, area: Rect, buf: &mut Buffer) {
         self.report.borrow_mut().nodes += 1;
-        let Some(mood) = mood(float.mood) else {
-            // `Mood::Passive` is `T038`'s; `float.rs` keeps the variant
-            // unconstructable on purpose — "an unconstructable variant is
-            // untestable chrome" — so the protocol can say it before the chrome
-            // can draw it.
-            self.defer("float:passive");
-            return;
-        };
+        let mood = mood(float.mood);
 
-        let header = float.header.as_ref().map_or_else(
+        let node = float.body.node();
+        let body = NodeBody { ctx: self, node };
+        // **Header and footer are built only for the moods that draw them.** A
+        // passive float has neither (§4's exception, and `Mood::Passive` for
+        // the header), so building them first walked the footer subtree once
+        // per frame for something the next line dropped.
+        let hints = if matches!(mood, UiMood::Passive) {
+            Vec::new()
+        } else {
+            float
+                .footer
+                .as_ref()
+                .map(|footer| self.footer_hints(footer.node()))
+                .unwrap_or_default()
+        };
+        let footer = FloatFooter::new(&hints);
+        let ui = match mood {
+            UiMood::Informational => UiFloat::informational(self.header(float), &body, footer),
+            UiMood::NeedsYou => UiFloat::needs_you(self.header(float), &body, footer),
+            // **The anchor rides on the ViewModel, not on the tree** (`T038`).
+            // `view::Float` has no anchor prop and the cell is not the view
+            // tree's to know: it is where the *cursor* is, which the host
+            // computes to draw the buffer and recomposes on every keystroke.
+            // Putting it in the tree would recompose the frame once per typed
+            // character for a number the host already has. Raised for `spine`
+            // rather than assumed — a `Float::anchor` prop is a protocol change.
+            //
+            // A header or a footer composed onto a passive float is dropped
+            // here and nowhere reports it. `Report::deferred` is a list of node
+            // kinds with no widget and this is not one, so the channel does not
+            // exist yet — flagged for `spine` rather than bent.
+            // **And held to the widest the session has been** (`CP-4`). Same
+            // dispatch as the anchor and for the same reason: the floor belongs
+            // to the session the body is drawing, not to whichever
+            // `Resources` door answers first.
+            UiMood::Passive => UiFloat::passive(&body, self.passive_anchor(node, area))
+                .with_width_floor(self.passive_width_floor(node)),
+        };
+        FloatSlot::with(ui).render(area, buf, self.theme());
+    }
+
+    /// A float's header, empty when the composition set none.
+    fn header<'n>(&self, float: &'n ViewFloat) -> FloatHeader<'n> {
+        float.header.as_ref().map_or_else(
             || FloatHeader::new(""),
             |header| FloatHeader {
                 left: &header.left,
                 right: header.right.as_deref(),
             },
-        );
-        let hints = float
-            .footer
-            .as_ref()
-            .map(|footer| self.footer_hints(footer.node()))
-            .unwrap_or_default();
-        let body = NodeBody {
-            ctx: self,
-            node: float.body.node(),
+        )
+    }
+
+    /// Where a passive float hangs: **the anchor belonging to the body being
+    /// drawn**, or the area's own corner when there is no session behind it.
+    ///
+    /// Chosen by the node rather than by whichever [`Resources`] door answers
+    /// first. §9 allows one *float*; it says nothing about sessions, and
+    /// nothing in [`Resources`] stops a host holding a completion session while
+    /// it composes a signature float — which used to put the signature at the
+    /// completion's anchor, two surfaces apart from the word it belongs to.
+    fn passive_anchor(&self, node: &Node, area: Rect) -> Anchor {
+        let resources = self.interp.resources;
+        let anchor = match node {
+            Node::Completion {} => resources.completion().map(|vm| vm.anchor),
+            Node::Signature {} => resources.signature().map(|vm| vm.anchor),
+            _ => None,
         };
-        let footer = FloatFooter::new(&hints);
-        let ui = match mood {
-            UiMood::Informational => UiFloat::informational(header, &body, footer),
-            UiMood::NeedsYou => UiFloat::needs_you(header, &body, footer),
-        };
-        FloatSlot::with(ui).render(area, buf, self.theme());
+        anchor.unwrap_or(Anchor::new(area.x, area.y))
+    }
+
+    /// The body columns the session says it has already taken —
+    /// [`UiFloat::with_width_floor`], the anti-thrash half of `CP-4`.
+    ///
+    /// Zero for a node with no session behind it, which is content-sizing: an
+    /// absent thing answers empty, the same rule [`Self::passive_anchor`] takes.
+    fn passive_width_floor(&self, node: &Node) -> u16 {
+        let resources = self.interp.resources;
+        match node {
+            Node::Completion {} => resources.completion().map_or(0, |vm| vm.width_floor),
+            Node::Signature {} => resources.signature().map_or(0, |vm| vm.width_floor),
+            _ => 0,
+        }
     }
 
     /// A float footer's hints.
@@ -829,7 +928,44 @@ impl Ctx<'_> {
             Node::KeyHints { density, hints } => {
                 crate::key_hints::KeyHints::new(hints, *density, self.theme()).natural_height()
             }
+            // `T038` / `T039`: the passive float is sized to its list, so a
+            // body that could not answer would collapse the float to chrome —
+            // the same failure `T086` fixed one kind up.
+            Node::Completion {} => self
+                .interp
+                .resources
+                .completion()
+                .map_or(0, |vm| CompletionList::new(vm).desired_height(0)),
+            Node::Signature {} => self
+                .interp
+                .resources
+                .signature()
+                .map_or(0, |vm| SignatureBody::new(vm).desired_height(0)),
             _ => 0,
+        }
+    }
+
+    /// Columns a node wants, for the one layout that asks —
+    /// [`crate::float::Layout::Anchored`] (`T038`).
+    ///
+    /// Reuses [`Ctx::natural`] wherever a node has a natural width, which is
+    /// every leaf. `0` for the flexible ones — a split, a spring, a buffer —
+    /// and an anchored float whose body wants no columns draws nothing at all
+    /// ([`crate::float::Float::frame`]), which is the right answer for a
+    /// composition that anchored a pane beside the cursor.
+    fn width(&self, node: &Node) -> u16 {
+        match node {
+            Node::Completion {} => self
+                .interp
+                .resources
+                .completion()
+                .map_or(0, |vm| CompletionList::new(vm).desired_width()),
+            Node::Signature {} => self
+                .interp
+                .resources
+                .signature()
+                .map_or(0, |vm| SignatureBody::new(vm).desired_width()),
+            other => self.natural(other).unwrap_or(0),
         }
     }
 
@@ -934,6 +1070,10 @@ impl FloatBody for NodeBody<'_, '_> {
         // Nothing in the tree reflows, so the width does not enter into it —
         // see `Ctx::height`.
         self.ctx.height(self.node)
+    }
+
+    fn desired_width(&self) -> u16 {
+        self.ctx.width(self.node)
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer, _theme: &Theme, _mood: UiMood) {
@@ -1044,13 +1184,12 @@ fn constraint(constraint: Constraint) -> UiConstraint {
     }
 }
 
-/// The protocol's mood, as the chrome's. `None` for the one the chrome cannot
-/// draw yet (`T038`).
-const fn mood(mood: ViewMood) -> Option<UiMood> {
+/// The protocol's mood, as the chrome's. Total since `T038` built the third.
+const fn mood(mood: ViewMood) -> UiMood {
     match mood {
-        ViewMood::Informational => Some(UiMood::Informational),
-        ViewMood::NeedsYou => Some(UiMood::NeedsYou),
-        ViewMood::Passive => None,
+        ViewMood::Informational => UiMood::Informational,
+        ViewMood::NeedsYou => UiMood::NeedsYou,
+        ViewMood::Passive => UiMood::Passive,
     }
 }
 
@@ -1086,7 +1225,12 @@ const fn glyph_str(glyph: Glyph) -> &'static str {
 
 /// Display width in cells — grapheme- and East-Asian-aware, the same
 /// measurement [`Buffer::set_stringn`] writes with.
-fn cells(text: &str) -> u16 {
+///
+/// **Crate-wide, because it was written three times.** `float` and `key_hints`
+/// each carried a byte-identical private copy; two lines is not a seam, and
+/// three copies of two lines is not a seam either — it is three places for the
+/// measurement a widget lays out with to drift from the one it draws with.
+pub(crate) fn cells(text: &str) -> u16 {
     u16::try_from(Span::raw(text).width()).unwrap_or(u16::MAX)
 }
 
@@ -1114,6 +1258,7 @@ fn write(buf: &mut Buffer, area: Rect, x: u16, text: &str, style: Style) -> u16 
 #[cfg(test)]
 mod tests {
     use super::{Interpreter, NoResources, Report};
+    use crate::float::{Anchor, CompletionVm, SignatureVm};
     use crate::frame::FrameCache;
     use crate::theme::Theme;
     use phosphor_core::query::Revision;
@@ -1160,6 +1305,35 @@ mod tests {
             text: text.to_owned(),
             tone,
             emphasis: Emphasis::Plain,
+        }
+    }
+
+    /// A host with an LSP session and no buffers — what `T038` and `T039` need
+    /// from [`Resources`], and nothing else.
+    #[derive(Debug)]
+    struct Session {
+        completion: Option<CompletionVm>,
+        signature: Option<SignatureVm>,
+    }
+
+    impl super::Resources for Session {
+        fn editor(&self, _buffer: BufferId) -> Option<&crate::buffer_view::Editor> {
+            None
+        }
+
+        fn completion(&self) -> Option<&CompletionVm> {
+            self.completion.as_ref()
+        }
+
+        fn signature(&self) -> Option<&SignatureVm> {
+            self.signature.as_ref()
+        }
+    }
+
+    fn item(label: &str, detail: Option<&str>) -> crate::float::CompletionItemVm {
+        crate::float::CompletionItemVm {
+            label: label.to_owned(),
+            detail: detail.map(str::to_owned),
         }
     }
 
@@ -1544,12 +1718,201 @@ mod tests {
         assert!(report.deferred.is_empty(), "{report:?}");
     }
 
+    /// `T038`'s half of screen `7c`, composed the way the editor composes it:
+    /// a passive float around a `completion` node, with the session behind
+    /// `Resources` and nothing in the tree naming an item.
     #[test]
-    fn the_passive_mood_is_reported_rather_than_mis_drawn() {
+    fn a_passive_float_draws_the_completion_session_at_its_anchor() {
+        let theme = Theme::phosphor_dark();
+        let host = Session {
+            completion: Some(CompletionVm {
+                items: vec![
+                    item("default()", Some("fn() -> RetryPolicy")),
+                    item("default_delay", Some("Duration")),
+                ],
+                selected: 0,
+                documentation: vec!["Returns the policy with 3 attempts.".to_owned()],
+                anchor: Anchor::new(20, 4),
+                width_floor: 0,
+            }),
+            signature: None,
+        };
         let tree =
             Tree::new(Node::Empty {}).with_float(Float::new(Mood::Passive, Node::Completion {}));
-        let (_, report) = draw(&tree);
-        assert!(report.deferred.contains(&"float:passive"), "{report:?}");
+        let mut buf = Buffer::empty(AREA);
+        let report = Interpreter::new(&theme, &host).render(&tree, AREA, &mut buf);
+
+        assert!(report.deferred.is_empty(), "{report:?}");
+        // Anchored: below the anchor row, starting at the anchor column.
+        assert_eq!(buf[(20, 5)].symbol(), "┌");
+        assert_eq!(buf[(20, 5)].fg, theme.float.passive);
+        let rows = (0..AREA.height).map(|y| row(&buf, y)).collect::<Vec<_>>();
+        let drawn = rows.join("\n");
+        assert!(drawn.contains("default()"), "{drawn}");
+        assert!(drawn.contains("fn() -> RetryPolicy"), "{drawn}");
+        assert!(drawn.contains("Returns the policy"), "{drawn}");
+        // §9's dim is not taken: `7c` draws live code around the list.
+        assert_ne!(buf[(0, 0)].fg, theme.neutrals.dimmed_under_float);
+    }
+
+    /// `T039`: the same chrome, the other body — and the active parameter is
+    /// the one thing on the row in bright text.
+    #[test]
+    fn a_passive_float_draws_signature_help_through_the_same_chrome() {
+        let theme = Theme::phosphor_dark();
+        let label = "fn fetch_json(url: &str) -> Value";
+        let start = label.find("url").expect("a parameter");
+        let host = Session {
+            completion: None,
+            signature: Some(SignatureVm {
+                label: Some(label.to_owned()),
+                active: Some((start, start + "url: &str".len())),
+                prose: vec!["fetches one url".to_owned()],
+                anchor: Anchor::new(6, 2),
+                width_floor: 0,
+            }),
+        };
+        let tree =
+            Tree::new(Node::Empty {}).with_float(Float::new(Mood::Passive, Node::Signature {}));
+        let mut buf = Buffer::empty(AREA);
+        let report = Interpreter::new(&theme, &host).render(&tree, AREA, &mut buf);
+
+        assert!(report.deferred.is_empty(), "{report:?}");
+        assert_eq!(buf[(6, 3)].symbol(), "┌");
+        assert_eq!(buf[(6, 3)].fg, theme.float.passive);
+        let drawn = (0..AREA.height).map(|y| row(&buf, y)).collect::<Vec<_>>();
+        let text = drawn.join("\n");
+        assert!(text.contains("fn fetch_json(url: &str) -> Value"), "{text}");
+        assert!(text.contains("fetches one url"), "{text}");
+        // The label row: border + 2 pad cols in, then the label. `url: &str`
+        // starts `start` cells along it and is the only bright run.
+        let label_x = 6 + 1 + 2;
+        assert_eq!(buf[(label_x, 4)].fg, theme.neutrals.text);
+        let active_x = label_x + u16::try_from(start).expect("a column");
+        assert_eq!(buf[(active_x, 4)].fg, theme.neutrals.bright_text);
+        assert_eq!(buf[(active_x, 4)].symbol(), "u");
+    }
+
+    /// An anchored float is sized to **any** leaf, not only to the two LSP
+    /// bodies: `Ctx::width` answers off `Ctx::natural` for everything else, and
+    /// a float that came out six columns wide with a label in it would be the
+    /// artifact `Float::frame`'s zero-content rule exists to prevent.
+    ///
+    /// It hangs at the area's corner, because a label has no session and so no
+    /// anchor — `passive_anchor`'s fallback, which nothing else reaches.
+    #[test]
+    fn a_passive_float_is_sized_to_whatever_leaf_it_holds() {
+        let tree = Tree::new(Node::Empty {})
+            .with_float(Float::new(Mood::Passive, label("mark seen", Tone::Text)));
+        let (buf, report) = draw(&tree);
+        assert!(report.deferred.is_empty(), "{report:?}");
+        assert_eq!(row(&buf, 1), "┌─────────────┐");
+        assert!(row(&buf, 2).contains("mark seen"), "{}", row(&buf, 2));
+    }
+
+    /// **The anchor belongs to the body, not to whichever door answers first.**
+    /// A host that still holds a completion session while it composes a
+    /// signature float used to get the signature drawn at the completion's
+    /// anchor — §9 constrains floats, not sessions, and nothing in `Resources`
+    /// stops both from answering.
+    #[test]
+    fn a_signature_float_hangs_off_the_signature_even_with_a_completion_live() {
+        let theme = Theme::phosphor_dark();
+        let host = Session {
+            completion: Some(CompletionVm {
+                items: vec![item("default()", None)],
+                selected: 0,
+                documentation: Vec::new(),
+                anchor: Anchor::new(30, 8),
+                width_floor: 0,
+            }),
+            signature: Some(SignatureVm {
+                label: Some("fn get(url: &str)".to_owned()),
+                active: None,
+                prose: Vec::new(),
+                anchor: Anchor::new(4, 1),
+                width_floor: 0,
+            }),
+        };
+        let tree =
+            Tree::new(Node::Empty {}).with_float(Float::new(Mood::Passive, Node::Signature {}));
+        let mut buf = Buffer::empty(AREA);
+        let report = Interpreter::new(&theme, &host).render(&tree, AREA, &mut buf);
+
+        assert!(report.deferred.is_empty(), "{report:?}");
+        assert_eq!(buf[(4, 2)].symbol(), "┌", "the signature's own anchor");
+        assert_eq!(buf[(30, 9)].symbol(), " ", "not the completion's");
+    }
+
+    /// **The anti-thrash floor reaches the float** (`CP-4`).
+    ///
+    /// `Float::with_width_floor` shipped with no non-test caller — the widget
+    /// had the knob, the ViewModel had nowhere to put the number, and nothing
+    /// between them turned one into the other, so every anchored float still
+    /// recomputed its width per keystroke. This is the composition half, and it
+    /// is stated over the *drawn* border rather than over a returned `Rect`
+    /// because that is the thing the wiring can be missing from.
+    ///
+    /// Both doors, in one test, because they take different `Resources`
+    /// methods and a single one would leave the other free to come loose.
+    #[test]
+    fn float_is_held_to_the_widest_the_session_has_been() {
+        let theme = Theme::phosphor_dark();
+        // Content of two columns; a floor of nine is what a wider answer
+        // earlier in the same session left behind.
+        let floor = 9;
+        let host = Session {
+            completion: Some(CompletionVm {
+                items: vec![item("de", None)],
+                selected: 0,
+                documentation: Vec::new(),
+                anchor: Anchor::new(1, 1),
+                width_floor: floor,
+            }),
+            signature: Some(SignatureVm {
+                label: Some("fn g()".to_owned()),
+                active: None,
+                prose: Vec::new(),
+                anchor: Anchor::new(1, 1),
+                width_floor: floor,
+            }),
+        };
+        for node in [Node::Completion {}, Node::Signature {}] {
+            let tag = node.tag();
+            let tree = Tree::new(Node::Empty {}).with_float(Float::new(Mood::Passive, node));
+            let mut buf = Buffer::empty(AREA);
+            let report = Interpreter::new(&theme, &host).render(&tree, AREA, &mut buf);
+            assert!(report.deferred.is_empty(), "{report:?}");
+            // Border at the anchor column, and the right border `floor + 6`
+            // columns along: the floor plus an anchored float's chrome.
+            assert_eq!(buf[(1, 2)].symbol(), "┌", "{tag}");
+            assert_eq!(
+                buf[(1 + floor + 6 - 1, 2)].symbol(),
+                "┐",
+                "{tag}: the float is not held to the session's width\n{}",
+                row(&buf, 2)
+            );
+        }
+    }
+
+    /// A composition that raises the passive float with nothing behind it draws
+    /// **nothing at all** — not even the border. `query.rs`'s *"an absent thing
+    /// answers empty"* meets `Float::frame`'s rule that an anchored float with
+    /// no content is not a float, which is the same statement
+    /// `float.rs::an_empty_completion_list_draws_nothing_at_all` makes one
+    /// layer down. (The doc used to say *"chrome and no body"*; the assertion
+    /// has always been that no `│` is drawn, which is the stronger claim.)
+    #[test]
+    fn a_passive_float_with_no_session_behind_it_draws_nothing_at_all() {
+        let tree =
+            Tree::new(Node::Empty {}).with_float(Float::new(Mood::Passive, Node::Completion {}));
+        let (buf, report) = draw(&tree);
+        assert!(report.deferred.is_empty(), "{report:?}");
+        let drawn = (0..AREA.height)
+            .map(|y| row(&buf, y))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!drawn.contains('│'), "{drawn}");
     }
 
     // -- deferred primitives -------------------------------------------------
@@ -1589,8 +1952,6 @@ mod tests {
                 text: String::new(),
                 anchor: None,
             },
-            Node::Completion {},
-            Node::Signature {},
             Node::Watch { watch: WatchId(5) },
         ];
         for node in deferred {
@@ -1603,13 +1964,16 @@ mod tests {
             );
         }
 
-        // The other half. `NoResources` hands back no editor and no marks, so
-        // these draw an empty column, an empty rail and an empty strip — which
-        // is drawing, and is what `deferred` distinguishes from it.
+        // The other half. `NoResources` hands back no editor, no marks and no
+        // LSP session, so these draw an empty column, an empty rail, an empty
+        // strip and an empty list — which is drawing, and is what `deferred`
+        // distinguishes from it.
         let drawn = [
             Node::Gutter {
                 buffer: BufferId(1),
             },
+            Node::Completion {},
+            Node::Signature {},
             Node::VirtualText {
                 owner: None,
                 content: Child::new(label("hint", Tone::Meta)),

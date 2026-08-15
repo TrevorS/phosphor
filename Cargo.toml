@@ -41,6 +41,34 @@ version = "0.1.0"
 #   * `phosphor-ui` takes `ratatui-core` and never `ratatui`.
 #   * `steel-core` is pinned exactly (Q5) — a patch bump is its own scheduled task.
 [workspace.dependencies]
+# `T036`'s language-server transport: JSON-RPC framing, request/response
+# correlation and typed LSP payloads. SPIKES.md's transport table recommends it
+# over `tower-lsp` (last released 2023) and over `lsp-types` alone.
+#
+# `default-features = false` drops three of the four defaults, and each one is a
+# *server*-side facility this client has no use for:
+#   * `client-monitor` — a server watching its client's pid, via `waitpid-any`
+#     and `rustix`. We are the client and we own the child, so a dead server is
+#     an EOF on a pipe we hold.
+#   * `stdio` — `PipeStdin`/`PipeStdout` for a server reading its own stdin.
+#     Phosphor's stdin is a terminal in raw mode; the pipes we read are the
+#     child's, through `tokio::process`.
+#   * `tracing` — this crate emits none, and the subscriber is the binary's.
+# What stays is `omni-trait`, which is the `LanguageServer` trait that turns
+# `initialize`/`did_open`/`definition` into typed method calls rather than
+# hand-built `serde_json::Value`s.
+#
+# **The recommendation's stated reason does not survive reading the manifest,
+# and the choice does.** SPIKES.md prefers this over "`lsp-types` alone
+# (2024-06)", but `async-lsp` 0.2.4 *depends on* `lsp-types` 0.95 and
+# re-exports it as `async_lsp::lsp_types`, so the types arrive either way and
+# they are the same 2024 types (0.97.0, the newest, is also 2024-06-04 —
+# `lsp-types` has not moved since). What `async-lsp` actually buys is the
+# framing, the id correlation and the `Router`; that is the reason to take it,
+# and it is worth taking rather than hand-rolling.
+async-lsp = { version = "0.2.4", default-features = false, features = [
+    "omni-trait",
+] }
 # The CLI door's argument parser (SPIKES.md's manifest, `phosphor --eval`).
 # `T090` is its first consumer — `--theme <slug>` plus the file to open — and
 # `T023` takes the same parser when `--eval` lands, which is why it is pinned
@@ -85,8 +113,54 @@ ratatui-code-editor = { path = "vendor/ratatui-code-editor", default-features = 
 ratatui-core = "0.1.2"
 ratatui-markdown = { path = "vendor/ratatui-markdown", default-features = false }
 ropey = "1.6.1"
+# `T036` **names a type** with it, and that is the whole of it: a language
+# server's `initializationOptions` is free-form JSON the server, not us, gives
+# meaning to, so `lsp_types::InitializeParams` types the field
+# `Option<serde_json::Value>` and `ServerSpec` has to carry the same type to
+# hand one through. The client builds no JSON of its own — `async-lsp`'s
+# `omni-trait` is taken precisely so every request is a typed method call rather
+# than a hand-built `Value`.
+#
+# This comment used to say "`T036` builds one value with it", which a review
+# checked against the tree and found false — no constructor anywhere in the
+# crate. Naming a type is a real reason for a dependency line and needed no
+# embellishment; the *builder* it types is exercised by
+# `lsp::tests::initialization_options_reach_the_server_or_are_absent`, so the
+# door is reachable rather than merely declared.
+#
+# Already in the lock through `steel-core`, so this line adds a name rather than
+# a build. SPIKES.md's manifest pins 1.0.151.
+serde_json = "1.0.151"
 steel-core = "=0.8.2"
 steel-derive = "=0.8.2"
+# `T036`'s runtime, and **the editor stays synchronous** — this is the one place
+# a scheduler exists. `phosphor-buffer`'s LSP client owns a `new_current_thread`
+# runtime on a thread of its own and posts finished work into the binary's one
+# event queue (`crates/phosphor/src/events.rs`), which is `std::sync::mpsc` and
+# knows nothing about any of this. Design Language's "no widget ever blocks" is
+# what that shape buys: a server that hangs hangs its own thread.
+#
+# Six features, each with a caller: `process` spawns the server and
+# `kill_on_drop`s it, `io-util` is the pipe traits `tokio-util`'s compat layer
+# adapts, `rt` is the single-threaded scheduler, `sync` is the command channel
+# into it, `time` is the readiness timeout that turns "hung" into `Crashed`
+# rather than "starting forever", and `macros` is `select!`. No `net`, no
+# `signal`, no multi-thread work-stealing pool.
+tokio = { version = "1.53.1", default-features = false, features = [
+    "io-util",
+    "macros",
+    "process",
+    "rt",
+    "sync",
+    "time",
+] }
+# The seam between the two async worlds, and the reason it is a dependency at
+# all: `async-lsp`'s main loop reads `futures::io::AsyncRead`, `tokio::process`
+# hands out `tokio::io::AsyncRead`, and `compat` is the adapter. One feature,
+# no runtime of its own.
+tokio-util = { version = "0.7.19", default-features = false, features = [
+    "compat",
+] }
 tree-sitter = "0.26"
 
 # One lint configuration for all seven crates, inherited via `[lints] workspace = true`,

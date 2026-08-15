@@ -1,0 +1,23 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+#
+# PROVENANCE, because the header above would otherwise read as a bug this
+# editor shipped. It did not. The seed below was generated against a
+# DELIBERATELY PLANTED widening of `AppEvent::is_resize` — `Term(Resize(..))`
+# to `Term(Resize(..)) | Posted(_)`, so the drain silently swallows every
+# posted event — run to check that
+# `every_non_resize_is_delivered_once_and_in_order` bites on it. It does now;
+# before the oracle was moved off `is_resize` and onto the generator's own
+# `kinds`, the mutated predicate judged its own output and the law was vacuous
+# for exactly the class of bug it claims to cover. That is the same file's
+# `PROVENANCE` argument as `phosphor-core/tests/properties.proptest-regressions`.
+#
+# It is kept rather than deleted because `[2, 0]` is the *minimal* interleaving
+# that distinguishes the rule from the bug — one posted event with one resize
+# behind it, proptest shrunk from forty — so re-running it first is exactly
+# what you want from this file.
+cc b7b41e71a628746e6f049df0875ef838f508b3d36aba50e072c1d9c30176dce8 # shrinks to kinds = [2, 0]

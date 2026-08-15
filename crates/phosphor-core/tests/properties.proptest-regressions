@@ -16,3 +16,12 @@
 # distinguishes Upper from Lower — proptest shrank it to one character — so
 # re-running it first is exactly what you want from this file.
 cc 47312c7ed0e33fdd14e813d5e5f509cc218e6a4050139ae2c6a92eb31d8a8d08 # shrinks to source = "a", case = Upper
+#
+# The second one is not a plant. `language::comment` measured the run-wide
+# minimum indent in bytes and cut there, so `gc` over a block holding one
+# non-breaking-space-indented line panicked in `str::split_at` — a real defect
+# in the code as first landed, which `any_comment_line`'s `" ".repeat(n)`
+# indents could not draw. `any_indent` draws them now, this is the input it
+# shrank to, and `an_indent_that_is_not_ascii_whitespace_neither_panics_nor_
+# splits_a_character` states the same case by hand.
+cc 1b20ea3a10e2d2ff01171dcbd70c644186dc0def8e6b7daddea593588b422075 # shrinks to lines = ["\u{a0}."], prefix = "//"

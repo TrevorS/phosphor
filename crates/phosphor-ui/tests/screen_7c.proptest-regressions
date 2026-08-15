@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b7163303d7769230a313cede8afffe191053b61d7466ff55e77d978f563ecb6b # shrinks to vm = CompletionVm { items: [CompletionItemVm { label: "", detail: None }], selected: 0, documentation: [], anchor: Anchor { col: 0, row: 38 } }, width = 3, height = 2
+cc 212228a107045741f00632cae50b73d1bc12c9c9e30380f578ddcb37486a9497 # shrinks to vm = CompletionVm { items: [], selected: 0, documentation: [""], anchor: Anchor { col: 0, row: 0 } }
+cc 1f3592c7c0d506e96c17840288c828366d8417b5195057f83d29398f9aca2537 # shrinks to vm = CompletionVm { items: [CompletionItemVm { label: "名前", detail: None }], selected: 0, documentation: [], anchor: Anchor { col: 0, row: 0 } }, height = 3
+cc 116e1767553dd7260d36d854b497bef1ff5b97acafdba58a73f598e973a5e458 # shrinks to vm = CompletionVm { items: [CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }], selected: 6, documentation: [], anchor: Anchor { col: 0, row: 0 } }, height = 3
+cc 1b78bbcb084a1dee051512cf8eec4567086cc8b748c86160df6ce10a1c54e349 # shrinks to vm = CompletionVm { items: [CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }, CompletionItemVm { label: "", detail: None }], selected: 0, documentation: ["."], anchor: Anchor { col: 0, row: 0 } }

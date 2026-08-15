@@ -37,6 +37,15 @@ use phosphor_core::value::Value;
 
 use crate::registry::{OK, REFUSED};
 
+/// What an evaluation that ran and then raised answers: `#raised · why`.
+///
+/// **Not beside [`OK`] and [`REFUSED`] in [`crate::registry`], and the reason is
+/// the rule that file states:** *refusals are values; errors are errors.* Those
+/// two are symbols scheme receives and can branch on. A raise never becomes a
+/// value — it unwinds — so `#raised` exists only where an [`Outcome`] is being
+/// *drawn*, which is here. `T100`.
+pub const RAISED: &str = "#raised";
+
 /// The two halves of the line drawn after `⇒`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Answered {
@@ -62,6 +71,17 @@ impl Answered {
 #[must_use]
 pub fn answered(outcome: &Outcome) -> Answered {
     match outcome {
+        // A refusal that came back through scheme rather than through the
+        // `Outcome`. `6b` drew `⇒ (#refused "not built yet — T077 builds it")`
+        // for `(watch-place …)` while the three lines above it drew
+        // `⇒ #raised · …`, because the door turns a refused Action into a
+        // *value* and the last value is what a REPL prints. Both halves are
+        // right and the join was not: a reader gets a receipt here, in the one
+        // voice §6 allows, and scheme still receives the list it can branch on.
+        Outcome::Done(receipt) if refused(&receipt.value).is_some() => Answered {
+            head: REFUSED.to_owned(),
+            note: refused(&receipt.value).map(str::to_owned),
+        },
         Outcome::Done(receipt) => Answered {
             head: match &receipt.value {
                 // An Action with no value of its own answers `#ok`, the same
@@ -75,13 +95,57 @@ pub fn answered(outcome: &Outcome) -> Answered {
             head: REFUSED.to_owned(),
             note: Some(why(refusal)),
         },
+        // `T100`. A raise is neither of the two above and now says so: the head
+        // is its own sigil, and the sentence is the enum's, exactly as a
+        // refusal's is.
+        Outcome::Raised(raised) => Answered {
+            head: RAISED.to_owned(),
+            note: Some(raised.why()),
+        },
     }
+}
+
+/// The reason inside the door's own `(#refused "…")`, or [`None`].
+///
+/// Exactly the two-element shape [`REFUSED`] documents and
+/// `registry::outcome_value` builds — a longer list, or a list that merely
+/// starts with the word, is somebody's data and is printed as data.
+fn refused(value: &Value) -> Option<&str> {
+    let Value::List(items) = value else {
+        return None;
+    };
+    let [Value::Text(head), Value::Text(reason)] = items.as_slice() else {
+        return None;
+    };
+    (head == REFUSED).then_some(reason.as_str())
 }
 
 /// One line, as the CLI door prints it.
 #[must_use]
 pub fn line(outcome: &Outcome) -> String {
     answered(outcome).line()
+}
+
+/// The one line to show when an [`Outcome`] is not a success, or [`None`].
+///
+/// Design Language §5: *trouble on the statusline never blocks editing* — so
+/// the surfaces that reduce an outcome to a notice want a sentence or nothing,
+/// never a receipt. The binary has three of them (an ex line, a producer's
+/// posted Action, a keymap form arriving from the CLI or MCP door) and each one
+/// carried its own two-arm `match` on [`Outcome::Refused`] alone.
+///
+/// **`T100` is why this exists rather than a fourth arm in each.** Adding
+/// [`Outcome::Raised`] made two of those three a compile error and left the
+/// third — an `if let Outcome::Refused(…)` — compiling and silently dropping a
+/// raise on the floor. One function is what stops the next case doing that
+/// again: it cannot be exhaustive in one place and lossy in another.
+#[must_use]
+pub fn trouble(outcome: &Outcome) -> Option<String> {
+    match outcome {
+        Outcome::Done(_) => None,
+        Outcome::Refused(refusal) => Some(why(refusal)),
+        Outcome::Raised(raised) => Some(raised.why()),
+    }
 }
 
 /// Why an Action did not happen, in the product's voice.
@@ -176,6 +240,49 @@ mod tests {
     fn a_refusal_names_itself_and_then_says_why() {
         let refused = Outcome::Refused(Refusal::NotYetImplemented { task: "T041" });
         assert_eq!(line(&refused), "#refused · not built yet — T041 builds it");
+    }
+
+    /// The same refusal arriving the other way round — as the *value* the
+    /// Steel door hands back — reads identically.
+    ///
+    /// `6b` drew `⇒ (#refused "not built yet — T077 builds it")` for
+    /// `(watch-place …)` while the three lines above it drew `⇒ #raised · …`,
+    /// because a refused Action is a value at the door and the last value is
+    /// what a REPL prints. Both halves were right; the join put Steel's shape
+    /// in front of a reader.
+    #[test]
+    fn a_refusal_that_came_back_as_a_value_reads_as_a_receipt() {
+        let door = |value| {
+            Outcome::Done(Receipt {
+                capability: "eval",
+                value,
+                note: None,
+            })
+        };
+        let refusal = Value::List(vec![
+            Value::Text("#refused".to_owned()),
+            Value::Text("not built yet — T077 builds it".to_owned()),
+        ]);
+        assert_eq!(
+            line(&door(refusal)),
+            "#refused · not built yet — T077 builds it"
+        );
+
+        // Somebody's own data is data. A two-element list whose head is not the
+        // door's symbol, and a list of the right head but the wrong length, are
+        // both printed as scheme — otherwise `answered` would be guessing at
+        // any list that mentioned the word.
+        assert_eq!(
+            line(&door(Value::List(vec![
+                Value::Text("#region 4".to_owned()),
+                Value::Text("fn:use".to_owned()),
+            ]))),
+            "(#region 4 \"fn:use\")"
+        );
+        assert_eq!(
+            line(&door(Value::List(vec![Value::Text("#refused".to_owned())]))),
+            "(#refused)"
+        );
     }
 
     #[test]

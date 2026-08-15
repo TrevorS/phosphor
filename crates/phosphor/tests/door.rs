@@ -136,24 +136,24 @@ fn the_flag_and_the_verb_answer_identically() {
 }
 
 #[test]
-fn a_refusal_names_the_task_that_builds_it() {
-    // Naming the task is what `Refusal::NotYetImplemented` is for — the caller
-    // learns what to wait for instead of getting "unknown action".
+fn an_unanswerable_query_raises_and_keeps_the_task_that_builds_it() {
+    // Naming the task is what `QueryError::NotYetImplemented` is for — the
+    // caller learns what to wait for instead of getting "unknown query".
     //
-    // **`T022` wired the VM in**, so this is no longer the door's own refusal
-    // for want of a runtime: the source reaches Steel, the binding reaches the
-    // host, and the host refuses the *query* by naming `T041`. That the task id
-    // survives the round trip is the whole point.
+    // **`T022` wired the VM in**, so the source reaches Steel and the binding
+    // reaches the host. **`T100` fixed what came back.** A query that cannot be
+    // answered *raises* (`phosphor-steel`'s `registry.rs`: refusals are values,
+    // errors are errors), and until this task there was no `Outcome` case for
+    // that — so the line said `#refused` and carried Steel's own envelope
+    // around a sentence that was already in Design Language §6's voice:
+    //
+    //     #refused · Error: Generic: not built yet — T041 builds it
+    //
+    // Asserted as the whole line rather than a `starts_with` plus a `contains`,
+    // which is the pair that let the envelope live here unnoticed.
     let out = run(&["--eval", EXPR]);
     let printed = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        printed.starts_with("#refused · "),
-        "unexpected answer: {printed:?}"
-    );
-    assert!(
-        printed.contains("T041"),
-        "the refusal lost the task that builds it: {printed:?}"
-    );
+    assert_eq!(printed, "#raised · not built yet — T041 builds it\n");
 }
 
 #[test]
@@ -193,7 +193,7 @@ fn the_host_still_needs_a_file_and_the_door_does_not() {
     let file = scratch("host").with_extension("rs");
     fs::write(&file, "fn main() {}\n").expect("write");
     // Not run — opening it would take the terminal. What is under test is that
-    // the *parser* accepts the host's line unchanged now that 212 subcommands
+    // the *parser* accepts the host's line unchanged now that 215 subcommands
     // sit beside it, which `--help` exercises without drawing a frame.
     let help = run(&["--help"]);
     let _ = fs::remove_file(&file);
@@ -201,4 +201,47 @@ fn the_host_still_needs_a_file_and_the_door_does_not() {
     let printed = String::from_utf8_lossy(&help.stdout);
     assert!(printed.contains("--theme"), "the host's flags survived");
     assert!(printed.contains("--eval"), "the door is documented");
+}
+
+/// A relative `XDG_CONFIG_HOME` is ignored, on the *read* side too — `T101`.
+///
+/// The window that added `phosphor_core::config` filtered on `is_absolute`
+/// there (*"resolving one against the working directory would put a user's
+/// keymap wherever they happened to launch from"*) and left
+/// `Runtime::root`'s own copy of the same walk unfiltered. So the layer booted
+/// from `./cfg/phosphor` while `persist-form!` wrote under `$HOME/.config` —
+/// the split `AppHost::persist_target` exists to prevent, arrived at from the
+/// other end.
+///
+/// A process test because the resolution reads the environment and
+/// `std::env::set_var` is `unsafe` in edition 2024; a child gets its own.
+#[test]
+fn a_relative_xdg_config_home_boots_no_layer_at_all() {
+    let home = scratch("relative-config");
+    let _ = fs::remove_dir_all(&home);
+    let layer = home.join("cfg").join("phosphor");
+    fs::create_dir_all(&layer).expect("a layer under a relative config home");
+    fs::write(layer.join("init.scm"), "(displayln \"RELATIVE-LAYER\")\n").expect("an init.scm");
+
+    let printed = phosphor()
+        .args(["--eval", "(+ 1 2)"])
+        .stdin(Stdio::null())
+        // `current_dir` is the whole test: `cfg` resolves against it, and
+        // `./runtime` — candidate 3 — does not exist here.
+        .current_dir(&home)
+        .env_remove("PHOSPHOR_RUNTIME")
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", "cfg")
+        .output()
+        .expect("the binary runs");
+
+    let out = String::from_utf8_lossy(&printed.stdout).into_owned();
+    let _ = fs::remove_dir_all(&home);
+
+    assert!(
+        !out.contains("RELATIVE-LAYER"),
+        "a relative XDG_CONFIG_HOME was resolved against the working \
+         directory on the read side: {out:?}"
+    );
+    assert_eq!(out.trim(), "3");
 }

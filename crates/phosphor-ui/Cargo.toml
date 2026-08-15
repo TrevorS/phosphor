@@ -106,6 +106,14 @@ harness = false
 name = "soft_wrap"
 harness = false
 
+# `T040`. Same pair, same silent failure without it: a publish arrives from a
+# producer thread and is applied between frames, so what it costs is a frame
+# tearing or not tearing — and a benchmark autodiscovered under libtest would
+# report zero measurements while looking green.
+[[bench]]
+name = "diagnostics"
+harness = false
+
 [features]
 default = []
 # Rich markdown in the transcript. Per-language highlight features stay off:

@@ -1,0 +1,63 @@
+---
+source: crates/phosphor-ui/tests/float_width.rs
+expression: frame.to_text(buf)
+---
+screen wide-chars-120 · phosphor dark · 120x9 cells
+  Width is measured in CELLS, not characters. Each CJK character is two
+    columns wide, so the label column and the ⋯ both land where a
+    character count would put them two columns early.
+  A truncated row never splits a wide grapheme: the last character that
+    did not fit goes whole, its cell is blanked, and the mark takes the
+    final column. Buffer::set_stringn does the walking, so the
+    measurement that lays out is the measurement that draws.
+  The second item is selected here (#26332a + bright text), so the tint
+    is on a row whose label is wide — the tint covers the body's columns
+    and not the chrome's, as in 7c.
+
+text
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │                                                                                                                        │
+  1 │                                                                                                                        │
+  2 │  ┌──────────────────────────────────────────────────────────────────────┐                                              │
+  3 │  │  送 信 す る       fn(あ て : Addr, 本 文 : Body) -> Result<(), 送 信 エ ラ ー >  │                                              │
+  4 │  │  送 信 済 み 確 認   bool                                                  │                                              │
+  5 │  │  🙂 reaction    fn(&str) -> Emoji                                     │                                              │
+  6 │  │  ──────────────────────────────────────────────────────────────────  │                                              │
+  7 │  │  指 定 し た 宛 先 に メ ッ セ ー ジ を 送 信 し ま す 。 失 敗 し た 場 合 は 送 信 エ ラ ー を  ⋯  │                                              │
+  8 │  └──────────────────────────────────────────────────────────────────────┘                                              │
+
+fg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │........................................................................................................................│
+  1 │........................................................................................................................│
+  2 │..wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww..............................................│
+  3 │..whhh.h.h.h.hhhhhhjjjj.j.jjjjjjjjj.j.jjjjjjjjjjjjjjjjjjjjjjj.j.j.j.j.jhhw..............................................│
+  4 │..whhm.m.m.m.m.m.hhjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhw..............................................│
+  5 │..whhh.hhhhhhhhhhhhjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhw..............................................│
+  6 │..whhCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCChhw..............................................│
+  7 │..whhj.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.j.jjhhw..............................................│
+  8 │..wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww..............................................│
+
+bg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │........................................................................................................................│
+  1 │........................................................................................................................│
+  2 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................................│
+  3 │..xxxx.x.x.x.xxxxxxxxxx.x.xxxxxxxxx.x.xxxxxxxxxxxxxxxxxxxxxxx.x.x.x.x.xxxx..............................................│
+  4 │..xxxp.p.p.p.p.p.ppppppppppppppppppppppppppppppppppppppppppppppppppppppxxx..............................................│
+  5 │..xxxx.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................................│
+  6 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................................│
+  7 │..xxxx.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.x.xxxxx..............................................│
+  8 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................................│
+
+legend
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  m  #e8f0e8  neutrals.bright_text
+  p  #26332a  regions.selection
+  w  #2a3c2e  float.passive
+  x  #101410  float.body
+  C  #242a24  chrome.divider

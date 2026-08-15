@@ -271,7 +271,14 @@ fn load(engine: &mut Engine, root: &Path, file: &Path, report: &mut BootReport) 
 /// A form is compiled on its own, so the span Steel reports is an offset into
 /// *that form*. Adding the form's own offset is what turns it back into a
 /// position a person can jump to.
-fn steel_fault(file: &Path, source: &str, form: Form, error: &SteelErr) -> BootFault {
+///
+/// **Public because the persisted layer is loaded outside this crate.** `T101`
+/// moved `persisted.scm` into the config home, so `crates/phosphor/src/main.rs`
+/// runs it form by form itself — and its own copy of these six lines kept
+/// Steel's CamelCase kind in the message that [`message`] strips, which put two
+/// voices in one boot float. One constructor is what stops that recurring.
+#[must_use]
+pub fn steel_fault(file: &Path, source: &str, form: Form, error: &SteelErr) -> BootFault {
     let offset = error
         .span()
         .map_or(form.start, |span| form.start + span.start() as usize);

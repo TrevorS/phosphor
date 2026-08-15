@@ -15,7 +15,7 @@
 //!
 //! | line | what happens today |
 //! |---|---|
-//! | `(unseen-regions "src/retry.rs")` | reaches the registered query; refused, naming `T041` |
+//! | `(unseen-regions "src/retry.rs")` | reaches the registered query; **raises**, naming `T041`. A query with nothing to say raises rather than answering a sentinel (`crate::registry`), and since `T100` the line says `#raised` instead of calling it a refusal and wearing Steel's `Error: Generic:` envelope |
 //! | `(map region-author (block-regions …))` | `block-regions` is registered; **`region-author` is unbound** |
 //! | `(keymap-set! "]r" (lambda () (goto (next-region-by claude))))` | `next-region-by` is registered; **`goto` and `claude` are unbound** (Steel names `claude`), and a lambda's free identifiers are resolved when it is *defined*, so the drawn body cannot be compiled |
 //! | `(watch-place "src/retry.rs:24" 'delay)` | the alias resolves to `place-watch` and the string decodes — refused, naming `T077`. Until `§8` this was the one line that failed on *shape*: `anchor` is a `Target` and the drawing passed a string, so the answer was a `TypeMismatch`. The mockup was right and the vocabulary was wrong |
@@ -110,8 +110,13 @@ fn the_session_is_typable_but_the_store_is_s5() {
         .map(|entry| entry.answered.line())
         .collect();
 
-    // A registered query with no store: refused, naming the task that builds it.
-    assert!(answers[0].contains("T041"), "{answers:#?}");
+    // A registered query with no store: it raises, naming the task that builds
+    // it. `T100` — the whole line, because a `contains` is what let Steel's
+    // `Error: Generic:` envelope sit inside this very answer unread.
+    assert_eq!(
+        answers[0], "#raised · not built yet — T041 builds it",
+        "{answers:#?}"
+    );
     // The accessor `query.rs` says is free and unregistered — and is not yet
     // written, because the record it accesses is `T041`'s.
     assert!(answers[1].contains("region-author"), "{answers:#?}");
@@ -134,7 +139,17 @@ fn the_session_is_typable_but_the_store_is_s5() {
     // The assertion moved with it, and is stronger for it — naming the task is
     // something only a *decoded* call can do, where the old one passed on any
     // message that happened to mention the capability.
-    assert!(answers[3].contains("T077"), "{answers:#?}");
+    //
+    // The whole line, not a `contains`, for `answers[0]`'s reason and one
+    // more: a refused Action is a *value* at the Steel door, so this answer
+    // used to reach the reader as the bare list `(#refused "not built yet —
+    // T077 builds it")` — Steel's shape leaking past §6 on the one line of
+    // `6b` that is a refusal rather than a raise. `answer::answered` reads it
+    // back into the receipt it is.
+    assert_eq!(
+        answers[3], "#refused · not built yet — T077 builds it",
+        "{answers:#?}"
+    );
     assert!(
         !answers[3].contains("TypeMismatch"),
         "the drawn line reaches the dispatcher now; a shape error means `§8` regressed: {answers:#?}"

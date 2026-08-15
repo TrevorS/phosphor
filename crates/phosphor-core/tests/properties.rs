@@ -21,6 +21,11 @@
 //!   *"folding a snapshot of a state produces that same state. Test the law."*
 //!   Torn-tail recovery is what makes `T030`'s `kill -9` acceptance mean
 //!   anything, and it was proven by three hand-built tails.
+//! * `language.rs` — *"removal takes the prefix and at most one following
+//!   space, the mirror of what insertion adds"*. `toggle-comment` is the one
+//!   `T037` capability that rewrites your file, and *press `gc` twice and get
+//!   your file back* is a law over every run of lines, not over the four blocks
+//!   in that module's own tests.
 //!
 //! House style is `phosphor-ui`'s `status_line.rs` `proptest!` block, whose
 //! property is a law the type obeys (*the statusline never wraps, at any
@@ -88,6 +93,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use phosphor_core::input::text::{self, Text};
 use phosphor_core::journal::{DecodeError, Decoder, Encoder, Folded, UndoLog, undo};
+use phosphor_core::language;
 use phosphor_core::registry::ParamType;
 use phosphor_core::request::{
     Actor, AnchorId, Binding, BlockId, BufferId, CaseChange, Direction, FileSpan, GroupId, HunkId,
@@ -1565,4 +1571,152 @@ fn append(path: &Path, bytes: &[u8]) {
         .expect("open for append")
         .write_all(bytes)
         .expect("append");
+}
+
+// ===========================================================================
+// P4 · The comment hook — `language.rs`
+// ===========================================================================
+
+/// Leading whitespace, drawn from more than the space bar.
+///
+/// `" ".repeat(n)` was the whole of this generator, which made all three laws
+/// below ASCII-only *by construction* — and the one thing they could not draw
+/// was the one that panicked. `str::trim_start` trims Unicode `White_Space`, so
+/// a run holding one non-breaking-space-indented line puts the run-wide minimum
+/// indent inside a character on every other line. A `.py` pasted out of a
+/// browser and CJK source both reach it.
+fn any_indent() -> impl Strategy<Value = String> {
+    prop::collection::vec(
+        prop_oneof![
+            8 => Just(' '),
+            2 => Just('\t'),
+            1 => Just('\u{a0}'),   // non-breaking space
+            1 => Just('\u{3000}'), // ideographic space
+        ],
+        0..8,
+    )
+    .prop_map(|chars| chars.into_iter().collect())
+}
+
+/// One line of a run: blank, or indented content.
+///
+/// Blank lines are drawn deliberately rather than left to a `[a-z ]*` regex
+/// ever producing one, because *what happens to the empty line in the middle of
+/// the block* is the case `gc` implementations get wrong and the case a uniform
+/// generator never draws.
+fn any_comment_line() -> impl Strategy<Value = String> {
+    prop_oneof![
+        2 => (any_indent(), "[a-z(){};,=. ]{1,12}")
+            .prop_map(|(indent, text)| format!("{indent}{text}")),
+        1 => any_indent(),
+    ]
+}
+
+/// The comment prefixes the twelve declarations use, plus two a thirteenth
+/// might.
+fn any_comment_prefix() -> impl Strategy<Value = String> {
+    prop_oneof![
+        Just("//".to_owned()),
+        Just("#".to_owned()),
+        Just(";;".to_owned()),
+        Just("--".to_owned()),
+        Just("%".to_owned()),
+    ]
+}
+
+/// The leading-whitespace width of a line, in **characters**.
+///
+/// Bytes were the unit here and in `language.rs` both, which agreed with each
+/// other and with nothing else: a non-breaking space is one indent character
+/// and two bytes, so "the prefixes line up" measured in bytes is a claim about
+/// encoding rather than about the column somebody reads.
+fn indent_of(line: &str) -> usize {
+    line.chars().count() - line.trim_start().chars().count()
+}
+
+/// Whether every non-blank line already carries `prefix`.
+fn wholly_commented(lines: &[String], prefix: &str) -> bool {
+    let mut content = lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .peekable();
+    content.peek().is_some() && content.all(|line| line.trim_start().starts_with(prefix))
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
+
+    /// **`gc` twice is the identity.**
+    ///
+    /// `language.rs` says removal takes *"the prefix and at most one following
+    /// space, the mirror of what insertion adds"*, and a mirror is a law rather
+    /// than an example. It is the whole reason pressing `gc` on a block you
+    /// were unsure about is safe: the second press has to give the file back,
+    /// byte for byte, including the alignment somebody hand-tuned.
+    ///
+    /// The assumption covers the one run where the first toggle does not
+    /// comment. A run already wholly commented uncomments first, and
+    /// uncommenting is lossy on purpose — `// x` and `//x` both come back as
+    /// `x`.
+    #[test]
+    fn commenting_then_uncommenting_gives_the_run_back(
+        lines in prop::collection::vec(any_comment_line(), 1..8),
+        prefix in any_comment_prefix(),
+    ) {
+        prop_assume!(!wholly_commented(&lines, &prefix));
+
+        let commented = language::toggle_comment(&lines, &prefix);
+        let back = language::toggle_comment(&commented, &prefix);
+        prop_assert_eq!(back, lines);
+    }
+
+    /// **The prefixes line up.**
+    ///
+    /// The reason to read a commented block is its shape, so the prefix goes at
+    /// the shallowest indent in the run rather than at each line's own — and
+    /// the two are indistinguishable to
+    /// [`commenting_then_uncommenting_gives_the_run_back`], because inserting
+    /// and removing at each line's own indent round-trips just as cleanly. This
+    /// is the property that tells them apart.
+    #[test]
+    fn commenting_puts_every_prefix_in_the_same_column(
+        lines in prop::collection::vec(any_comment_line(), 1..8),
+        prefix in any_comment_prefix(),
+    ) {
+        prop_assume!(!wholly_commented(&lines, &prefix));
+
+        let commented = language::toggle_comment(&lines, &prefix);
+        let columns: Vec<usize> = commented
+            .iter()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| indent_of(line))
+            .collect();
+        if let Some(first) = columns.first() {
+            prop_assert!(
+                columns.iter().all(|column| column == first),
+                "prefixes at {columns:?}, from {lines:?}"
+            );
+        }
+    }
+
+    /// **A blank line is never touched, in either direction.**
+    ///
+    /// *"A trailing `//` on an empty line is noise the next `gc` would have to
+    /// guess about"* — and the guess is what would break the involution above,
+    /// so this is that law from underneath. The line count rides along:
+    /// `toggle-comment` lowers to a buffer edit, and a transform that dropped
+    /// or split a line would move every anchor under it.
+    #[test]
+    fn blank_lines_and_the_line_count_survive_a_toggle(
+        lines in prop::collection::vec(any_comment_line(), 1..8),
+        prefix in any_comment_prefix(),
+    ) {
+        let toggled = language::toggle_comment(&lines, &prefix);
+        prop_assert_eq!(toggled.len(), lines.len());
+        for (before, after) in lines.iter().zip(&toggled) {
+            if before.trim().is_empty() {
+                prop_assert_eq!(before, after);
+            }
+        }
+    }
 }

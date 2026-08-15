@@ -25,5 +25,38 @@ version.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
 
+# `src/raw.rs`'s wrapper law is a PROPERTY over write schedules, not a set of
+# examples: whatever order of clean frames, panicking renders and failing writes
+# a session produces, `synchronized_frame` offers exactly one `?2026l` per
+# `?2026h` and never returns with a block open. Three examples covered three
+# schedules; the law is what says no *other* schedule leaves the terminal
+# frozen, which Design Language §8 calls a P0.
+#
+# 1.11.0 is the version `phosphor-core`, `phosphor-buffer`, `phosphor-ui` and
+# `phosphor` already pin, so this adds an edge and not a crate. Declared here
+# rather than in `[workspace.dependencies]` for the reason their entries give: a
+# member's dev-only test dependency is that crate's business, and the root
+# manifest is `spine`'s.
+[dev-dependencies]
+proptest = "1.11.0"
+
+# `tests/owning_the_terminal.rs` drives a real `Term` on a pseudoterminal —
+# the only place the alt screen, the restore ordering and the panic path are
+# observable as bytes rather than as intentions. Needs
+# `openpt`/`grantpt`/`unlockpt`/`ptsname`, a `TIOCSWINSZ`, and — the part no
+# other test in this repo does — `tcgetattr`, because raw mode is a termios
+# state and not an escape sequence. "The user's shell still echoes after the
+# editor died" is only checkable that way.
+#
+# Same crate, same version and the same two features as
+# `phosphor/Cargo.toml`'s, for the same reason: `crossterm` already builds on
+# `rustix`, so this turns features on rather than adding a crate, and the
+# workspace denies `unsafe_code` — a test is not a reason to make an exception.
+#
+# Target-gated because a pty is a unix object; the test file carries a non-unix
+# arm that says it was skipped.
+[target.'cfg(unix)'.dev-dependencies]
+rustix = { version = "1.1.4", features = ["pty", "termios"] }
+
 [lints]
 workspace = true

@@ -137,9 +137,9 @@ use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
 use ratatui_core::style::Style;
 use ratatui_core::symbols::line;
-use ratatui_core::text::Span;
 use ratatui_core::widgets::Widget;
 
+use crate::interpret::cells;
 use crate::theme::Theme;
 
 /// Cells between a key and its label, and between a label and its detail.
@@ -646,12 +646,6 @@ fn spell(tokens: &[&str]) -> String {
         previous_wide = wide;
     }
     out
-}
-
-/// Display width in cells — the same measurement [`Buffer::set_stringn`] writes
-/// with.
-fn cells(text: &str) -> u16 {
-    u16::try_from(Span::raw(text).width()).unwrap_or(u16::MAX)
 }
 
 /// Write `text` at `(x, y)`, clipped to `area`. Returns the column after the

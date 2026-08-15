@@ -31,7 +31,7 @@ Then:
   published sources with `file:line` citations, the full dependency manifest with verified
   versions, and the hygiene tooling. **Read this before T001** — it inverts one recorded
   decision and uncovers unbudgeted work.
-- **[TASKS.md](TASKS.md)** — the plan decomposed into 100 tasks across the 9 phases, plus 9
+- **[TASKS.md](TASKS.md)** — the plan decomposed into 103 tasks across the 9 phases, plus 9
   verification-harness tasks, with **12 checkpoints** where work stops for manual verification.
   `T084`–`T089` were added by a review of these docs: six widget and primitive tasks the design
   requires — the `Float` chrome primitive, undercurl, the `HelpGrid`, region tints, the pane
@@ -143,7 +143,9 @@ drawings contradicting each other rather than contradicting the build:
   `· persisted to init.scm`; the build writes to whatever `phosphor/persist-file` names, because
   `init.scm` runs to its last form *before* Rust reads the load order it declared — so a
   `(keymap-set! …)` appended there comes back on the next boot as a free-identifier fault in a
-  float. A one-file layer still gets `init.scm`, which is what `6b` drew and why.
+  float. A one-file layer still gets `init.scm`, which is what `6b` drew and why. *(`T101` kept
+  this and made it structural: the file left the load order entirely, so "last" is a call site
+  rather than a list position — see the `CP-4` amendment below.)*
 - **The λ prompt is steel `#9ec98c`, not claude green `#3ddc97`** (TUI Mockups `6b`). The Design
   Language's glyph lexicon draws `λ ◆` in steel and captions it *"steel prompt · steel surface"*;
   `6b` draws the same glyph in claude green. The lexicon governs — it is the drawing that is
@@ -170,6 +172,26 @@ drawings contradicting each other rather than contradicting the build:
   live keymap already, so "the footer tells the truth about what this key does **in this mode**"
   is a small change rather than a rewrite; it is recorded as owed work on `T034` in
   [TASKS.md](TASKS.md).
+
+**And one more from the repair window after `CP-4`** — the fourth against `6b`, and the first that
+a test could not have found, because it is about what the product *should* do rather than about
+what it does:
+
+- **A bare `(keymap-set! …)` does not persist; `(persist! …)` does** (TUI Mockups `6b`, fourth
+  line: *"`⇒ #ok · persisted to init.scm`"*). Ruled by Teej on 2026-08-14. Persisting by head
+  name means trying a theme keeps it forever, and Emacs — which has two mechanisms — has neither:
+  `M-:` and `ielm` never persist, `M-x customize` is a deliberate *save this*. It also fails the
+  third invariant, *nothing moves unless you asked*. The verb is an identity function in
+  `runtime/repl.scm`, so the REPL stays the only writer and a persisted form is idempotent at
+  boot; a bare config verb answers `· not persisted — (persist! …) keeps it`,
+  which is `6b`'s own receipt offering it. `7a`'s always-allow is untouched — pressing a digit
+  was already the explicit act. Built as `T101`; reasoning at
+  [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s §32.
+  **The same task moved the file it writes to.** `phosphor/persist-file` was joined to the
+  runtime root, which in a dev checkout is *the repository* — `CP-4`'s manual test left a
+  `(define-language! "lua" …)` in a tracked `runtime/persisted.scm`. It is
+  `$XDG_CONFIG_HOME/phosphor/` now. That amends no drawing; it is [Q1](IMPLEMENTATION-PLAN.md#q1)
+  applied a second time, and to *config* rather than state.
 
 - **`KeymapFooter` is one widget at *three* densities, not two.** Design Language §12 describes it
   as *"verb-labeled hints; also renders the which-key grid — same data, two densities"*, and the

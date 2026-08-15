@@ -568,6 +568,35 @@ pub fn retry_with_backoff<T, E>(
         );
     }
 
+    /// **`install` replaces, and every caller with two sources depends on it.**
+    ///
+    /// A thread's rows and a diagnostic's are built by different modules, and a
+    /// host that installed the second set on its own would delete the first —
+    /// silently, because both calls succeed and the frame simply comes back
+    /// with fewer rows on it. That is why `tests/screen_6c.rs` merges the two
+    /// lists before installing either, and this is the claim that merge rests
+    /// on.
+    #[test]
+    fn a_second_install_replaces_the_rows_the_first_one_left() {
+        let theme = Theme::phosphor_dark();
+        let mut editor = plain(&theme);
+        let before = editor.visual_len_lines();
+
+        install(&mut editor, &thread(&theme, Anchor::line(3)));
+        assert_eq!(editor.visual_len_lines(), before + 2);
+
+        install(
+            &mut editor,
+            &[Row::new(Anchor::line(5), vec![Run::prose("alone", &theme)])],
+        );
+        assert_eq!(
+            editor.visual_len_lines(),
+            before + 1,
+            "the thread's two rows are gone, not kept alongside"
+        );
+        assert_eq!(rows_of(&editor, RegionId(4)), Vec::<usize>::new());
+    }
+
     #[test]
     fn the_toggle_hides_the_rows_without_losing_them() {
         let theme = Theme::phosphor_dark();

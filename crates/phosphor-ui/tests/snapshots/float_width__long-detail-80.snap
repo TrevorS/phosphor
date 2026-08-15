@@ -1,0 +1,66 @@
+---
+source: crates/phosphor-ui/tests/float_width.rs
+expression: frame.to_text(buf)
+---
+screen long-detail-80 · phosphor dark · 80x9 cells
+  CP-4: 'we need a max width for completion and hover and stuff — right
+    now its very dynamic and will go from small to across the screen'.
+  The float stops at 60% of the area (ANCHORED_WIDTH_PCT) — §8's band
+    floor read as the passive float's ceiling — where before it was
+    content plus chrome capped only by the terminal.
+  Every row here is longer than the float. The label keeps its columns
+    and the meta detail loses them (§11 'drop, never squeeze'), so the
+    text that would be inserted is never the half that goes.
+  Rows that do not fit end in §2's ⋯ rather than stopping mid-word.
+  7c at the width the design draws it is unchanged by any of this, and
+    the measurement that says so lives on ANCHORED_WIDTH_PCT rather than
+    here — one statement, because four copies of an arithmetic claim in
+    prose is four things no lint can reconcile.
+
+text
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │                                                                                │
+  1 │                                                                                │
+  2 │  ┌──────────────────────────────────────────────┐                              │
+  3 │  │  retry_with_backoff  fn(&mut Client, Retry⋯  │                              │
+  4 │  │  retry_once          fn(&mut Client) -> Re⋯  │                              │
+  5 │  │  retries_left        u32                     │                              │
+  6 │  │  ──────────────────────────────────────────  │                              │
+  7 │  │  Retries the request with exponential back⋯  │                              │
+  8 │  └──────────────────────────────────────────────┘                              │
+
+fg
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │................................................................................│
+  1 │................................................................................│
+  2 │..wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww..............................│
+  3 │..whhmmmmmmmmmmmmmmmmmmhhjjjjjjjjjjjjjjjjjjjjjjhhw..............................│
+  4 │..whhhhhhhhhhhhhhhhhhhhhhjjjjjjjjjjjjjjjjjjjjjjhhw..............................│
+  5 │..whhhhhhhhhhhhhhhhhhhhhhjjjhhhhhhhhhhhhhhhhhhhhhw..............................│
+  6 │..whhCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCChhw..............................│
+  7 │..whhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhw..............................│
+  8 │..wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww..............................│
+
+bg
+     0         1         2         3         4         5         6         7
+     01234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │................................................................................│
+  1 │................................................................................│
+  2 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+  3 │..xxxppppppppppppppppppppppppppppppppppppppppppxxx..............................│
+  4 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+  5 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+  6 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+  7 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+  8 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................│
+
+legend
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  m  #e8f0e8  neutrals.bright_text
+  p  #26332a  regions.selection
+  w  #2a3c2e  float.passive
+  x  #101410  float.body
+  C  #242a24  chrome.divider

@@ -27,19 +27,44 @@ fn runtime_dir() -> PathBuf {
 }
 
 /// Every `.scm` we ship, sorted, so a failure names a stable file.
+///
+/// One level of subdirectory, because the tree grew one: `T037` puts the twelve
+/// language declarations in `runtime/languages/`, and `pickers/` is next
+/// (`T045`). A flat `read_dir` here would have gone on passing while twelve
+/// unscanned files shipped — which is the failure this whole file exists
+/// against.
 fn shipped() -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(runtime_dir())
-        .expect("runtime/ is part of the repo")
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "scm"))
-        .collect();
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut directories = vec![runtime_dir()];
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(&directory)
+            .expect("runtime/ is part of the repo")
+            .filter_map(Result::ok)
+        {
+            let path = entry.path();
+            if path.is_dir() && directory == runtime_dir() {
+                directories.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "scm") {
+                files.push(path);
+            }
+        }
+    }
     files.sort();
     assert!(
         !files.is_empty(),
         "runtime/ has no .scm files — wrong path?"
     );
     files
+}
+
+/// A shipped file's name **as the load order spells it** — `keymaps.scm`,
+/// `languages/rust.scm`.
+fn as_listed(path: &Path) -> String {
+    path.strip_prefix(runtime_dir())
+        .expect("every shipped file is under runtime/")
+        .to_str()
+        .expect("a utf-8 path")
+        .replace('\\', "/")
 }
 
 /// Every shipped file scans: no form left open at end of file.
@@ -136,15 +161,12 @@ fn the_load_order_and_the_directory_agree() {
     }
 
     for path in shipped() {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .expect("a utf-8 filename");
+        let name = as_listed(&path);
         if name == "init.scm" {
             continue;
         }
         assert!(
-            listed.iter().any(|listed| listed == name),
+            listed.contains(&name),
             "runtime/{name} is not in init.scm's load order, so it never runs. \
              Either add it, or delete it — a file that looks live and is not is \
              worse than no file."

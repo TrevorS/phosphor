@@ -132,8 +132,17 @@ impl KeyboardProtocol {
     ///
     /// A pure function of the value so every branch is testable without a
     /// terminal; [`KeyboardProtocol::forced`] is the one caller that reads the
-    /// process. The vocabulary follows `PHOSPHOR_UNDERCURL`'s, which is the
-    /// same kind of escape hatch for the same kind of capability:
+    /// process.
+    ///
+    /// **It does not spell the same words as `PHOSPHOR_UNDERCURL`**, which this
+    /// comment claimed until the coverage pass checked it against
+    /// `vendor/ratatui-code-editor/src/phosphor/cell_style.rs`'s
+    /// `TerminalEnv::forced`. That one also takes `yes`/`always` and
+    /// `no`/`never`, and does not take `none`; here `PHOSPHOR_KEYBOARD=yes` is
+    /// an unrecognised value and the query decides. The two are the same *kind*
+    /// of escape hatch and always were — the vocabulary sentence was the part
+    /// that was wrong, and `the_two_escape_hatches_do_not_spell_the_same_words`
+    /// is what keeps it from drifting back.
     ///
     /// * `legacy`, `0`, `off`, `false`, `none` → [`KeyboardProtocol::Legacy`].
     ///   **The degradation terminal, on the hardware you have.** Negotiation is
@@ -478,9 +487,36 @@ impl Term {
 
     /// Clear the screen; the next [`Term::draw`] repaints in full.
     ///
+    /// # Read this before giving it a caller
+    ///
+    /// **Nothing calls this**, and the coverage pass that established that also
+    /// established two things about it that the rest of this crate's contract
+    /// says should be impossible. Both are `ratatui` 0.30.2's behaviour, read
+    /// from its source rather than inferred, and neither is a bug in the code
+    /// below — they are what `Terminal::clear` does:
+    ///
+    /// 1. **It writes outside the synchronized-output block.**
+    ///    `CrosstermBackend::clear_region` is an `execute!` — write, then
+    ///    flush, immediately. A full-screen erase is the most tearing-visible
+    ///    write there is, and `raw.rs`'s header claim that *"exactly one of
+    ///    those methods draws"* is true only because this one has no caller.
+    /// 2. **It reads from the terminal.** `Terminal::clear` opens with
+    ///    `backend.get_cursor_position()`, which is a `CSI 6 n` round trip on
+    ///    whatever `/dev/tty` resolves to — so it would compete with `T026`'s
+    ///    input machine for the bytes arriving on stdin, and it blocks until it
+    ///    is answered. Under `nextest`, with no terminal to answer, it returns
+    ///    `ENXIO` having written nothing to the writer this crate seals.
+    ///
+    /// It is left as it is because a coverage pass is the wrong place to
+    /// remove public API or to change what a call does. The choice belongs to
+    /// whoever needs it: wrap it in the pair and take the cursor round trip
+    /// knowingly, or delete it — a repaint is already reachable through
+    /// [`Term::draw`], which is what the frame path uses today.
+    ///
     /// # Errors
     ///
-    /// [`TermError::Io`] if the clear could not be written.
+    /// [`TermError::Io`] if the clear could not be written, **or if the cursor
+    /// query it makes first was not answered**.
     pub fn clear(&mut self) -> Result<(), TermError> {
         self.raw.clear().map_err(TermError::Io)
     }
@@ -514,6 +550,8 @@ impl Drop for Term {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::{
         ALT_SCREEN, Capabilities, ENTERED, KEYBOARD_ENV, KITTY, KeyboardProtocol, MOUSE, Ordering,
         RAW_MODE, TermConfig, TermError, mark, restore_entered,
@@ -639,5 +677,152 @@ mod tests {
             TermError::AlreadyActive.to_string(),
             "a Term is already active in this process"
         );
+    }
+
+    #[test]
+    fn the_two_escape_hatches_do_not_spell_the_same_words() {
+        // `from_env_value`'s doc said the vocabulary *"follows
+        // `PHOSPHOR_UNDERCURL`'s"* for two windows. It does not, and a user who
+        // read that and exported `PHOSPHOR_KEYBOARD=yes` would get the query
+        // deciding rather than the protocol they asked for — silently, because
+        // an unrecognised value is deliberately ignored here.
+        //
+        // The list is `TerminalEnv::forced` in
+        // `vendor/ratatui-code-editor/src/phosphor/cell_style.rs`: on is
+        // `1|true|on|yes|always|force`, off is `0|false|off|no|never`.
+        for undercurl_only in ["yes", "always", "no", "never"] {
+            assert_eq!(
+                KeyboardProtocol::from_env_value(Some(undercurl_only)),
+                None,
+                "{undercurl_only:?} forces PHOSPHOR_UNDERCURL and is ignored here"
+            );
+        }
+        // The canary, deterministically. `NEAR_MISSES` puts it in front of the
+        // property too, but a sampled generator is a probability and this is
+        // the one value in the suite whose whole purpose is being rejected.
+        assert_eq!(KeyboardProtocol::from_env_value(Some("kitty-please")), None);
+        assert_eq!(
+            KeyboardProtocol::from_env_value(Some("none")),
+            Some(KeyboardProtocol::Legacy),
+            "`none` goes the other way: this hatch takes it and that one does not"
+        );
+    }
+
+    /// Every spelling the doc comment promises, as a second copy.
+    ///
+    /// Two copies of a list is normally a smell; here it is the point. The
+    /// property below asserts that `Some` is returned for **nothing else**, and
+    /// a property that read the same list the implementation reads would be
+    /// asserting that a function agrees with itself.
+    const DOCUMENTED: [&str; 10] = [
+        "legacy", "0", "off", "false", "none", "kitty", "1", "on", "true", "force",
+    ];
+
+    /// Words a person would plausibly type, and the function must reject.
+    ///
+    /// **Without these the property below cannot fail.** The first version
+    /// generated only `any::<String>()`, and a planted `"yes" => Kitty` arm
+    /// survived all 256 cases — proptest's `\PC*` does not produce
+    /// three-letter English words by chance, so the law was true and untested,
+    /// which is the shape of the seven dead tests this build has already
+    /// shipped. Four of these are `PHOSPHOR_UNDERCURL`'s spellings, which is
+    /// the exact mistake a reader of the old doc comment would have made.
+    ///
+    /// `kitty-please` is the canary, and it is here rather than in
+    /// [`DOCUMENTED`] — where it sat, because [`DOCUMENTED`] is the property's
+    /// *allowed* set and law 1 reads `plain.is_some() ⇒ DOCUMENTED.contains`.
+    /// A rejected value in the allowed set widens the law by one and asserts
+    /// nothing, so a planted `"kitty-please" => Kitty` arm passed the whole
+    /// suite. In this list the same property goes red on it, which is the job
+    /// the canary was written for.
+    const NEAR_MISSES: [&str; 15] = [
+        "yes",
+        "no",
+        "always",
+        "never",
+        "y",
+        "n",
+        "enable",
+        "disable",
+        "2",
+        "-1",
+        "kitty!",
+        "legacyy",
+        "",
+        "  ",
+        "kitty-please",
+    ];
+
+    /// The values the property is run over: free-form strings, the documented
+    /// spellings, and the near misses above, so the vocabulary's boundary is
+    /// somewhere the generator can actually land.
+    fn value() -> impl Strategy<Value = String> {
+        prop_oneof![
+            2 => any::<String>(),
+            3 => prop::sample::select(DOCUMENTED.as_slice()).prop_map(str::to_owned),
+            3 => prop::sample::select(NEAR_MISSES.as_slice()).prop_map(str::to_owned),
+        ]
+    }
+
+    proptest! {
+        /// **The vocabulary is closed**, and case and padding do not open it.
+        ///
+        /// Three laws, none of them a restatement of the match arms:
+        ///
+        /// 1. Nothing outside [`DOCUMENTED`] ever forces a protocol. This is
+        ///    the claim the doc makes — *"anything else, including unset and
+        ///    empty → `None`, and the query decides"* — and it is what stops a
+        ///    typo from silently selecting the degradation path.
+        /// 2. ASCII case is irrelevant. `to_ascii_lowercase` is what makes that
+        ///    true and folds nothing else, which is why the generator flips
+        ///    only ASCII letters.
+        /// 3. Surrounding ASCII whitespace is irrelevant — a value pasted from
+        ///    a shell script with a trailing space still works.
+        ///
+        /// **What the generator cannot produce**: proptest's `String` strategy
+        /// is `\PC*`, so no control characters and no lone surrogates; and no
+        /// generator here can produce a **non-UTF-8** value, which is the one
+        /// input `KeyboardProtocol::forced` actually treats differently —
+        /// `std::env::var(..).ok()` turns it into `None` before this function
+        /// ever sees it. Nor does it produce non-ASCII whitespace such as
+        /// U+00A0, which `str::trim` *does* strip: that widens law 3 rather
+        /// than narrowing it, and is untested here. What it *can* produce, and
+        /// deliberately, is [`NEAR_MISSES`] — see that constant for why a
+        /// free-form generator alone left this property unable to fail.
+        #[test]
+        fn no_undocumented_spelling_ever_forces_a_protocol(
+            value in value(),
+            pad_left in prop::collection::vec(prop_oneof![Just(' '), Just('\t')], 0..4),
+            pad_right in prop::collection::vec(prop_oneof![Just(' '), Just('\t')], 0..4),
+            upper in any::<bool>(),
+        ) {
+            let plain = KeyboardProtocol::from_env_value(Some(&value));
+
+            if plain.is_some() {
+                let folded = value.trim().to_ascii_lowercase();
+                prop_assert!(
+                    DOCUMENTED.contains(&folded.as_str()),
+                    "{value:?} forced {plain:?} and is not a spelling the docs offer"
+                );
+            }
+
+            let cased: String = if upper {
+                value.to_ascii_uppercase()
+            } else {
+                value.to_ascii_lowercase()
+            };
+            let padded: String = pad_left
+                .iter()
+                .chain(cased.chars().collect::<Vec<_>>().iter())
+                .chain(pad_right.iter())
+                .collect();
+            prop_assert_eq!(
+                KeyboardProtocol::from_env_value(Some(&padded)),
+                plain,
+                "{:?} and {:?} disagree",
+                padded,
+                value
+            );
+        }
     }
 }

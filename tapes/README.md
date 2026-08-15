@@ -588,6 +588,45 @@ these tapes points at real, moving source, and will keep reporting
 false-positive-looking mismatches under concurrent development until
 something stops moving under them. Reverted the same way afterward.
 
+### V007 saw one frame per tape, and six tapes draw no such frame (CP-4)
+
+`diff-tapes.sh` compared `artifacts/<id>.png` and nothing else. **Six tapes in
+the library never write that file**: `3c`, `folds`, `8e`,
+`insert-whitespace-marks`, `repl-liveness` and now `signature-help` each
+screenshot a *named moment* instead — `3c-open.png`, `folds-reopened.png`,
+`repl-liveness-4-live-on-next-key.png`. Every one of them printed *"no
+committed reference yet, nothing to diff against"* and was counted as
+`skipped`, indistinguishable from a screen nobody had captured. That is the
+worst answer a change detector can give: the tapes it could not see are
+exactly the ones capturing what a **keystroke** does, which is the whole
+lesson of the `CP-3` history section above.
+
+Found while adding `signature-help`, whose three frames would have been
+invisible from the day they landed. A screen's frames are now `<id>.png` plus
+every committed `<id>-<suffix>.png`, with one exclusion that is not optional:
+**a name that is itself a tape id belongs to that tape.**
+`1a-degraded-term.png` is its own tape's frame and not `1a`'s, and
+`diagnostics-undercurl.png` is not `diagnostics`'s — without that rule the
+variant tapes this library already has would each be diffed twice, once
+against the wrong screen. Coverage went from 25 frames to **41**, and the
+summary line now counts frames rather than screens so the two cannot be
+confused again.
+
+**Proven by planting one**, in a frame the old runner could not have reached:
+a ~10x20px magenta cell drawn into `signature-help-typing.png`,
+`diff-tapes.sh --no-capture signature-help` → `x signature-help-typing —
+MISMATCH (126.767 px beyond 0.6% tolerance)` with its two siblings still
+matching, exit code still `0`. Reverted with `git checkout --`, and the
+`_diffs` directory removed.
+
+**Two bash facts this cost, both recorded in the script**: `declare -A` is a
+syntax error on the bash macOS ships (3.2.57), and — the one that matters —
+`git ls-tree HEAD:tapes/artifacts` run with cwd `tapes/` resolves the path
+against the prefix and prints **nothing at all with exit code 0**, so the
+first working version reported every screen as having no reference and
+"passed" by doing nothing. `--full-tree` with a root-relative pathspec is the
+form that works from a subdirectory.
+
 **Montage note.** The obvious tool for "side by side" is ImageMagick
 `montage`, and it was tried first — it failed outright even with `-label
 ''`, because this machine's ImageMagick has no fonts configured at all
@@ -809,6 +848,189 @@ of the work. It was a gap between the widget landing and the binary's event
 loop composing it in — flagged for `spine`/Teej rather than folded in, per
 `harness`'s own standing instruction (`docs/TEAM.md`).
 
+## CP-4 — the `S4` tapes, and the server they are not driven by
+
+`docs/TASKS.md`'s `CP-4` line asks for three things: *"the completion float
+opening over real code in all three languages (`7c`) · signature help · a file
+with real diagnostics showing gutter priority against other region states"*.
+Six tapes, and **one of the three is answered in half** — the half that can be.
+`docs/TEAM.md`'s Window D note is what said this was outstanding: the `S4`
+window ran with `harness` absent, and producing a checkpoint's tapes is
+standing work rather than a numbered task, so nobody's prompt named it.
+
+| tape | what it captures |
+|---|---|
+| `7c-rust.tape` | `7c`'s float over real rust — carries the writeup the other five point back to |
+| `7c-typescript.tape` | the same over real typescript, reached through the `.` trigger |
+| `7c-python.tape` | the same over real python |
+| `signature-help.tape` | `<C-s>` inside a call, three frames: open · the argument typed under it · dismissed by `<esc>` |
+| `diagnostics.tape` | a publish nobody asked for, reaching the gutter and a `■` row |
+| `diagnostics-undercurl.tape` | the same range with `PHOSPHOR_UNDERCURL=1` — the primary terminal's treatment beside the degraded one |
+
+**The server is a fixture, and that is the decision this section exists to
+argue.** `crates/phosphor/tests/fixtures/toy_language_server.py` was written
+for the `S4` pty tests; these tapes drive it too. rust-analyzer is the honest
+server and the wrong one to hang a *pixel reference* on — it must be
+installed, it indexes a crate graph, and what it offers depends on how far
+that has got, which depends on the machine. A tape racing indexing produces a
+different frame every capture, which is the flake `V006` exists to prevent for
+agent surfaces and precisely the red build `docs/TEAM.md` warns teaches a team
+to ignore the harness. The fixture speaks the same protocol over the same
+transport — framing, JSON-RPC envelope, `initialize`/`didOpen`, and the UTF-16
+position encoding the client reads back and refuses on — and answers `7c`'s
+own three labels, its detail column and its one row of prose in constants. So
+these captures show `7c`'s **shape**, drawn by the shipping binary over a real
+pipe to a real process, identically on every run.
+
+**What it costs, left visible.** The statusline chip reads `toy-lsp ✓` where
+the mockup draws `rust-analyzer ✓`, because the chip draws the name a server
+gives itself. Nothing here disguises that, and nothing here closes the gap
+`docs/TASKS.md`'s `CP-4` entry records: `typescript` and `python` declare
+servers **nothing automated has ever attached to**, which is what the `rootUri`
+defect at `T036` cost. A fixture proves the editor's half of a conversation and
+never the real server's. Teej's half of the checkpoint — *is completion fast
+enough to be useful, or fast enough to be annoying* — is a question about
+rust-analyzer's latency and no tape can answer it.
+
+**What is not the fixture.** `tapes/lsp-fixture.sh` swaps exactly one line of
+the *copied* `runtime/languages/<language>.scm` — `lsp_command` — so the
+grammar, the extensions and the comment prefix are still whatever `runtime/`
+declares today, and every glyph on these frames is real tree-sitter
+highlighting of a real buffer. That is what makes *"over real code"* true
+rather than claimed, and it means a declaration that changes upstream changes
+the capture instead of silently disagreeing with it. The script fails loudly
+if a declaration does not have exactly one `lsp_command` line, rather than
+rewriting a line nobody looked at. Same scratch-`$PHOSPHOR_RUNTIME` rule as
+`broken-init.tape`, for the same reason: `harness` does not own `runtime/**`.
+
+**The diagnostics half `CP-4` asks for and this does not answer.** The line
+says *"gutter priority **against other region states**"*, and there is exactly
+one source of regions until `T041` — which is why `T040` is unticked and why
+its task entry is worth reading before judging the screen. The host
+concatenates diagnostic regions with every other source and calls
+`gutter::state_column` once; the composition is written and the `Vec` has one
+element in it. `diagnostics.png` is the first clause. Re-capturing it once
+`T041` puts a second source in that `Vec` is what would make it the checkpoint
+item.
+
+### The undercurl pair, and the signal that separates them
+
+`CP-4` says *"undercurl only if `V002` established that it survives capture"*.
+It did — see this file's own V002 section — and until now nothing in the
+shipping binary had a surface to spend that on: the `_undercurl-check-*` trio
+drove `phosphor-buffer`'s standalone example, because when they were written
+no code path in `crates/phosphor` reached `UnderlineCapability::resolve`.
+`main.rs`'s `set_styled_spans` does now, and a published diagnostic is what
+puts an underlined range on a real frame.
+
+`vhs`'s ttyd session reports `TERM=xterm-256color`, which
+`UnderlineCapability::detect`
+(`vendor/ratatui-code-editor/src/phosphor/cell_style.rs`) resolves to
+`Underline` — so the *default* capture of any underlined range in this library
+is the degradation path, and the primary terminal's look needs
+`PHOSPHOR_UNDERCURL=1`. The two PNGs differ, measured rather than eyeballed,
+by V002's own Signal-3 method: per-row ink coverage across the five columns of
+the diagnostic's range (`x=62..112`, background `#0c0f0c`):
+
+| row | `diagnostics.png` (degraded) | `diagnostics-undercurl.png` |
+|---|---|---|
+| `y=35` | 50/50 | 6/50 |
+| `y=36` | 50/50 | 28/50 |
+| `y=37` | 0/50 | 50/50 |
+| `y=38` | 0/50 | 24/50 |
+
+A flat, full-width, two-row band against partial, varying coverage spread over
+four rows — a straight line against a line whose y-position moves with x. Same
+font, same theme, same file, same span; the only variable was the escape.
+That is the same signature `V002` measured on the fixture example, now on a
+product surface.
+
+**This pair is not `CP-4`'s manual item.** *"Undercurl on the primary
+terminal; underline fallback on the degradation terminal"* is a question about
+two real terminals and stays Teej's. What the pair answers is the half that is
+a fact about the build rather than about the hardware.
+
+### Reproducibility, and the flake this found in the library's own convention
+
+Every one of the six was captured, compared, and captured again. **Six of the
+eight PNGs were byte-identical across two independent runs on the first try**
+(`sha256`, not just pixel-equal): `7c-rust`, `7c-typescript`, `7c-python`,
+`signature-help-dismissed`, `diagnostics`, `diagnostics-undercurl`.
+
+The two that were not are both `signature-help.tape`'s, and they are the only
+two frames in the library taken from a session that **keeps going after the
+`Screenshot`** — every other multi-shot tape either ends there or waits on a
+key. `signature-help-typing.png` came back showing the *dismissed* frame
+(`NORMAL`, the two covered rows repainted) on one run of three, and
+`signature-help-open.png` differed by `10.8` px on another: **a `Screenshot` is
+asynchronous to the key stream, so the frame a later key paints can land in an
+earlier key's PNG.** This is the same class as the settle guard `1a.tape`
+documents — the text buffer `Wait+Screen` matches against and the pixels
+headless-Chromium has painted are not the same clock — but a second, distinct
+manifestation of it: `1a`'s guard sits *before* the `Screenshot`, and this one
+has to sit *after* it. Fixed by a `Sleep 500ms` after each non-final
+`Screenshot`; **three consecutive runs then produced byte-identical `sha256`
+for all three frames.**
+
+> **A latent version of this is in `3c.tape` and `8e.tape` and is left
+> alone.** Both take two screenshots with a key between them and neither has
+> the trailing guard. Neither has been observed to flake — `CP-3` ran each two
+> or three times clean — and re-capturing them would bless new bytes for
+> screens this window was not asked to touch. Recorded here rather than fixed;
+> if either ever produces a frame from the wrong side of a keystroke, this
+> paragraph is the diagnosis.
+
+**Two mutations, planted and reverted**, because a tape whose `Wait+Screen`
+cannot fail is a reference that captures whatever was on screen:
+
+* `7c-rust.tape` with the fixture server in `diagnostics` mode (it answers
+  `[]` for completion): `recording failed`, no PNG written, the frame it timed
+  out on visible in vhs's own output with the typed line and no float. The
+  `Wait+Screen@10s /default_delay/` is what caught it.
+* `diagnostics.tape` with the server in `completion` mode (it publishes
+  nothing): `recording failed`, no PNG. `Wait+Screen@10s /expected Duration,
+  found u128/` caught it.
+
+**And one guard this could *not* show biting, stated rather than implied.**
+Every `S4` tape waits on `toy-lsp` — the server's own `serverInfo.name` off
+its `initialize` reply — before typing, because the insert-mode trigger is
+edge-triggered on the edit and requires `servers.state(language).is_ready()`:
+a character typed one frame early is dropped and the float never opens.
+Replacing that with the library's usual mode-chip sentinel **still passed,
+twice**, because the ~1.6 s of scripted typing before the trigger
+(`G k k O` plus 28 characters at `TypingSpeed 50ms`) is longer than
+`python3`'s startup on this machine. The sentinel is kept because that margin
+is a property of this machine and this typing speed rather than of the editor
+— `loop_pty.rs`'s `ready()` exists for the same race one tier down, where the
+harness presses keys with no delay and the race does fire.
+
+**One thing the pixels say that the Tier-1 assertions cannot.** `T039`'s claim
+that the active parameter is drawn in its own style is a claim about *style*,
+and every test of it asserts *text*. Sampling the signature row of
+`signature-help-open.png` with Pillow: the `policy: RetryPolicy` run reaches
+`(255, 255, 255)`, while `fn retry(` peaks at `(182, 190, 183)` and
+`-> Result<(), Error>` at `(202, 210, 203)`. The active run is drawn brighter,
+on captured pixels, which is the kind of thing Tier 2 is for.
+
+### The line counts, which are load-bearing
+
+Each `7c` tape types the line the mockup catches mid-typing, and reaches the
+site by counting back from the end: `G` lands on the empty line a trailing
+newline leaves (confirmed on a capture, not assumed), `k` walks back to the
+call, `O` opens above it. Rust and typescript press `G k k O`; python presses
+`G k O`, one fewer, because its function body ends with the call rather than
+with a closing brace after it. Each fixture under `tapes/fixtures/` carries a
+header saying its tail is counted, so the coupling is visible at both ends.
+`O` copies the current line's indentation — typing a leading space produced
+eight columns of indent, which is how that was found.
+
+`fixtures/policy.rs` is shaped by the other end of the same rule: the fixture
+server's diagnostic range is the constant *line 1, characters 0..5*, so that
+file has exactly one header line and starts its second at column 0 with a
+five-character word — and with a line about which `expected Duration, found
+u128` is a true sentence. Written with a seven-line header first, which put
+the diagnostic on a comment.
+
 ## Convention: every tape gets a `Require`
 
 Every `.tape` file must open with a `Require <program>` line for each external
@@ -830,6 +1052,12 @@ tapes/
   run-tapes.sh            runs every real tapes/*.tape (`_`-prefixed skipped)
   diff-tapes.sh            V007 — the pixel-diff runner (`just tapes-diff` /
                             `just tape-diff <id>`); never gates CI
+  lsp-fixture.sh            CP-4 — builds the scratch tree the six S4 tapes
+                             drive and repoints one `lsp_command` at the
+                             deterministic fixture server
+  fixtures/                 CP-4 — the buffers those tapes open. Real code in
+                             three languages, parsed by the shipped grammars;
+                             each file's tail is counted by its tape
   _dimensions.tape         V002 — the column-width calibration table (+ V005's 40/60 rows)
   _config.tape              V003 — Source'd by every real tape
   _config-check.tape         V003 — its reproducibility proof
@@ -854,6 +1082,10 @@ tapes/
   3c.tape, folds.tape,                   the CP-3 tapes — see "CP-3 —
   insert-whitespace-marks.tape,          harness's tapes" above
   8e.tape
+  7c-{rust,typescript,python}.tape,      the CP-4 tapes — see "CP-4 — the S4
+  signature-help.tape,                   tapes" above. All six need `python3`
+  diagnostics.tape,                      as well as `phosphor`, and each
+  diagnostics-undercurl.tape             `Require`s both
   artifacts/                             V005 — committed Screenshot/gif output
     .gitkeep
     DUPLICATES.md                        why each byte-identical pair is allowed
@@ -895,7 +1127,10 @@ this sandboxed worktree, so check `ls artifacts/*.png` against the tape count
 after a from-scratch run and re-run `just tape <id>` for anything short.
 
 `phosphor` has to be on `$PATH` before any of this — `Require phosphor` is
-the first line of every real tape:
+the first line of every real tape. Since `CP-4` **`python3` does too**: the six
+`S4` tapes spawn the fixture language server with it, and each one `Require`s
+it beside `phosphor` so a missing interpreter fails the tape immediately
+rather than as a `Wait+Screen` timeout ten seconds later.
 
 ```
 cargo build --release --bin phosphor && \

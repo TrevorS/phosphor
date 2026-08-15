@@ -1,0 +1,53 @@
+---
+source: crates/phosphor-ui/tests/float_width.rs
+expression: frame.to_text(buf)
+---
+screen long-hover-120 · phosphor dark · 120x6 cells
+  The same cap over hover, where the prose IS the answer and there is no
+    list above it competing for the columns — so it truncates on its own
+    line rather than giving its columns to something else.
+  This paragraph arrives UNWRAPPED, which is the BACKSTOP and not the
+    path the binary takes: §11 is 'nothing ever wraps' and
+    SignatureVm::prose is one string per screen row, so wrapping is the
+    host's job. float::wrap_prose at anchored_wrap_cols(width) is that
+    job and Editing::wrapped is where the shipping binary does it, so a
+    real hover gets no ⋯ at all. The width itself is pinned in
+    the_cap_at_both_widths below.
+  What must NOT happen is the answer vanishing. The mark says the line
+    goes on; the first cells of it are still readable.
+
+text
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │                                                                                                                        │
+  1 │                                                                                                                        │
+  2 │  ┌──────────────────────────────────────────────────────────────────────┐                                              │
+  3 │  │  Retries the request with exponential backoff. The delay doubles a⋯  │                                              │
+  4 │  │  Returns the first successful response, or the last error if every⋯  │                                              │
+  5 │  └──────────────────────────────────────────────────────────────────────┘                                              │
+
+fg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │........................................................................................................................│
+  1 │........................................................................................................................│
+  2 │..wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww..............................................│
+  3 │..whhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhw..............................................│
+  4 │..whhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhw..............................................│
+  5 │..wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww..............................................│
+
+bg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │........................................................................................................................│
+  1 │........................................................................................................................│
+  2 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................................│
+  3 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................................│
+  4 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................................│
+  5 │..xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..............................................│
+
+legend
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  w  #2a3c2e  float.passive
+  x  #101410  float.body

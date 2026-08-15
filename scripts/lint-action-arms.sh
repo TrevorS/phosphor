@@ -108,6 +108,16 @@ RECORDED = {
                             "`host.flag(\"soft-wrap\")` — but the verb is not applied, so it "
                             "cannot be toggled from Steel, MCP or the CLI door. `T081` is ticked; "
                             "this is `T016`'s shape and was found by the same audit."),
+    "ApplyWorkspaceEdit": ("T060", "A server's rename or code action, across files. `T036` built "
+                                   "the reading half — `lsp::file_edits_from_lsp` turns a "
+                                   "`WorkspaceEdit` into `Vec<FileEdits>` and is tested — and "
+                                   "the applying half is blocked twice over. It is the one `Lsp` "
+                                   "capability rated `Ask`, and `deliver` answers it *needs an "
+                                   "ask first — T060 builds the queue*: there is nowhere to put "
+                                   "the question, so the only arm that could exist today would "
+                                   "be one that skipped asking. (It also edits files that are "
+                                   "not open, which is `T088`; the ask is the nearer of the "
+                                   "two.)"),
     "SetVirtualTextVisible": ("T041", "Collapsing a virtual-text rail addresses it by owning "
                                       "region, and regions arrive with the store at `T041`. The "
                                       "one live rail today is the unknown-key hint, which is "

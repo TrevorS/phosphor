@@ -38,8 +38,10 @@
 //!    enumerates.
 
 pub mod action;
+pub mod config;
 pub mod input;
 pub mod journal;
+pub mod language;
 pub mod query;
 pub mod registry;
 pub mod request;

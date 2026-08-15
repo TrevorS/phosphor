@@ -179,6 +179,7 @@ fn status_vm() -> StatusVm {
         ask_pending: false,
         unseen: 0,
         vcs: None,
+        server: None,
         cursor: Some(Cursor { line: 27, col: 1 }),
         hints: Vec::new(),
     }

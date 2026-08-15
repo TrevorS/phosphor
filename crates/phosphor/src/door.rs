@@ -172,15 +172,20 @@ impl Answer {
     /// `T041` lands and refusals start turning into successes. Changing it
     /// while every caller is indifferent is the cheapest this will ever be.
     ///
-    /// Distinct from `T100`, which is about the *voice* of a refusal and adds
-    /// an `Outcome` case for "it ran and raised". This is only the exit code,
-    /// and it reads the shape `phosphor_steel::registry::REFUSED` already
-    /// defines — the constant whose own doc comment says it is two elements
+    /// Distinct from `T100`, which was about the *voice* of a refusal and added
+    /// the [`Outcome::Raised`] case for "it ran and raised". This is only the
+    /// exit code, and it reads the shape `phosphor_steel::registry::REFUSED`
+    /// already defines — the constant whose own doc comment says it is two
+    /// elements
     /// "so the reason survives to the REPL and to a composition that wants to
     /// branch on it". This is such a composition.
     fn happened(&self) -> bool {
         match self {
-            Self::Acted(Outcome::Refused(_)) => false,
+            // `T100` split the second of these off the first. A raise exits
+            // non-zero for the same reason a refusal does — nothing happened,
+            // and `V006` seeds tape fixtures through this door — but it is a
+            // different fact, and `render` now says which.
+            Self::Acted(Outcome::Refused(_) | Outcome::Raised(_)) => false,
             Self::Acted(Outcome::Done(receipt)) => !Self::is_refusal(&receipt.value),
             Self::Read(_) => true,
         }
@@ -265,7 +270,7 @@ impl Error for DoorError {
 /// takes `Cli::command()` and adds to it, so `--theme`, `--float` and the file
 /// argument keep one definition.
 ///
-/// The verbs are hidden from the top-level help rather than absent from it: 212
+/// The verbs are hidden from the top-level help rather than absent from it: 215
 /// subcommands would bury the four flags a person actually types, and a door you
 /// discover by name (`phosphor <verb> --help`) is the shape every multi-verb CLI
 /// already has. [`after_help`] says so in one line, with the count derived.
@@ -448,7 +453,7 @@ pub(crate) fn answer(call: &Call, runtime: Option<&mut dyn Evaluate>) -> Result<
 ///
 /// At `S2` there is no store, so every Action that touches one answers
 /// [`Refusal::NotYetImplemented`] carrying **its own row's task id** — derived,
-/// not listed, which is why 212 capabilities need no table here. The single
+/// not listed, which is why 215 capabilities need no table here. The single
 /// special case is the one capability whose implementation *is* a runtime rather
 /// than a store: scheme source needs a VM, and the VM is [`Evaluate`].
 fn apply(request: &Request, runtime: Option<&mut dyn Evaluate>) -> Outcome {
@@ -477,24 +482,17 @@ const fn not_yet(task: &'static str) -> Outcome {
 /// the task id, because *"not built yet — `T041` builds it"* is the answer that
 /// tells a caller what to do next.
 ///
-/// **This door does not phrase a refusal.** It asks [`Refusal::why`], which is
-/// the one implementation for every surface (`T100`); the door's contribution
-/// is the `#refused` head and the midline dot.
+/// **This door does not phrase an outcome at all** — `T100`, finished. It used
+/// to carry its own `match`, spelling the `#ok` sigil, the midline dot and the
+/// `#refused` head a second time beside [`phosphor_steel::answer::answered`]'s;
+/// the two agreed only because a test compared them byte for byte, which is a
+/// convention with a guard rather than a structure. There is now one `match` on
+/// [`Outcome`] behind both front-ends, so the REPL's `⇒` line and this door's
+/// stdout cannot drift without somebody deleting this call — and `#raised`, the
+/// case `T100` added, needed no edit here at all.
 pub(crate) fn render(answer: &Answer) -> String {
     match answer {
-        Answer::Acted(Outcome::Done(receipt)) => {
-            let head = match &receipt.value {
-                Value::Null => "#ok".to_owned(),
-                value => write_value(value),
-            };
-            match &receipt.note {
-                Some(note) => format!("{head} · {note}"),
-                None => head,
-            }
-        }
-        Answer::Acted(Outcome::Refused(refusal)) => {
-            format!("#refused · {}", refusal.why())
-        }
+        Answer::Acted(outcome) => phosphor_steel::answer::line(outcome),
         Answer::Read(value) => write_value(value),
     }
 }
@@ -557,7 +555,7 @@ pub(crate) fn run(call: &Call, runtime: Option<&mut dyn Evaluate>) -> Result<Exi
 #[cfg(test)]
 mod tests {
     use clap::CommandFactory;
-    use phosphor_core::action::Receipt;
+    use phosphor_core::action::{Raised, Receipt};
     use phosphor_core::registry::capabilities;
     use phosphor_core::value::Args;
 
@@ -701,7 +699,7 @@ mod tests {
         );
     }
 
-    /// Every case of [`Refusal`], so the check below is over the enum and not
+    /// Every case of [`Refusal`], so the checks below are over the enum and not
     /// over the three someone thought of.
     ///
     /// The `match` is the guard: it names each variant once and the compiler
@@ -735,19 +733,81 @@ mod tests {
     }
 
     #[test]
-    fn the_cli_door_and_the_repl_phrase_one_enum_one_way() {
-        // `T100`, and the reason it is a task: this door used to say
-        // `T041 builds this` where `phosphor-steel` said
-        // `not built yet — T041 builds it`. Byte equality over every case,
-        // because "they agree" was true of five of the seven before too.
+    fn one_enum_value_is_one_sentence_and_this_is_the_sentence() {
+        // `T100`'s *done when*, and the reason it was a task: this door used to
+        // say `T041 builds this` where `phosphor-steel` said
+        // `not built yet — T041 builds it`.
+        //
+        // This replaces a test that compared the two front-ends to each other.
+        // That test can no longer fail — `render` calls
+        // `phosphor_steel::answer::line`, so it would be comparing a function
+        // with itself — and a pair that agree are still free to agree on the
+        // wrong words. So the expectation is written out. `every_refusal`'s own
+        // `match` is what stops the list going stale: an eighth variant is a
+        // compile error there and a missing row here.
+        let expected = [
+            (
+                Refusal::NotYetImplemented { task: "T041" },
+                "#refused · not built yet — T041 builds it",
+            ),
+            (
+                Refusal::FocusRelativeTargetOverMcp,
+                "#refused · an agent has no cursor — name the target",
+            ),
+            (
+                Refusal::DoorDenied { door: Door::Mcp },
+                "#refused · the mcp door refuses this — open it in init.scm",
+            ),
+            (Refusal::NoRepository, "#refused · no repository here"),
+            (
+                Refusal::NoSuchTarget,
+                "#refused · no such target — it was dropped or closed",
+            ),
+            (
+                Refusal::WouldLoseWork,
+                "#refused · unsaved work — force it or save first",
+            ),
+            (
+                Refusal::Declined {
+                    reason: "a rule said no".to_owned(),
+                },
+                "#refused · a rule said no",
+            ),
+        ];
+
         for refusal in every_refusal() {
-            let outcome = Outcome::Refused(refusal.clone());
-            assert_eq!(
-                render(&Answer::Acted(outcome.clone())),
-                phosphor_steel::answer::line(&outcome),
-                "the two front-ends disagree about {refusal:?}"
-            );
+            let (_, line) = expected
+                .iter()
+                .find(|(candidate, _)| *candidate == refusal)
+                .unwrap_or_else(|| panic!("`{refusal:?}` has no sentence in this table"));
+            assert_eq!(&render(&Answer::Acted(Outcome::Refused(refusal))), line);
         }
+        assert_eq!(expected.len(), every_refusal().len());
+    }
+
+    #[test]
+    fn a_raise_is_not_a_refusal_and_the_door_says_so() {
+        // `T100`'s other half. Before it, `phosphor --eval '(car 5)'` printed
+        // `#refused · Error: TypeMismatch: car expected a list or pair, found: 5`
+        // — the wrong head, because nothing declined anything, and Steel's own
+        // envelope inside a line Design Language §6 owns.
+        let raised = Answer::Acted(Outcome::Raised(Raised {
+            kind: Some("wrong type"),
+            message: "car expected a list or pair, found: 5".to_owned(),
+        }));
+        assert_eq!(
+            render(&raised),
+            "#raised · wrong type — car expected a list or pair, found: 5"
+        );
+        assert!(!raised.happened(), "a raise must not exit zero");
+
+        // The kind is optional because a `QueryError` is already a finished
+        // sentence — the case the task was reported from.
+        let query = Answer::Acted(Outcome::Raised(Raised {
+            kind: None,
+            message: "not built yet — T041 builds it".to_owned(),
+        }));
+        assert_eq!(render(&query), "#raised · not built yet — T041 builds it");
     }
 
     #[test]
@@ -826,7 +886,7 @@ mod tests {
 
     #[test]
     fn the_host_flags_survive_the_extension() {
-        // One parser, not two: adding 212 subcommands must not cost `--theme`
+        // One parser, not two: adding 215 subcommands must not cost `--theme`
         // or the file argument, and a subcommand must not demand the file.
         let matches = parser(crate::Cli::command())
             .try_get_matches_from(["phosphor", "--theme", "tokyo-night", "src/main.rs"])

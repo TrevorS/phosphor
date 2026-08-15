@@ -184,6 +184,9 @@ pub struct Machine {
     last_find: Option<(Motion, char)>,
     /// Where a visual selection started.
     anchor: Option<Position>,
+    /// Where the pointer last went down, which is the anchor a drag selects
+    /// from. See [`Machine::click`].
+    pointer: Option<Position>,
     /// Keys of the command being typed, for `.`.
     record: Vec<Key>,
     /// Whether that command has changed anything yet.
@@ -332,6 +335,84 @@ impl Machine {
             // `T099`; a silent success here is the failure `T098` exists to end.
             InputAction::SetMacroRecording { .. } => {}
         }
+    }
+
+    /// The pointer went down: the cursor lands there, and a live selection ends.
+    ///
+    /// **The pointer is the machine's, and `CP-4` is why.** The host used to
+    /// build a drag selection straight out of the editor — `ClearSelection` and
+    /// `SetCursor` here, `SelectRange` off `Editor::selection_anchor` there —
+    /// so the *editor* held a selection the *machine* had never heard of. Three
+    /// things followed from that one split, all of them measured on the
+    /// shipping binary at `CP-4`: `<esc>` left the highlight on screen for the
+    /// rest of the session, because [`Machine::escape`] only clears what it
+    /// believes it selected; every motion key left it there too; and `d` after
+    /// a drag waited for an operand instead of deleting what was highlighted,
+    /// because [`Machine::operator`] reads [`Machine::anchor`] and nothing had
+    /// set it. A pointer selection that only *looks* like a selection is worse
+    /// than no mouse at all.
+    ///
+    /// So a drag is visual mode — which is also what vim does with `mouse=a`,
+    /// and `CP-3`'s rule is that vim habits carry without thinking about them.
+    /// The mode chip says `VISUAL`, `<esc>` leaves, motions extend, and
+    /// operators take the highlighted span, all through the arms that already
+    /// existed.
+    ///
+    /// **Insert is not left**, because clicking while typing is how you move
+    /// the caret without losing the mode you are in; only a *visual* selection
+    /// ends here.
+    pub fn click(&mut self, position: Position) -> Vec<Action> {
+        let mut out = vec![Action::Motion(MotionAction::ClearSelection {})];
+        self.anchor = None;
+        if matches!(
+            self.mode.get(),
+            EditMode::VisualChar | EditMode::VisualLine | EditMode::VisualBlock
+        ) {
+            self.set_mode(EditMode::Normal, &mut out);
+        }
+        self.pointer = Some(position);
+        out.push(Action::Motion(MotionAction::SetCursor {
+            position,
+            buffer: None,
+        }));
+        out
+    }
+
+    /// The pointer moved with the button down: a characterwise visual selection
+    /// from the [`Machine::click`] that started it.
+    ///
+    /// **The span is measured from the click and not from the last drag.** The
+    /// host used to read the anchor back out of `Editor::selection_anchor`,
+    /// which answers *"the end of the selection the cursor is not at"* — and
+    /// `SelectRange` never moved the cursor, so after the first drag event that
+    /// answer was the *previous pointer position*. Measured at `CP-4`: press at
+    /// column 8, drag to 12, drag to 16, and the selection was 11–14 rather
+    /// than 8–16. Holding the click position here is what makes a drag one
+    /// gesture rather than a chain of two-event guesses.
+    ///
+    /// `SetCursor` rides along for the same reason `jump` emits one: the moving
+    /// end of a visual selection *is* the cursor, and a later `l` or `d` reads
+    /// it.
+    ///
+    /// A drag with no click before it — the first event after a resize, or a
+    /// press the editor could not place — selects nothing rather than anchoring
+    /// somewhere arbitrary.
+    pub fn drag(&mut self, position: Position, text: &dyn Text) -> Vec<Action> {
+        let Some(anchor) = self.pointer else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        self.anchor = Some(anchor);
+        self.set_mode(EditMode::VisualChar, &mut out);
+        out.push(Action::Motion(MotionAction::SelectRange {
+            span: span_between(anchor, position, text),
+            kind: SelectionKind::Char,
+        }));
+        out.push(Action::Motion(MotionAction::SetCursor {
+            position,
+            buffer: None,
+        }));
+        out
     }
 
     /// The scope the next key is looked up in.

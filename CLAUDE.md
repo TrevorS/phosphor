@@ -19,7 +19,7 @@ Use the `just` recipes, not raw cargo — several of them differ from the obviou
 - `just fmt` (check) · `just fmt-fix` (in place) · `just build` · `just clippy` (warnings denied) ·
   `just deny` · `just vendor-diff` (bare, the full divergence — `gate` takes `--stat`) ·
   `just review` (`cargo insta review` for the golden frames)
-- **Measurements, deliberately not gates.** `just bench` (four benchmarks; asserts *shapes*, prints
+- **Measurements, deliberately not gates.** `just bench` (six benchmarks; asserts *shapes*, prints
   numbers, because a figure that moves with the machine has no business failing a build — this
   worktree saw absolute times swing 25× under concurrent load while every shape assertion held) ·
   `just coverage` (per-file, worst first) · `just coverage-html` · `just unused-deps`. None of
@@ -115,7 +115,10 @@ Hygiene and truthfulness — each of these exists because the thing it catches a
 - **Fuzz targets** — the `fuzz/` crate's targets are checked against the parsers they claim.
 - **Counts nothing else recomputes** — the capability and parity counts (`209`/`627` went stale in
   six places at once), and the lint count in CI's own prose, which said "six" while sixteen
-  existed. Seventeen now, and section 6 caught the seventeenth on its first day.
+  existed. **Eighteen lints now** — and this paragraph itself said seventeen for a window after the
+  eighteenth landed, because `doc_claims.py` section 6 globbed `.github/workflows/*.yml` and could
+  not see the file every agent reads on entry. It reads this one too now, so the sentence you are
+  reading is recomputed rather than remembered.
 
 ## Do not assert what you have not read
 

@@ -30,9 +30,34 @@
 ;;
 ;; names that do not exist are left out rather than listed: a boot float on
 ;; every start would teach you to ignore boot floats.
-;; persisted.scm is last on purpose: it holds what the repl wrote down, and a
-;; form written there may use anything the files before it defined.
-(define phosphor/boot-files '("keymaps.scm" "statusline.scm" "repl.scm" "persisted.scm"))
+;;
+;; **persisted.scm is not in this list, and that is T101.** it is no longer a
+;; file in the shipped tree — it lives in `$XDG_CONFIG_HOME/phosphor/` and the
+;; binary loads it after this whole order has run (repl.scm's
+;; `phosphor/persist-file`).  it has to load last, because a form written there
+;; may name anything the files above defined; naming it here would have made
+;; "last" a position in a list rather than a property of the boot.
+;;
+;; languages/ is twelve entries rather than one, and the length is the feature:
+;; this list is the whole of what "the bundled set" means (T037), so a thirteenth
+;; language is a file beside them and a name here — no rust, no rebuild. drop one
+;; and that language is gone; the editor holds no copy.
+(define phosphor/boot-files
+  '("keymaps.scm"
+    "statusline.scm"
+    "languages/typescript.scm"
+    "languages/javascript.scm"
+    "languages/rust.scm"
+    "languages/python.scm"
+    "languages/steel.scm"
+    "languages/markdown.scm"
+    "languages/json.scm"
+    "languages/csv.scm"
+    "languages/toml.scm"
+    "languages/yaml.scm"
+    "languages/html.scm"
+    "languages/css.scm"
+    "repl.scm"))
 
 ;; ---------------------------------------------------------------------------
 ;; defaults
@@ -42,3 +67,18 @@
 ;; turning it on gives you ↪ continuations instead. off is the default because
 ;; a wrapped line moves every row under it, and code is read by shape.
 (set-option! "soft-wrap" #f)
+
+;; how much of a word has to be behind the cursor before *typing* raises the
+;; completion list. measured on the word prefix the cursor sits in — the same
+;; span the list is filtered against and the same span accepting a row
+;; overwrites — so it is not a count of keystrokes and does not reset.
+;;
+;; **CP-4 found this at zero**, which is what a missing floor looks like: a
+;; space raised the server's whole table, and the first letter of an identifier
+;; raised the longest list that letter has. two is the shortest prefix that
+;; says you meant a word rather than that you pressed a key. set it to 0 for
+;; vim's `completeopt`-style eagerness, or higher to be left alone.
+;;
+;; `<C-x>` is unaffected in either direction: asking is asking, and it answers
+;; on an empty line.
+(set-option! "completion-min-chars" 2)

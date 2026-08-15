@@ -104,6 +104,20 @@ pub struct StatusVm {
     pub unseen: u32,
     /// The VCS chip, e.g. `jj ✓` (`T071`). [`None`] outside a repo.
     pub vcs: Option<String>,
+    /// The language-server chip, e.g. `rust-analyzer ✓` (`7c`, `T036`).
+    /// [`None`] for a buffer whose language declares no server — which is an
+    /// honest first-class thing to be, so it draws nothing rather than a
+    /// crossed-out anything.
+    ///
+    /// **A sentence, not a state.** Whether a crashed server says
+    /// `rust-analyzer ✗` or the OS's own words is the host's judgement about
+    /// what the user needs; this type is facts, and the fact is *what the
+    /// statusline should say about the server*. Until this existed
+    /// `ServerState::Crashed` was read by nothing at all and a server that
+    /// could not start was completely silent — `Failure::Spawn` carries *"no
+    /// such file or directory"* precisely so it can be said, and it reached
+    /// nobody.
+    pub server: Option<String>,
     /// Where the cursor is, or [`None`] on a surface with no cursor.
     pub cursor: Option<Cursor>,
     /// Keys this surface teaches — `6b`'s `C-c buffer · tab complete · q close`.
@@ -123,6 +137,7 @@ impl Default for StatusVm {
             ask_pending: false,
             unseen: 0,
             vcs: None,
+            server: None,
             cursor: None,
             hints: Vec::new(),
         }
@@ -162,6 +177,7 @@ impl StatusVm {
                 .with("ask_pending", self.ask_pending.to_value())
                 .with("unseen", self.unseen.to_value())
                 .with("vcs", self.vcs.to_value())
+                .with("server", self.server.to_value())
                 .with("cursor", cursor)
                 .with("hints", self.hints.to_value()),
         )

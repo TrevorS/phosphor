@@ -36,8 +36,30 @@ cargo-fuzz = true
 # lockfile is separate from the root one by construction — a second workspace
 # root has its own — so a fuzz dependency can never move a workspace one.
 libfuzzer-sys = "0.4"
+phosphor-buffer = { path = "../crates/phosphor-buffer" }
 phosphor-core = { path = "../crates/phosphor-core" }
 phosphor-ui = { path = "../crates/phosphor-ui" }
+# `csv_parse` law 5 paints the aligned row into a real `Buffer` and reads the
+# cells back, because the alignment defect this build actually shipped was
+# `phosphor_ui::csv` measuring a control character the painter then dropped —
+# invisible to any assertion that measures the row with the same function that
+# laid it out. The pin matches the workspace's (root `Cargo.toml`); the
+# resolution is recorded in `fuzz/Cargo.lock`, which is a second workspace's and
+# cannot move a workspace one.
+ratatui-core = "0.1.2"
+# `lsp_wire` reads the same two crates the client's own decode path reads, and
+# for the same reason `ratatui-core` is here: the target has to see what the
+# shipping code sees. `serde_json` turns a frame body into the `lsp_types`
+# values `phosphor_buffer::lsp`'s converters take — the step `async-lsp` does
+# inside `Message::read`, which is not a public door — and `lsp_types` itself
+# arrives re-exported through `phosphor_buffer::lsp::lsp_types`, so the target
+# cannot drift to a second version of it. `tokio` is base-featured on purpose:
+# `AsyncRead` and `ReadBuf` are all `Bounded` needs, and the target drives its
+# `poll_read` with a no-op waker rather than starting a runtime. Pins match the
+# workspace's; the resolution is recorded in `fuzz/Cargo.lock`, which is a
+# second workspace's and cannot move a workspace one.
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", default-features = false }
 
 # Every fuzz target takes a raw `&[u8]`, so `arbitrary`'s derive is deliberately
 # absent. That is not laziness — an `Arbitrary`-shaped target cannot be seeded
@@ -64,6 +86,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "csv_parse"
+path = "fuzz_targets/csv_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "key_notation"
 path = "fuzz_targets/key_notation.rs"
 test = false
@@ -73,6 +102,13 @@ bench = false
 [[bin]]
 name = "theme_load"
 path = "fuzz_targets/theme_load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lsp_wire"
+path = "fuzz_targets/lsp_wire.rs"
 test = false
 doc = false
 bench = false

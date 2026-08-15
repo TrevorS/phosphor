@@ -34,10 +34,10 @@
 //! * **Steel invocations** — Rust reaches into the VM for
 //!   `phosphor/status-line` (`T025`) and `phosphor/resolve` (`T022`, `T033`)
 //!   **by name, on every call**. That is the editor layer's liveness claim, and
-//!   it is also the instrument: a copy of `runtime/` with a counting wrapper
-//!   appended to `persisted.scm` — which loads last — redefines both, ticks a
-//!   byte into a file, and delegates to what the shipped layer defined. The
-//!   composition that runs is the shipped composition.
+//!   it is also the instrument: a copy of `runtime/` plus a counting wrapper in
+//!   the config home's `persisted.scm` — which loads last (`T101`) — redefines
+//!   both, ticks a byte into a file, and delegates to what the shipped layer
+//!   defined. The composition that runs is the shipped composition.
 //!
 //! The layer is *copied* rather than edited: `PHOSPHOR_RUNTIME`
 //! (`phosphor_steel::runtime::RUNTIME_ENV`) points the child at the copy, so
@@ -107,6 +107,7 @@ mod measured {
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
     use std::time::{Duration, Instant};
 
+    use phosphor_core::config::config_dir_in;
     use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
     use rustix::termios::{Winsize, tcsetwinsize};
 
@@ -263,7 +264,13 @@ mod measured {
         let resolutions = scratch.path.join("resolutions");
         let runtime = scratch.path.join("runtime");
         copy_layer(layer, &runtime);
-        instrument(&runtime, &compositions, &resolutions);
+        // `T101` moved the persisted layer out of the runtime tree and into the
+        // config home, which is where the wrapper has to go now — the file the
+        // binary loads *after* the whole boot order.
+        let config = scratch.path.join("config");
+        let persisted = config_dir_in(&config);
+        fs::create_dir_all(&persisted).expect("a config home");
+        instrument(&persisted, &compositions, &resolutions);
 
         let fixture = scratch.path.join("main.rs");
         fs::write(&fixture, FIXTURE).expect("the fixture buffer is written");
@@ -289,6 +296,9 @@ mod measured {
             // goes in the scratch that removes itself — and the journal's
             // per-keystroke cost is then measured rather than skipped.
             .env("XDG_STATE_HOME", scratch.path.join("state"))
+            // `T101`: and the config home, or the child reads the developer's
+            // own persisted layer and measures whatever is in it.
+            .env("XDG_CONFIG_HOME", &config)
             .env("TERM", "xterm-256color")
             .stdin(Stdio::from(slave.try_clone().expect("the slave clones")))
             .stdout(Stdio::from(slave.try_clone().expect("the slave clones")))
@@ -420,19 +430,20 @@ mod measured {
         assert!(copied > 0, "no *.scm found in {}", from.display());
     }
 
-    /// Appends the counting wrapper to the copied `persisted.scm`.
+    /// Appends the counting wrapper to the config home's `persisted.scm`.
     ///
-    /// `persisted.scm` loads **last** (`init.scm`'s `phosphor/boot-files`, and
-    /// its own header: *"it loads last, and that is the whole reason it exists"*),
-    /// so these two definitions are the ones Rust finds when it asks for the
-    /// names. Each delegates to the value the shipped layer bound, so what runs
-    /// per invocation is the shipped composition plus one byte.
+    /// The persisted layer loads **last** — after the whole of
+    /// `phosphor/boot-files`, from a call site rather than a list position
+    /// since `T101` (`main.rs`'s `Layer::load_persisted`) — so these two
+    /// definitions are the ones Rust finds when it asks for the names. Each
+    /// delegates to the value the shipped layer bound, so what runs per
+    /// invocation is the shipped composition plus one byte.
     ///
     /// If the layer ever stops making these the last definitions, the counter
     /// concerned reads zero in both arms and [`verdict`]'s liveness assert
     /// fails, rather than a flat line being reported for something nothing
     /// measured.
-    fn instrument(runtime: &Path, compositions: &Path, resolutions: &Path) {
+    fn instrument(persisted_dir: &Path, compositions: &Path, resolutions: &Path) {
         let scheme = format!(
             "\n\
              ;; T091 — the counting wrapper, appended to a *copy* of the shipped layer.\n\
@@ -452,8 +463,9 @@ mod measured {
             compositions = scheme_path(compositions),
             resolutions = scheme_path(resolutions),
         );
-        let persisted = runtime.join("persisted.scm");
+        let persisted = persisted_dir.join("persisted.scm");
         let mut file = OpenOptions::new()
+            .create(true)
             .append(true)
             .open(&persisted)
             .unwrap_or_else(|error| panic!("{} is appendable: {error}", persisted.display()));

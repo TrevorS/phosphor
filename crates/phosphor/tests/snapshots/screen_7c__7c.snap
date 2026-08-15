@@ -1,0 +1,132 @@
+---
+source: crates/phosphor/tests/screen_7c.rs
+expression: frame.to_text(&buf)
+---
+screen 7c · phosphor-dark · 120x24 cells
+  The statusline is composed by runtime/statusline.scm, not by a widget: the
+    segment order, the shed ladder and the chip's tone are all the editor
+    layer's. `rust-analyzer ✓` is a StatusVm field (T036) rather than the vcs
+    slot standing in for one, which is what the widget's own 7c frame records
+    as owed at CP-4.
+  The completion session is a fixture here — a golden frame may not start a
+    language server. Three rows is what the typed prefix leaves; the filter
+    is phosphor_buffer::lsp::narrow, and loop_pty.rs presses the keys that
+    prove it against a real server process.
+  7c draws `src/fetch.rs [+]` and the running editor draws the path as the
+    user typed it, absolute included. Repo-relative is phosphor-vcs's answer
+    (T071); this frame states the mockup's spelling because the ViewModel is
+    a path and the shed ladder's basename rung is what contracts it.
+  The float's documentation rule is chrome.divider (#242a24); 7c specifies
+    #1d241d. One step apart on the same neutral ramp, and §4 hexes no
+    internal rule — recorded in float::Mood::rule, not folded in.
+  The selection tint and the documentation rule cover the body's rows, which
+    sit two columns inside the border; 7c runs both edge to edge. A FloatBody
+    is handed an area inside the padding and must clip to it.
+  The documentation is wrapped by the host, not by the widget: §11 is
+    "nothing ever wraps" and float::anchored_wrap_cols publishes the width
+    Editing::completions wraps to. At 120 columns the mockup's sentence fits
+    one row and nothing moves; at 80 the cap (ANCHORED_WIDTH_PCT) binds and
+    the same sentence takes two.
+  No cursor: a golden frame is a Buffer, and the insert caret 7c draws after
+    `de` is the terminal's, placed by the host.
+  Lines 1-29 of the fixture are not in any mockup — see the widget's frame,
+    which records the same judgement about the same file.
+
+text
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │  30  pub async fn fetch_all(urls: &[String]) -> Vec<Result<Value, FetchError>> {                                       │
+  1 │  31      let policy = RetryPolicy::de                                                                                  │
+  2 │  32      join_all(urls.iter().map(|┌───────────────────────────────────────────────────────────┐                       │
+  3 │  33  }                             │  default()      fn() -> RetryPolicy                       │                       │
+  4 │  34                                │  default_delay  Duration                                  │                       │
+  5 │   ~                                │  deserialize    fn(D) -> Result<Self>                     │                       │
+  6 │   ~                                │  ───────────────────────────────────────────────────────  │                       │
+  7 │   ~                                │  Returns the policy with 3 attempts, 200ms base, 1s cap.  │                       │
+  8 │   ~                                └───────────────────────────────────────────────────────────┘                       │
+  9 │   ~                                                                                                                    │
+ 10 │   ~                                                                                                                    │
+ 11 │   ~                                                                                                                    │
+ 12 │   ~                                                                                                                    │
+ 13 │   ~                                                                                                                    │
+ 14 │   ~                                                                                                                    │
+ 15 │   ~                                                                                                                    │
+ 16 │   ~                                                                                                                    │
+ 17 │   ~                                                                                                                    │
+ 18 │   ~                                                                                                                    │
+ 19 │   ~                                                                                                                    │
+ 20 │   ~                                                                                                                    │
+ 21 │   ~                                                                                                                    │
+ 22 │   ~                                                                                                                    │
+ 23 │ INSERT  src/fetch.rs [+]                                                                       rust-analyzer ✓ │ 31:34 │
+
+fg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │..kk..bbbhbbbbbhbbhfffffffffhhhhhhhbheeeeeehhhhhheeeheeeeeeheeeeehheeeeeeeeeehhhh.......................................│
+  1 │..kk..hhhhbbbhhhhhhhhhheeeeeeeeeeehhhh..................................................................................│
+  2 │..kk..hhhhffffffffhhhhhhffffhhhfffhhwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww.......................│
+  3 │..kk..h.............................whhmmmmmmmmmhhhhhhjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhw.......................│
+  4 │..kk................................whhhhhhhhhhhhhhhhhjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhw.......................│
+  5 │...k................................whhhhhhhhhhhhhhhhhjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhw.......................│
+  6 │...k................................whhCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCChhw.......................│
+  7 │...k................................whhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhw.......................│
+  8 │...k................................wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww.......................│
+  9 │...k....................................................................................................................│
+ 10 │...k....................................................................................................................│
+ 11 │...k....................................................................................................................│
+ 12 │...k....................................................................................................................│
+ 13 │...k....................................................................................................................│
+ 14 │...k....................................................................................................................│
+ 15 │...k....................................................................................................................│
+ 16 │...k....................................................................................................................│
+ 17 │...k....................................................................................................................│
+ 18 │...k....................................................................................................................│
+ 19 │...k....................................................................................................................│
+ 20 │...k....................................................................................................................│
+ 21 │...k....................................................................................................................│
+ 22 │...k....................................................................................................................│
+ 23 │gggggggg.hhhhhhhhhhhh.ccc.......................................................................jjjjjjjjjjjjjjj.j.jjjjj.│
+
+bg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  1 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  2 │ggggggggggggggggggggggggggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxggggggggggggggggggggggg│
+  3 │ggggggggggggggggggggggggggggggggggggxxxpppppppppppppppppppppppppppppppppppppppppppppppppppppppxxxggggggggggggggggggggggg│
+  4 │ggggggggggggggggggggggggggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxggggggggggggggggggggggg│
+  5 │ggggggggggggggggggggggggggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxggggggggggggggggggggggg│
+  6 │ggggggggggggggggggggggggggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxggggggggggggggggggggggg│
+  7 │ggggggggggggggggggggggggggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxggggggggggggggggggggggg│
+  8 │ggggggggggggggggggggggggggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxggggggggggggggggggggggg│
+  9 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 10 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 11 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 12 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 13 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 14 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 15 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 16 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 17 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 18 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 19 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 20 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 21 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 22 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 23 │bbbbbbbb................................................................................................................│
+
+legend
+  b  #82aecd  actors.you = syntax.keyword
+  c  #e0a94e  actors.attention
+  e  #cfa86a  actors.transient = syntax.ty = syntax.constant = syntax.string = syntax.number
+  f  #9ec98c  actors.steel = syntax.function
+  g  #0c0f0c  neutrals.ground = chrome.mode_chip_fg = chrome.tab_bar
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  k  #414b42  neutrals.line_numbers
+  m  #e8f0e8  neutrals.bright_text
+  p  #26332a  regions.selection
+  w  #2a3c2e  float.passive
+  x  #101410  float.body
+  C  #242a24  chrome.divider

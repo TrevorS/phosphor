@@ -117,9 +117,13 @@ jobs:
           tool: just
       # The whole seam: every lint is one scripts/lint-*.sh script, and
       # `just lint` runs all of them. Nobody edits this workflow to add a lint —
-      # seventeen exist now and not one of them changed this file. (It said "six"
-      # until the count was ten behind, which is the seam working and the prose
-      # not: nothing recomputes a number written in a comment.)
+      # eighteen exist now and not one of them changed a *step* here. (It said
+      # "six" until the count was ten behind, which is the seam working and the
+      # prose not: nothing recomputed a number written in a comment. Something
+      # does now, and that is why the word above is the one thing a new lint
+      # still has to touch — `scripts/doc_claims.py` fails until it matches.
+      # T102 was the first to discover that, which is the cheaper half of the
+      # trade: a one-word edit instead of a silently stale sentence.)
       - run: just lint
 
   deny:

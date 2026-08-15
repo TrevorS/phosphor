@@ -75,6 +75,12 @@ pub struct Code {
     injection_parsers: Option<HashMap<String, Rc<RefCell<Parser>>>>,
     injection_queries: Option<HashMap<String, Query>>,
     change_callback: Option<Box<dyn Fn(Vec<(usize, usize, usize, usize, String)>)>>,
+    // PHOSPHOR PATCH 10 — see VENDOR.md. The change events for the open batch,
+    // each recorded against the text as it stood when its edit was applied.
+    // They cannot be derived at `commit` time: an edit later in the same batch
+    // may shorten the rope past an earlier edit's offset, which is a wrong
+    // line number at best and a panic at worst.
+    batch_changes: Vec<(usize, usize, usize, usize, String)>,
     custom_highlights: Option<HashMap<String, String>>,
 }
 
@@ -99,6 +105,8 @@ impl Code {
             injection_parsers: None,
             injection_queries: None,
             change_callback: None,
+            // PHOSPHOR PATCH 10 — see VENDOR.md.
+            batch_changes: Vec::new(),
             custom_highlights,
         };
 
@@ -467,6 +475,9 @@ impl Code {
 
     pub fn tx(&mut self) {
         self.current_batch = EditBatch::new();
+        // PHOSPHOR PATCH 10 — the events travel with the batch, so opening one
+        // discards anything an abandoned batch left behind.
+        self.batch_changes.clear();
     }
 
     pub fn set_state_before(&mut self, offset: usize, selection: Option<Selection>) {
@@ -479,7 +490,9 @@ impl Code {
 
     pub fn commit(&mut self) {
         if !self.current_batch.edits.is_empty() {
-            self.notify_changes(&self.current_batch.edits);
+            // PHOSPHOR PATCH 10 — no `&self.current_batch.edits` argument: the
+            // events were recorded as the edits were applied. See VENDOR.md.
+            self.notify_changes();
             self.history.push(self.current_batch.clone());
             self.current_batch = EditBatch::new();
         }
@@ -488,6 +501,14 @@ impl Code {
     pub fn insert(&mut self, from: usize, text: &str) {
         let byte_idx = self.content.char_to_byte(from);
         let byte_len: usize = text.chars().map(|ch| ch.len_utf8()).sum();
+
+        // PHOSPHOR PATCH 10 — before the rope moves, and only under the guard
+        // that decides whether this edit joins the batch at all. See VENDOR.md.
+        if self.applying_history && self.change_callback.is_some() {
+            let (row, col) = self.point(from);
+            self.batch_changes
+                .push((row, col, row, col, text.to_string()));
+        }
 
         self.content.insert(from, text);
 
@@ -515,6 +536,15 @@ impl Code {
         let from_byte = self.content.char_to_byte(from);
         let to_byte = self.content.char_to_byte(to);
         let removed_text = self.content.slice(from..to).to_string();
+
+        // PHOSPHOR PATCH 10 — as in `insert`, and for the same reason: `from`
+        // is only meaningful against the text this call is about to change.
+        if self.applying_history && self.change_callback.is_some() {
+            let (start_row, start_col) = self.point(from);
+            let (end_row, end_col) = calculate_end_position(start_row, start_col, &removed_text);
+            self.batch_changes
+                .push((start_row, start_col, end_row, end_col, String::new()));
+        }
 
         self.content.remove(from..to);
 
@@ -902,34 +932,20 @@ impl Code {
     }
 
     /// Notify about document changes
-    fn notify_changes(&self, edits: &[Edit]) {
+    ///
+    /// PHOSPHOR PATCH 10 — this used to take the batch's `edits` and turn each
+    /// `start` into a `(row, col)` **here**, after every edit had already been
+    /// applied. That is only right for a batch whose offsets all still address
+    /// the finished rope, and an undo step is exactly the batch where they do
+    /// not: its edits run in descending offset order, so `point()` was asked
+    /// for a position the text no longer has. See VENDOR.md.
+    fn notify_changes(&mut self) {
+        let changes = std::mem::take(&mut self.batch_changes);
+        if changes.is_empty() {
+            return;
+        }
         if let Some(callback) = &self.change_callback {
-            let mut changes = Vec::new();
-
-            for edit in edits {
-                match edit.operation {
-                    Operation::Insert => {
-                        let (start_row, start_col) = self.point(edit.start);
-                        changes.push((
-                            start_row,
-                            start_col,
-                            start_row,
-                            start_col,
-                            edit.text.clone(),
-                        ));
-                    }
-                    Operation::Remove => {
-                        let (start_row, start_col) = self.point(edit.start);
-                        let (end_row, end_col) =
-                            calculate_end_position(start_row, start_col, &edit.text);
-                        changes.push((start_row, start_col, end_row, end_col, String::new()));
-                    }
-                }
-            }
-
-            if !changes.is_empty() {
-                callback(changes);
-            }
+            callback(changes);
         }
     }
 }

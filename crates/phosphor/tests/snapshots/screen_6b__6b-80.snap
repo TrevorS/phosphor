@@ -24,16 +24,16 @@ text
      01234567890123456789012345678901234567890123456789012345678901234567890123456789
   0 │◆ steel · :repl                                                                 │
   1 │λ (unseen-regions "src/retry.rs")                                               │
-  2 │⇒ #refused · Error: Generic: not built yet — T041 builds it                     │
+  2 │⇒ #raised · not built yet — T041 builds it                                      │
   3 │                                                                                │
   4 │λ (map region-author (block-regions "retry logic"))                             │
-  5 │⇒ #refused · Error: FreeIdentifier: Cannot reference an identifier before its de│
+  5 │⇒ #raised · unbound identifier — Cannot reference an identifier before its defin│
   6 │                                                                                │
   7 │λ (keymap-set! "]r" (lambda () (goto (next-region-by claude))))                 │
-  8 │⇒ #refused · Error: FreeIdentifier: Cannot reference an identifier before its de│
+  8 │⇒ #raised · unbound identifier — Cannot reference an identifier before its defin│
   9 │                                                                                │
  10 │λ (watch-place "src/retry.rs:24" 'delay)                                        │
- 11 │⇒ (#refused "not built yet — T077 builds it")                                   │
+ 11 │⇒ #refused · not built yet — T077 builds it                                     │
  12 │λ                                                                               │
  13 │                                                                                │
  14 │                                                                                │
@@ -52,16 +52,16 @@ fg
      01234567890123456789012345678901234567890123456789012345678901234567890123456789
   0 │hhhhhhhhjjjjjjj.................................................................│
   1 │ffhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh...............................................│
-  2 │iiiiiiiiiijjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj.....................│
+  2 │iiiiiiiiijjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj......................................│
   3 │................................................................................│
   4 │ffhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh.............................│
-  5 │iiiiiiiiiijjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj│
+  5 │iiiiiiiiijjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj│
   6 │................................................................................│
   7 │ffhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh.................│
-  8 │iiiiiiiiiijjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj│
+  8 │iiiiiiiiijjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj│
   9 │................................................................................│
  10 │ffhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh........................................│
- 11 │iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii...................................│
+ 11 │iiiiiiiiiijjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj.....................................│
  12 │ffh.............................................................................│
  13 │................................................................................│
  14 │................................................................................│

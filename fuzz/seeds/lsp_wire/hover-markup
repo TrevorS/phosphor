@@ -1,0 +1,3 @@
+Content-Length: 129
+
+{"id":3,"jsonrpc":"2.0","result":{"contents":{"kind":"markdown","value":"```rust\nfn main()\n```\n\n---\n\nThe entry point.\n"}}}

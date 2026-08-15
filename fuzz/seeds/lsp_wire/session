@@ -1,0 +1,9 @@
+Content-Length: 174
+
+{"id":0,"jsonrpc":"2.0","result":{"capabilities":{"completionProvider":{},"hoverProvider":true,"textDocumentSync":2},"serverInfo":{"name":"rust-analyzer","version":"1.0.0"}}}Content-Length: 86
+
+{"jsonrpc":"2.0","method":"window/logMessage","params":{"message":"loading","type":3}}Content-Length: 205
+
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"diagnostics":[{"message":"x","range":{"end":{"character":1,"line":0},"start":{"character":0,"line":0}}}],"uri":"file:///tmp/main.rs"}}Content-Length: 129
+
+{"id":3,"jsonrpc":"2.0","result":{"contents":{"kind":"markdown","value":"```rust\nfn main()\n```\n\n---\n\nThe entry point.\n"}}}

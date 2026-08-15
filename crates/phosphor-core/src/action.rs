@@ -91,11 +91,11 @@
 
 use crate::registry::{McpPolicy, Param, Since};
 use crate::request::{
-    AcceptHow, Actor, AskOption, Binding, CaseChange, ChangeId, CheckpointId, Diagnostic, DiffMode,
-    Direction, DiskExit, Edit, FileEdits, FileGroup, FoldState, GrantScope, Grouping, KeySeq,
-    LanguageId, LanguageSpec, Motion, PaneKind, PaneRef, Position, PromptKind, RegionSpec,
-    RegisterName, ScrollRequest, Seek, SelectionKind, Sequence, Severity, SourceId, Span, Target,
-    TextObject, ThemeSlug, WatchId,
+    AcceptHow, Actor, AskOption, Binding, BufferId, CaseChange, ChangeId, CheckpointId, Completion,
+    Diagnostic, DiffMode, Direction, DiskExit, Edit, FileEdits, FileGroup, FoldState, GrantScope,
+    Grouping, KeySeq, LanguageId, LanguageSpec, Motion, PaneKind, PaneRef, Position, PromptKind,
+    RegionSpec, RegisterName, ScrollRequest, Seek, SelectionKind, Sequence, Severity, Signature,
+    SourceId, Span, Target, TextObject, ThemeSlug, WatchId,
 };
 use crate::value::{Args, Call, Value, Wire, WireError};
 
@@ -359,7 +359,7 @@ actions! {
         SetCursor = "set-cursor" [S3 / "T026" / Deny]
             "puts the cursor at an absolute position — what a click and a jump both lower to" {
             position: Position = "where",
-            buffer: Option<crate::request::BufferId> = "which buffer; absent means the focused one",
+            buffer: Option<BufferId> = "which buffer; absent means the focused one",
         }
         SelectRange = "select-range" [S3 / "T026" / Deny]
             "selects a span characterwise, linewise or blockwise" {
@@ -942,6 +942,43 @@ actions! {
 
     /// The language server. Completion is the one passive float (`7c`) — it
     /// never takes focus, which is why its verbs are here and not in `float`.
+    ///
+    /// # Why there are four `ingest-` verbs and not one
+    ///
+    /// The transport is asynchronous by construction: `phosphor-buffer`'s
+    /// `lsp::LanguageServers::look_up` answers on the runtime thread, and the
+    /// event queue's `Posted` carries an [`Action`] plus the name of the
+    /// subsystem that posted it — no payload of its own. So an
+    /// answer needs a *verb* to arrive through, exactly as an unsolicited
+    /// `publishDiagnostics` does — property 3 above, one enum for user intent
+    /// and for external ingest. Modelling completion, signature help and hover
+    /// as request-only is what a **synchronous** editor would do, and it left
+    /// three surfaces that could be asked for and could not arrive.
+    ///
+    /// Each answers *exactly once per request, including the empty answer*,
+    /// which is the contract `phosphor-buffer`'s `Answer` type keeps on every
+    /// path (its `Drop` gives `Insight::Nothing`). That is why an empty list,
+    /// an absent signature and empty prose are legal payloads rather than
+    /// calls the client suppresses: they are how a float that is already open
+    /// closes, and a suppressed empty answer leaves stale prose beside the
+    /// cursor forever.
+    ///
+    /// # Why these three are `Deny` where `ingest-diagnostics` is `Allow`
+    ///
+    /// Not symmetry with the other ingest — symmetry with the **request each
+    /// one answers**. Those three are `Deny`, and so are the three verbs that
+    /// drive the completion float once it is up. A diagnostic set is a fact
+    /// about a *file*, addressed by path, unsolicited by construction, and it
+    /// lands in a gutter the user reads at their leisure; an agent pushing one
+    /// is a linter reporting, which is a capability worth having. These three
+    /// are addressed by the user's **cursor** and open a float against it, and
+    /// the completion float is one keystroke from typing its contents into the
+    /// buffer through `accept-completion`. An `Allow` here would be a hole
+    /// around the `Deny` on `request-completion`: an agent that may not ask
+    /// could still make the answer appear. As everywhere else, `Deny` is the
+    /// *default* and not a wall — the rule that opens it is one the user wrote
+    /// and can read (`7a`, `T061`) — and the host applies these in-process,
+    /// never through the MCP door.
     Lsp(LspAction) = "lsp" {
         RequestCompletion = "request-completion" [S4 / "T038" / Deny]
             "asks for completions at the cursor" {
@@ -952,7 +989,7 @@ actions! {
         }
         AcceptCompletion = "accept-completion" [S4 / "T038" / Deny]
             "accepts a completion" {
-            index: u32 = "which item, 1-based",
+            index: u32 = "which item, 1-based; 0 is whichever row is selected, which is the only thing a keymap can name",
         }
         CancelCompletion = "cancel-completion" [S4 / "T038" / Deny]
             "dismisses the completion float" {
@@ -966,8 +1003,36 @@ actions! {
         RequestDefinition = "request-definition" [S4 / "T036" / Deny]
             "asks where the symbol at the cursor is defined" {
         }
-        RequestReferences = "request-references" [S4 / "T036" / Deny]
+        // **Re-homed from `S4`/`T036` by that phase's wiring pass, on the
+        // `apply-edits` precedent.** `LanguageServers::ask` answers a
+        // `Vec<FileSpan>` and **nothing in the vocabulary carries a list of
+        // places**: `open-file` takes one path, and a references result is a
+        // list by definition rather than by accident. `T047` is the task that
+        // builds the surface a list of places is drawn in — *"grep / symbols
+        // source … results carry who-touched-them"* — so the attribution was
+        // the bug, exactly as it was for `jump` and `apply-edits` in the repair
+        // window. `request-definition` stayed on `T036`, because a single
+        // target is an `open-file` and that arm exists.
+        RequestReferences = "request-references" [S5 / "T047" / Deny]
             "asks what references the symbol at the cursor" {
+        }
+        IngestCompletions = "ingest-completions" [S4 / "T038" / Deny]
+            "delivers the answer to a completion request; an empty list closes the float" {
+            items: Vec<Completion> = "the items, in the order the server ranked them; empty means it had nothing",
+            at: Position = "the cursor the request was made at, so an answer the cursor has left is dropped rather than drawn in the wrong place",
+            buffer: Option<BufferId> = "which buffer asked; absent means the focused one",
+        }
+        IngestSignatureHelp = "ingest-signature-help" [S4 / "T039" / Deny]
+            "delivers the answer to a signature-help request; absent closes the float" {
+            signature: Option<Signature> = "the active signature, absent when the server had none",
+            at: Position = "the cursor the request was made at, so a late answer is dropped rather than drawn in the wrong place",
+            buffer: Option<BufferId> = "which buffer asked; absent means the focused one",
+        }
+        IngestHover = "ingest-hover" [S4 / "T039" / Deny]
+            "delivers the answer to a hover request; empty prose closes the float" {
+            prose: Vec<String> = "the hover text, one row per line; empty means the server had nothing",
+            at: Position = "the cursor the request was made at, so a late answer is dropped rather than drawn in the wrong place",
+            buffer: Option<BufferId> = "which buffer asked; absent means the focused one",
         }
         IngestDiagnostics = "ingest-diagnostics" [S4 / "T040" / Allow]
             "records a server's diagnostics for a file; they reach the gutter at trouble priority" {
@@ -1186,29 +1251,34 @@ pub struct Batch {
 /// An Action returning nothing cannot draw that screen, and `T023`'s *"`--eval`
 /// and the REPL return identical results"* would have nothing to compare.
 ///
-/// # The case that is missing, and what it costs today
+/// # Why there are three cases and not two (`T100`)
 ///
-/// **There is no case for *"it ran and raised"*.** `Done` is *it happened* and
-/// `Refused` is *it did not, and that is a normal state*; scheme source that
-/// began evaluating and then blew up is neither. `phosphor-steel`'s
-/// `Runtime::evaluate` therefore lands it in [`Refusal::Declined`], which means
-/// *a rule, a hook or the user said no* — so the wrong case carries Steel's own
-/// error text, envelope and all, into a line that [`Refusal::why`] promises is
-/// the product's voice. A refused **query** shows it most plainly. A query that
-/// cannot be answered *raises* rather than answering a value — deliberately, and
-/// `phosphor-steel`'s `registry.rs` says why — so a `QueryError` becomes a
-/// `SteelErr`, and what the CLI door prints for
-/// `--eval '(unseen-regions "src/retry.rs")'` is this enum's `#refused` head
-/// followed by Steel's rendering of its own error, envelope and all: the
-/// `Error: <kind>:` prefix wrapped around the one line
-/// [`Refusal::why`] would otherwise have owned.
+/// [`Done`](Self::Done) is *it happened* and [`Refused`](Self::Refused) is *it
+/// did not, and that is a normal state*. Scheme source that began evaluating
+/// and then blew up is **neither**, and until `T100` there was no case for it:
+/// `phosphor-steel`'s `Runtime::evaluate` landed a raise in
+/// [`Refusal::Declined`], which means *a rule, a hook or the user said no*. So
+/// the wrong case carried Steel's own error text, envelope and all, into a line
+/// [`Refusal::why`] promises is the product's voice.
 ///
-/// This is `OPEN-QUESTIONS.md` §7, ruled into `T100` with §9. Adding the case
-/// here is the small half; the half that makes it real is in three files this
-/// task did not hold — the construction site (`Runtime::evaluate`), the scheme
-/// door's sigil beside `#ok`/`#refused` (`phosphor-steel`'s `registry.rs`), and
-/// the REPL's own arm. **Flagged rather than folded in:** a case nothing
-/// constructs is the exact debt this window exists to stop repeating.
+/// A refused **query** showed it most plainly, because a query that cannot be
+/// answered *raises* rather than answering a value — deliberately, and
+/// `phosphor-steel`'s `registry.rs` says why. So a `QueryError` already phrased
+/// in Design Language §6's voice became a `SteelErr` and came back wearing
+/// Steel's envelope, measured against the built binary before the fix:
+///
+/// ```text
+/// phosphor --eval '(unseen-regions "src/main.rs")'
+/// #refused · Error: Generic: not built yet — T041 builds it
+/// ```
+///
+/// [`Raised`](Self::Raised) is that third case. It is not a refusal — nothing
+/// declined anything — and it is not an error type either: a raise is an
+/// [`Outcome`], because the request was well formed and the evaluator did run.
+/// The doors that render it own only the sigil; the sentence is
+/// [`struct@Raised`]'s, for the same reason [`Refusal::why`] is the enum's.
+///
+/// `OPEN-QUESTIONS.md` §7, ruled into `T100` with §9.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     /// It happened.
@@ -1216,6 +1286,54 @@ pub enum Outcome {
     /// It did not, and here is why. **Not an error** — a refusal is a normal
     /// state (a bare directory has no VCS; an agent may not move your cursor).
     Refused(Refusal),
+    /// It ran, and it raised.
+    ///
+    /// Only an evaluator produces this: everything else in the editor answers
+    /// in Rust and either does the thing or declines it. A `Host` that returned
+    /// one would be re-raising at the Steel door rather than handing scheme a
+    /// value, which is `phosphor-steel`'s *"refusals are values; errors are
+    /// errors"* rule read from this side.
+    Raised(Raised),
+}
+
+/// What an evaluation that ran and then raised has to say for itself.
+///
+/// Two halves rather than one string, because the halves come from two places
+/// and only one of them is ours. [`kind`](Self::kind) is a closed vocabulary —
+/// a `&'static str` chosen by the crate that owns the evaluator, so a raise
+/// cannot invent a category — and [`message`](Self::message) is whatever the
+/// evaluator said, which belongs to it exactly as [`Refusal::Declined`]'s
+/// reason belongs to the rule that wrote it.
+///
+/// The join lives in [`Raised::why`] beside [`Refusal::why`] so that Design
+/// Language §6's *em dash for cause* is spelled once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Raised {
+    /// What kind of failure it was, in the product's voice: `"wrong type"`,
+    /// `"unbound identifier"`.
+    ///
+    /// [`None`] when naming the kind would add nothing a reader can act on —
+    /// the evaluator's generic envelope around a message that is already a
+    /// finished sentence, which is how a refused query's *"not built yet —
+    /// `T041` builds it"* reaches a caller unwrapped.
+    pub kind: Option<&'static str>,
+    /// What the evaluator said, with its own envelope stripped.
+    pub message: String,
+}
+
+impl Raised {
+    /// Why the evaluation produced no value, in the product's voice.
+    ///
+    /// The counterpart of [`Refusal::why`], and a method for the same reason:
+    /// a second phrasing has to be a second `match` somebody writes on purpose.
+    #[must_use]
+    pub fn why(&self) -> String {
+        match self.kind {
+            // §6: *em dash for cause*.
+            Some(kind) => format!("{kind} — {}", self.message),
+            None => self.message.clone(),
+        }
+    }
 }
 
 /// What a completed Action has to say for itself.
@@ -1476,6 +1594,131 @@ mod tests {
         });
         assert!(eval.feeds_the_keyboard());
         assert_eq!(eval.spec().mcp, McpPolicy::Deny);
+    }
+
+    /// The pairing the `Lsp` domain's header argues for, as a check rather
+    /// than a paragraph: an answer is exactly as open as the request it
+    /// answers. An `Allow` on the answer would be a hole around the `Deny` on
+    /// the request — an agent that may not ask could still make the float
+    /// appear beside the user's cursor — and relaxing the request without
+    /// relaxing its answer would register a capability whose reply nothing may
+    /// send. Either drift fails here.
+    #[test]
+    fn an_lsp_answer_is_exactly_as_open_as_the_request_it_answers() {
+        let policy = |name: &str| {
+            ACTIONS
+                .iter()
+                .find(|spec| spec.name == name)
+                .unwrap_or_else(|| panic!("`{name}` is registered"))
+                .mcp
+        };
+        for (request, answer) in [
+            ("request-completion", "ingest-completions"),
+            ("request-signature-help", "ingest-signature-help"),
+            ("request-hover", "ingest-hover"),
+        ] {
+            assert_eq!(
+                policy(answer),
+                policy(request),
+                "`{answer}` answers `{request}`; their MCP defaults move together"
+            );
+        }
+    }
+
+    /// `phosphor-buffer`'s `Answer` promises **exactly one** call per lookup on
+    /// every path, including the one its `Drop` takes when a server never
+    /// replies. So each of these three verbs has to be able to carry *nothing*:
+    /// an empty answer is how an open float closes, and a payload that could
+    /// only express a result would leave stale prose beside the cursor for the
+    /// rest of the session.
+    #[test]
+    fn the_empty_answer_is_a_call_each_of_the_three_can_make() {
+        let at = Position {
+            line: 12,
+            column: 1,
+        };
+        let nothing = [
+            Action::Lsp(LspAction::IngestCompletions {
+                items: Vec::new(),
+                at,
+                buffer: None,
+            }),
+            Action::Lsp(LspAction::IngestSignatureHelp {
+                signature: None,
+                at,
+                buffer: None,
+            }),
+            Action::Lsp(LspAction::IngestHover {
+                prose: Vec::new(),
+                at,
+                buffer: None,
+            }),
+        ];
+        for action in nothing {
+            let call = action.to_call();
+            assert_eq!(
+                Action::from_call(&call.name, &call.args).unwrap(),
+                action,
+                "`{}` must round-trip its empty answer",
+                call.name
+            );
+        }
+
+        // And a door that says nothing by *omitting* the field, which is what a
+        // CLI invocation with no `--signature` and a Steel call with the
+        // keyword absent both look like. `Vec` has no such spelling — an empty
+        // list is a list — so this is the signature's case alone.
+        let omitted = Args::new().with("at", Wire::to_value(&at));
+        assert_eq!(
+            Action::from_call("ingest-signature-help", &omitted).unwrap(),
+            Action::Lsp(LspAction::IngestSignatureHelp {
+                signature: None,
+                at,
+                buffer: None,
+            }),
+        );
+    }
+
+    /// Documentation rides on the *item*, not on the list, because
+    /// `move-completion` changes which prose is on screen without asking the
+    /// server again. A per-call documentation field would either re-request on
+    /// every arrow key or draw the first item's prose under all of them.
+    #[test]
+    fn each_completion_carries_its_own_documentation_through_the_wire() {
+        let action = Action::Lsp(LspAction::IngestCompletions {
+            items: vec![
+                Completion {
+                    label: "default".to_owned(),
+                    detail: Some("fn() -> RetryPolicy".to_owned()),
+                    documentation: vec!["Returns the policy with 3 attempts.".to_owned()],
+                    insert: "default()".to_owned(),
+                },
+                Completion {
+                    label: "default_delay".to_owned(),
+                    detail: Some("Duration".to_owned()),
+                    documentation: vec!["The base delay between attempts.".to_owned()],
+                    insert: "default_delay".to_owned(),
+                },
+            ],
+            at: Position {
+                line: 24,
+                column: 9,
+            },
+            buffer: Some(BufferId(3)),
+        });
+        let call = action.to_call();
+        let Action::Lsp(LspAction::IngestCompletions { items, .. }) =
+            Action::from_call(&call.name, &call.args).unwrap()
+        else {
+            panic!("`ingest-completions` decodes to its own variant");
+        };
+        assert_eq!(items.len(), 2);
+        assert_ne!(
+            items[0].documentation, items[1].documentation,
+            "two items' prose must survive one call as two different things"
+        );
+        assert_eq!(items[0].label, "default");
+        assert_eq!(items[1].insert, "default_delay");
     }
 
     #[test]

@@ -46,6 +46,19 @@ ratatui-code-editor.workspace = true
 # adds an edge and not a crate.
 [dev-dependencies]
 insta = { version = "1.48.0", default-features = false }
+# `src/events.rs` — the one event queue. Its rule is a *property* over
+# interleavings, not a set of examples: whatever order producers post in, every
+# event that is not a resize is delivered exactly once and in order, and a
+# resize is dropped only when something arrived after it. Four examples cover
+# the drag `§22` names; the law is what says no *other* interleaving loses a
+# keystroke or a server message.
+#
+# 1.11.0 is the version `phosphor-core`, `phosphor-buffer` and `phosphor-ui`
+# already pin, so this adds an edge and not a crate. Declared here rather than
+# in `[workspace.dependencies]` for the reason `phosphor-ui`'s own entry gives:
+# a member's dev-only test dependency is that crate's business, and the root
+# manifest is `spine`'s. Lift it if the fourth of these ever makes the case.
+proptest = "1.11.0"
 ratatui-core.workspace = true
 
 # `benches/vm_invocations.rs` (T091) drives the shipping binary on a

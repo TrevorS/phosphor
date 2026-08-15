@@ -744,6 +744,96 @@
   (list "<down>" (key/motion "line-down") "down a line")))
 
 ;; ---------------------------------------------------------------------------
+;; the language server — T036, T038, T039
+;; ---------------------------------------------------------------------------
+;;
+;; 7c is the drawing: a passive float under the word you are typing, with no
+;; header and no footer. that last part is what decides these bindings — §4's
+;; documented exception means the float carries **no key hints of its own**, so
+;; every key that drives it has to be one your hands already know. they are
+;; vim's own insert-mode completion keys, with one deliberate difference.
+;;
+;; **the difference from vim is which key opens.** in vim `<C-n>` opens the
+;; popup *and* steps through it, because vim's keymap and vim's popup are the
+;; same program. here the keymap is data — a binding names a capability and its
+;; arguments, and cannot ask whether a list is open or which row is selected —
+;; so one key cannot mean two capabilities. `<C-x>` opens, which is the prefix
+;; vim's own completion submode is spelled with; `<C-n>` and `<C-p>` step,
+;; which is exactly what they do there. that divergence is written here rather
+;; than smoothed over: closing it needs a role that reads host state, which is a
+;; change to the machine and not to this file.
+;;
+;; **and mostly you will not press `<C-x>`.** T038's acceptance is *"typing in
+;; insert mode raises the float"*, and the loop asks on every insert-mode edit
+;; against a server that is ready. `<C-x>` is how you ask again — after `<C-e>`,
+;; or on a line you have not typed into.
+;;
+;; `<C-y>` accepts and `<C-e>` cancels, both exactly as vim spells them. the
+;; index is **0**, which is not a row: the list is 1-based, so 0 is free to mean
+;; *whichever row is selected*, and it has to mean something — a keymap is data
+;; and cannot read a selection the host holds, so a literal row number here
+;; would make `<C-y>` accept the same row forever.
+;;
+;; **every one of these is a byte a terminal can send unambiguously**, which is
+;; not a detail: `<C-j>` is `0x0a`, which is the byte `<enter>` sends, so a
+;; binding on it would take newlines away from insert mode on every terminal
+;; there is. `<C-e>` is bound to a scroll in normal and visual and to this in
+;; insert; that is not a collision — the scroll rows are declared for those two
+;; scopes only, and vim gives `<C-e>` the same double life.
+(keymap-set-rows!
+ '("insert")
+ (list
+  (list "<C-x>" (key/run (key/cmd "request-completion")) "completions here")
+  (list "<C-n>" (key/run (key/cmd "move-completion" "delta" 1)) "next completion")
+  (list "<C-p>" (key/run (key/cmd "move-completion" "delta" -1)) "previous completion")
+  (list "<C-y>" (key/run (key/cmd "accept-completion" "index" 0)) "accept the completion")
+  (list "<C-e>" (key/run (key/cmd "cancel-completion")) "dismiss the completions")
+  (list "<C-s>" (key/run (key/cmd "request-signature-help")) "what does this call take")))
+
+;; `K` is vim's `keywordprg` key — *"look up what is under the cursor"* — and
+;; hover is exactly that, so it keeps its meaning with a better source. the
+;; float is dismissed by the next key, which is what a passive float with no
+;; footer can offer.
+;;
+;; `gd` is vim's own *go to definition*, and here it is the server's. the jump
+;; is an `open-file` with a position, which is why it works across files and why
+;; the cursor lands on the line rather than the top of one.
+;;
+;; `gr` is *what uses this*, and it is bound to say so.
+;;
+;; **this row used to argue the other way, and the argument is kept rather than
+;; deleted because it was wrong for an instructive reason.** it read: references
+;; answer a *list* of places and nothing in the vocabulary carries one;
+;; `request-references` was re-homed from T036 to T047 for that reason, and T047
+;; builds the picker a list is drawn in — so binding `gr` to a refusal *"would
+;; take `gr` away from the surface that will actually own it, and an unbound key
+;; here is one keystroke of silence rather than a key that teaches the wrong
+;; home."*
+;;
+;; both halves of that are false against this build's own rule. **silence is
+;; what T098 exists to eliminate** — *"these keys are unknown when they should be
+;; known and not built"* — and a refusal does not take the key away from T047
+;; any more than `/` naming T058 takes `/` away from the search prompt: the row
+;; is rewritten by the task that lands, which is exactly what T099 is scheduled
+;; to do to `q`'s row above. and the wrong-home worry does not apply here at
+;; all, which is the part the earlier reasoning got backwards: it was written for
+;; keys with **no capability to name**, where the nearest-looking verb would name
+;; the wrong task. `request-references` is not a near-miss — it is the verb `gr`
+;; means, declared, with T047 on its own row. reported at CP-4 (*"why is gr
+;; unbound it should show uses of that thing"*), which is the muscle-memory
+;; question CP-3 asks, answered by a vim user's hands rather than by a reading.
+;;
+;; so `gr` resolves, declines, and the statusline says `not built yet — T047
+;; builds it` — the task coming off the capability's own row, so this row cannot
+;; go stale independently of the vocabulary.
+(keymap-set-rows!
+ '("normal")
+ (list
+  (list "K" (key/run (key/cmd "request-hover")) "what is this")
+  (list "gd" (key/run (key/cmd "request-definition")) "go to the definition")
+  (list "gr" (key/run (key/cmd "request-references")) "what uses this")))
+
+;; ---------------------------------------------------------------------------
 ;; the leader tree — screen 3c
 ;; ---------------------------------------------------------------------------
 ;;
@@ -1115,6 +1205,22 @@
                           (list (key/cmd "start-thread"
                                          "anchor" (ex-anchor)
                                          "body" rest))))))
+
+;; T036 — restarting a language server, the one thing you do to a server rather
+;; than through it. an ex command and not a leader key because 3c draws six rows
+;; and those are the six; a seventh would teach a namespace the mockup does not
+;; have.
+;;
+;; **the language is typed, and that is not a shortcut taken.** the capability
+;; names a `LanguageId` and this file cannot know which language the buffer in
+;; front of you is — a binding is data, and the query that would answer it
+;; (`buffer`) lands at T041's store. an empty argument would have to *mean*
+;; something, and the two candidate meanings — "this buffer's" and "all of
+;; them" — are both invented payloads. so `:restart-server rust` says what it
+;; restarts, and a bare `:restart-server` is declined by name.
+(ex-set! "restart[-server]" "restart a language's server — :restart-server rust"
+         (lambda (rest bang)
+           (key/run (key/cmd "restart-language-server" "language" rest))))
 
 ;; ---------------------------------------------------------------------------
 ;; the prompt key

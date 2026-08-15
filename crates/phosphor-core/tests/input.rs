@@ -1301,3 +1301,181 @@ fn a_find_extends_a_live_selection() {
     drive(&mut machine, &mut keymap, &mut buffer, "d");
     assert_eq!(buffer.content(), " beta");
 }
+
+// ---------------------------------------------------------------------------
+// The pointer — `CP-4`
+// ---------------------------------------------------------------------------
+
+/// The press and the drags of one gesture, applied as they go.
+///
+/// The host does exactly this (`mouse_actions` in `crates/phosphor/src/main.rs`)
+/// and the reason to drive it here is [`drive`]'s: a drag reads the buffer, so
+/// each event's Actions have to land before the next arrives.
+fn gesture(
+    machine: &mut Machine,
+    buffer: &mut Buffer,
+    press: (u32, u32),
+    to: &[(u32, u32)],
+) -> Vec<Action> {
+    let at = |(line, column)| Position { line, column };
+    let mut stream = Vec::new();
+    for action in machine.click(at(press)) {
+        apply(buffer, &action);
+        stream.push(action);
+    }
+    for step in to {
+        for action in machine.drag(at(*step), buffer) {
+            apply(buffer, &action);
+            stream.push(action);
+        }
+    }
+    stream
+}
+
+#[test]
+fn a_drag_is_visual_mode_and_esc_leaves_it_the_way_v_does() {
+    // `CP-4`, verbatim: *"escape gets out of visual mode but doesnt clear the
+    // selection"*. The typed path clears; the pointer's did not, because the
+    // selection lived in the editor and the machine had never heard of it —
+    // and `Machine::escape` only clears what it believes it selected.
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+    let mut buffer = Buffer::new("alpha beta\nsecond line");
+    buffer.at(1, 1);
+
+    gesture(&mut machine, &mut buffer, (1, 1), &[(1, 5)]);
+    assert_eq!(
+        machine.mode(),
+        EditMode::VisualChar,
+        "a drag is visual mode"
+    );
+    let (span, _) = buffer.selection.expect("a drag selects");
+    assert_eq!(span.start, Position { line: 1, column: 1 });
+    assert_eq!(span.end, Position { line: 1, column: 6 });
+
+    drive(&mut machine, &mut keymap, &mut buffer, "<esc>");
+    assert_eq!(machine.mode(), EditMode::Normal);
+    assert_eq!(
+        buffer.selection, None,
+        "esc clears a pointer selection the way it clears a typed one"
+    );
+}
+
+#[test]
+fn a_drag_measures_from_the_press_and_not_from_the_last_drag() {
+    // The host used to read the anchor back out of `Editor::selection_anchor`,
+    // which answers *"the end of the selection the cursor is not at"* — so
+    // after the first drag event it answered with the *previous* pointer
+    // position. Measured at `CP-4`: press at column 3, drag to 6, drag to 9,
+    // and the selection ran 6–9 rather than 3–9.
+    let mut machine = Machine::new();
+    let mut buffer = Buffer::new("alpha beta gamma");
+    buffer.at(1, 1);
+
+    gesture(
+        &mut machine,
+        &mut buffer,
+        (1, 3),
+        &[(1, 6), (1, 9), (1, 12)],
+    );
+    let (span, kind) = buffer.selection.expect("a drag selects");
+    assert_eq!(
+        span.start,
+        Position { line: 1, column: 3 },
+        "every drag event anchors at the press"
+    );
+    assert_eq!(
+        span.end,
+        Position {
+            line: 1,
+            column: 13
+        }
+    );
+    assert_eq!(kind, SelectionKind::Char);
+}
+
+#[test]
+fn an_operator_after_a_drag_takes_what_the_drag_highlighted() {
+    // The other half of the same split: `Machine::operator` reads the machine's
+    // own anchor, so before this a `d` after a drag waited for an operand
+    // instead of deleting what was on the screen.
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+    let mut buffer = Buffer::new("alpha beta");
+    buffer.at(1, 1);
+
+    gesture(&mut machine, &mut buffer, (1, 1), &[(1, 6)]);
+    drive(&mut machine, &mut keymap, &mut buffer, "d");
+    assert_eq!(buffer.content(), "beta");
+    assert_eq!(machine.mode(), EditMode::Normal);
+}
+
+#[test]
+fn a_drag_backwards_selects_from_the_press_to_the_pointer() {
+    let mut machine = Machine::new();
+    let mut buffer = Buffer::new("alpha beta");
+    buffer.at(1, 1);
+
+    gesture(&mut machine, &mut buffer, (1, 9), &[(1, 3)]);
+    let (span, _) = buffer.selection.expect("a drag selects");
+    assert_eq!(span.start, Position { line: 1, column: 3 });
+    assert_eq!(
+        span.end,
+        Position {
+            line: 1,
+            column: 10
+        },
+        "the press is the fixed end whichever side the pointer is on"
+    );
+}
+
+#[test]
+fn a_press_ends_a_visual_selection_and_leaves_visual_mode() {
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+    let mut buffer = Buffer::new("alpha beta");
+    buffer.at(1, 1);
+
+    drive(&mut machine, &mut keymap, &mut buffer, "vll");
+    assert_eq!(machine.mode(), EditMode::VisualChar);
+
+    gesture(&mut machine, &mut buffer, (1, 8), &[]);
+    assert_eq!(
+        machine.mode(),
+        EditMode::Normal,
+        "a press is a caret move, not a selection"
+    );
+    assert_eq!(buffer.selection, None);
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 8 });
+}
+
+#[test]
+fn a_press_while_typing_moves_the_caret_without_leaving_insert() {
+    // Only a *visual* selection ends at a press. Clicking while typing is how
+    // the caret moves without losing the mode you are in.
+    let mut machine = Machine::new();
+    let mut keymap = support::table();
+    let mut buffer = Buffer::new("alpha beta");
+    buffer.at(1, 1);
+
+    drive(&mut machine, &mut keymap, &mut buffer, "i");
+    assert_eq!(machine.mode(), EditMode::Insert);
+
+    gesture(&mut machine, &mut buffer, (1, 7), &[]);
+    assert_eq!(machine.mode(), EditMode::Insert);
+    assert_eq!(buffer.cursor(), Position { line: 1, column: 7 });
+}
+
+#[test]
+fn a_drag_with_no_press_behind_it_selects_nothing() {
+    // The first event after a resize, or a press the editor could not place. An
+    // anchor guessed here would be a selection the user never started.
+    let mut machine = Machine::new();
+    let mut buffer = Buffer::new("alpha beta");
+    buffer.at(1, 1);
+
+    let stream = machine.drag(Position { line: 1, column: 5 }, &buffer);
+    assert!(stream.is_empty(), "{stream:#?}");
+    assert_eq!(machine.mode(), EditMode::Normal);
+    assert_eq!(buffer.selection, None);
+}

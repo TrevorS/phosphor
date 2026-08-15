@@ -12,10 +12,12 @@
 # about the editor, which is exactly what `T016` taught and exactly what got
 # repeated.
 #
-# It exists *now*, before the LSP phase, because `S4` builds `Node::Completion`
-# and `Node::Signature` — two more kinds that are composed by nothing today. The
-# lint that catches the shape has to precede the window that would otherwise
-# repeat it.
+# It existed *before* the LSP phase, because `S4` builds `Node::Completion` and
+# `Node::Signature` — two more kinds that were composed by nothing the day this
+# was written. The lint that catches the shape has to precede the window that
+# would otherwise repeat it, and both entries are gone from RECORDED below:
+# `S4`'s wiring pass composes them in `crates/phosphor/src/main.rs`
+# (`passive_float`), which is the outcome this file was betting on.
 #
 # WHAT IT CHECKS. `crates/phosphor-core/src/view.rs` declares every kind through
 # a macro DSL that carries both spellings at once:
@@ -157,10 +159,6 @@ RECORDED = {
                        "scaffolding with a demolition date at `T058` — a second draw path for a "
                        "surface that has a node kind. `main.rs` names `view::Node::Prompt` in a "
                        "comment at that draw site, which is why this lint strips comments."),
-    "Completion": ("T038", "The LSP completion list, as a passive float. `S4`, and one of the "
-                           "two kinds this lint was written ahead of."),
-    "Signature": ("T039", "Signature help, through the same float chrome as `Completion`. The "
-                          "other one."),
     "Watch": ("T076", "`WatchOverlay` — the `◉ ⇒` stream, which renders *through* a "
                       "`VirtualText` row. That kind is composed (the unknown-key hint); this "
                       "one is the watch's own formatting and is deferred in the interpreter."),

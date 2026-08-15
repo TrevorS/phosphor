@@ -115,3 +115,29 @@ the directory; that is the whole resolution.
   ratatui in the tree, `cargo tree` stays clean — but it is a real relaxation of that rule and
   is flagged to `spine` rather than assumed. It follows from Q4 (vendor this crate) meeting T002
   (`phosphor-ui` gets `ratatui-core` only), and the two decisions do not otherwise meet.
+
+---
+
+## This fork's own tests do not run anywhere — `T102`
+
+Recorded rather than fixed, because it belongs to whoever next touches this fork.
+
+`scripts/lint-vendor-tests.sh` runs `vendor/ratatui-code-editor`'s test suite inside `just gate`,
+closing the gap that let an undo panic ship past a green build (`T102`, that fork's §10). It does
+**not** run this one, and the reason is two failures rather than a preference:
+
+* **No `[workspace]` table.** The root manifest excludes this directory by path, so a bare
+  `cargo test` here walks up looking for a workspace root and finds the excluding manifest — or,
+  from an agent worktree under `.claude/worktrees/`, the *parent* checkout's root, whose
+  `exclude` paths do not match this one at all. Cargo errors before it compiles anything.
+  `ratatui-code-editor` does not have this problem because it carries its own `[workspace]` for
+  its examples.
+* **Two examples do not compile.** With an empty `[workspace]` added, `cargo test` gets as far
+  as the example targets and stops: `examples/image` and `examples/mermaid_image` fail against
+  the `ratatui ^0.30` bump (patch 1), eight errors each. `--lib --tests` would step around them,
+  which is a decision about what this fork's suite *is* and not one to make in passing.
+
+So this crate's `#[cfg(test)]` tests — and there are many, across `markdown/`, `scroll/`,
+`tree/`, `text_input/` and `mermaid/` — have never been executed by anything in this repo, before
+or after the ratatui bump that is the entire point of the fork. Fixing it is a `[workspace]`
+table, a decision about the two examples, and one line in `FORKS` in that lint.

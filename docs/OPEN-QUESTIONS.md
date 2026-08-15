@@ -43,6 +43,14 @@ orders of magnitude, §14 turned out to be a live inconsistency rather than a fo
 trap, and `R15` said only Teej could do it when the API takes it. Every one of those corrections
 came from executing the thing, and none from thinking harder about it.
 
+**Swept again after `S4`, on 2026-08-14, and §10 makes the point a fourth time.** Four entries were
+added — §27 through §30, in their own group below — and §10 was re-checked and found to be wrong in
+three ways at once: the frame it calls blocked is built, it was looking in a file that could never
+have held it, and the unblocking it expected from `T037` was never `T037`'s to give. Nothing in
+that entry was a lie when it was written; it went wrong by standing still while the tree moved.
+**Re-read an entry before quoting it**, and prefer the tree to the entry when they disagree — which
+is `CLAUDE.md`'s rule, and is now the fourth consecutive sweep to earn it.
+
 ---
 
 ## Doc-versus-tree disagreements
@@ -102,6 +110,43 @@ gained by starting it in S3"* clause has expired and the recommendation's own tr
 Both gaps are `S4`'s to clear — `T037` brings the literals, and the ground question wants
 `spine`'s first free phase, which is the same window.
 
+**The frame exists. Neither gap closed. And the entry was looking in the wrong file — all three
+checked against the tree on 2026-08-14.**
+
+- **`crates/phosphor/tests/screen_6b.rs` is the `6b` golden frame**, at two widths
+  (`screen_6b_draws` at 120 columns, `screen_6b_draws_at_80_columns`), with committed snapshots at
+  `crates/phosphor/tests/snapshots/screen_6b__6b.snap` and `…__6b-80.snap`. It landed in `5017293`
+  — the pre-`S4` repair window, one of *"the six things that had to be true before S4 opens"* —
+  and `TASKS.md`'s header already records the missing `6b` snapshot as one of `CP-2`'s three gate
+  findings. **`golden_frames.rs` still carries no `6b` and never will**, and the reason is
+  structural rather than an omission — `screen_6b.rs`'s own module header, section *"Why it lives
+  in the binary crate"*, is where it is written down. `6b` is composed by Steel and drawn by
+  the interpreter, so a test of it needs `phosphor-steel` *and* `phosphor-ui` at once, and
+  `scripts/lint-no-store-mutation.sh` check 2 allows `phosphor-ui` exactly one `phosphor-*`
+  dependency. The binary crate is the only place both are visible — the same reason `parity.rs`
+  lives there. **This entry named a file that could not have held the answer**, which is worth
+  more than the correction: a blocker recorded against the wrong file reads as blocked long after
+  it is built.
+- **The `#1a201a` ground is still not drawn.** The committed 80-column snapshot's `bg` plane is
+  empty on every row except the `REPL` badge on row 23, and its legend names five colours
+  (`#9ec98c`, `#0c0f0c`, `#c6cec6`, `#9aa39a`, `#59635a`) — no ground among them. Unchanged, still
+  `spine`'s, still a view-tree contract question.
+- **`T037` did not bring the literals, and could never have.** The typed rows in that snapshot are
+  one colour end to end (`h`, `neutrals.text`), not per-token. The blocker was never
+  `define-language`: `runtime/languages/steel.scm` declares `"grammar" "scheme"` and
+  `phosphor_buffer::grammar::BUNDLED` is ten names that **do not include `scheme`** — the vendored
+  fork has no arm for it, its own manifest says adding one is `S4`'s job, and nobody added one.
+  `steel` is `second-tier` by `Languages::tier` for exactly this reason, and its declaration file
+  spends five paragraphs saying so. So a `.scm` buffer renders unhighlighted today, and **the
+  remaining half of this entry is a fork grammar arm that no task in the graph names.**
+
+*Recommendation, revised: close the frame half — it is built, and this entry should stop claiming
+otherwise. Keep the ground question, which is unchanged and is `spine`'s. Re-file the literals
+half: it is not `T037`'s and never was, and a grammar arm in the vendored fork is `surface`'s work
+under `T083`'s subject matter with no task naming it. This is §30's pattern wearing different
+clothes — a claim nothing recomputes, drifting quietly — except that here what drifted was the
+blocker's attribution rather than a count, and no lint could have caught it.*
+
 ---
 
 ## Raised by Window D's S3 run
@@ -125,6 +170,15 @@ whichever rendering wins is what every agent-surface tape at `CP-5` will show.
 
 *Recommendation: Teej picks one rendering per conflict at claude.ai, and `fixtures/` follows. There
 is no build change here — nothing is wrong in the tree.*
+
+**A third conflict joined this category on 2026-08-14, and it is a different axis: §27 below.**
+The two above are mockup-versus-mockup, where either rendering could be made true. §27 is a mockup
+against Design Language §3's **prose**, which the build already implements — so unlike these, one
+of the two sources is load-bearing in the tree today and the other is a picture. Same resolution,
+same owner, and worth reading together: it is now three drawings in this build that disagree with
+something, and none of them was found by a checkpoint. All three were found by an agent
+transcribing a drawing into a fixture or a widget, which is the only activity that reads a mockup
+closely enough.
 
 **§14 is ruled and closed** — `phosphor --eval`'s exit code. It was recorded as a
 forward-looking trap; running it found the CLI door's two routes already answering different
@@ -377,9 +431,14 @@ remaining ~6 seconds. `nextest` reports it as the one `SLOW` test and crosses bo
 The shape explains the size, and the shape is deliberate. `Doors::open` boots one `Runtime`
 (`crates/phosphor/tests/parity.rs`, `impl Doors`), and `steel_door` then builds a fresh source
 string per capability and calls `Runtime::evaluate` on it — so the Steel third is one full
-parse/compile/eval per capability, and the test as a whole is 636 door checks over 212
-capabilities. That is exactly the thing worth having: it is the test that makes *one API, three
-doors* true rather than asserted.
+parse/compile/eval per capability, and the test as a whole is one check per capability per door —
+`636` over `212` capabilities on the day this was measured. That is exactly the thing worth
+having: it is the test that makes *one API, three doors* true rather than asserted.
+
+> **Every count in this entry is the count of 2026-08-13**, deliberately, and written the way
+> `scripts/doc_claims.py` section 5 spells a historical one so it is not recomputed against a
+> vocabulary that has since grown. A timing divided by a live count would be a different
+> measurement every window; the run it describes happened once.
 
 **Why it is worth an entry now rather than whenever somebody notices.** `nextest` isolates tests
 per process and can run 682 of them concurrently, but it cannot split one test *function* — so
@@ -390,9 +449,9 @@ floor gets paid once per agent. It is also the same CPU-contention window in whi
 to re-run.
 
 **Not asserted:** that the Steel third is where the time goes. The shape says so and 176 s over
-212 capabilities is ~0.83 s each, which is consistent with parse-and-compile; but nothing has
-profiled it, and the MCP and CLI thirds have not been timed separately. Do not "optimise Steel"
-on the strength of this paragraph.
+the `212` capabilities of that run is ~0.83 s each, which is consistent with parse-and-compile;
+but nothing has profiled it, and the MCP and CLI thirds have not been timed separately. Do not
+"optimise Steel" on the strength of this paragraph.
 
 - **Split it per door.** Three test functions instead of one, and `nextest` runs them
   concurrently. It is already three independent assertions wearing one name — `check` is a
@@ -438,6 +497,489 @@ Kept as a record rather than trimmed to the answer, because the wrong guess is t
 every option above was ranked against a hypothesis with no measurement behind it, the hedge
 (*"not asserted: that the Steel third is where the time goes"*) was the only thing that stopped
 it becoming a wasted optimisation, and the cheapest possible experiment settled it in one run.
+
+---
+
+## Raised by the `S4` window
+
+Four entries, from three commits (`b76b8ee`, `52183a6`, `0c12f68`) and the wiring pass that
+followed them. Every citation below was checked against the tree on 2026-08-14, and the design-doc
+ones against `docs/design/` in the same session. **One of them is a correction to the window's own
+handoff report rather than a question** — §29's third item — and it is written up as a finding
+because the report said the opposite of what the code says, which is the failure mode this whole
+file exists against.
+
+### 27 · A diagnostic on a row claude just wrote — `6c` and §3 draw it differently
+
+The second finding of §12's kind, and a different axis: §12 is two *mockups* disagreeing with each
+other, and this is a mockup disagreeing with the **prose spec**. Both resolve the same way, which
+is why they are cross-referenced.
+
+- **`Design Language.dc.html:67` (§3)** fixes the ladder: *"Column 1: the 1-cell state bar
+  (unseen/diagnostic/none — priority: trouble &gt; attention &gt; claude)."*
+- **`TUI Mockups.dc.html:523` (screen `6c`, line 64)** draws that exact overlap and draws it the
+  other way. The row carries `■ E0308: expected Duration, found u128` and a `#d97b6c` wavy
+  underline, and its state bar is `background:#3ddc97` — **claude green** — because it sits inside
+  the region claude just wrote (lines 62 and 63 carry the same green bar, at `:520` and `:522`).
+
+The prose and that drawing cannot both be right about one cell. §3's own render is silent on it:
+its row 19, *"diagnostic region"*, carries the trouble bar but carries no unseen state, so it
+never draws the overlap.
+
+**The build follows the prose, and it was flagged rather than folded in — which is the rule
+working.** `phosphor_ui::gutter::RegionState::mark` sends `Diagnostic` and `Failure` to
+`StateMark::Trouble`, `state_column` folds each row's set with `raise`, and the higher rank wins;
+`crates/phosphor-ui/src/diagnostics.rs` carries a header section titled *"Where 6c and §3 disagree,
+and which one this follows"* that states the choice and its reason — the ladder is written
+mechanically, `T031` already implements it, and the alternative reading is written down nowhere.
+
+**A second, smaller question came out of the same task and belongs with it.** `T040` added
+`RegionState::Warning`, because mapping every LSP warning onto trouble-red makes a file with
+unused imports read as a file that does not build. It resolves to `StateMark::Attention`, and
+§3 enumerates the column as *"unseen/diagnostic/none"* — no amber tier in the bar at all.
+`gutter.rs`'s `Warning` doc **calls its own placement a reading rather than a transcription** and
+records that no mockup draws an amber bar (`6c`, `1a`, `8c` and `9a`–`9c` draw claude-green and
+trouble-red only; that enumeration is the `T040` agent's, quoted rather than re-derived here). The
+tier is not new — `NeedsYou` already reaches it — so what is genuinely unwritten is a compiler
+warning arriving in the cell that otherwise says *"claude is waiting on you"*.
+
+*Recommendation: Teej rules both at claude.ai, on the drawings, not in the tree — there is no
+build defect here and nothing to fix until the answer exists. If `6c` wins, the reading behind it
+is that an **inline** `■` releases the bar, and note that the inline draw does not exist: a
+`virtual_text::Row` is a row of its own (`VENDOR.md` patch 8) and end-of-line virtual text is a
+fork patch nobody has written, so `6c` cannot currently be reproduced either way. If §3 wins, the
+mockup is the bug and `6c`'s line 64 gets a trouble bar. The change to the tree is one arm of
+`RegionState::mark` and a snapshot, in both directions.*
+
+### 28 · The `Lsp` vocabulary could be asked and could not answer
+
+Not a defect that shipped — it was found and fixed inside the window — but a fact about how the
+vocabulary was designed, which is worth more than the three rows that fixed it.
+
+At `0c12f68` — the last committed state before the wiring pass, read this session with
+`git show HEAD:crates/phosphor-core/src/action.rs` — `Action::Lsp` had eleven verbs: five spelled
+`request-`, one spelled `ingest-`, and five that do something else entirely (`move-`, `accept-`
+and `cancel-completion` drive a list that is already up; `apply-workspace-edit` and
+`restart-language-server` are neither questions nor answers).
+**Three of the five requests had no verb their answer could arrive through.** The transport is
+asynchronous by construction — `phosphor-buffer`'s `lsp::LanguageServers::look_up` answers on the
+runtime thread, and the event queue's `Posted` carries an `Action` plus the name of the subsystem
+that posted it and **no payload of its own** — so an answer needs a *verb*, exactly as an
+unsolicited `publishDiagnostics` does. Completion, signature help and hover could be asked for and
+could not come back.
+
+**Why it went unnoticed is the interesting half.** `ingest-diagnostics` existed from the start,
+because `publishDiagnostics` is *obviously* unsolicited and nothing about it looks like a function
+call. The other three look exactly like function calls with return values — and there is no return
+value anywhere in this design. So the asymmetry is not one row somebody forgot: it is what happens
+when a request/response protocol is modelled as user intent and the answer's door is left implicit
+because a synchronous editor would not need one.
+
+**What was done.** `ingest-completions`, `ingest-signature-help` and `ingest-hover` were added
+(`212` → `215` capabilities), each carrying the cursor the request was made at so a late answer is
+dropped rather than drawn in the wrong place, and each answering *exactly once per request,
+including the empty answer* — which is how a float that is already open closes. The durable half
+is a test rather than the paragraph: `an_lsp_answer_is_exactly_as_open_as_the_request_it_answers`
+pairs each answer with its request and asserts their MCP defaults move together, so relaxing an
+ingest without relaxing the request it answers fails the build.
+
+*Recommendation: nothing to rule for `S4` — it is built. The question worth putting in front of a
+later window is whether **"every request verb declares the verb its answer arrives through"**
+should be a property of the registry rather than three pairs someone remembered. The pairing test
+enumerates those three by name and would not notice a fourth, and `S5`–`S8` add more asynchronous
+sources than `S4` did (`T053` routes agent ingest; `T069` watches files). This is a `spine`
+question about the capability table, not an `S4` question, and it costs a table property plus the
+column it reads.*
+
+### 29 · Four decisions `S4` made that a keymap could not make for itself
+
+Grouped because they share a cause: **a binding is data**. It names a capability and its arguments
+and cannot ask what the host is holding, so wherever vim's answer depends on host state, this
+build had to pick something else and write down why. All four are in the tree and pressed by
+tests; none is a defect; each is a place a vim user's hands will land differently, which is
+`CP-4`'s subject.
+
+1. **`<C-x>` opens the completion float; `<C-n>` only steps.** In vim `<C-n>` does both, because
+   vim's keymap and vim's popup are one program. `runtime/keymaps.scm` argues it where it binds
+   it: one key cannot mean two capabilities when a binding cannot ask whether a list is open.
+   `<C-x>` is the prefix vim's own completion submode is spelled with, and mostly it is not
+   pressed at all — the loop asks by itself whenever an insert-mode edit lands against a ready
+   server (subject to item 3's throttle), so `<C-x>` is how you ask *again*, after `<C-e>` or on a
+   line you have not typed into. **Closing this needs a role that reads host state, which is a
+   change to the machine and not to the keymap.**
+2. **`gcgc` comments a line; `gcc` does not.** Doubling an operator is a lookup in
+   operator-pending — the rule that makes `dd` linewise — so the doubled form of a *two-key*
+   operator is the two keys again, and `gcc` parses as `gc` followed by the `change` operator.
+   vim-commentary users reach for `gcc`. Flagged, not fixed: a special case for it is a change to
+   the input machine, which is `T026`'s.
+3. **The typing trigger's throttle is one request in flight, not a timer — and this window's own
+   handoff report said there was no throttle at all.** The tree is the authority and it disagrees:
+   `crates/phosphor/src/main.rs` gates the trigger on `!outstanding.awaiting(Lookup::Completion)`
+   and its comment there calls that *"the whole of the debounce"*, chosen over a timer because the
+   loop blocks on `recv` and has no tick to hang one off. A burst of typing costs one round trip
+   plus one, not one per character, and `a_burst_of_typing_never_says_the_editor_denied_something`
+   is the test. **So the open question is not "add a debounce" — it is whether a throttle whose
+   period is the server's round trip feels right**, which is exactly `CP-4`'s *"fast enough to be
+   useful, or fast enough to be annoying"* and cannot be answered without typing.
+4. **`accept-completion`'s `index` `0` means *whichever row is selected*.** The list is 1-based, so
+   `0` named no row and was free; it had to be given a meaning, because a keymap that could only
+   name a literal row would make `<C-y>` accept the same row forever. It is an invention rather
+   than a transcription, and the parameter's own description in `action.rs` says so. Worth a look
+   at `CP-4` on the same grounds as the others: it is a spelling a person will eventually read.
+
+*Recommendation: none of these is a build change today. Items 1 and 4 are one question wearing two
+hats — whether a binding may carry a **role** that reads host state — and answering it yes would
+close both and cost a change to the input machine. Item 2 is a `T026` special case and small. Item
+3 is a judgement and needs the manual half of `CP-4`. Rule item 1 first, because it is the only one
+that changes what a keymap **is**.*
+
+### 30 · Three counts drifted in one session, and `doc_claims.py` checks none of them
+
+`scripts/doc_claims.py` recomputes task counts, wave widths, capability and parity counts, the
+structural-lint count, the toolchain version and the `T0xx` references in Rust comments. It is the
+reason six stale copies of `208` went red in one run. **It does not recompute the benchmark list,
+the tool table, or the recipe list**, and all three moved this session:
+
+1. **`docs/SPIKES.md`'s tooling table**, whose struck `divan` row said *"all four benchmarks are
+   `harness = false` … four `[[bench]]` entries"* and whose `cargo-fuzz` row said *"Four
+   targets"*. The tree has **six** `[[bench]]` entries and **five** fuzz targets: `csv.rs`,
+   `diagnostics.rs` and `fuzz_targets/csv_parse.rs` all landed in `0c12f68`, this window's third
+   commit. Fixed in this pass — that table is `docs/`. **It had been audited the previous day**
+   (`fa28004`, *"the tooling table had drifted in both directions"*), and its own blockquote says
+   *"nothing recomputes it"*. It then drifted again within twenty-four hours, which is the
+   strongest evidence available that the audit is not the fix.
+2. **The `justfile`'s `bench` recipe.** Its docstring reads *"Run the benchmarks (frame cache, VM
+   invocations, journal, soft wrap)"* and the comment block above it names those same four files
+   with a paragraph each. `cargo bench --workspace` runs all six. **This is what `just --list`
+   prints**, so the four-item list is what every agent who follows `CLAUDE.md`'s *"`just --list` is
+   the authority"* instruction reads. Not fixed here — the `justfile` is `harness`'s file, not
+   `docs/`.
+3. **`CLAUDE.md`'s own commands section**, which records that it *"was five recipes behind at the
+   pre-`S4` audit"* — `vendor-check`, `vendor-pull`, `vendor-build-headless`, `tapes-diff` and
+   `tape-diff`. That one is already fixed, and its fix was to add a sentence naming `just --list`
+   as the authority. Which is the point: **the repair for a list nothing recomputes has twice been
+   a sentence telling the reader to go look somewhere else.**
+
+The shape is identical in all three: a *list* transcribed into prose, where the source of truth is
+a directory or a manifest, and where adding an item to the tree is a normal thing to do and
+updating every prose copy is not. Counts of *tasks* do not drift, because `doc_claims.py` fails on
+them.
+
+**And this is not the first time it has been noticed.** `docs/README.md`'s amendments section
+already carries the same observation about itself — *"this list was two behind it until the `CP-3`
+audit, which is its own small lesson about a list nothing recomputes"* — and the response then was
+also an audit rather than a check. Four instances, and every response so far has been a person
+reading carefully once. **The failure recurs on a schedule set by how often somebody adds a file;
+the fix recurs on a schedule set by how often somebody audits.** Those two schedules are not
+related, which is the whole argument for option (b) below.
+
+*Recommendation: this is Teej's, because it is a change to how the team is gated rather than a
+correction, and no agent should add a gate to `scripts/lint-*.sh` on its own initiative. The
+options, cheapest first. **(a) Do nothing** — defensible; none of the three misled anybody into a
+wrong decision, and a stale tool table costs a reader one `ls`. **(b) Extend `doc_claims.py`** with
+a section that recomputes the benchmark count from `[[bench]]` entries, the fuzz-target count from
+`fuzz/Cargo.toml`, and the recipe list from `just --list`, and fails on a prose copy that disagrees
+— roughly the shape section 5 already has for capabilities, and it would have caught all three the
+day they broke. **(c) Stop transcribing lists into prose at all** and make each of these a pointer,
+which is what `CLAUDE.md` did by hand and costs nothing — but it also deletes the description that
+made the list worth reading, and this repo's prose earns its keep by explaining why each item
+exists. (b) is the recommendation; (c) is the one to take if (b) looks like more machinery than
+the problem deserves.*
+
+---
+
+### 31 · One crate guards a P0 with eleven tests, and its real coverage is an accident
+
+Counted from the tree on 2026-08-14, after `S4` closed: `#[test]` occurrences under `src/` and
+`tests/`, `proptest! {` blocks anywhere in the crate, files under `benches/`, and targets in
+`fuzz/fuzz_targets/` attributed to the crate they exercise.
+
+| crate | unit | integ | prop | fuzz | bench |
+|---|---|---|---|---|---|
+| `phosphor` | 67 | 71 | 1 | — | 1 |
+| `phosphor-core` | 113 | 124 | 5 | 3 | 1 |
+| `phosphor-ui` | 235 | 27 | 2 | 1 | 3 |
+| `phosphor-buffer` | 8 | 153 | 5 | 1 | 1 |
+| `phosphor-steel` | 104 | 48 | **0** | — | **0** |
+| `phosphor-term` | **11** | **0** | **0** | **0** | **0** |
+| `phosphor-agent` | — | — | — | — | — |
+| `phosphor-vcs` | — | — | — | — | — |
+
+`phosphor-agent` (7 lines) and `phosphor-vcs` (6 lines) are placeholders for `S6`/`S7`. Zero is
+correct there and they are listed only so the two blank rows are not read as a gap.
+
+**`phosphor-term` is the finding.** 906 lines across `lib.rs` and `raw.rs`, eleven unit tests, and
+nothing else — no integration test, no property, no fuzz target, no benchmark. It owns raw mode,
+capability detection, and the synchronized-output wrapper, and Design Language §8 makes a torn
+frame a **P0**.
+
+**Its real assurance is accidental, which is the part worth acting on.**
+`crates/phosphor/tests/loop_pty.rs` counts `\x1b[?2026l` closers to check **frame accounting** —
+one frame per key. So the only thing in this repository that exercises synchronized output end to
+end lives in a *different crate's* test asserting a *different property*, and it disappears
+silently the day someone rewrites that harness for a reason unrelated to terminals. A test that
+protects something it does not mention is not a test of that thing.
+
+Four smaller gaps, in the order they would pay:
+
+- **`phosphor-steel` has 152 tests and no properties.** Keymap resolution is property-shaped over
+  a space no example set covers — 55 KB of `keymaps.scm`, prefix resolution, operator-pending,
+  counts, registers. The law worth stating is *a prefix never resolves to something its extension
+  does not, and resolution is deterministic under any generated sequence*, which is what `CP-2`'s
+  liveness claim rests on.
+- **Four unfuzzed decoders, all taking foreign input**: `registry::…::parse` (argv, from the CLI
+  door), the `from_value` wire surface (~15 impls across `value.rs` and `request.rs`),
+  `target_from_text` (the `path:line` spelling), and **LSP JSON-RPC framing** — the highest value
+  of the four, because "truncated header, bad `Content-Length`, server closes mid-message" was a
+  review finding *in this window* and it is input from a subprocess we do not control.
+- **Three unbenched expensive paths**: completion float draw with a large list (the `S4` review
+  found a real server filling 29 of 30 rows), document sync on rapid typing (`didChange` per
+  keystroke is the cost `T038` chose), and keymap resolution per keystroke against that 55 KB file.
+- **`phosphor-ui` is 235 unit / 27 integration**, inverted from every other crate. Widgets tested
+  in isolation, few tested composed — the shape that produced this window's `T016`-class findings,
+  where `lint-node-kinds` caught what the tests did not.
+
+**Counts are not the measure, and this window is the proof.** `S4`'s review found **five tests
+that could not fail** — a property oracle asserting the output of the function under test, an
+acceptance test that survived both a planted Rust table and deleting the file it claimed to depend
+on, a guard test carried entirely by a trailing newline in its fixture, and a tautological
+`assert_eq!`. Every one of them is counted in the table above. So the table measures *surface*,
+not assurance.
+
+*Recommendation: take `phosphor-term` before Window E — that window adds four surfaces that draw,
+and the crate that keeps them from tearing is the least tested thing in the workspace. Take the
+LSP-framing fuzz target with it; it is cheap and the input is hostile. The rest can wait. And
+whatever is done here must include an adversarial "does this test bite" sweep rather than only a
+gap-filling sweep: a pass that raises the numbers without planting mutations would leave this
+build more confident and no safer, which is the exact trade the five vacuous tests already made.*
+
+---
+
+## Raised by the repair window between `CP-4` and Window E
+
+Five entries. The first is **a ruling recorded rather than a question asked** — the exception this
+file otherwise refuses. It is here because the half that is still open is a drawing only Teej can
+amend, and because `CLAUDE.md`'s rule is that a design conflict is flagged and never folded in:
+`T101` changed the build in a direction `6b` draws the other way, so somebody has to be able to
+find out why the tree and the mockup disagree without re-deriving the argument.
+
+The second is `T100`'s neighbour: the task was scoped to the door's *voice*, and running it found
+that one of the two sentences it was sent to fix is false for a reason no wording can repair.
+
+The third and fourth were found by the review of that repair window, and both are about
+`$XDG_CONFIG_HOME/phosphor/`: what happens when a user puts an `init.scm` there, and what happens
+to the one form `7a` will write there. The fifth is what fixing the two unrunnable tapes revealed
+about the other thirty-one.
+
+### 32 · `6b` draws auto-persist, and `T101` removed it — ruled by Teej, 2026-08-14
+
+**What `6b` draws.** Its fourth line, from `docs/design/TUI Mockups.dc.html` (screen `6b`, *"Steel
+REPL"*), read this session:
+
+> ```
+> λ (keymap-set! "]r" (lambda () (goto (next-region-by claude))))
+> ⇒ #ok · persisted to init.scm
+> ```
+
+A bare `(keymap-set! …)`, typed at the prompt, answering *persisted*. That is persistence **by head
+name**: `runtime/repl.scm` listed eight heads and any form with one of them was written to disk for
+having been evaluated. Try a theme, keep it forever.
+
+**Why it was ruled out.** Teej's argument is Emacs, and it is that Emacs has two mechanisms and
+phosphor had neither: `M-:` and `ielm` never persist — evaluating is evaluating — while
+`M-x customize` is a deliberate *save this* UI that writes `custom-file`. Auto-persisting by head
+is a third thing, and it sits badly against this build's third invariant, **nothing moves unless
+you asked**: the user asked to evaluate.
+
+**What the tree does now.** The mechanism is kept and the automatic is gone. `runtime/repl.scm`
+defines `persist!`, an identity function that is a *mark* rather than a mechanism — the REPL is
+still the only thing that writes, so a `(persist! …)` read back at boot evaluates its argument and
+appends nothing. A bare config verb is answered `⇒ #ok · not persisted — (persist!
+…) keeps it`, which is `6b`'s receipt offering the verb at the moment you would want it. Both
+halves of *"a `persist!` verb, or `6b`'s receipt offering it, or both"* landed;
+`the_repl_keeps_what_the_verb_marks_and_offers_the_rest` in `crates/phosphor/tests/loop_pty.rs`
+drives all three cases through the shipping binary.
+
+**`7a` is untouched and that was a constraint, not an accident.** `7a` draws `[2] always allow git
+push` → *"writes `(allow "git push")` to init.scm"*, captioned *"always-allow writes a legible
+rule"*. The user pressed a digit, so the act is already explicit and a permission grant has to
+survive a restart. The gate is on the heads the layer *listed*; a head it never listed is written
+as given, which is the call the permission surface will make when `T061` builds it
+(`a_head_the_layer_never_offered_is_written_as_given`).
+
+*What is still open, and it is Teej's:* `6b`'s fourth line. The tree and the drawing now disagree
+about one row, and `docs/design/*.dc.html` round-trips to claude.ai — so the amendment happens
+there, not here. Nothing in the build waits on it. **The same treatment §12 and §27 get**, and the
+third entry in a row where the answer is *"rule it on the drawing"*.
+
+### 33 · The CLI verb route is a second dispatcher, and it contradicts the door it lives in
+
+**`T100` was sent to fix two sentences and could only fix one.** The task's brief named a live
+example of the wrong voice, and it is real — verified against the built binary this session, after
+`T100` landed and unchanged by it:
+
+```text
+phosphor set-case --target cursor --case upper
+#refused · not built yet — T026 builds it            exit 1
+```
+
+`T026` is ticked, `Editing::act` has a live `Action::Buffer(BufferAction::SetCase)` arm, and the
+keys work — `the_case_keys_edit_through_the_shipped_keymap` drives them through the shipped
+keymap. So the door says a built, keyboard-reachable capability is unbuilt.
+`scripts/lint-action-arms.sh` is satisfied, because `main.rs` *does* name the variant.
+
+**Running the same capability both ways is what shows it is not a wording problem.** One binary,
+one process, one absence of an editor, two answers:
+
+```text
+phosphor open-repl                   #refused · not built yet — T022 builds it   exit 1
+phosphor --eval '(open-repl!)'       #ok                                         exit 0
+```
+
+The verb route says the capability is unbuilt. The eval route, in the same process, **carries it
+out**. That is `§14`'s shape one level up: that one was two exit codes for one refusal; this is
+*refused* against *done* for one capability.
+
+**The cause, read this session.** `door.rs`'s `apply` is a `match` with three arms —
+`Action::Runtime(Eval)` with a runtime, `Eval` without one, and *everything else* answering
+`not_yet(action.spec().since.task)`. It is an `S2` stub: it predates `T022` wiring a real host in,
+and `main.rs`'s `dispatch` now builds that host (`vm()`) on the verb path too and then never asks
+it anything. The Steel door asks the same host and gets `AppHost::apply`, which carries out nine
+capabilities and refuses the rest **by the same derived sentence** — so the falsehood exists on
+both doors for those rows, in one place, and only the CLI door has a *second* place.
+
+Counted, so the size is not an adjective: **55 action rows** whose declaring task is ticked *and*
+whose variant the binary names are told *not built yet* by `phosphor <verb>` — 21 of them `T026`'s.
+
+It read **56** until this repair pass recomputed it, and the missing one is worth naming rather
+than quietly correcting: `Eval`. It satisfies the definition — ticked, and named by the binary —
+but it is named in `door.rs` rather than in `main.rs`, and it is named there precisely *because*
+`apply`'s first arm carries it out. So it is the one row of the 56 the verb route does not lie
+about, and counting it made the sentence one larger than the defect it describes.
+
+**Why this is not `T100`'s enum change, having considered making it one.** `Outcome::Raised` is a
+missing case in *what happened*: the evaluation neither completed nor was declined. *"Built, but
+this door has nothing to act on"* is a well-formed request the editor declined, which is precisely
+what `Refusal` already means — a different enum. And no new `Refusal` variant repairs it either,
+because **every sentence that arm could say is false for some row**: *"no session here"* is false
+for the nine `AppHost` carries out, and *"not built yet"* is false for the 55 above. The behaviour
+is the defect and the wording is downstream of it. Adding a case would have put a better-worded
+lie in the same place, which is worse than leaving the honest-looking one visible.
+
+**What the fix looks like, and the one thing that has to be ruled first.** Delete the second
+dispatcher: route the verb path's `Action` to the host `main.rs` already built, exactly as the
+Steel door does. Then `phosphor open-repl` answers `#ok`, `phosphor mark-seen` still answers *not
+built yet — T041 builds it* (honest — `AppHost` genuinely does not implement it), and `set-case`'s
+lie survives in **one** place instead of two, where it is the ordinary *arms-owed* debt
+`lint-action-arms.sh` exists for rather than a door disagreeing with itself.
+
+The thing to rule: `phosphor persist-form --form '(…)'` would then **write to the user's
+`init.scm`** from a subprocess, and `crates/phosphor/tests/parity.rs`'s CLI walk runs every verb
+with its canonical example — so a `just gate` would append `sample` to a real config home. That is
+a side effect, a test-isolation question and a `T101` question at once, and it is why this was not
+folded into a voice task. → `T103`.
+
+There is also a **weakening of the parity walk** hiding behind the same sentence, worth fixing
+whichever way `T103` goes: `cli_door`'s expectation is `#refused · not built yet — {task} builds
+it`, and a task id is shared by many rows — 21 rows say `T026`. So a verb that dispatched to a
+*neighbour with the same task* prints the identical line and passes.
+`a_verb_that_answers_for_another_capability_is_caught` plants a fake task id and does not reach
+this. The capability's own name is unique per row and is equally derived.
+
+### 34 · A user's own `init.scm` replaces the shipped layer, and nothing says so
+
+**Run this session, on the built binary.** A config home holding the one file
+`phosphor_core::config`'s header used to draw — an `init.scm` with a single `(set-option!
+"soft-wrap" #t)` in it — with no `$PHOSPHOR_RUNTIME` and a working directory outside the checkout:
+
+```text
+phosphor --eval '(length phosphor/boot-files)'
+#raised · unbound identifier — Cannot reference an identifier before its definition: phosphor/boot-files
+
+$PHOSPHOR_RUNTIME=<the shipped tree>, same expression
+15
+```
+
+Fifteen shipped files against none. The review that found this drove the same config home through
+a pty: an empty statusline, `:` drawing `┊ unknown key : — SPC opens the keymap`, and `ZQ` doing
+nothing — the process had to be killed. **No boot float and no fault**, because `init.scm` ran its
+one form cleanly, so nothing on screen says the product is missing.
+
+**Why.** `Runtime::root` is a first-match-wins `find` over `$PHOSPHOR_RUNTIME`, the config home,
+and `./runtime`. A config home containing an `init.scm` *is* the runtime tree, so it **replaces**
+the shipped layer rather than loading after it. `runtime/README.md` has said so since `T101`
+(*"candidate 2 replaces candidate 3 rather than layering over it"*, *"still open"*); the module
+header in `config.rs` said the opposite — a three-layer stack with the config-home file drawn as
+*"yours. hand-written."* on top of the shipped one — which invited exactly the file that bricks the
+editor. **The header is corrected; the behaviour is not**, and correcting the behaviour is a
+feature rather than a repair: it needs a load path, an order, and a ruling on whether a user's file
+can *remove* a shipped binding as well as add one.
+
+The Emacs argument `T101` was decided on has two halves and only one is built. *"Never writes into
+its own source tree"* is genuinely achieved and pty-tested
+(`the_repl_keeps_what_the_verb_marks_and_offers_the_rest` asserts
+`!runtime.join("persisted.scm").exists()`). *"Shipped lisp plus a user `init.el`"* is approximated:
+a user can only replace.
+
+**The cheap half, if the full one waits.** A boot that picks candidate 2 could say so — one line on
+the statusline, or a float naming which root was chosen — so that an editor with no keymaps is a
+legible state rather than a mystery. That is a `T09x`-sized change and is not being folded into a
+repair pass. → needs a task.
+
+### 35 · `7a`'s always-allow writes a form that faults on the next boot until `T061`
+
+**The write half is intact and tested.** `a_head_the_layer_never_offered_is_written_as_given` puts
+`(allow "git push")` through `persist-form!` with the shipped policy loaded and reads the file
+back: the form is written as given, ungated, which is what `7a`'s *"pressed a digit"* earns.
+
+**The read half faults.** Run this session against the shipped layer, with the form sitting in a
+config home's `persisted.scm`:
+
+```text
+phosphor --eval '(allow "git push")'
+#raised · unbound identifier — Cannot reference an identifier before its definition: allow
+```
+
+`allow` is a free identifier until `T061` builds `runtime/permissions.scm`, and
+`Layer::load_persisted` runs each form and records a fault the boot float draws
+(`a_broken_persisted_form_costs_one_line_and_reaches_the_boot_float`). So the grant persists, and
+then opens a boot float on every start.
+
+**Nothing writes that form today** — the permission surface is `T061` and unbuilt, so this is
+forward-looking rather than live. It is recorded because `T101` ticked `7a`'s clause without
+naming it, and because the answer is a constraint on `T061` rather than a defect in `T101`:
+whatever `runtime/permissions.scm` defines has to load **before** the persisted layer, which
+`Layer::load_persisted`'s *"last, after the whole load order"* already guarantees for anything in
+`phosphor/boot-files`. The thing to check when `T061` lands is that `allow` is defined there and
+not somewhere the boot reaches later. → `T061`.
+
+### 36 · The whole capture library's references are a window or three old
+
+**What running it says now.** With `6b.tape` and `repl-liveness.tape` repaired and
+`run-tapes.sh` collecting failures instead of stopping at the first, a full
+`tapes/diff-tapes.sh` this session captured **every tape with zero capture failures** and reported:
+
+```text
+diff-tapes.sh: 8 frames matched, 33 mismatched, 0 screens skipped
+```
+
+So the tapes are healthy and the *references* are stale. `git log -1` on the drifted PNGs, read
+this session: `broken-init.png` last written at `9a5c0e3` (S2), and `8c.png`, `9c.png`,
+`theme-catppuccin.png`, `sweep-80.png` and `1a.png` at `e702d8a` (Window B). Three windows of
+UI have landed since — the statusline, the gutter, the floats, S4's whole surface — so a mismatch
+is the expected answer and not a regression signal.
+
+**Why that is a finding rather than a chore.** A change detector whose baseline predates three
+windows detects nothing: everything is red, so nothing stands out. That is the same failure mode
+`V007` was written for one layer down — it could not see per-frame tapes, so six of them reported
+*"no reference yet"* forever.
+
+**Two frames were blessed here and thirty-one were not, deliberately.** `6b` and
+`repl-liveness`'s four frames are the ones this pass *caused* to change — their tapes could not be
+captured at all before it, so their references were unreproducible by construction, and all five
+were looked at as images before being kept. The rest were restored with `git checkout`: blessing a
+screen is a review act, `CP-4` is not passed, and thirty-one frames nobody has looked at is exactly
+the kind of bulk approval a golden library dies of. → Teej, at `CP-4` or the window after it.
 
 ---
 
@@ -595,6 +1137,61 @@ only what is left cannot tell you whether the rest was done or forgotten.
   `ib` and never shows you `gsib`. Arguably correct for a grid rendered from the live keymap,
   since a sentence is a composition and not a binding — which makes this a question for whoever
   next holds `T086`, not a defect to fix on sight.
+### The third repair window's list — between `CP-4` and Window E
+
+Staged 2026-08-14 by the `S4` run. The test applied to each is the one [TASKS.md](TASKS.md)'s §B
+used for the window between `CP-3` and `S4`: **does this get more expensive if the next window
+runs first?** That is what put the node-kinds lint before `S4` rather than after — the lint that
+would catch the next window's repeat had to exist before the window that would repeat it.
+
+**Take before Window E, because waiting costs more:**
+
+- **§12's mockup conflict, and it has a deadline nothing else here has.** `fixtures/` is a
+  byte-exact transcription of the worked example, so whichever rendering wins is what every
+  agent-surface tape at `CP-5` shows — and **Window E ends at `CP-5`**. Settling it afterwards
+  means re-capturing. This is Teej's and it is the one item on this list with a hard ordering
+  constraint rather than a preference.
+- **§27's `6c`-versus-§3 ruling**, because `T041` builds the region states the disagreement is
+  about. Deciding it after the states exist means changing them.
+- **§31's `phosphor-term` coverage**, because Window E adds four surfaces that draw and that
+  crate is what keeps them from tearing. The LSP-framing fuzz target rides along.
+- **`T100`** — **done in this window**, which is a change to what [TEAM.md](TEAM.md) schedules. It
+  sat at the front of Window E *"in a phase where nothing else is rewriting the parity
+  expectations, because that is the whole cost of it"* — but `S4` had just rewritten them (three
+  capabilities, 212 → 215) and Window E will rewrite them again. It needed only `T020` and `T024`,
+  both ticked, and touched `door.rs`, `answer.rs` and `parity.rs`, none of which `T041` wants. It
+  also turned out to reach `action.rs`, `runtime.rs`, `registry.rs`, `repl.rs`, `main.rs` and both
+  `6b` snapshots, because a third `Outcome` case is a compile error at every consumer — which is
+  an argument for having run it while the tree was quiet rather than against it. It found `§33`.
+
+**Can wait, with a reason rather than by omission:**
+
+- **`T082`'s alignment surface** — inline virtual text at a column, which needs a
+  `vendor/ratatui-code-editor` patch and its `VENDOR.md` entry. **This is the only item in the
+  window with no creditor**: no task in the graph builds that patch, which is why `T082` is
+  unticked and not re-homed. It costs no more later than now.
+- **§31's remaining property and benchmark gaps** — real, and none of them blocks Window E.
+- **§30's count-lint decision** — a decision, not work.
+
+**Not repair work at all**, listed so nobody adds them to a window: `T040`'s tick (`T041` closes
+it), `apply-workspace-edit` (`T060`), `request-references` (`T047`), `V006` (`T041`), `V008`(2)
+and `V009`. Every one has a named creditor inside a scheduled window.
+
+> **Window E's shape, checked against [TASKS.md](TASKS.md) on 2026-08-14.** Every prerequisite
+> outside the window is ticked — `T019`, `T020`, `T024`, `T028`, `T030`, `T084`, `T015`. `T080` is
+> unticked and annotated *"Built at S2, deliberately not ticked — `T048` ticks this"*, the same
+> honest pattern `T040` just took, so it blocks nothing.
+>
+> The graph is a chain with one root, exactly like `S4`'s: `T041` gates `T042`, `T043`, `T044`,
+> `T045`, `T048`, `T049` and `T087`, with `T046` behind `T045` and `T047` behind `T046`. Peak
+> concurrency after the root is seven.
+>
+> **But plan it by crate, not by task, because `S4` proved the file graph is narrower than the
+> task graph.** `S4`'s three dependency-independent tasks all wanted `theme.rs`, `interpret.rs`
+> and `lib.rs`; running them concurrently would have been the collision rule 1 of *Concurrency*
+> exists for, and the window ran two-wide and then serially instead. A dependency graph says what
+> *may* run together; only the file list says what *can*.
+
 ### Ruled not to do
 
 *Empty since 2026-08-13.* `R7` lived here and no longer does — see the `R7` entry under **Done**
@@ -790,6 +1387,12 @@ it.
   stood here, and to `spine` in [TEAM.md](TEAM.md). The expectation count is deliberately not
   quoted in prose any more: `scripts/doc_claims.py` recomputes it, and a hand-written copy is
   what went stale.
+  **`T100` is done, in the repair window between `CP-4` and Window E** rather than at the front
+  of Window E — `Outcome::Raised` exists and `phosphor --eval '(unseen-regions …)'` answers
+  `#raised · not built yet — T041 builds it` where it used to wear `Error: Generic:`. §9's half
+  turned out to have been closed by `5050b58` and its guard turned out to be a test that could no
+  longer fail; both are recorded on the task. **It also found §33 below**, which is the behaviour
+  under one of the two sentences and could not be fixed by any wording.
 
 - **§19 · Who owns `phosphor-ui/{interpret,frame}.rs`? RULED 2026-08-13: `spine`.** Both files
   are `T079`'s — *tree interpreter + frame cache* — which [TEAM.md](TEAM.md) already assigns to
@@ -912,9 +1515,10 @@ it.
   `runtime/keymaps.scm:420`–`431` binds all nine; and `SetCase` is a capability
   (`crates/phosphor-core/src/action.rs:336`) bound at `keymaps.scm:463` (`gu`), `:464` (`gU`),
   `:529` and `:556` (`~`). R1's arithmetic — *"the vocabulary goes 208 → 209"* — is the tell: it
-  already went, which is why `TASKS.md` read 209 when this was written. (It reads **212** now —
+  already went, which is why `TASKS.md` read 209 when this was written. (It reads **215** now —
   the repair window between `CP-3` and `S4` added `set-macro-recording`, `register` and
-  `place-anchor`. The count is recomputed by `scripts/doc_claims.py`, so it is not a claim
+  `place-anchor`, and `S4` added `ingest-completions`, `ingest-signature-help` and
+  `ingest-hover`. The count is recomputed by `scripts/doc_claims.py`, so it is not a claim
   anybody maintains by hand.)
   **The design question R1 was really asking is ruled, 2026-08-13: the character does not ride
   inside `Motion`.** A payload-carrying arm would make `ParamType::Choice` the wrong type for

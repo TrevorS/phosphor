@@ -100,7 +100,28 @@ pub enum RegionState {
     Watch,
     /// ■ a diagnostic over the region — §7's third overlay, and the one §3's
     /// row 19 *does* draw in the bar, because a diagnostic is trouble (§1).
+    ///
+    /// An **error**, specifically. A server grades what it sends and §1 has a
+    /// tier for each grade; [`Self::Warning`] is the one below this.
     Diagnostic,
+    /// ■ a diagnostic the server graded below an error (`T040`).
+    ///
+    /// §1's attention tier, which is what the vocabulary already calls a
+    /// warning: `phosphor-buffer`'s `severity_from_lsp` maps LSP `WARNING` — and
+    /// an ungraded diagnostic — to `Severity::Attention`, *"worth your eyes"*.
+    /// Without this variant every warning would paint the same trouble-red as a
+    /// compile error, and a file that merely has unused imports would read as a
+    /// file that does not build.
+    ///
+    /// **Which tier it lands on is a reading, and is flagged as one.** §3
+    /// enumerates the column as *"unseen/diagnostic/none"* and no mockup draws
+    /// an amber bar at all — `6c`, `1a`, `8c` and `9a`–`9c` draw claude-green
+    /// and trouble-red only. The amber tier is not new ([`Self::NeedsYou`]
+    /// already reaches it, and [`Self::mark`] gives both the same one), so what
+    /// is unwritten is a compiler warning arriving in the cell that otherwise
+    /// says *"claude is waiting on you"*. Escalated in the `T040` report next to
+    /// the `6c`-versus-§3 conflict, not decided here.
+    Warning,
     /// A failure: §1's trouble is *"deletions, failures, disconnects"*, and §3
     /// gives a failed region its own row tint. Same tier as a diagnostic.
     Failure,
@@ -116,12 +137,13 @@ impl RegionState {
     /// compile error at the array's length, and `T031`'s acceptance —
     /// *"priority resolution unit-tested across all overlap combinations"* —
     /// enumerates the power set of this array in every order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Unseen,
         Self::Seen,
         Self::Thread,
         Self::Watch,
         Self::Diagnostic,
+        Self::Warning,
         Self::Failure,
         Self::NeedsYou,
     ];
@@ -135,7 +157,7 @@ impl RegionState {
             // module header, and §3's rows 18 and 20.
             Self::Seen | Self::Thread | Self::Watch => StateMark::None,
             Self::Unseen => StateMark::ClaudeUnseen,
-            Self::NeedsYou => StateMark::Attention,
+            Self::NeedsYou | Self::Warning => StateMark::Attention,
             Self::Diagnostic | Self::Failure => StateMark::Trouble,
         }
     }
@@ -382,13 +404,14 @@ mod tests {
             (RegionState::Thread, StateMark::None),
             (RegionState::Watch, StateMark::None),
             (RegionState::Diagnostic, StateMark::Trouble),
+            (RegionState::Warning, StateMark::Attention),
             (RegionState::Failure, StateMark::Trouble),
             (RegionState::NeedsYou, StateMark::Attention),
         ] {
             assert_eq!(state.mark(), expected, "{state:?}");
         }
         // And the table is the whole enum, not a sample of it.
-        assert_eq!(RegionState::ALL.len(), 7);
+        assert_eq!(RegionState::ALL.len(), 8);
     }
 
     /// §3's ladder, said a second way: the highest tier anything in the set
@@ -424,8 +447,8 @@ mod tests {
         out
     }
 
-    /// **`T031`'s acceptance, exhaustively.** Every subset of the seven states
-    /// — all 128 of them — in every order, which is 13 700 sequences in total.
+    /// **`T031`'s acceptance, exhaustively.** Every subset of the eight states
+    /// — all 256 of them — in every order, which is 109 601 sequences in total.
     ///
     /// The space is small enough to enumerate, so it is enumerated rather than
     /// sampled: a row is covered by whichever regions happen to cover it, in
@@ -457,8 +480,8 @@ mod tests {
             }
         }
 
-        assert_eq!(subsets, 128, "every subset of the seven states");
-        assert_eq!(sequences, 13_700, "every subset, in every order");
+        assert_eq!(subsets, 256, "every subset of the eight states");
+        assert_eq!(sequences, 109_601, "every subset, in every order");
     }
 
     #[test]
@@ -519,6 +542,24 @@ mod tests {
         assert_eq!(
             resolve([RegionState::Unseen, RegionState::Failure]),
             StateMark::Trouble
+        );
+    }
+
+    #[test]
+    fn an_error_outranks_a_warning_on_the_same_row() {
+        // `T040`'s own pair, and the reason `Warning` is a state rather than a
+        // second colour decided at the drawing: one unused import must not make
+        // a row that also fails to compile look like a warning, and a file with
+        // only warnings must not read as a file that does not build.
+        assert_eq!(
+            resolve([RegionState::Warning, RegionState::Diagnostic]),
+            StateMark::Trouble
+        );
+        assert_eq!(resolve([RegionState::Warning]), StateMark::Attention);
+        assert_eq!(
+            resolve([RegionState::Warning, RegionState::Unseen]),
+            StateMark::Attention,
+            "a warning still outranks claude's unseen marker"
         );
     }
 

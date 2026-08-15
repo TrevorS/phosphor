@@ -14,6 +14,8 @@
 //! nothing else. Keep it to that.
 
 pub mod buffer_view;
+pub mod csv;
+pub mod diagnostics;
 pub mod float;
 pub mod frame;
 pub mod gutter;

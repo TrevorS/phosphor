@@ -11,8 +11,8 @@ What lands here, and when:
 | `init.scm` | boot: load order, defaults | T021 |
 | `keymaps.scm` | the live table, `keymap-set!`, key dispatch; then every binding, with counts and named registers | T022, then T033 |
 | `statusline.scm` | the whole statusline: which segments, in what order, joined how, and the shed ladder | T025 |
-| `repl.scm` | which forms the REPL persists, and where | T022 |
-| `persisted.scm` | what the REPL wrote down; loads last | T022 |
+| `repl.scm` | the `persist!` verb, which forms the REPL offers to keep, and where they go | T022, T101 |
+| `languages/` | the first-class twelve, one `define-language!` per file — the whole bundled set, with no Rust list beside it | T037 |
 | `pickers/` | picker sources and columns | `store` |
 | `permissions.scm`, `inbox.scm`, `watch.scm` | the directing surfaces | `agent` |
 
@@ -61,6 +61,20 @@ planted in it.
 One limit worth knowing: an unclosed `(` is not a broken form, it is a form that has not
 finished, so everything after it is *inside* it and goes down with it. The float names
 the line it opened on.
+
+A load-order entry may name a subdirectory — `languages/rust.scm` — as long as it stays
+inside this tree; `boot.rs`'s `is_confined` refuses an absolute path or a `..`. That is
+what lets `T037`'s twelve declarations be twelve files rather than one, and it is why
+`crates/phosphor-steel/tests/shipped_runtime.rs` walks one level down: a flat scan there
+would have gone on passing while twelve unchecked files shipped.
+
+## Languages are declared here, not in Rust
+
+`languages/` **is** the bundled set. `phosphor_core::language::Languages` is an empty
+table that `define-language!` fills, and it ships with no list in it — so the twelve are
+not privileged, and the thirteenth you type at `:repl` takes the same path they did
+(`T037`, and `CP-4`'s manual half). `languages/README.md` has the four fields and why
+three of the twelve declare no server.
 
 ## The keymap is live because it is only here
 
@@ -113,37 +127,75 @@ is still yours after a restart. `phosphor/status-line` itself is the exception t
 `set!` rule — Rust asks for it by name on every composition, so redefining *it* takes
 effect immediately, and a whole statusline of your own is one form.
 
-## What the REPL persists, and where
+## What the REPL keeps, and where — `T101`
 
-`repl.scm` binds `phosphor/persistent-heads`. A form typed at `:repl` whose head is in
-that list is appended after it runs — `6b`'s `⇒ #ok · persisted to …`; a form whose head
-is not is session-only. **The REPL persists, not `keymap-set!`**: only the REPL has the
-source text (a closure cannot be printed back as the form that made it), and a form
-loaded at boot must not append itself to the file it came from.
+**Evaluating is evaluating.** A form typed at `:repl` runs and is gone; `(persist! <form>)` runs
+it *and* writes the line down. `persist!` is an identity function — a mark, not a mechanism —
+because **the REPL persists, not `keymap-set!`**: only the REPL has the source text (a closure
+cannot be printed back as the form that made it), which is also what makes a `(persist! …)` read
+back at boot idempotent. It evaluates its argument and appends nothing.
 
-**It is not written to `init.scm`, and the reason is the boot order above.** `init.scm`
-runs to its last form *before* Rust reads the load order it declared, so a form appended
-there can only use names Rust registered — `(keymap-set! …)` is defined in `keymaps.scm`,
-which has not loaded yet, and a persisted rebind comes back on the next start as a
-free-identifier fault in a boot float. That is not a hypothetical: it is what the first
-run of this feature did.
+`repl.scm` binds three names for this. `phosphor/persist-verb` is the head Rust writes without
+asking. `phosphor/offered-heads` is the eight config verbs the REPL routes to `persist-form!` so
+the receipt can answer `⇒ #ok · not persisted — (persist! …) keeps it` — the
+offer, at the moment you would want it. `phosphor/persistent-heads` is the two lists joined, and
+is the name `phosphor-steel` reads. A head in neither list gets no persistence line at all:
+`(+ 1 2)` and every query are session-only and silent, because this is a file of decisions and
+the receipt is not a transcript.
 
-So `repl.scm` binds `phosphor/persist-file` to the file that loads **last**
-(`persisted.scm`), where everything a persisted form could depend on is already defined.
-A layer that declares no such file gets `init.scm`, which is right for a one-file layer
-and is what `6b` draws. The regression is
-`crates/phosphor/src/main.rs`'s `a_persisted_rebind_survives_the_next_boot`, which types a
-rebind, throws the editor away, and starts another one over the same tree.
+A head the layer *never listed* is written as given — which is `7a`'s always-allow (`[2] always
+allow git push` → `(allow "git push")`). Pressing a digit was already the explicit act, and a
+permission grant has to survive a restart.
+
+**Teej ruled this on 2026-08-14 and it overrides `6b`**, which draws a bare `(keymap-set! …)`
+answering `· persisted to init.scm`. The argument is Emacs: `M-:` and `ielm` never persist, and
+`M-x customize` is a deliberate *save this*. See [OPEN-QUESTIONS.md](../docs/OPEN-QUESTIONS.md)
+§32; the drawing is amended at claude.ai, not here.
+
+### Where it is written
+
+`$XDG_CONFIG_HOME/phosphor/persisted.scm` (or `~/.config/phosphor/…`) — **not this tree**. It
+used to be a name joined to the runtime root, and in a dev checkout that root is *the
+repository*: `CP-4`'s manual test left a `(define-language! "lua" …)` in a tracked file. Config
+rather than state, because the file's own header promises *"it is yours to edit"* and a binding
+you kept belongs with your dotfiles; `crates/phosphor-core/src/config.rs` has the argument and
+the fallbacks.
+
+**And it loads last, after the whole boot order above.** `init.scm` runs to its last form
+*before* Rust reads the load order it declared, so a form appended *there* could only use names
+Rust registered — `(keymap-set! …)` is defined in `keymaps.scm`, which has not loaded yet, and a
+persisted rebind comes back on the next start as a free-identifier fault in a boot float. That is
+not a hypothetical: it is what the first run of this feature did. `persisted.scm` is no longer in
+`phosphor/boot-files` at all, so "last" is a call site (`main.rs`'s `Layer::load_persisted`)
+rather than a list position anyone can reorder. A fault in it still reaches the same float, form
+by form. The regressions are `a_persisted_rebind_survives_the_next_boot` and
+`a_broken_persisted_form_costs_one_line_and_reaches_the_boot_float`, and
+`a_form_kept_at_the_repl_survives_a_restart_of_the_binary` drives it through the shipping binary.
 
 ## Where this tree is read from
 
 `Runtime::root()` takes the first of:
 
 1. `$PHOSPHOR_RUNTIME`, taken at its word;
-2. `$XDG_CONFIG_HOME/phosphor` (or `~/.config/phosphor`) containing an `init.scm`;
+2. `phosphor_core::config::config_dir()` — `$XDG_CONFIG_HOME/phosphor` or `~/.config/phosphor` —
+   containing an `init.scm`. **The same function `persist-form!` writes through**, so the layer
+   that boots and the file that is appended to cannot disagree about where the config home is; a
+   *relative* `XDG_CONFIG_HOME` is ignored on both sides per the XDG spec
+   (`a_relative_xdg_config_home_boots_no_layer_at_all`);
 3. `./runtime` containing an `init.scm` — the checkout, so `cargo run` in the repo boots
    the layer you are editing.
 
-**Open, and flagged rather than decided:** whether a shipped layer and a user's own layer
-are two trees that both load, and which one `persist-form` appends to (`6b`'s *"persisted
-to init.scm"*, `7a`'s always-allow rule). Today there is one tree.
+**Still open, and narrower than it was:** whether a shipped layer and a user's own `init.scm` are
+two trees that both load. Today there is one tree, and candidate 2 *replaces* candidate 3 rather
+than layering over it. `T101` settled the half that was doing damage — where a *written* form
+goes, and that the persisted layer loads from the config home whichever tree booted — so what is
+left is a question about hand-written `init.scm`, not about `persist-form`.
+
+What a user actually hits when they take candidate 2 up on the offer — an editor with no keymaps,
+no statusline and no way to quit, with **no fault on screen** — is measured in
+[OPEN-QUESTIONS.md](../docs/OPEN-QUESTIONS.md)'s §34.
+
+One thing candidate 2 does *not* cost, since the repair pass: a one-file layer there is the boot
+root **and** the persist target, and the binary used to evaluate it twice on every start.
+`Layer::booted_already` reads the boot report and skips a file the boot already ran
+(`a_one_file_layer_in_the_config_home_boots_once_rather_than_twice`).

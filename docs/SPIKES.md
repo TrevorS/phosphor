@@ -334,15 +334,24 @@ produce. Nothing on the list is a default.
 > not to"* and *"nobody got round to it"* look identical in a table a year later, and only one of
 > them is a decision. The evidence is in each row. Everything unstruck below is installed, wired
 > to a `just` recipe, and exercised.
+>
+> **And it drifted again the next day, which is the argument this blockquote could not make for
+> itself.** `S4` added two `[[bench]]` entries and a fuzz target in one commit (`0c12f68`:
+> `phosphor-buffer/benches/csv.rs`, `phosphor-ui/benches/diagnostics.rs`,
+> `fuzz/fuzz_targets/csv_parse.rs`), and the `divan` and `cargo-fuzz` rows below both went stale
+> the moment it landed — *four* benchmarks where six now exist, *four* fuzz targets where five do.
+> Corrected here, counted against the tree. An audit fixes a table once; nothing has yet stopped
+> the next commit from breaking it, and the options are in
+> [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) §30 for Teej rather than folded in here.
 
 | Tool | Version | The specific risk it catches |
 |---|---|---|
 | **`cargo-deny`** | 0.20.2 | **The one that matters most.** A `[bans]` rule denying multiple versions of `ratatui` / `ratatui-core` would have caught the `tui-textarea` and `ratatui-markdown` 0.29-vs-0.30 split *mechanically*, before either reached the plan. Also covers licences (`ratatui-code-editor` is MIT, `ratatui-markdown` is `MIT OR Apache-2.0`) and the advisory DB — which subsumes `cargo-audit`, so we don't need both. |
 | **`insta`** | 1.48.0 | Tier 1 golden-frame snapshots (T018). Purpose-built for exactly this, with review tooling for intentional changes. |
 | **`proptest`** | 1.11.0 | T017's statusline invariant — never two rows, at every width from 40 to 200. This is a property, not a set of examples. |
-| ~~`divan`~~ | — | **Not adopted, and the build says so rather than this row.** It was picked for `T079`'s benchmark; all four benchmarks are `harness = false` with no framework at all (`crates/*/Cargo.toml`, four `[[bench]]` entries; `divan` appears in no manifest). The reason is in `phosphor-ui/Cargo.toml`: the measurement is two counters over a simulated clock and *"the interesting number is their ratio, not a confidence interval"* — which is the same argument against `divan` as against `criterion`. Kept as a struck row because a tool this table names and the tree does not use is exactly the drift the table exists to prevent. |
+| ~~`divan`~~ | — | **Not adopted, and the build says so rather than this row.** It was picked for `T079`'s benchmark; all six benchmarks are `harness = false` with no framework at all (`crates/*/Cargo.toml`, six `[[bench]]` entries; `divan` appears in no manifest). The reason is in `phosphor-ui/Cargo.toml`: the measurement is two counters over a simulated clock and *"the interesting number is their ratio, not a confidence interval"* — which is the same argument against `divan` as against `criterion`. Kept as a struck row because a tool this table names and the tree does not use is exactly the drift the table exists to prevent. |
 | **`cargo-llvm-cov`** | — | Per-file coverage, worst first (`just coverage`). **Deliberately not a gate and no floor** — the justfile's own block argues it at length: a coverage floor is a change detector, it reddens for reasons unrelated to correctness, and the response is always to lower it or to write a test whose only job is to colour a line. Added by the test-depth run; this table did not name it until the pre-`S4` tooling audit. |
-| **`cargo-fuzz`** | — | Four targets over the parsers that take bytes from outside the process. `scripts/lint-fuzz-targets.sh` checks the targets against the parsers they claim, so a target that stops covering its parser fails the gate rather than passing quietly. Added by the test-depth run, and missing from this table for the same reason `divan` outlived its adoption: **nothing recomputes this table.** |
+| **`cargo-fuzz`** | — | Five targets over the parsers that take bytes from outside the process. `scripts/lint-fuzz-targets.sh` checks the targets against the parsers they claim, so a target that stops covering its parser fails the gate rather than passing quietly. Added by the test-depth run, and missing from this table for the same reason `divan` outlived its adoption: **nothing recomputes this table.** |
 | **`cargo-hack`** | 0.6.45 | [Q4](IMPLEMENTATION-PLAN.md#q4)'s guardrail: the transcript must render with the markdown feature **on and off**. `--feature-powerset` proves it rather than trusting it. |
 | **`cargo-nextest`** | 0.9.143 | Per-test process isolation. We have tests that touch the XDG state dir and terminal state; shared-process test runners make those flaky in ways that waste hours. |
 | **`cargo-machete`** | 0.9.2 | Vendored forks accumulate dependencies we don't use — the editor fork alone arrives with 16 grammars, `arboard` and `rust-embed`. |

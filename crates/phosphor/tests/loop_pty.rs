@@ -52,6 +52,7 @@ mod driven {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
+    use phosphor_core::config::config_dir_in;
     use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
     use rustix::termios::{Winsize, tcsetwinsize};
 
@@ -115,6 +116,13 @@ mod driven {
     impl Editor {
         /// Starts the shipping binary on `file`, with `state` as its
         /// `$XDG_STATE_HOME`, and waits for the first frame.
+        ///
+        /// `$XDG_CONFIG_HOME` is set too, and `T101` is why it has to be: the
+        /// persisted layer is read from and written to the config home now, so
+        /// a child that inherited the developer's would read *their*
+        /// `~/.config/phosphor` — and the first test that persisted anything
+        /// would write into it. [`config_home`] derives one nothing else
+        /// shares from the state home every caller already passes.
         fn open(file: &Path, state: &Path, runtime: &Path) -> Self {
             let binary = PathBuf::from(env!("CARGO_BIN_EXE_phosphor"));
             let (master, slave_path) = open_pty();
@@ -131,6 +139,7 @@ mod driven {
                 .arg(file)
                 .env("PHOSPHOR_RUNTIME", runtime)
                 .env("XDG_STATE_HOME", state)
+                .env("XDG_CONFIG_HOME", config_home(state))
                 .env("TERM", "xterm-256color")
                 .stdin(Stdio::from(slave.try_clone().expect("the slave clones")))
                 .stdout(Stdio::from(slave.try_clone().expect("the slave clones")))
@@ -224,6 +233,90 @@ mod driven {
             self.accounted.store(target, Ordering::Relaxed);
         }
 
+        /// Writes `keys` and waits until `wanted` has been drawn, or fails.
+        ///
+        /// **The counted-frames discipline cannot be used for anything a
+        /// server answers**, and that is a fact about servers rather than a
+        /// weakening of the harness: `press` asserts one frame per key because
+        /// the terminal is the only producer of a keystroke's frame, and an
+        /// LSP answer arrives on its own schedule from another thread. What is
+        /// asserted here instead is stronger in the one way that matters — not
+        /// *"a frame happened"* but *"this text reached the screen"* — and a
+        /// wiring that never answers fails on the deadline rather than
+        /// passing quietly.
+        ///
+        /// The accounting is resynchronised afterwards ([`Editor::settle`]),
+        /// so an ordinary `press` may follow.
+        fn press_until(&self, keys: &[u8], wanted: &str) -> String {
+            let mark = self.mark();
+            (&*self.master)
+                .write_all(keys)
+                .expect("the child takes the keys");
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                let drawn = self.since(mark);
+                if shows(&drawn, wanted) {
+                    // **Settle first, then read again.** The wanted text can
+                    // appear in the first half of a frame whose second half is
+                    // still on the wire — under load this returned a float
+                    // whose documentation block had not been written yet, and
+                    // the assertion after it failed on a frame that was about
+                    // to be complete. The transcript is re-read afterwards so
+                    // what comes back is whole.
+                    self.settle();
+                    return self.since(mark);
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "{wanted:?} was never drawn after typing {:?}. Drawn since: {drawn}",
+                    printable(keys)
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        /// Writes `keys` and waits for the editor to go quiet, asserting
+        /// nothing about frames.
+        ///
+        /// For a key whose effect is **in the buffer** rather than on a frame
+        /// this harness can read. [`printable`]'s own doc says why that is a
+        /// real distinction: a frame is a diff, so accepting a completion over
+        /// a word that shares a prefix redraws only the suffix — `ault_delay`
+        /// reaches the transcript and `let base = default_delay` never does.
+        /// The assertion for those belongs on the file, after `:w`.
+        fn press_quietly(&self, keys: &[u8]) {
+            (&*self.master)
+                .write_all(keys)
+                .expect("the child takes the keys");
+            self.settle();
+        }
+
+        /// Waits for the editor to stop drawing, then takes the frame count as
+        /// accounted for.
+        ///
+        /// A server pushes — diagnostics arrive unasked and a lookup answers
+        /// when it answers — so the frame a key produced and the frames an
+        /// answer produced cannot be told apart by counting. This is the seam
+        /// where a test stops counting and starts reading.
+        fn settle(&self) {
+            let mut quiet_since = Instant::now();
+            let mut last = self.frames.load(Ordering::Relaxed);
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while quiet_since.elapsed() < Duration::from_millis(250) {
+                assert!(
+                    Instant::now() < deadline,
+                    "the editor never stopped drawing"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+                let now = self.frames.load(Ordering::Relaxed);
+                if now != last {
+                    last = now;
+                    quiet_since = Instant::now();
+                }
+            }
+            self.accounted.store(last, Ordering::Relaxed);
+        }
+
         /// Everything drawn since `mark`, as printable text.
         fn since(&self, mark: usize) -> String {
             let transcript = self.transcript.lock().expect("the reader has not panicked");
@@ -254,6 +347,12 @@ mod driven {
                 );
                 std::thread::sleep(Duration::from_millis(2));
             }
+        }
+
+        /// Everything drawn so far, replayed onto a grid — see [`Screen`].
+        fn screen(&self) -> Screen {
+            let transcript = self.transcript.lock().expect("the reader has not panicked");
+            Screen::replayed(&transcript)
         }
 
         /// The tail of the transcript, for a failure message.
@@ -449,14 +548,30 @@ mod driven {
             .canonicalize()
             .expect("the shipped editor layer is where the workspace keeps it");
         let to = into.join("runtime");
-        fs::create_dir_all(&to).expect("a runtime directory");
-        for entry in fs::read_dir(&from).expect("the shipped layer") {
+        copy_scm_tree(&from, &to);
+        to
+    }
+
+    /// Every `.scm` under `from`, into `to`, **preserving relative paths**.
+    ///
+    /// Flat was enough until `T037`. `runtime/` was one directory of files, so a
+    /// `read_dir` taking `*.scm` staged the whole layer; `init.scm`'s
+    /// `phosphor/boot-files` now names twelve `languages/*.scm`, and a flat copy
+    /// stages an `init.scm` asking for files nobody put there. Seven tests here
+    /// failed exactly that way, each reporting a boot fault rather than the
+    /// missing copy — so the recursion is the fix and this comment is the reason
+    /// the next subdirectory does not repeat it.
+    fn copy_scm_tree(from: &Path, to: &Path) {
+        fs::create_dir_all(to).expect("a runtime directory");
+        for entry in fs::read_dir(from).expect("the shipped layer") {
             let entry = entry.expect("a readable entry");
-            if entry.path().extension().is_some_and(|ext| ext == "scm") {
-                fs::copy(entry.path(), to.join(entry.file_name())).expect("copy");
+            let path = entry.path();
+            if path.is_dir() {
+                copy_scm_tree(&path, &to.join(entry.file_name()));
+            } else if path.extension().is_some_and(|ext| ext == "scm") {
+                fs::copy(&path, to.join(entry.file_name())).expect("copy");
             }
         }
-        to
     }
 
     /// A scratch directory that removes itself.
@@ -482,6 +597,29 @@ mod driven {
             fs::create_dir_all(&state).expect("a state home");
             state
         }
+
+        /// Where this session's persisted layer lives — `T101`.
+        ///
+        /// The directory the child will read `persisted.scm` out of, made so a
+        /// test can write one *before* the editor starts. Derived through the
+        /// product's own [`config_dir_in`] rather than by joining `phosphor`
+        /// here, so a test cannot be seeding a directory the binary does not
+        /// look in.
+        fn persisted(&self) -> PathBuf {
+            let dir = config_dir_in(&config_home(&self.state()));
+            fs::create_dir_all(&dir).expect("a config home");
+            dir
+        }
+    }
+
+    /// `$XDG_CONFIG_HOME` for a session, derived from its state home.
+    ///
+    /// One definition, because two would be a test seeding a directory the
+    /// child does not read — which is the whole failure mode `T101` was
+    /// reported for, one level up. Every caller's state home is
+    /// `<scratch>/state`, so its sibling is a config home nothing else shares.
+    fn config_home(state: &Path) -> PathBuf {
+        state.with_file_name("config")
     }
 
     impl Drop for Scratch {
@@ -563,6 +701,116 @@ mod driven {
     }
 
     // -----------------------------------------------------------------------
+    // `T101` — explicit persist, and a real config home
+    // -----------------------------------------------------------------------
+
+    /// **The whole of `T101`'s first half, in one session.** Ruled by Teej on
+    /// 2026-08-14 and it overrides `6b`, which draws a bare `(keymap-set! …)`
+    /// answering `⇒ #ok · persisted to init.scm`.
+    ///
+    /// Three forms, one prompt: the bare rebind is *offered*, the marked one is
+    /// *kept*, and `7a`'s rule — a direct call on the capability, which is what
+    /// `[2] always allow git push` will be — is written as given. The fourth
+    /// assertion is the one `CP-4` earned: nothing lands in the runtime tree,
+    /// which in a checkout is the repository.
+    #[test]
+    fn the_repl_keeps_what_the_verb_marks_and_offers_the_rest() {
+        let scratch = Scratch::new("explicit-persist");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\n").expect("a fixture");
+        let persisted = scratch.persisted().join("persisted.scm");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+
+        // Evaluating is evaluating.
+        let bare = editor.mark();
+        editor.press_until(
+            b"(keymap-set! \"gz\" (lambda () (open-repl!)))\r",
+            "not persisted",
+        );
+        assert!(
+            !editor.since(bare).contains("persisted to"),
+            "a bare config verb is session-only; frames were: {}",
+            editor.since(bare)
+        );
+        assert!(
+            !persisted.exists(),
+            "and it wrote no file at all, not even an empty one"
+        );
+
+        // The verb is the explicit act.
+        editor.press_until(
+            b"(persist! (keymap-set! \"gy\" (lambda () (open-repl!))))\r",
+            "persisted to persisted.scm",
+        );
+
+        // `7a`: *"writes (allow \"git push\") to init.scm"*. The capability
+        // called directly, which is the call the permission surface will make
+        // (`T061`) — no verb, no gate, because pressing a digit was the act.
+        editor.press_until(
+            b"(persist-form! \"(allow \\\"git push\\\")\")\r",
+            "persisted to persisted.scm",
+        );
+        editor.quit();
+
+        let written = fs::read_to_string(&persisted).expect("the config home holds the layer");
+        assert!(
+            written.contains(r#"(persist! (keymap-set! "gy""#),
+            "the marked form was kept whole: {written:?}"
+        );
+        assert!(
+            written.contains(r#"(allow "git push")"#),
+            "7a's rule is written as given, not wrapped: {written:?}"
+        );
+        assert!(
+            !written.contains("\"gz\""),
+            "the offered form never reached the file: {written:?}"
+        );
+        assert!(
+            !runtime.join("persisted.scm").exists(),
+            "T101: nothing is written into the tree that booted — in a checkout that is the repo"
+        );
+    }
+
+    /// **And it comes back.** A second process over the same config home, and
+    /// the binding is in force on the next key.
+    ///
+    /// The load order is what this really tests. `init.scm` runs to its last
+    /// form *before* Rust reads the load order it declared, so a persisted
+    /// `(keymap-set! …)` that loaded any earlier than last would come back as a
+    /// free-identifier fault — `keymaps.scm` has not run yet. `T101` took the
+    /// file out of `phosphor/boot-files` entirely, so "last" is now
+    /// `Layer::load_persisted`'s call site rather than a list position.
+    #[test]
+    fn a_form_kept_at_the_repl_survives_a_restart_of_the_binary() {
+        let scratch = Scratch::new("persist-restart");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\n").expect("a fixture");
+
+        let first = Editor::open(&file, &scratch.state(), &runtime);
+        first.press_until(b":repl\r", "steel");
+        first.press_until(
+            b"(persist! (keymap-set! \"gz\" (lambda () (open-repl!))))\r",
+            "persisted to persisted.scm",
+        );
+        first.quit();
+
+        // A fresh process. It has never seen the form; it reads it.
+        let second = Editor::open(&file, &scratch.state(), &runtime);
+        let before = second.mark();
+        second.press(b"gz");
+        let frame = second.since(before);
+        assert!(
+            frame.contains("steel"),
+            "the persisted rebind opened the REPL on a fresh process; frame was: {frame}"
+        );
+        second.quit();
+    }
+
+    // -----------------------------------------------------------------------
     // `R18` — the unknown-key hint
     // -----------------------------------------------------------------------
 
@@ -616,6 +864,21 @@ mod driven {
     fn za_closes_the_fold_the_cursor_is_in() {
         let scratch = Scratch::new("folds");
         let runtime = copy_layer(&scratch.path);
+        // **This test is about folds, not about rust-analyzer.** A `.rs` file
+        // starts whatever `runtime/languages/rust.scm` declares, and on a
+        // machine that has that server it changes state on its own schedule,
+        // wakes the loop (`events::AppEvent::Woke`) and draws a frame no key
+        // asked for — which `press` is entitled to call a bug, and which makes
+        // the test behave differently depending on what is installed. So the
+        // copied layer redeclares `rust` with no server: turning one off is
+        // what `define-language!` is for, and this is the first caller of it.
+        fs::write(
+            scratch.persisted().join("persisted.scm"),
+            "(define-language! \"rust\"\n  (hash \"extensions\" '(\"rs\")\n        \
+             \"grammar\" \"rust\"\n        \"lsp_command\" (list)\n        \
+             \"comment_prefix\" \"//\"))\n",
+        )
+        .expect("the config home takes a declaration");
         let file = scratch.path.join("folded.rs");
         fs::write(
             &file,
@@ -1197,6 +1460,7 @@ mod driven {
                 .arg(file)
                 .env("PHOSPHOR_RUNTIME", runtime)
                 .env("XDG_STATE_HOME", state)
+                .env("XDG_CONFIG_HOME", config_home(state))
                 .env("PHOSPHOR_KEYBOARD", keyboard)
                 .env("TERM", "xterm-256color")
                 .stdin(Stdio::from(slave.try_clone().expect("the slave clones")))
@@ -1223,5 +1487,1403 @@ mod driven {
             editor.await_frames(1);
             editor
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // `S4` — the language server, from a keystroke
+    // -----------------------------------------------------------------------
+
+    /// The toy server, as `runtime/languages/` would declare it.
+    ///
+    /// **Declared, not configured.** This is the same `define-language!` the
+    /// shipped twelve are, appended to the **config home's** `persisted.scm` —
+    /// which `T101` moved out of the runtime tree and which the binary loads
+    /// after the whole boot order, and which is what the REPL writes into. So
+    /// every one of these tests is `CP-4`'s manual half run from a pty: a
+    /// thirteenth language, its server, and its comment syntax, with no Rust
+    /// in the path.
+    ///
+    /// `mode` picks which half of the server runs; see the fixture's header for
+    /// why one process cannot do both under a frame-counting harness.
+    fn declare_toy(scratch: &Scratch, mode: &str) {
+        let server = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/toy_language_server.py")
+            .canonicalize()
+            .expect("the toy server is beside this file");
+        let form = format!(
+            "(define-language! \"toy\"\n  (hash \"extensions\" '(\"toy\")\n        \
+             \"grammar\" void\n        \"lsp_command\" (list \"python3\" {:?} {mode:?})\n        \
+             \"comment_prefix\" \";\"))\n",
+            server.display().to_string(),
+        );
+        let persisted = scratch.persisted().join("persisted.scm");
+        let mut existing = fs::read_to_string(&persisted).unwrap_or_default();
+        existing.push_str(&form);
+        fs::write(&persisted, existing).expect("the config home takes a declaration");
+    }
+
+    /// Waits until `wanted` has been drawn **at any point this session**, then
+    /// settles and hands back everything drawn.
+    ///
+    /// **Not [`Editor::press_until`], and the difference is a race that one
+    /// cannot avoid.** That waits for text to appear *since a mark*, which is
+    /// right for a key's own frame and wrong for a chip that changes in place:
+    /// a frame is a diff, so `starting …` becoming `✓` repaints the glyph and
+    /// skips the name beside it. Whether the name is ever redrawn after the
+    /// mark depends on whether the server won its race with the first frame —
+    /// a fact about process startup rather than about the editor, and the
+    /// reason this exists. It cost a `just gate` run to find, on a test that
+    /// had passed a dozen times.
+    ///
+    /// `contains` rather than `shows`: the callers here match strings they
+    /// wrote themselves, and a fuzzy match on a one-character needle answers
+    /// yes to a row of spaces.
+    fn shown(editor: &Editor, wanted: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let session = editor.since(0);
+            if session.contains(wanted) {
+                editor.settle();
+                return editor.since(0);
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{wanted:?} was never drawn. Drawn this session: {session}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Waits until the toy server has answered `initialize`, and resynchronises
+    /// the frame count.
+    ///
+    /// **The counted-frames discipline and an unsolicited producer cannot both
+    /// be true**, and since the repair pass there is a second unsolicited
+    /// producer: a server changing state wakes the loop
+    /// (`events::AppEvent::Woke`) so the statusline's chip cannot go stale. Two
+    /// frames therefore arrive on their own between `open` and the first
+    /// keystroke — `starting …` and `toy ✓` — and [`Editor::press`] is entitled
+    /// to call that a bug, because for a *keystroke* it is.
+    ///
+    /// So every `S4` test that counts frames waits here first. What makes that
+    /// possible rather than a sleep is the chip itself: `toy ✓` is the server's
+    /// own `serverInfo.name` out of its `initialize` reply, so this is *"the
+    /// server is up"* stated by the editor rather than guessed at by the test.
+    fn ready(editor: &Editor) {
+        drop(shown(editor, "toy-lsp \u{2713}"));
+    }
+
+    /// A scratch tree with the toy language declared and one `.toy` file in it.
+    fn toy(name: &str, mode: &str, contents: &str) -> (Scratch, PathBuf, PathBuf) {
+        let scratch = Scratch::new(name);
+        let runtime = copy_layer(&scratch.path);
+        declare_toy(&scratch, mode);
+        let file = scratch.path.join("sample.toy");
+        fs::write(&file, contents).expect("a fixture");
+        (scratch, runtime, file)
+    }
+
+    /// **`T038`'s *done when*, verbatim:** *"screen `7c`'s completion
+    /// reproduces **from a keystroke** — typing in insert mode in the running
+    /// binary raises the float"*.
+    ///
+    /// Nothing here presses a completion key. One character is typed into the
+    /// buffer, and everything between that character and the frame is real:
+    /// the loop notices the edit stream moved in insert mode against a server
+    /// that is ready, `LanguageServers` asks it over a pipe to a real process,
+    /// the answer comes back on another thread through `crate::events`' queue,
+    /// and the composed `Node::Completion` is drawn by the interpreter through
+    /// the host's own `Resources`. Break any one of those and this goes red;
+    /// nothing here builds a tree.
+    #[test]
+    fn typing_in_insert_mode_raises_the_completion_float() {
+        let (scratch, runtime, file) = toy(
+            "typing",
+            "completion",
+            "let retry = RetryPolicy\nlet base = de\n",
+        );
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"j");
+        // `A` — append at the end of the line, which is an insert session and
+        // not yet an edit.
+        editor.press(b"A");
+
+        // **Asked for once explicitly, and this is how the test waits for the
+        // child process to finish `initialize`.** A `<C-x>` is queued into the
+        // server's own task and answered when it is ready; a *typed* trigger
+        // is edge-triggered on the edit, so one that landed a millisecond
+        // early would be dropped and this test would hang on a wiring that
+        // works. Dismissed again, so what follows starts from a closed float.
+        editor.press_until(b"\x18", "default_delay");
+        editor.press_quietly(b"\x05");
+
+        // …and this is the edit that raises it. One character, no completion
+        // key.
+        let frame = editor.press_until(b"f", "default_delay");
+        assert!(
+            shows(&frame, "fn() -> RetryPolicy"),
+            "`7c` draws a meta detail column right of the labels; frame was: {frame}"
+        );
+        assert!(
+            shows(&frame, "3 attempts"),
+            "the selected row's documentation sits under a rule; frame was: {frame}"
+        );
+        editor.quit();
+    }
+
+    /// The float is not only drawn — it is **driven**, by the keys `7c` cannot
+    /// show because a passive float has no footer.
+    ///
+    /// `<C-x>` asks, `<C-n>` moves the selection, `<C-y>` accepts. The proof
+    /// the selection moved is the *prose*: the block under the rule is per
+    /// item, so a selection that did not move would leave the first row's
+    /// sentence on screen. The proof `<C-y>` accepted the **selected** row and
+    /// not a fixed one is the buffer — `index 0` means the selection, and a
+    /// literal row number would have written `default()`.
+    #[test]
+    fn the_completion_keys_move_the_selection_and_write_the_buffer() {
+        let (scratch, runtime, file) = toy("accept", "completion", "let base = def\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        editor.press_until(b"\x18", "3 attempts");
+        editor.press_until(b"\x0e", "The base delay");
+        // Accepted quietly: the line it writes shares its first ten characters
+        // with the line that was there, so the frame is a diff of the suffix
+        // alone. The file is the assertion.
+        editor.press_quietly(b"\x19");
+        editor.press_quietly(b"\x1b");
+        editor.press_quietly(b":w\r");
+        let written = fs::read_to_string(&file).expect("the buffer was written");
+        assert_eq!(
+            written, "let base = default_delay\n",
+            "the accepted row replaced the prefix under the cursor, and nothing else"
+        );
+        editor.quit();
+    }
+
+    /// `<C-e>` dismisses, which is the other half of a float with no footer —
+    /// and the half that would otherwise be a list you cannot get rid of
+    /// without leaving insert mode.
+    #[test]
+    fn control_e_dismisses_the_completion_float() {
+        let (scratch, runtime, file) = toy("dismiss", "completion", "let base = def\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        editor.press_until(b"\x18", "default_delay");
+
+        let mark = editor.mark();
+        editor.press_quietly(b"\x05");
+        // Every cell the list held is redrawn as the code behind it, so the
+        // labels are gone from the frames drawn *after* the key.
+        let after = editor.since(mark);
+        assert!(
+            !shows(&after, "default_delay"),
+            "the list is still on screen after `<C-e>`; frames were: {after}"
+        );
+        editor.quit();
+    }
+
+    /// `T039` — signature help and hover are one surface, reached by two keys.
+    ///
+    /// `<C-s>` in insert asks what the call takes; `K` in normal asks what is
+    /// under the cursor, which is the meaning vim's `K` already had.
+    #[test]
+    fn signature_help_and_hover_reach_the_same_passive_float() {
+        let (scratch, runtime, file) = toy("signature", "completion", "retry(\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        // The active parameter is drawn in its own style, and `printable`
+        // puts a space between style runs — so the assertion is the run, not
+        // the whole line. `how many times` is the documentation under the rule,
+        // which is what makes this the signature *body* and not a bare label.
+        let frame = editor.press_until(b"\x13", "policy: RetryPolicy");
+        assert!(
+            shows(&frame, "how many times, and how far apart"),
+            "frame was: {frame}"
+        );
+        editor.press(b"\x1b");
+        editor.press_until(b"K", "a toy hover answer");
+        editor.quit();
+    }
+
+    /// **Signature help survives the argument you type under it**, and is
+    /// dismissed by leaving the insert session that raised it.
+    ///
+    /// The rule was *"the next key is the answer to have you read it"* for both
+    /// features at once. That is right for hover in normal mode and exactly
+    /// backwards for signature help: `7c` is captioned *"lsp completion +
+    /// signature help"*, the float exists to be read **while the arguments are
+    /// typed**, and at `CP-4` the first character of the first argument cleared
+    /// it — `<C-s>` inside `add(` drew `fn add(left: i32, right: i32)` with
+    /// `left: i32` in the active tone, and typing `1` left an empty frame.
+    ///
+    /// **Read as an erasure, not as a presence.** A frame is a diff: a float
+    /// that is still up is not redrawn, so *"is it still there"* cannot be
+    /// asked directly. What a dismissal does is repaint the rows underneath —
+    /// so the fixture puts a word there and the assertion is that the word does
+    /// not come back. The token is the **tail** of that word, because the float
+    /// hangs off the cursor's column and repaints only the cells it covered.
+    #[test]
+    fn signature_help_survives_the_argument_being_typed_under_it() {
+        let (scratch, runtime, file) = toy(
+            "signature-typing",
+            "completion",
+            "retry(\nUNDERNEATH_THE_FLOAT\nand another line\n",
+        );
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        editor.press_until(b"\x13", "policy: RetryPolicy");
+
+        // A digit matches no completion label, so nothing else opens over it —
+        // this is the signature float alone.
+        let mark = editor.mark();
+        editor.press_quietly(b"1");
+        editor.settle();
+        let typed = editor.since(mark);
+        assert!(
+            !shows(&typed, "THE_FLOAT"),
+            "the row under the float was repainted, so the float was dismissed \
+             by the argument it exists to help type; frames were: {typed}"
+        );
+
+        // …and `esc` — the key that ends the insert session — does dismiss it.
+        let closed = editor.press_until(b"\x1b", "THE_FLOAT");
+        assert!(
+            !shows(&closed, "policy: RetryPolicy"),
+            "the signature is still on screen after leaving insert; frames were: {closed}"
+        );
+        editor.quit();
+    }
+
+    /// `T040` — a **real** publish, arriving unasked on the queue, reaching the
+    /// screen.
+    ///
+    /// Nothing presses a key for this one and that is the property: a server
+    /// publishes when it has something, and the editor was parked in
+    /// `Queue::recv` with no timeout and no tick. The row is
+    /// `phosphor_ui::virtual_text`'s and the `■` is §2's lexicon; the state
+    /// column beside it is `gutter::state_column`, computed once by the loop.
+    #[test]
+    fn a_published_diagnostic_reaches_the_screen_with_nobody_asking() {
+        let (scratch, runtime, file) = toy(
+            "diagnostics",
+            "diagnostics",
+            "let retry = RetryPolicy\nbase = 3\n",
+        );
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // No key is pressed. The editor is idle and the server pushes into the
+        // same queue the keyboard uses.
+        let frame = editor.press_until(b"", "expected Duration, found u128");
+        assert!(
+            shows(&frame, "\u{25a0}"),
+            "§2's lexicon opens a diagnostic row with a filled square; frame was: {frame}"
+        );
+        editor.quit();
+    }
+
+    /// `T036` — `gd`, and the arm it needed that nothing had noticed was
+    /// missing.
+    ///
+    /// A definition is a **place**, not text about a place, so it does not come
+    /// back through a float: the client answers `Vec<FileSpan>`, the host turns
+    /// the first into an `open-file` with a position — which the client could
+    /// not, because a `PaneRef` is knowledge it does not have — and the loop
+    /// opens it.
+    ///
+    /// **`open-file`'s `at` was being dropped**, and every caller so far was
+    /// `:edit <path>`, which has no opinion about where the cursor lands. So
+    /// the assertion is on the *line*, not on the file: the target's second
+    /// line is what a jump that honours the position lands on, and its first is
+    /// what one that does not lands on.
+    #[test]
+    fn gd_opens_the_file_the_server_named_at_the_line_it_named() {
+        let (scratch, runtime, file) = toy("definition", "completion", "retry\n");
+        fs::write(
+            scratch.path.join("target.toy"),
+            "the first line of the target\nthe definition is on this line\n",
+        )
+        .expect("a fixture to jump to");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press_until(b"gd", "the definition is on this line");
+        // `x` deletes the character under the cursor, which is the only way
+        // this harness can ask *where is the cursor* — the answer is in the
+        // file it writes.
+        editor.press_quietly(b"x");
+        editor.press_quietly(b":w\r");
+        let written =
+            fs::read_to_string(scratch.path.join("target.toy")).expect("the target was written");
+        assert_eq!(
+            written, "the first line of the target\nhe definition is on this line\n",
+            "the cursor landed on the line the server named, not on the first one"
+        );
+        editor.quit();
+    }
+
+    /// `T037`'s locale hook, from a keystroke: `gc` uses the prefix the
+    /// **declaration** named, and nothing in Rust knows what it is.
+    ///
+    /// The toy language declares `;`. A Rust comment table would have to answer
+    /// `//` or nothing for a `.toy` file, so this cannot pass by accident.
+    #[test]
+    fn gc_comments_with_the_prefix_the_declaration_named() {
+        let (scratch, runtime, file) = toy("comment", "completion", "base = 3\nbase = 4\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        // `gcgc`, not `gcc`. Doubling an operator is a lookup in
+        // operator-pending — the rule that makes `dd` linewise — so the
+        // doubled form of a two-key operator is the two keys again. `gcc` is
+        // `gc` followed by `c`, which is a *different* operator.
+        editor.press(b"g");
+        editor.press(b"c");
+        editor.press(b"g");
+        editor.press(b"c");
+        editor.press_quietly(b":w\r");
+        let written = fs::read_to_string(&file).expect("the buffer was written");
+        assert_eq!(
+            written, "; base = 3\nbase = 4\n",
+            "the prefix came from `define-language!`, and only the cursor's line moved"
+        );
+        editor.quit();
+    }
+
+    /// **The list is narrowed to the word being typed**, and the server is not
+    /// what narrows it.
+    ///
+    /// The fixture answers *the same three items whatever the prefix is* —
+    /// its own header says so, and a real server behaves the same way for the
+    /// same reason: the protocol says the client filters. At `CP-4` nothing
+    /// did, so one `.` against rust-analyzer drew a float over rows 0–28 of 30
+    /// with `strict_mul` selected.
+    ///
+    /// The assertion that matters is the **negative** one: `defaults_for`
+    /// alone survives a typed `defaults`, and `default_delay` — which the
+    /// server sent, in the same answer — is not on the frame.
+    #[test]
+    fn the_list_is_narrowed_to_the_prefix_the_server_was_never_told_about() {
+        let (scratch, runtime, file) = toy("narrow", "completion", "let base = de\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        // Warm: `<C-x>` is answered once the server is ready, so what follows
+        // is not racing `initialize`. All three rows match `de`.
+        let wide = editor.press_until(b"\x18", "defaults_for");
+        assert!(
+            shows(&wide, "default_delay"),
+            "every row matching `de` is offered; frame was: {wide}"
+        );
+        // Dismissed, so what follows is a float drawn from nothing rather than
+        // a diff of one — `press_quietly`'s own doc explains why a shrinking
+        // list cannot be read off a partial redraw.
+        editor.press_quietly(b"\x05");
+
+        // …and typing the rest of the word narrows it, with no completion key
+        // pressed at all.
+        let narrow = editor.press_until(b"faults", "defaults_for");
+        assert!(
+            !shows(&narrow, "default_delay"),
+            "a row that cannot become `defaults` is still on screen; frames were: {narrow}"
+        );
+        assert!(
+            !shows(&narrow, "Duration"),
+            "…nor its detail column; frames were: {narrow}"
+        );
+        editor.quit();
+    }
+
+    /// **Typing does not paint a refusal.** `CP-4` found `lsp: denied to a
+    /// producer — only the keyboard asks for this` on the statusline during
+    /// ordinary typing, in four independent runs against a real
+    /// rust-analyzer — the last content frame of a session ending in that
+    /// notice.
+    ///
+    /// The cause was one slot for one outstanding request: the insert-mode
+    /// trigger asks per edit, the newest answer replaced the oldest in the
+    /// slot, and every superseded answer arrived unrecognised and was rated
+    /// `Deny` as though a server had pushed it. `Outstanding` counts instead.
+    ///
+    /// A burst is what reproduces it, and **`<C-x>` is interleaved into it on
+    /// purpose**: the trigger now asks one at a time, so typing alone no longer
+    /// overlaps two requests, while an explicit ask always may — it is the key
+    /// that says *ask now*, and it is what keeps this test pointed at the
+    /// counting rather than at the gate in front of it. Verified by planting
+    /// the old one-slot behaviour (`*owed = 0` in `Outstanding::answers`),
+    /// which puts the notice back on the frame verbatim.
+    #[test]
+    fn a_burst_of_typing_never_says_the_editor_denied_something() {
+        let (scratch, runtime, file) = toy("burst", "completion", "let base = de\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        editor.press_until(b"\x18", "default_delay");
+        editor.press_quietly(b"\x05");
+
+        // **Written as one burst**, which is the whole reproduction: a key at a
+        // time, each waited on, is ten separate round trips and never overlaps
+        // two requests. This is what typing at speed looks like on the wire.
+        let mark = editor.mark();
+        editor.press_quietly(b"f\x18a\x18u\x18lts_for");
+        editor.settle();
+        let drawn = editor.since(mark);
+        assert!(
+            !shows(&drawn, "denied to a producer"),
+            "typing raised a producer refusal; frames were: {drawn}"
+        );
+        assert!(
+            !shows(&drawn, "lsp:"),
+            "typing said something about the lsp subsystem at all; frames were: {drawn}"
+        );
+        editor.quit();
+    }
+
+    /// **`gd` may not discard unsaved work**, and until `CP-4` it did: the
+    /// open-file arm re-read the target from disk with no dirty guard, so a
+    /// jump out of an edited buffer threw the edit away with no prompt and no
+    /// notice.
+    ///
+    /// `close-buffer` and `quit` both raise `WouldLoseWork`; this is the third
+    /// verb that can lose a buffer, and the first one a *keystroke* reaches
+    /// without an ex line.
+    #[test]
+    fn a_jump_out_of_a_dirty_buffer_refuses_rather_than_discarding_it() {
+        let (scratch, runtime, file) = toy("dirty-gd", "completion", "retry\n");
+        fs::write(
+            scratch.path.join("target.toy"),
+            "the first line of the target\nthe definition is on this line\n",
+        )
+        .expect("a fixture to jump to");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        // Dirty it, and prove it is dirty: `[+]` is the statusline's own word
+        // for unsaved work.
+        editor.press(b"A");
+        editor.press_until(b" edited", "[+]");
+        editor.press_quietly(b"\x1b");
+
+        let refused = editor.press_until(b"gd", "unsaved work");
+        assert!(
+            !shows(&refused, "the definition is on this line"),
+            "the jump happened anyway; frames were: {refused}"
+        );
+        // And the edit is still there to be written.
+        editor.press_quietly(b":w\r");
+        let written = fs::read_to_string(&file).expect("the buffer was written");
+        assert_eq!(
+            written, "retry edited\n",
+            "the edit survived the refused jump"
+        );
+        editor.quit();
+    }
+
+    /// The same jump into the file you are **already in** does not re-read it,
+    /// so it cannot lose anything — which is `gd`'s common case and the one
+    /// the guard above must not break.
+    #[test]
+    fn a_jump_inside_the_open_file_moves_the_cursor_and_keeps_the_edits() {
+        let (scratch, runtime, file) = toy(
+            "same-file",
+            "definition-here",
+            "the first line\nthe definition is on this line\n",
+        );
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        editor.press_until(b" edited", "[+]");
+        editor.press_quietly(b"\x1b");
+
+        // The server answers with *this* file, line 2. **The file is the
+        // assertion, not the frame**: a jump inside one buffer moves the
+        // cursor and nothing else, and a frame is a diff — `1:21` becoming
+        // `2:1` on the statusline redraws two cells that no fuzzy match can
+        // tell from the row it replaced. `x` is how this harness asks where the
+        // cursor is, and the answer is in the file it writes.
+        editor.press_quietly(b"gd");
+        editor.press_quietly(b"x");
+        editor.press_quietly(b":w\r");
+        let written = fs::read_to_string(&file).expect("the buffer was written");
+        assert_eq!(
+            written, "the first line edited\nhe definition is on this line\n",
+            "the cursor moved to the line the server named and the edit survived"
+        );
+        editor.quit();
+    }
+
+    /// **`T037`'s criterion, in one session:** *"a 13th language can be added
+    /// from the REPL with no Rust change"* — with no restart either.
+    ///
+    /// The loop read the language table **once, at boot**, and the comment
+    /// above that line claimed a language declared at `:repl` was a fact about
+    /// the next file opened. It was not: `:e` is the next file opened, and at
+    /// `CP-4` a language declared at the REPL commented nothing until the
+    /// binary was restarted on the same layer, at which point it worked. Every
+    /// test that ticked the task called `AppHost::languages` freshly and was
+    /// structurally unable to see it.
+    ///
+    /// So: declare at the REPL, `:e` a file with that extension, and press the
+    /// key whose whole meaning comes from the declaration.
+    #[test]
+    fn a_language_declared_at_the_repl_is_live_in_the_same_session() {
+        let scratch = Scratch::new("live-language");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.zz");
+        fs::write(&file, "local x = 1\n").expect("a fixture");
+        let opened = scratch.path.join("start.txt");
+        fs::write(&opened, "nothing to do with it\n").expect("a fixture");
+
+        let editor = Editor::open(&opened, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(
+            b"(define-language! \"zz\" (hash \"extensions\" (list \"zz\") \
+              \"grammar\" void \"lsp_command\" (list) \"comment_prefix\" \"--\"))\r",
+            "#ok",
+        );
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        editor.press_quietly(format!(":e {}\r", file.display()).as_bytes());
+        editor.press_quietly(b"gcgc");
+        editor.press_quietly(b":w\r");
+        let written = fs::read_to_string(&file).expect("the buffer was written");
+        assert_eq!(
+            written, "-- local x = 1\n",
+            "the prefix came from a declaration typed into this session's own REPL"
+        );
+        editor.quit();
+    }
+
+    /// **`7c`'s `rust-analyzer ✓`, and the half of it that matters more:** a
+    /// server that could not start says so.
+    ///
+    /// `ServerState` was complete, tested and read by exactly one call site —
+    /// the insert-mode trigger's `is_ready()` — so `Crashed`, `Failure` and
+    /// `ServerIdentity` reached nobody. At `CP-4`, with a server failing to
+    /// initialize, the editor drew the buffer and the statusline and said
+    /// nothing, forever: no float, no notice, no refusal, through two `<C-x>`
+    /// presses over forty seconds.
+    ///
+    /// The declaration here names a program that does not exist, so the
+    /// sentence on the row is the OS's own — which is what `Failure::Spawn`
+    /// says it carries the message for.
+    #[test]
+    fn a_server_that_cannot_start_says_so_on_the_statusline() {
+        let scratch = Scratch::new("no-server");
+        let runtime = copy_layer(&scratch.path);
+        let form = "(define-language! \"toy\"\n  (hash \"extensions\" '(\"toy\")\n        \
+                    \"grammar\" void\n        \
+                    \"lsp_command\" (list \"phosphor-no-such-language-server\")\n        \
+                    \"comment_prefix\" \";\"))\n";
+        fs::write(scratch.persisted().join("persisted.scm"), form)
+            .expect("the config home takes it");
+        let file = scratch.path.join("sample.toy");
+        fs::write(&file, "base = 3\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // **No key is pressed for this.** The spawn fails on the client's
+        // runtime thread after the first frame is already on screen, and this
+        // loop draws when a producer speaks — so what proves the wake
+        // (`events::AppEvent::Woke`) is that the chip changes with the editor
+        // idle. Without it the row would say `starting …` until a keystroke.
+        // Read against the whole session rather than the last frame: the name
+        // was drawn by the `starting …` chip and a frame is a diff, so the
+        // failure repaints the glyph and skips the name it is not changing.
+        let whole = shown(&editor, "\u{2717}");
+        assert!(
+            whole.contains("phosphor-no-such-language-server"),
+            "the chip never named the program that could not be started; \
+             session was: {whole}"
+        );
+        assert!(
+            !whole.contains("no language server for this buffer"),
+            "…and it is not the second-tier sentence, which would be a lie about \
+             a language that declares one; session was: {whole}"
+        );
+        editor.quit();
+    }
+
+    /// The same chip, on a server that **is** serving: `7c` draws
+    /// `rust-analyzer ✓` and the name is the server's own, out of its
+    /// `initialize` reply, rather than the command that was run.
+    ///
+    /// The declaration runs `python3`; the fixture calls itself `toy`. A chip
+    /// built from the command would read `python3 ✓`.
+    #[test]
+    fn a_ready_server_draws_the_name_it_gave_itself() {
+        let (scratch, runtime, file) = toy("chip", "completion", "base = 3\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // No key is pressed: the chip arrives on the wake the state change
+        // posts, which is what makes it the answer to *"is the server up"*
+        // every other `S4` test waits on.
+        let frame = shown(&editor, "toy-lsp \u{2713}");
+        assert!(
+            !frame.contains("python3 \u{2713}"),
+            "the chip is the command rather than the name the server gave itself; \
+             frame was: {frame}"
+        );
+        editor.quit();
+    }
+
+    /// `T036` — `:restart-server`, and the sentence a bare one answers with.
+    ///
+    /// The refusal is the half worth pressing: an ex command that silently did
+    /// nothing when it could not tell which server you meant is the failure
+    /// `T098` is about, one surface over.
+    #[test]
+    fn restarting_a_server_names_it_and_a_bare_restart_says_why() {
+        let (scratch, runtime, file) = toy("restart", "completion", "base = 3\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press_until(b":restart-server toy\r", "restarting toy");
+        editor.press_until(b":restart-server\r", "which language");
+        editor.quit();
+    }
+
+    // -----------------------------------------------------------------------
+    // `CP-4` — the completion floor
+    // -----------------------------------------------------------------------
+
+    /// Sets `completion-min-chars` in the copied layer, the way a person's own
+    /// editor layer would.
+    ///
+    /// Appended to the config home's `persisted.scm`, which the binary loads
+    /// **after the whole boot order** (`T101`) — so this is an override of the
+    /// shipped default rather than a replacement of it, which is the
+    /// arrangement a real user has and the only one that proves the option is
+    /// read at all.
+    fn set_completion_floor(scratch: &Scratch, least: i64) {
+        let persisted = scratch.persisted().join("persisted.scm");
+        let mut existing = fs::read_to_string(&persisted).unwrap_or_default();
+        existing.push_str(&format!("(set-option! \"completion-min-chars\" {least})\n"));
+        fs::write(&persisted, existing).expect("the config home takes an option");
+    }
+
+    /// **`CP-4`'s first finding: the list fired at zero characters.** *"there
+    /// should be a configurable min num char before firing the menu, right now
+    /// its 0"*.
+    ///
+    /// The shipped floor is two, and the two keystrokes below it are the ones
+    /// worth pressing. A **space** is an edit, in insert mode, against a ready
+    /// server — every gate the trigger had — and it leaves nothing to filter
+    /// on, so the answer was the server's whole table. The **first letter** of
+    /// an identifier is the widest list that letter has.
+    ///
+    /// The negative assertion is the test. `press_quietly` settles — it returns
+    /// only after the editor has drawn nothing for 250ms — and the toy server
+    /// is a local pipe answering in constants, so a request that was made would
+    /// have been answered and drawn well inside that window. Verified by
+    /// planting a floor of `0`, which puts all three labels on the frame after
+    /// the space.
+    #[test]
+    fn typing_does_not_raise_the_list_until_the_word_is_two_characters() {
+        let (scratch, runtime, file) = toy("floor-shipped", "completion", "let base =\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        // `A` — an insert session at the end of the line, and not yet an edit.
+        editor.press(b"A");
+
+        let mark = editor.mark();
+        editor.press_quietly(b" ");
+        editor.press_quietly(b"d");
+        let quiet = editor.since(mark);
+        assert!(
+            !shows(&quiet, "default_delay"),
+            "the list came up on a space and a single letter; frames were: {quiet}"
+        );
+        assert!(
+            !shows(&quiet, "defaults_for"),
+            "…nor any other row of it; frames were: {quiet}"
+        );
+
+        // The second character of the word is the floor, and the very next
+        // keystroke raises it — the floor delays the list, it does not need a
+        // key to get it back.
+        let raised = editor.press_until(b"e", "default_delay");
+        assert!(
+            shows(&raised, "defaults_for"),
+            "the whole list is up at two characters; frame was: {raised}"
+        );
+        editor.quit();
+    }
+
+    /// **The floor is the editor layer's, which is what *configurable* means
+    /// here.** No Rust in the path: one `(set-option! …)` in the layer, and the
+    /// same keystrokes behave differently.
+    ///
+    /// Four rather than three, so the value cannot be confused with the shipped
+    /// default by an off-by-one — three characters are silent and the fourth
+    /// raises the list.
+    #[test]
+    fn the_completion_floor_is_the_editor_layers_own() {
+        let (scratch, runtime, file) = toy("floor-four", "completion", "let base =\n");
+        set_completion_floor(&scratch, 4);
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+
+        let mark = editor.mark();
+        editor.press_quietly(b" def");
+        let quiet = editor.since(mark);
+        assert!(
+            !shows(&quiet, "default_delay"),
+            "three characters raised a list the layer set the floor at four; \
+             frames were: {quiet}"
+        );
+
+        let raised = editor.press_until(b"a", "default_delay");
+        assert!(
+            shows(&raised, "defaults_for"),
+            "…and the fourth did not raise it; frame was: {raised}"
+        );
+        editor.quit();
+    }
+
+    /// **`<C-x>` ignores the floor, because asking is asking.**
+    ///
+    /// The two halves are pressed against the *same* prefix on purpose. One
+    /// character with a floor of four is silent when it was typed and answers
+    /// when it was asked for, so what this separates is the *path* rather than
+    /// the length — which is the whole of the ruling: the floor lives in the
+    /// loop's typed-trigger and not in `Editing::act`, so every door that sends
+    /// `request-completion` — the key, the CLI, MCP — is unaffected by a
+    /// preference about typing.
+    #[test]
+    fn an_explicit_completion_key_ignores_the_floor() {
+        let (scratch, runtime, file) = toy("floor-explicit", "completion", "let base =\n");
+        set_completion_floor(&scratch, 4);
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+
+        let mark = editor.mark();
+        editor.press_quietly(b" d");
+        assert!(
+            !shows(&editor.since(mark), "default_delay"),
+            "typing one character raised a list floored at four; frames were: {}",
+            editor.since(mark)
+        );
+
+        let asked = editor.press_until(b"\x18", "default_delay");
+        assert!(
+            shows(&asked, "defaults_for"),
+            "`<C-x>` on the same one character answered nothing; frame was: {asked}"
+        );
+        editor.quit();
+    }
+
+    /// **A trigger character asks where the floor would not** (`CP-4` review).
+    ///
+    /// The floor is measured on `Editing::prefix_len`, which counts identifier
+    /// characters — so `foo.` measures **zero** and the shipped floor of two
+    /// made `.`-completion, the most common completion moment in a dotted
+    /// language, unreachable by typing. The server is the one that knows: this
+    /// asks its `completionProvider.triggerCharacters`, which the toy fixture
+    /// advertises as `.` and `::`.
+    ///
+    /// Two halves, and the first is what makes the second mean something: a
+    /// floor of four is set, so a single `d` is silent — the floor is still the
+    /// floor — and then a `.` raises the list on a prefix of zero.
+    #[test]
+    fn a_trigger_character_raises_the_list_under_the_floor() {
+        let (scratch, runtime, file) = toy("trigger-dot", "completion", "let base =\n");
+        set_completion_floor(&scratch, 4);
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+
+        let mark = editor.mark();
+        editor.press_quietly(b" d");
+        assert!(
+            !shows(&editor.since(mark), "default_delay"),
+            "one character raised a list floored at four; frames were: {}",
+            editor.since(mark)
+        );
+
+        let raised = editor.press_until(b".", "default_delay");
+        assert!(
+            shows(&raised, "defaults_for"),
+            "a `.` the server named as a trigger raised nothing; frame was: {raised}"
+        );
+        editor.quit();
+    }
+
+    // -----------------------------------------------------------------------
+    // `CP-4` — `gr`, and a path with nothing behind it
+    // -----------------------------------------------------------------------
+
+    /// **`CP-4`'s second finding: `gr` was unbound.** *"why is gr unbound it
+    /// should show uses of that thing right"*.
+    ///
+    /// It is `T098`'s rule reaching one more key. `runtime/keymaps.scm` argued
+    /// the other way and the argument is kept at the row it was wrong about;
+    /// what settles it is that `request-references` is not a near-miss for what
+    /// `gr` means, it is the verb, so the refusal names the task that builds the
+    /// list rather than a task about something else.
+    ///
+    /// Both halves in one session, the way `a_deferred_key_does_not_spend_the_
+    /// session_hint` presses `q` and `Q`: the refusal has to be *readable*, and
+    /// a key that is known must not spend `8e`'s one teaching row.
+    #[test]
+    fn gr_declines_by_naming_the_task_that_builds_the_list() {
+        let scratch = Scratch::new("references");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let before = editor.mark();
+        editor.press(b"gr");
+        let frame = editor.since(before);
+        assert!(
+            shows(&frame, "not built yet — T047 builds it"),
+            "gr names the task that builds the surface a list of places is drawn in; \
+             frame was: {frame}"
+        );
+        assert!(
+            !frame.contains("unknown key"),
+            "gr is bound, so it is not an unknown key and does not spend the session's \
+             one hint; frame was: {frame}"
+        );
+        editor.quit();
+    }
+
+    /// **`CP-4`'s third finding: `:e` on a path that does not exist refused.**
+    /// Teej typed `:e /tmp/x.lua` and got *"x.lua didnt exist"* — no buffer, no
+    /// way to create the file.
+    ///
+    /// The whole chain is asserted rather than the notice alone, because the
+    /// notice is the cheap half: a buffer with nothing on disk behind it still
+    /// has to know its language, still has to reach a server, and above all has
+    /// to be *writable*, or the empty buffer is a worse answer than the refusal
+    /// it replaced.
+    ///
+    /// So: the file is never created, the extension is the only thing anyone
+    /// knows about it, and the proof that the declaration was adopted is that
+    /// typing two characters into an empty new buffer raises a list the toy
+    /// server answered — which needs the language table, the attach, and the
+    /// `didOpen` that carries the buffer's own (empty) text rather than disk's.
+    /// Then `:w` creates the file.
+    #[test]
+    fn a_path_with_nothing_behind_it_opens_as_a_writable_new_buffer() {
+        let (scratch, runtime, opened) = toy("new-file", "completion", "base = 3\n");
+        let fresh = scratch.path.join("second.toy");
+        assert!(!fresh.exists(), "the fixture is a path with nothing at it");
+
+        let editor = Editor::open(&opened, &scratch.state(), &runtime);
+        ready(&editor);
+        let mark = editor.mark();
+        editor.press_quietly(format!(":e {}\r", fresh.display()).as_bytes());
+        let drawn = editor.since(mark);
+        assert!(
+            shows(&drawn, "new file"),
+            "opening a free path says so instead of refusing; frames were: {drawn}"
+        );
+
+        editor.press(b"i");
+        let raised = editor.press_until(b"de", "default_delay");
+        assert!(
+            shows(&raised, "defaults_for"),
+            "the new buffer never reached the server the extension declares; \
+             frame was: {raised}"
+        );
+        editor.press_quietly(b"\x1b");
+        editor.press_quietly(b":w\r");
+        assert_eq!(
+            fs::read_to_string(&fresh).expect("`:w` created the file"),
+            "de",
+            "the buffer wrote itself to the path that had nothing behind it"
+        );
+        editor.quit();
+    }
+
+    /// The same buffer, keyed on the same journal **across a restart** — which
+    /// is the half a new file makes easy to get wrong.
+    ///
+    /// `Timeline` keys on `std::fs::canonicalize`, which needs the file to
+    /// exist; a new buffer has nothing to resolve. Keyed on the name alone the
+    /// second session would hash a different path and open an empty history,
+    /// and nothing would say so — the file would be fine and the undo would
+    /// simply not be there. So: type, save, quit, reopen, `u`, and the file
+    /// goes back.
+    ///
+    /// **One character, and that is not arbitrary.** Undoing a group of *two
+    /// or more* edits whose highest offset is past the length the buffer ends
+    /// up at panics the binary in the vendored fork — `Code::notify_changes`
+    /// (`vendor/ratatui-code-editor/src/code.rs`) computes `point(edit.start)`
+    /// for every edit in the batch against the rope as it is *after* all of
+    /// them, so `char_to_line` is handed an index the rope no longer has. It is
+    /// not this change's doing and it is not new-file-specific — `abc` with no
+    /// trailing newline, `A`, `xy`, `<esc>`, `u` reproduces it on a file that
+    /// has been on disk all along — but an empty buffer is the shortest way
+    /// there, so this test stays inside one edit rather than encoding a crash.
+    /// Reported at `CP-4`; the fix is `surface`'s, in the fork.
+    #[test]
+    fn a_new_files_history_survives_the_first_save_and_a_restart() {
+        let scratch = Scratch::new("new-file-undo");
+        let runtime = copy_layer(&scratch.path);
+        let state = scratch.state();
+        let file = scratch.path.join("fresh.txt");
+
+        let first = Editor::open(&file, &state, &runtime);
+        first.press(b"i");
+        first.press(b"x");
+        first.press(b"\x1b");
+        first.press_quietly(b":w\r");
+        assert_eq!(
+            fs::read_to_string(&file).expect("`:w` created the file"),
+            "x"
+        );
+        first.quit();
+
+        // A second process, on the same journal. `u` walks into a history the
+        // first session wrote before the file existed.
+        let second = Editor::open(&file, &state, &runtime);
+        second.press(b"u");
+        second.press_quietly(b":w\r");
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "",
+            "the history the first session wrote was keyed on a path the second \
+             session could not find"
+        );
+        second.quit();
+    }
+
+    /// **A path whose *directory* does not exist is still a refusal**, and that
+    /// is the line the new-buffer rule stops at: an empty buffer that `:w`
+    /// cannot write costs whatever was typed into it, which is strictly worse
+    /// than the keystroke a refusal costs.
+    ///
+    /// The second half is what proves nothing opened. The notice alone could
+    /// not: a swapped-in empty buffer would leave the original file untouched
+    /// too. So the buffer is edited and written, and the bytes that land are
+    /// the *original* file's — which only happens if `:e` never swapped it.
+    #[test]
+    fn a_path_whose_directory_is_missing_is_still_a_refusal() {
+        let scratch = Scratch::new("no-directory");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\n").expect("a fixture");
+        let nowhere = scratch.path.join("nope").join("x.txt");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let mark = editor.mark();
+        editor.press_quietly(format!(":e {}\r", nowhere.display()).as_bytes());
+        let drawn = editor.since(mark);
+        assert!(
+            shows(&drawn, "no directory"),
+            "the refusal names the directory rather than the file; frames were: {drawn}"
+        );
+        assert!(
+            !shows(&drawn, "new file"),
+            "a path with no directory was opened as a new buffer; frames were: {drawn}"
+        );
+
+        // `x` deletes a character from whatever buffer is open, and `:w` writes
+        // it back to whatever file that buffer came from.
+        editor.press_quietly(b"x");
+        editor.press_quietly(b":w\r");
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "ne\ntwo\n",
+            "the refused `:e` swapped the buffer anyway"
+        );
+        assert!(
+            !nowhere.exists(),
+            "nothing was created under a directory that does not exist"
+        );
+        editor.quit();
+    }
+
+    // -----------------------------------------------------------------------
+    // Visual mode — `CP-4`
+    // -----------------------------------------------------------------------
+
+    /// The transcript replayed onto a grid, **because a frame is a diff**.
+    ///
+    /// [`printable`] answers *"is this word on the frame"* and cannot answer
+    /// *"is this cell still highlighted"* — the two questions differ exactly
+    /// where a selection is concerned. Leaving visual mode changes no text at
+    /// all, so the frame that clears the highlight and the frame that fails to
+    /// clear it contain the same characters; the difference is entirely in the
+    /// SGR runs around them, and it is *cumulative*, since a cell nobody
+    /// rewrote keeps whatever the last frame that touched it said. Asserting on
+    /// one frame's bytes therefore cannot fail — a selection left standing is a
+    /// frame that simply never mentions those cells.
+    ///
+    /// So this replays the whole transcript and keeps, per cell, the character
+    /// and the background it was written with. It is deliberately the smallest
+    /// terminal that can answer the question: cursor positioning (`CSI …H`),
+    /// the SGR background, and printable runs, which is all `ratatui`'s
+    /// backend emits — measured on this binary's own output, where the only
+    /// other sequences are the private mode sets terminal setup makes once.
+    /// Everything else is skipped the way [`printable`] skips it.
+    #[derive(Debug)]
+    struct Screen {
+        width: u16,
+        cells: Vec<Cell>,
+        row: u16,
+        column: u16,
+        background: String,
+    }
+
+    /// One cell: what was written, and the background it was written on.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct Cell {
+        character: char,
+        background: String,
+    }
+
+    impl Default for Cell {
+        fn default() -> Self {
+            Self {
+                character: ' ',
+                background: String::new(),
+            }
+        }
+    }
+
+    impl Screen {
+        /// A grid the size of [`SCREEN`], with `bytes` played onto it.
+        fn replayed(bytes: &[u8]) -> Self {
+            let width = SCREEN.ws_col;
+            let height = SCREEN.ws_row;
+            let mut screen = Self {
+                width,
+                cells: vec![Cell::default(); usize::from(width) * usize::from(height)],
+                row: 0,
+                column: 0,
+                background: String::new(),
+            };
+            screen.feed(bytes);
+            screen
+        }
+
+        fn feed(&mut self, bytes: &[u8]) {
+            let text = String::from_utf8_lossy(bytes);
+            let mut chars = text.chars().peekable();
+            while let Some(character) = chars.next() {
+                if character != '\u{1b}' {
+                    match character {
+                        '\r' => self.column = 0,
+                        '\n' => {
+                            self.row = self.row.saturating_add(1);
+                            self.column = 0;
+                        }
+                        printable if !printable.is_control() => self.put(printable),
+                        _ => {}
+                    }
+                    continue;
+                }
+                match chars.next() {
+                    Some('[') => {
+                        let mut parameters = String::new();
+                        let mut final_byte = '\0';
+                        for byte in chars.by_ref() {
+                            if ('\u{40}'..='\u{7e}').contains(&byte) {
+                                final_byte = byte;
+                                break;
+                            }
+                            parameters.push(byte);
+                        }
+                        self.csi(&parameters, final_byte);
+                    }
+                    Some(']') => {
+                        while let Some(inner) = chars.next() {
+                            if inner == '\u{7}' {
+                                break;
+                            }
+                            if inner == '\u{1b}' && chars.peek() == Some(&'\\') {
+                                chars.next();
+                                break;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        fn csi(&mut self, parameters: &str, final_byte: char) {
+            // A private sequence (`?2026h`) is never one of the two below.
+            if parameters.starts_with('?') {
+                return;
+            }
+            match final_byte {
+                'H' | 'f' => {
+                    let mut halves = parameters.split(';');
+                    let row = Self::number(halves.next()).max(1);
+                    let column = Self::number(halves.next()).max(1);
+                    self.row = row - 1;
+                    self.column = column - 1;
+                }
+                'm' => self.sgr(parameters),
+                _ => {}
+            }
+        }
+
+        fn number(field: Option<&str>) -> u16 {
+            field
+                .filter(|value| !value.is_empty())
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(1)
+        }
+
+        /// The background half of an SGR run. Foreground, bold and the rest are
+        /// no part of the question this screen exists to answer.
+        fn sgr(&mut self, parameters: &str) {
+            let fields: Vec<&str> = parameters.split(';').collect();
+            let mut index = 0;
+            while index < fields.len() {
+                match fields[index] {
+                    "" | "0" | "49" => self.background.clear(),
+                    "48" => {
+                        let width = match fields.get(index + 1) {
+                            Some(&"2") => 5,
+                            Some(&"5") => 3,
+                            _ => 1,
+                        };
+                        self.background =
+                            fields[index..(index + width).min(fields.len())].join(";");
+                        index += width - 1;
+                    }
+                    _ => {}
+                }
+                index += 1;
+            }
+        }
+
+        fn put(&mut self, character: char) {
+            if self.column >= self.width {
+                self.row = self.row.saturating_add(1);
+                self.column = 0;
+            }
+            let at = usize::from(self.row) * usize::from(self.width) + usize::from(self.column);
+            if let Some(cell) = self.cells.get_mut(at) {
+                cell.character = character;
+                cell.background.clone_from(&self.background);
+            }
+            self.column = self.column.saturating_add(1);
+        }
+
+        /// Row `y` as text, trailing blanks trimmed.
+        fn line(&self, y: u16) -> String {
+            let start = usize::from(y) * usize::from(self.width);
+            let row = &self.cells[start..start + usize::from(self.width)];
+            row.iter()
+                .map(|cell| cell.character)
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        }
+
+        /// The columns of row `y` drawn on a background other than the body's.
+        ///
+        /// The body background is read off the row's **last** column, which is
+        /// the honest reference rather than a colour literal: no test here
+        /// writes a line anywhere near 120 characters, so the far right of a
+        /// row is never selected and never anything but background.
+        fn tinted(&self, y: u16) -> Vec<u16> {
+            let start = usize::from(y) * usize::from(self.width);
+            let row = &self.cells[start..start + usize::from(self.width)];
+            let body = &row[row.len() - 1].background;
+            (0..self.width)
+                .filter(|column| &row[usize::from(*column)].background != body)
+                .collect()
+        }
+    }
+
+    /// A file whose lines are short, distinct, and the same length — so a
+    /// column count is readable straight off [`Screen::tinted`].
+    fn ten_by_ten(name: &str) -> (Scratch, PathBuf, PathBuf) {
+        let scratch = Scratch::new(name);
+        let file = scratch.path.join("ten.txt");
+        fs::write(&file, "abcdefghij\nklmnopqrst\nuvwxyz0123\n").expect("a fixture file");
+        let runtime = copy_layer(&scratch.path);
+        (scratch, file, runtime)
+    }
+
+    /// The mouse, as an emulator with SGR reporting (`?1006h`) spells it.
+    fn mouse(button: u8, column: u16, row: u16, down: bool) -> Vec<u8> {
+        format!(
+            "\x1b[<{button};{column};{row}{}",
+            if down { 'M' } else { 'm' }
+        )
+        .into_bytes()
+    }
+
+    /// **`CP-4`'s reported finding, on the shipping binary.** *"escape gets out
+    /// of visual mode but doesnt clear the selection."*
+    ///
+    /// Nothing in this repository pressed `v` before this test, so the whole of
+    /// visual mode was unguarded — which is why the finding could only be found
+    /// by hand. The typed path turns out to be correct and this is what says so
+    /// from now on.
+    #[test]
+    fn v_selects_under_the_cursor_and_esc_takes_the_highlight_with_it() {
+        let (scratch, file, runtime) = ten_by_ten("visual-esc");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        editor.press(b"v");
+        let one = editor.screen().tinted(0);
+        assert_eq!(one.len(), 1, "`v` selects the character under the cursor");
+
+        editor.press(b"ll");
+        assert_eq!(
+            editor.screen().tinted(0),
+            [one[0], one[0] + 1, one[0] + 2],
+            "two `l`s in visual mode reach three characters"
+        );
+
+        editor.press(b"\x1b");
+        assert!(
+            editor.screen().tinted(0).is_empty(),
+            "esc left the selection drawn: {:?}",
+            editor.screen().line(0)
+        );
+        assert!(
+            shows(&editor.tail(), "NORMAL"),
+            "esc left the mode chip alone: {}",
+            editor.tail()
+        );
+        editor.quit();
+    }
+
+    /// **The highlight and the operand were one character apart** (`CP-4`).
+    ///
+    /// `v l l` drew two cells and `d` deleted three, because `SelectRange` went
+    /// through `span_between` — inclusive of the character under the cursor —
+    /// and `ExtendSelection` went through the fork's half-open
+    /// `extend_selection`. Whichever of the two is right, they cannot disagree:
+    /// a highlight that is not the operand is a lie the editor tells at every
+    /// keystroke.
+    #[test]
+    fn the_highlight_is_exactly_what_the_operator_takes() {
+        let (scratch, file, runtime) = ten_by_ten("visual-operand");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        editor.press(b"vll");
+        let highlighted = editor.screen().tinted(0);
+        assert_eq!(highlighted.len(), 3, "three characters are drawn selected");
+
+        editor.press_quietly(b"d");
+        assert!(
+            editor.screen().line(0).ends_with("defghij"),
+            "the highlight covered three characters and the delete took a \
+             different number: {:?}",
+            editor.screen().line(0)
+        );
+        editor.quit();
+    }
+
+    /// `V` is linewise on the screen as well as under the operator (`CP-4`).
+    ///
+    /// It drew a single cell while `V d` deleted the whole line — the same
+    /// disagreement as the test above, one selection kind over.
+    #[test]
+    fn shift_v_highlights_whole_lines() {
+        let (scratch, file, runtime) = ten_by_ten("visual-line");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        editor.press(b"V");
+        let first = editor.screen().tinted(0);
+        assert_eq!(first.len(), 10, "`V` selects the line, not a character");
+        assert!(
+            editor.screen().tinted(1).is_empty(),
+            "`V` reached a line the cursor is not on"
+        );
+        assert!(shows(&editor.tail(), "V-LINE"), "{}", editor.tail());
+
+        editor.press(b"j");
+        assert_eq!(editor.screen().tinted(0), first);
+        assert_eq!(
+            editor.screen().tinted(1),
+            first,
+            "`j` in `V` takes the whole of the second line too"
+        );
+
+        editor.press_quietly(b"d");
+        assert!(
+            editor.screen().line(0).ends_with("uvwxyz0123"),
+            "`V j d` took something other than the two whole lines it drew: {:?}",
+            editor.screen().line(0)
+        );
+        editor.quit();
+    }
+
+    /// `<C-v>` reaches blockwise mode and `<esc>` leaves it.
+    ///
+    /// **Deliberately not asserted: the shape of the block.** The fork's
+    /// `Selection` is one offset range, so a column selection is drawn as a run
+    /// through the intervening line ends — reported at `CP-4` rather than
+    /// blessed here, because a test written to the current drawing would have
+    /// to be deleted by whoever fixes it. What is guarded is the half that is
+    /// this file's business: the key reaches the machine, the chip says so, and
+    /// `<esc>` leaves nothing behind.
+    #[test]
+    fn ctrl_v_reaches_blockwise_mode_and_esc_leaves_it() {
+        let (scratch, file, runtime) = ten_by_ten("visual-block");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        editor.press(b"\x16");
+        assert!(shows(&editor.tail(), "V-BLOCK"), "{}", editor.tail());
+        editor.press(b"jl");
+        assert!(
+            !editor.screen().tinted(1).is_empty(),
+            "the block never reached the second row"
+        );
+
+        editor.press(b"\x1b");
+        assert!(shows(&editor.tail(), "NORMAL"), "{}", editor.tail());
+        for row in 0..3 {
+            assert!(
+                editor.screen().tinted(row).is_empty(),
+                "esc left row {row} highlighted"
+            );
+        }
+        editor.quit();
+    }
+
+    /// **A pointer selection is a visual selection** (`CP-4`).
+    ///
+    /// This is the reported finding's other half and the one that reproduced: a
+    /// drag built a highlight straight in the editor, so the machine never
+    /// entered visual mode, `<esc>` had nothing it believed it had selected,
+    /// and the highlight stayed for the rest of the session — no key cleared
+    /// it, and only another click did.
+    #[test]
+    fn a_drag_selects_in_visual_mode_and_esc_clears_what_it_drew() {
+        let (scratch, file, runtime) = ten_by_ten("visual-drag");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // Row 1 of the screen, over the text column: the gutter is six cells,
+        // so the file's first character is column 7 in the emulator's 1-based
+        // spelling.
+        editor.press_quietly(&mouse(0, 7, 1, true));
+        editor.press_quietly(&mouse(32, 11, 1, true));
+        editor.press_quietly(&mouse(0, 11, 1, false));
+
+        let dragged = editor.screen().tinted(0);
+        assert_eq!(
+            dragged.len(),
+            5,
+            "a press at the first character and a drag to the fifth selects five"
+        );
+        assert!(
+            shows(&editor.tail(), "VISUAL"),
+            "a drag left the mode chip in normal: {}",
+            editor.tail()
+        );
+
+        editor.press(b"\x1b");
+        assert!(
+            editor.screen().tinted(0).is_empty(),
+            "esc left the drag's highlight drawn"
+        );
+        editor.quit();
     }
 }

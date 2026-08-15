@@ -1,0 +1,3 @@
+Content-Length: 222
+
+{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"diagnostics":[{"message":"","range":{"end":{"character":4294967295,"line":0},"start":{"character":4294967295,"line":0}}}],"uri":"file:///tmp/main.rs"}}

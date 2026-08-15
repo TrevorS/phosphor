@@ -59,7 +59,7 @@
 use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, Mutex};
 
-use phosphor_core::action::{Action, Outcome, Receipt, Refusal, Request, RuntimeAction};
+use phosphor_core::action::{Action, Outcome, Receipt, Request, RuntimeAction};
 use phosphor_core::query::{Answer, Answers, Query, QueryError, Revision};
 use phosphor_core::registry::cli::{FlagValue, Verb};
 use phosphor_core::registry::mcp::{Schema, Tool};
@@ -76,8 +76,9 @@ use phosphor_steel::runtime::Runtime;
 ///
 /// One capability does not answer a task id at the CLI door: `eval`'s
 /// implementation is the VM, and `T022` wired `main.rs` to hand the door one.
-/// So it answers whatever the VM made of the source rather than
-/// `not built yet — … builds it`, and the door check reads that instead.
+/// So it answers whatever the VM made of the source — since `T100` a `#raised`
+/// line, because the canonical example is not a defined identifier — rather
+/// than `not built yet — … builds it`, and the door check reads that instead.
 ///
 /// Detected structurally — the Action that is a runtime — rather than by naming
 /// the capability, so this stays one exception in the arrangement and not one in
@@ -183,11 +184,13 @@ impl Doors {
 
         match self.runtime.evaluate(&source) {
             Outcome::Done(_) => {}
-            Outcome::Refused(Refusal::Declined { reason }) => {
-                // `Runtime::evaluate` reports a raised Steel error this way, so
-                // this is a call that did not run: a wrong arity, an argument
-                // the barrier refused, an identifier that is not a procedure.
-                return Err(format!("`{source}` did not run — {reason}"));
+            // A call that did not run: a wrong arity, an argument the barrier
+            // refused, an identifier that is not a procedure. `T100` made this
+            // its own case — it used to arrive as `Refusal::Declined`, which
+            // meant this walk could not tell a raise from a rule saying no, and
+            // the two arms below were one guess apart.
+            Outcome::Raised(raised) => {
+                return Err(format!("`{source}` did not run — {}", raised.why()));
             }
             Outcome::Refused(refusal) => {
                 return Err(format!("`{source}` was refused — {refusal:?}"));
@@ -560,10 +563,17 @@ fn cli_door(capability: &Capability, verb: &Verb) -> Result<(), String> {
     // The one capability that answers no task id: its implementation is the VM
     // (`is_the_vm`), and since `T022` the door has one. The canonical example
     // for its source parameter is the word `sample`, which is not a defined
-    // identifier — so the VM refuses it in Steel's own words, and a refusal that
-    // names no task is the proof that the source reached a runtime at all.
+    // identifier — so the VM *raises*, and a raise is the proof that the source
+    // reached a runtime at all.
+    //
+    // `T100` sharpened this from `#refused ·` to the exact sentence. The old
+    // form passed on any refusal that named no task, which is what a door with
+    // no runtime at all would print for `eval` too — `not built yet — T021
+    // builds it` was excluded by name, but `Refusal::Declined` carrying
+    // anything else was not.
     if is_the_vm(capability) {
-        return if printed.starts_with("#refused · ") && !printed.contains("not built yet") {
+        const UNBOUND: &str = "#raised · unbound identifier — ";
+        return if printed.starts_with(UNBOUND) {
             Ok(())
         } else {
             Err(format!(
