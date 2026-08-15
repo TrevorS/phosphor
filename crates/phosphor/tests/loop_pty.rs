@@ -2255,7 +2255,19 @@ mod driven {
         // `start.txt` says something else entirely so there is nothing to
         // confuse it with.
         editor.press_until(format!(":e {}\r", file.display()).as_bytes(), "local x = 1");
-        editor.press_quietly(b"gcgc");
+        // **Wait for the comment on the screen, not for the write.** Waiting on
+        // the open alone was not enough: CI failed twice more with the fixture
+        // written back unchanged, which says `gcgc` ran before something it
+        // needed — and the buffer's text being drawn does not prove the
+        // language was attached to it, because a `zz` declares no server and so
+        // puts nothing on the statusline to wait for.
+        //
+        // Asserting the *drawn* row is the stronger claim anyway: a comment the
+        // user cannot see is not a comment, and `:w` after it can no longer
+        // race what it is writing. It is also self-diagnosing — if the prefix
+        // never arrives, `press_until` fails with the frames, which is the
+        // thing four red CI runs could not tell me.
+        editor.press_until(b"gcgc", "-- local x = 1");
         editor.press_quietly(b":w\r");
         let written = fs::read_to_string(&file).expect("the buffer was written");
         assert_eq!(
