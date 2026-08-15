@@ -83,8 +83,20 @@ for fork in "${FORKS[@]}"; do
     features="crossterm,grammars-phosphor"
     # Run, THEN read the status. A pipe here would report the pipe's exit code,
     # which is how this repo has twice called a red check green.
+    # **`--color never`, and it is the whole reason this lint was red on CI and
+    # green here.** `.github/workflows/ci.yml` sets `CARGO_TERM_COLOR: always`,
+    # so cargo wraps its own words in SGR escapes: the line becomes
+    # `<esc>[1m<esc>[32m   Running<esc>[0m tests/change_events.rs (…)`, and the
+    # `index($0, "Running tests/…")` below — a literal substring match — stops
+    # matching. The suite ran, every test passed, and the lint reported that the
+    # file contributed none. A parser that reads another program's output has to
+    # say how it wants that output; inheriting the ambient environment is what
+    # made this pass on one machine and fail on the other.
+    #
+    # Reproduce the failure without CI: `CARGO_TERM_COLOR=always` in front of
+    # this script.
     set +e
-    cargo test --manifest-path "$manifest" \
+    cargo test --manifest-path "$manifest" --color never \
         --no-default-features --features "$features" >"$log" 2>&1
     rc=$?
     set -e
