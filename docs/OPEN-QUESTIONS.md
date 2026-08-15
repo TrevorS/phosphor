@@ -981,6 +981,30 @@ were looked at as images before being kept. The rest were restored with `git che
 screen is a review act, `CP-4` is not passed, and thirty-one frames nobody has looked at is exactly
 the kind of bulk approval a golden library dies of. → Teej, at `CP-4` or the window after it.
 
+**Until then Tier 2 is dark, and saying so is the point of this paragraph.** Thirty-three of
+forty-one frames mismatch, so the runner reports red for everything and therefore distinguishes
+nothing — a change detector at 80% false positive is not a weaker signal, it is no signal, and
+the danger is that a real regression arrives inside that noise and reads as more of it. `V008`'s
+design already stops it costing anything (Tier 2 is `continue-on-error` and never gates), so the
+cost is entirely that a reader may take a red Tier-2 job as information. It is not, today.
+
+**The number is also the reason the obvious fix is wrong.** Thirty-three frames is more than
+anyone reviews carefully in one sitting, so "bless them at `CP-4`" risks becoming exactly the
+bulk approval this entry refused, with extra ceremony. Two honest shapes, and the choice is
+Teej's:
+
+- **By screen group, across several sittings** — the statusline screens, then the gutter, then
+  the floats, then `S4`'s surface. Each group is small enough to actually look at, and a group
+  that goes green stops contributing noise to the next.
+- **Declare the baseline abandoned and re-capture wholesale at `CP-4`**, on the argument that a
+  frame nobody has compared since Window B is not a baseline but a historical artifact. Cheaper
+  and honest, and it forfeits the one thing a golden library is for — so it is only right if the
+  intervening three windows are believed on other evidence.
+
+*Recommendation: by screen group, starting with whatever `CP-4` makes Teej look at anyway. And
+whichever is chosen, do not run `just tapes` to make the red go away: that is the one-command
+version of the bulk approval, and it is indistinguishable afterwards from having reviewed them.*
+
 ---
 
 ## Repair pass — queued work, not questions

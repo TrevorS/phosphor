@@ -1778,9 +1778,34 @@ live.
   > surprise, and so that whoever builds `T088` sees the claim made on their behalf.
 
 - [ ] **T061 · Permission asks + rule writing**
-  Screen `7a`: exact invocation shown; always-allow **writes a legible rule to `init.scm`**.
+  Screen `7a`: exact invocation shown; always-allow **writes a legible rule**.
   *Done when:* the written rule is readable by a human and takes effect next time. *Needs:*
   T059
+
+  > **Two corrections from `T101`, both of which change what this task has to do.**
+  >
+  > **Where the rule lands.** This entry said `init.scm` until 2026-08-14, and `7a` still draws
+  > that word. `T101` moved machine-written forms out of the shipped tree entirely — they go to
+  > `$XDG_CONFIG_HOME/phosphor/persisted.scm` now, and `runtime/persisted.scm` is deleted. The
+  > write path already works and is tested:
+  > `a_head_the_layer_never_offered_is_written_as_given` puts `(allow "git push")` through
+  > `persist-form!` with the shipped policy loaded and reads it back **ungated**, which is what
+  > `7a`'s *"pressed a digit"* earns — the explicit-persist gate is on the REPL's auto-route, not
+  > on this.
+  >
+  > **The read half faults today, and that is this task's constraint rather than `T101`'s bug**
+  > ([OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) §35). Run this session:
+  > `phosphor --eval '(allow "git push")'` answers
+  > `#raised · unbound identifier — Cannot reference an identifier before its definition: allow`.
+  > `allow` is free until this task builds `runtime/permissions.scm`, and `Layer::load_persisted`
+  > runs each persisted form and records a fault the boot float draws. So a grant written before
+  > this task exists would open a boot float on every start. Nothing writes one yet — the
+  > permission surface *is* this task — so it is forward-looking rather than live.
+  >
+  > **What to check when this lands:** that `allow` is defined by a file in
+  > `phosphor/boot-files`, and not somewhere the boot reaches later. `Layer::load_persisted`
+  > already guarantees "after the whole load order" for anything in that list, so satisfying the
+  > constraint is a matter of *where* the definition goes rather than of new machinery.
 
 - [ ] **T062 · Interrupt and steer**
   `esc` pauses at the next tool boundary → steer / resume / abort. The seam is recorded in the
