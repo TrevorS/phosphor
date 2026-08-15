@@ -226,8 +226,8 @@ fn a_relative_xdg_config_home_boots_no_layer_at_all() {
     let printed = phosphor()
         .args(["--eval", "(+ 1 2)"])
         .stdin(Stdio::null())
-        // `current_dir` is the whole test: `cfg` resolves against it, and
-        // `./runtime` — candidate 3 — does not exist here.
+        // `current_dir` is the whole test: `cfg` resolves against it, and the
+        // checkout candidate — `./runtime` — does not exist here.
         .current_dir(&home)
         .env_remove("PHOSPHOR_RUNTIME")
         .env("HOME", &home)
@@ -244,4 +244,71 @@ fn a_relative_xdg_config_home_boots_no_layer_at_all() {
          directory on the read side: {out:?}"
     );
     assert_eq!(out.trim(), "3");
+}
+
+/// **`OPEN-QUESTIONS.md` §34's reproduction, as a test.**
+///
+/// The measurement that opened §34 was this command, run against a config home
+/// holding the single file `phosphor_core::config`'s header used to draw — an
+/// `init.scm` with one `(set-option! "soft-wrap" #t)` in it:
+///
+/// ```text
+/// phosphor --eval '(length phosphor/boot-files)'
+/// #raised · unbound identifier — Cannot reference an identifier before its definition
+/// ```
+///
+/// Nothing shipped had loaded. `Runtime::root` was a first-match-wins search
+/// with the config home second, so that one file *became* the runtime tree —
+/// and driven through a pty it was an editor with an empty statusline, `:`
+/// drawing `unknown key :` and `ZQ` doing nothing, with **no boot float**,
+/// because the user's one form ran cleanly.
+///
+/// Two claims, in one process because they are one question. `user-ran` is
+/// visible, so the user's file ran; `ZQ` resolves to the shipped `quit`, so
+/// `runtime/keymaps.scm` ran too — and `keymap-set!` is defined *there*, which
+/// is why a user's file loading after the tree rather than instead of it is
+/// what makes both true at once.
+///
+/// A process test for [`a_relative_xdg_config_home_boots_no_layer_at_all`]'s
+/// reason: the resolution reads the environment, and `std::env::set_var` is
+/// `unsafe` in edition 2024.
+#[test]
+fn a_config_home_layers_over_the_shipped_tree() {
+    let config = scratch("layering");
+    let _ = fs::remove_dir_all(&config);
+    let layer = config.join("phosphor");
+    fs::create_dir_all(&layer).expect("a config home");
+    fs::write(
+        layer.join("init.scm"),
+        "(set-option! \"soft-wrap\" #t)\n(define user-ran 7)\n",
+    )
+    .expect("the file a user writes first");
+
+    // The checkout, so the tree under test is the *shipped* one rather than
+    // whatever the developer running this has in `$PHOSPHOR_RUNTIME`.
+    let checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let printed = phosphor()
+        .args([
+            "--eval",
+            "(list user-ran (phosphor/resolve \"normal\" \"ZQ\"))",
+        ])
+        .stdin(Stdio::null())
+        .current_dir(&checkout)
+        .env_remove("PHOSPHOR_RUNTIME")
+        .env("XDG_CONFIG_HOME", &config)
+        .output()
+        .expect("the binary runs");
+
+    let out = String::from_utf8_lossy(&printed.stdout).into_owned();
+    let _ = fs::remove_dir_all(&config);
+
+    assert!(
+        out.starts_with("(7 "),
+        "the user's own init.scm never ran: {out:?}"
+    );
+    assert!(
+        out.contains("\"run\"") && out.contains("\"quit\""),
+        "the shipped keymap did not survive a user's init.scm — §34's whole \
+         defect, and the state a person could not quit out of: {out:?}"
+    );
 }

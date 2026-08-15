@@ -362,15 +362,16 @@ tapes:
     @bash tapes/run-tapes.sh
 
 # V005: regenerate exactly one screen — `just tape 1a`. Same version gate as
-# `just tapes`, but runs a single `tapes/<id>.tape`. Runs with cwd `tapes/`
-# (matching run-tapes.sh) so a tape's relative paths — `Source
-# "_config.tape"`, `Screenshot "artifacts/<id>.png"` — resolve identically
-# whether it's regenerated this way or via `just tapes`.
+# `just tapes`, and the capture itself goes through tapes/record-one.sh so this
+# runs in the same cwd and the same environment `run-tapes.sh` gives a full
+# regeneration — a scratch `$XDG_CONFIG_HOME` among them, without which a
+# single re-record picks up the operator's own `init.scm` and every other
+# screen in the library does not.
 
 # Regenerate exactly one screen — `just tape 1a`.
 tape id:
     @bash tapes/check-versions.sh
-    cd tapes && vhs "{{ id }}.tape"
+    @bash tapes/record-one.sh "{{ id }}"
 
 # Builds the binary and puts it where the tapes can find it. `just tapes` and
 # `just tape <id>` both need `phosphor` on `$PATH`, and until this recipe

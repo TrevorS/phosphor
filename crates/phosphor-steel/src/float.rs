@@ -44,12 +44,31 @@ use crate::boot::{BootFault, BootReport};
 /// caused the others.
 pub const FAULTS_SHOWN: usize = 6;
 
+/// Whether the ex line this float's footer teaches actually exists.
+///
+/// §4 asks a footer for *"every legal key, always visible"*, and the reading
+/// that matters is **legal**. `:repl` and `:reload-runtime` are two ex commands,
+/// `:` is bound in `runtime/keymaps.scm`, and the one state this float is
+/// guaranteed to open in — nothing loaded an editor layer at all (`OPEN-QUESTIONS.md`
+/// §34) — is the state where that file did not run. Driven on a pty in exactly
+/// that state: `esc` closed the float, because Rust handles it; pressing `:`
+/// changed nothing on the frame. A footer teaching two keys that cannot be
+/// typed is worse than a short one, and it is worst in front of the reader who
+/// has no other way to find out what is wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExLine {
+    /// An editor layer loaded, so `:` reaches the command table.
+    Bound,
+    /// Nothing loaded one. `esc` is the only key the footer can honestly name.
+    Unbound,
+}
+
 /// The boot float, or [`None`] when the boot ran clean.
 ///
 /// A clean boot draws nothing at all — *"cold start invites, never nags"*
 /// (TUI Mockups, turn 7). The float exists only when there is something in it.
 #[must_use]
-pub fn boot_float(report: &BootReport) -> Option<Float> {
+pub fn boot_float(report: &BootReport, ex: ExLine) -> Option<Float> {
     if report.is_clean() {
         return None;
     }
@@ -65,10 +84,13 @@ pub fn boot_float(report: &BootReport) -> Option<Float> {
     let hidden = report.faults.len().saturating_sub(FAULTS_SHOWN);
     if hidden > 0 {
         rows.push(SpanRow::default());
-        rows.push(row(vec![Run::new(
-            &format!("{hidden} more · :repl to read them"),
-            Tone::Meta,
-        )]));
+        // The same rule as the footer: an ex command is only an instruction
+        // where `:` is bound. Without it the count is all there is to say.
+        let rest = match ex {
+            ExLine::Bound => format!("{hidden} more · :repl to read them"),
+            ExLine::Unbound => format!("{hidden} more"),
+        };
+        rows.push(row(vec![Run::new(&rest, Tone::Meta)]));
     }
 
     rows.push(SpanRow::default());
@@ -83,13 +105,17 @@ pub fn boot_float(report: &BootReport) -> Option<Float> {
         body: Child::new(Node::Spans { rows }),
         footer: Some(Child::new(Node::KeyHints {
             // §4: *"every legal key, always visible"*; §6: primary action
-            // first, escape last.
+            // first, escape last. See [`ExLine`] for why the first two are not
+            // always legal.
             density: Density::Footer,
-            hints: vec![
-                hint(":repl", "open the repl"),
-                hint(":reload-runtime", "run the boot again"),
-                hint("esc", "close"),
-            ],
+            hints: match ex {
+                ExLine::Bound => vec![
+                    hint(":repl", "open the repl"),
+                    hint(":reload-runtime", "run the boot again"),
+                    hint("esc", "close"),
+                ],
+                ExLine::Unbound => vec![hint("esc", "close")],
+            },
         })),
     })
 }
@@ -195,13 +221,16 @@ mod tests {
 
     #[test]
     fn a_clean_boot_draws_nothing() {
-        assert!(boot_float(&report(Vec::new())).is_none());
+        assert!(boot_float(&report(Vec::new()), ExLine::Bound).is_none());
     }
 
     #[test]
     fn the_float_carries_the_file_the_line_and_the_message() {
-        let float = boot_float(&report(vec![fault(12, "unexpected end of file")]))
-            .expect("a fault opens the float");
+        let float = boot_float(
+            &report(vec![fault(12, "unexpected end of file")]),
+            ExLine::Bound,
+        )
+        .expect("a fault opens the float");
         let body = text(&float);
         assert!(body.contains("init.scm:12:3"), "{body}");
         assert!(body.contains("unexpected end of file"), "{body}");
@@ -214,14 +243,15 @@ mod tests {
 
     #[test]
     fn the_float_says_the_editor_is_up() {
-        let float = boot_float(&report(vec![fault(2, "boom")])).expect("a fault opens the float");
+        let float = boot_float(&report(vec![fault(2, "boom")]), ExLine::Bound)
+            .expect("a fault opens the float");
         assert!(text(&float).contains("3 of 4 forms ran · the editor is up"));
     }
 
     #[test]
     fn the_header_counts_the_faults_and_the_footer_teaches_the_keys() {
-        let float =
-            boot_float(&report(vec![fault(1, "a"), fault(2, "b")])).expect("two faults, one float");
+        let float = boot_float(&report(vec![fault(1, "a"), fault(2, "b")]), ExLine::Bound)
+            .expect("two faults, one float");
         let header = float.header.expect("the boot float has a header");
         assert_eq!(header.left, "◆ steel · boot");
         assert_eq!(header.right.as_deref(), Some("2 faults"));
@@ -236,22 +266,68 @@ mod tests {
         assert_eq!(hints.last().expect("at least one hint").key.0, "esc");
     }
 
+    /// **A footer may not teach a key that does not exist** — the state
+    /// `OPEN-QUESTIONS.md` §34's float is guaranteed to open in.
+    ///
+    /// Nothing loaded an editor layer, so `:` is unbound and the two ex
+    /// commands beside `esc` are instructions a reader cannot carry out. Driven
+    /// on a pty in exactly that state before this existed: `esc` closed the
+    /// float, `:` changed nothing on the frame.
+    ///
+    /// The `Bound` half is asserted too, in the same test, because the bug this
+    /// guards against on *that* side is silently teaching nothing: a footer
+    /// trimmed to `esc` for every boot fault would pass a test that only looked
+    /// at the unbound case.
+    #[test]
+    fn a_boot_with_no_editor_layer_teaches_only_the_key_rust_handles() {
+        let hints = |ex| {
+            let float = boot_float(&report(vec![fault(1, "boom")]), ex).expect("a fault, a float");
+            let Node::KeyHints { hints, .. } = float.footer.expect("a footer").node().clone()
+            else {
+                panic!("the footer is a keymap surface");
+            };
+            hints
+                .iter()
+                .map(|hint| hint.key.0.clone())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(hints(ExLine::Unbound), vec!["esc".to_owned()]);
+        assert_eq!(
+            hints(ExLine::Bound),
+            vec![
+                ":repl".to_owned(),
+                ":reload-runtime".to_owned(),
+                "esc".to_owned()
+            ]
+        );
+    }
+
     #[test]
     fn a_long_list_of_faults_is_summarised_rather_than_scrolled() {
-        let faults = (1..=FAULTS_SHOWN + 3)
+        let faults: Vec<BootFault> = (1..=FAULTS_SHOWN + 3)
             .map(|line| fault(u32::try_from(line).expect("small"), "boom"))
             .collect();
-        let float = boot_float(&report(faults)).expect("faults open the float");
+        let float =
+            boot_float(&report(faults.clone()), ExLine::Bound).expect("faults open the float");
         assert!(
             text(&float).contains("3 more · :repl to read them"),
             "{}",
             text(&float)
         );
+
+        // The same row without an ex line to send the reader to. The count is
+        // still worth saying; the instruction is not.
+        let float = boot_float(&report(faults), ExLine::Unbound).expect("faults open the float");
+        let body = text(&float);
+        assert!(body.contains("3 more"), "{body}");
+        assert!(!body.contains(":repl"), "{body}");
     }
 
     #[test]
     fn the_mood_is_informational_because_it_asks_nothing() {
-        let float = boot_float(&report(vec![fault(1, "boom")])).expect("a fault opens the float");
+        let float = boot_float(&report(vec![fault(1, "boom")]), ExLine::Bound)
+            .expect("a fault opens the float");
         assert_eq!(float.mood, Mood::Informational);
     }
 }

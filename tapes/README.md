@@ -522,6 +522,47 @@ tapes` starts hanging to `Wait+Screen` timeouts again after a runtime change,
 check `Runtime::root()`'s fallback order before assuming the sandbox — this
 exact failure has one specific cause and it isn't flaky infrastructure.
 
+## §34 — the operator's own `init.scm` was in every capture
+
+The sibling of the regression above, found by review rather than by a hang, and
+the reason `tapes/tape-env.sh` exists.
+
+**The leak.** Every tape sets `PHOSPHOR_RUNTIME` and nothing else. Since
+`OPEN-QUESTIONS.md` §34, `$XDG_CONFIG_HOME/phosphor/init.scm` is layer 2 — it
+runs *after* whatever `$PHOSPHOR_RUNTIME` named, on every start, so the
+override does not shield a capture from it the way it shields one from
+`./runtime`. Since `T101` the same is true of `persisted.scm`. So `just tapes`
+on an operator's laptop recorded that operator's editor configuration into the
+library, and `CP-4` reads the library as a change detector: a screen that moved
+because somebody edited their own `init.scm` is a false positive nobody could
+explain. `grep -rn XDG_CONFIG_HOME tapes/ scripts/ justfile` returned nothing
+before this. The pty harness has always set one (`loop_pty.rs`'s
+`config_home`), and so does `benches/vm_invocations.rs`; the tapes were the
+only uncovered surface.
+
+**Measured, not inferred.** A probe tape launching the release binary with
+`PHOSPHOR_RUNTIME=../runtime`, captured three ways: with no `$XDG_CONFIG_HOME`
+at all; with one holding `phosphor/init.scm` = `(no-such-verb 1)`; and with the
+same environment sourced through `tape-env.sh`. The middle capture differs from
+the first — the operator's mistake is on the screen, in a boot float. The third
+is byte-identical to the first. Recording `1a.tape` through `record-one.sh`
+against a clean environment is also byte-identical to recording it with a bare
+`vhs`, so the fix moves no pixels of its own.
+
+**The fix, and why it is not a tape line.** `_config.tape` holds only `Set`
+lines deliberately — a bare `Source` of it must not close vhs's
+before-first-command window, or the per-tape `Set Width`/`Set Height` after it
+stop taking effect — and vhs 0.11 has no `Env` command at all (`vhs manual`'s
+command list). What it does have is plain inheritance: vhs → ttyd → shell.
+Verified with a probe tape whose only command was
+`env | grep XDG_CONFIG_HOME > cfg.txt`, which came back holding the exported
+value. So `tapes/tape-env.sh` exports a scratch config home under `$TMPDIR`,
+emptied every run, and the three entry points that run `vhs` source it:
+`run-tapes.sh`, `diff-tapes.sh`, and `record-one.sh` behind `just tape <id>`.
+The scratch home is outside the repository because some tapes evaluate
+`persist!`, which creates the directory and appends to a file in it — a capture
+run may not leave an untracked file in the tree it is capturing.
+
 ## V007 — pixel-diff runner
 
 `tapes/diff-tapes.sh` (`just tapes-diff` / `just tape-diff <id>`). Captures a
@@ -1050,6 +1091,10 @@ tapes/
   README.md              this file
   check-versions.sh      the version gate `just tapes` / `just tape <id>` run first
   run-tapes.sh            runs every real tapes/*.tape (`_`-prefixed skipped)
+  record-one.sh            records exactly one — what `just tape <id>` runs
+  tape-env.sh               the environment all three capture paths source: a
+                             scratch $XDG_CONFIG_HOME, so a recording does not
+                             load the operator's own init.scm (§34, above)
   diff-tapes.sh            V007 — the pixel-diff runner (`just tapes-diff` /
                             `just tape-diff <id>`); never gates CI
   lsp-fixture.sh            CP-4 — builds the scratch tree the six S4 tapes

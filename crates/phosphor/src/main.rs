@@ -45,7 +45,8 @@
 //! There is no accessor handing out the `Runtime`, so a new way to enter the VM
 //! has to be a new method here — and the shape of every method here is to set
 //! the flag. `scripts/lint-one-vm-door.sh` fails the build if that stops being
-//! true, and `arbitrary_scheme_marks_the_frame_stale` tests both halves.
+//! true, and `arbitrary_scheme_marks_the_frame_stale_and_composing_does_not`
+//! tests both halves.
 //!
 //! Composition is the deliberate exception ([`Layer::compose`]): invalidating
 //! on the call that fills the cache would refill it every frame, which is the
@@ -171,6 +172,7 @@ use phosphor_core::view::{
     Child, Density, Emphasis, Float as ViewFloat, KeyHint, Mood, Node, SessionState, Tone, Tree,
 };
 use phosphor_steel::boot::{BootFault, BootReport, BootUnit};
+use phosphor_steel::float::ExLine;
 use phosphor_steel::host::Host;
 use phosphor_steel::keymap::{self, Ex};
 use phosphor_steel::repl::Repl;
@@ -391,9 +393,37 @@ struct HostState {
     offered: Vec<String>,
 }
 
-/// What a layer that declares no [`PERSIST_FILE`] gets — `6b`'s own note, and
-/// the right answer for a layer that is one file.
-const INIT: &str = "init.scm";
+/// The boot file's name, and it names two different files.
+///
+/// In the **shipped** tree it is what `phosphor_steel::boot` loads first and
+/// reads the load order out of. In the **config home** it is the user's own
+/// layer, which [`Layer::load_user_layer`] runs on top of that tree (§34).
+///
+/// **`phosphor_steel::boot::INIT`, not a second spelling of it.** The sentence
+/// above asserts the two names are the same name, and a `&str` written twice
+/// across a crate barrier is exactly the drift [`PERSIST_VERB`]'s doc refuses:
+/// *"two spellings of one name drift, and the one that drifts silently is the
+/// Rust one."* This is an alias so the claim is held by the compiler; the doc
+/// is here because that is where a reader of this file looks for it.
+///
+/// # The one place the Emacs argument cuts the other way
+///
+/// It is also what a layer that declares no [`PERSIST_FILE`] gets — `6b`'s own
+/// note, and the right answer for a machine whose only layer is that one file:
+/// the file you hand-wrote is then the file `persist!` appends to, and
+/// [`Layer::booted_already`] is what keeps it from running twice.
+///
+/// **That is a machine writing into a human's file**, and
+/// `phosphor_core::config`'s header argues against it a screen earlier —
+/// *"Emacs makes the same split: `custom.el` sits beside `init.el`, not in a
+/// cache."* Both are true of Emacs, which is the reason to record the tension
+/// rather than resolve it: Emacs's own default writes customisations into
+/// `init.el` until you set `custom-file`, and the split is what you get when
+/// you name a second file. Here the shipped layer names it
+/// (`runtime/repl.scm`), so a machine with no shipped layer has nobody to name
+/// one — and inventing a `persisted.scm` for it in Rust would be this file
+/// holding an opinion the layer is supposed to hold.
+const INIT: &str = phosphor_steel::boot::INIT;
 
 /// The global the editor layer binds to name the file the REPL writes to.
 ///
@@ -504,6 +534,40 @@ impl AppHost {
     fn persist_target(&self) -> Option<PathBuf> {
         let state = self.state.lock().ok()?;
         Some(state.config.as_ref()?.join(&state.file))
+    }
+
+    /// The user's own hand-written layer — `$XDG_CONFIG_HOME/phosphor/init.scm`
+    /// — or [`None`] when there is no config home (§34).
+    ///
+    /// **A fixed name, unlike [`AppHost::persist_target`]'s.** The persist file
+    /// is whatever the *shipped* layer declares ([`PERSIST_FILE`]), because the
+    /// thing that has to load last is a property of that layer's load order.
+    /// This one is the file a person is told to create, so it cannot be named
+    /// by a layer they may not have: on a machine with no shipped tree at all
+    /// this is the only file there is, and a name that moved with the layer
+    /// would make *"where do I put my config"* unanswerable.
+    ///
+    /// It resolves through the same `state.config` the persist target does, so
+    /// the file you hand-write and the file `persist-form!` appends to are in
+    /// one directory by construction rather than by two agreeing readings of
+    /// `$XDG_CONFIG_HOME`.
+    fn user_layer(&self) -> Option<PathBuf> {
+        let state = self.state.lock().ok()?;
+        Some(state.config.as_ref()?.join(INIT))
+    }
+
+    /// The config home this process resolved, or [`None`] when there is none.
+    ///
+    /// `phosphor_core::config`'s header claims [`config::config_dir`] is *"the
+    /// one resolution"* and that this type's joins are the only readers of it.
+    /// [`run`] called `config_dir()` a second time to hand
+    /// [`Layer::note_if_no_layer`] the same directory this host already holds,
+    /// which made the sentence narrowly false and put a second environment read
+    /// on the startup path. No drift was possible — one function, one process —
+    /// but a claim that survives only by coincidence is a claim a later edit
+    /// gets to break silently.
+    fn config_home(&self) -> Option<PathBuf> {
+        self.state.lock().ok()?.config.clone()
     }
 
     /// Everything asked for since the last drain.
@@ -852,6 +916,22 @@ struct Layer {
     /// One report rather than two floats: a person opening the editor wants to
     /// know what did not load, not which of two mechanisms failed to load it.
     report: BootReport,
+    /// Every file [`Layer::load_after_boot`] has run, as it was given.
+    ///
+    /// The boot's own files are in [`Layer::report`] relative to a root, so
+    /// they answer [`Layer::booted_already`] on their own; these have no root
+    /// to be relative to, and there are two of them now — the user's layer and
+    /// the persisted one — which on a machine with no shipped tree are **the
+    /// same path** ([`INIT`]). Without this list that file runs twice.
+    after_boot: Vec<PathBuf>,
+    /// How many files the **boot** loaded, before anything stacked on top.
+    ///
+    /// [`Layer::report`] grows as the layers run, so `units.is_empty()` stops
+    /// answering *"did an editor layer load"* the moment a user's own
+    /// `init.scm` reads — and that is §34's whole population, not an edge. This
+    /// is the count taken before [`Layer::load_after_boot`] can touch it, which
+    /// is what [`Layer::has_editor_layer`] reads.
+    booted_units: usize,
 }
 
 impl Layer {
@@ -860,12 +940,78 @@ impl Layer {
         Self {
             runtime,
             ran: false,
+            booted_units: report.units.len(),
             report,
+            after_boot: Vec::new(),
         }
     }
 
-    /// Runs the persisted layer — **last, after the whole load order**
-    /// (`T101`).
+    /// Whether the shipped tree loaded anything at all — the fact `:` and every
+    /// other key depend on (§34).
+    ///
+    /// **The boot's own units, not the report's.** Every binding in the editor
+    /// is in `runtime/keymaps.scm` and the seed table is empty by construction
+    /// (`crates/phosphor/tests/no_bindings_in_rust.rs`), so a process where
+    /// this is false has no keymap, no ex line and no way to quit — however
+    /// many files layered on top of the nothing it found. A config-home
+    /// `init.scm` is a layer, never an editor.
+    const fn has_editor_layer(&self) -> bool {
+        self.booted_units > 0
+    }
+
+    /// Runs the user's own `init.scm` — **on top of the shipped tree, not
+    /// instead of it** (§34).
+    ///
+    /// Teej ruled this on 2026-08-14 and the model is Emacs's, which is the one
+    /// `T101` was decided on to begin with: shipped lisp loads, then your
+    /// `init.el` runs over it. Until then the config home was
+    /// [`Runtime::root`]'s second *candidate*, so an `init.scm` there became
+    /// the runtime tree and the shipped fifteen files never loaded at all —
+    /// measured on the built binary as an empty statusline, `:` drawing
+    /// `unknown key :`, `ZQ` doing nothing, and no float, because the user's
+    /// one form ran cleanly.
+    ///
+    /// **The ruling settles the direction question too.** A user's file may
+    /// *remove* a shipped binding as well as add one, and the vocabulary
+    /// already spells it: `keymap-remove!` is defined in `runtime/keymaps.scm`
+    /// and listed in `runtime/repl.scm`'s persistable heads. Layering gives
+    /// both directions with no new verb.
+    ///
+    /// **It runs before the persisted layer** ([`Layer::load_persisted`]), and
+    /// that order is a claim about intent rather than about mechanism: a form
+    /// you hand-wrote should beat the shipped default, and a form you
+    /// deliberately kept at the REPL — the later act, and the more explicit one
+    /// — should beat both. The same argument the other way round would make
+    /// `persist!` unable to change anything you had ever written down.
+    ///
+    /// **One file, deliberately.** The shipped tree declares its load order in
+    /// `phosphor/boot-files` and the boot reads that global once; a user layer
+    /// that declared its own would be redefining the *same* global, so anything
+    /// read afterwards is either the shipped fifteen names — which do not exist
+    /// in the config home, and would be fifteen `unreadable` faults on every
+    /// start — or a list a user has to restate in full. Both are worse than
+    /// saying so: a second file in the config home wants a name of its own, and
+    /// that is a vocabulary question rather than a load-path one.
+    fn load_user_layer(&mut self, path: &Path) {
+        // The whole path, shortened at `$HOME`. Every other layer is named by
+        // its bare file name because the tree it sits in is unambiguous; this
+        // one shares the name `init.scm` with the shipped boot file, and a
+        // float that says `init.scm:1:2 · free identifier` in front of a person
+        // with two of them has answered nothing.
+        //
+        // **It buys that with the overflow `note_if_no_layer` refuses to pay**,
+        // and the two are not in conflict: there the path is a remedy and the
+        // label is the news, here the path IS the fault's name and losing it
+        // costs the reader the whole answer. `config::abbreviated` is what
+        // keeps the bill to `~/.config/phosphor/init.scm` in the field — a
+        // pty's temp directory is longer, which is why the row was measured
+        // there first.
+        let named = config::abbreviated(path);
+        self.load_after_boot(path, named);
+    }
+
+    /// Runs the persisted layer — **last, after the whole load order and after
+    /// the user's own file** (`T101`, then §34).
     ///
     /// The property this shape exists for was found by running it: `init.scm`
     /// evaluates to its last form *before* Rust reads the load order it
@@ -874,27 +1020,38 @@ impl Layer {
     /// `persisted.scm` last in `phosphor/boot-files`; the file lives in the
     /// config home now, so "last" is a call site rather than a list position
     /// and nobody can reorder it.
+    fn load_persisted(&mut self, path: &Path) {
+        // Named the way the load order would have named it, so the float's
+        // `persisted.scm:3:1` reads like every other boot fault. The bare name
+        // is unambiguous here: no file in the shipped tree is called that —
+        // `runtime/init.scm`'s load order says why in full.
+        let named = PathBuf::from(path.file_name().unwrap_or(path.as_os_str()));
+        self.load_after_boot(path, named);
+    }
+
+    /// Runs one file of forms after the boot, naming its faults `file`.
     ///
     /// Form by form, for `crate::boot`'s reason one layer over: a stray paren
     /// in a file the header invites you to hand-edit must cost one line, not
     /// the keymap. A missing file is a fresh install and not a fault.
     ///
-    /// **Never twice.** [`Runtime::root`]'s second candidate is the config home,
-    /// so a layer that is one file — the shape [`INIT`] blesses — makes the boot
-    /// root and the persist target the same path, and without
-    /// [`Layer::booted_already`] every form in a user's own `init.scm` would run
-    /// once at boot and once again here.
-    fn load_persisted(&mut self, path: &Path) {
+    /// **Never twice.** The config home holds both files this loads, and on a
+    /// machine with no shipped tree they are one file: nothing declares
+    /// [`PERSIST_FILE`], so the persist target falls back to [`INIT`], which is
+    /// also the user's layer. Pointing `$PHOSPHOR_RUNTIME` at the config home
+    /// makes the boot root a third name for it. [`Layer::booted_already`] is
+    /// what keeps every form in it from running once per role it plays —
+    /// reproduced on the built binary with `(displayln "BOOTED-ONCE")`, which
+    /// printed twice.
+    fn load_after_boot(&mut self, path: &Path, file: PathBuf) {
         if self.booted_already(path) {
             return;
         }
+        self.after_boot.push(path.to_path_buf());
         self.ran = true;
         let Ok(source) = std::fs::read_to_string(path) else {
             return;
         };
-        // Named the way the load order would have named it, so the float's
-        // `persisted.scm:3:1` reads like every other boot fault.
-        let file = PathBuf::from(path.file_name().unwrap_or(path.as_os_str()));
 
         let (forms, unterminated) = source::top_level_forms(&source);
         let mut ran = 0;
@@ -930,21 +1087,111 @@ impl Layer {
         });
     }
 
-    /// Whether the boot has already run the file at `path` (`T101`).
+    /// Whether this layer has already run the file at `path` (`T101`, §34).
     ///
-    /// The boot report names its root and every file it read relative to it, so
-    /// this is the boot's own record rather than a second guess at the load
-    /// order: a config-home layer that declares `phosphor/boot-files` gets each
-    /// of those checked too, and one that declares a `persist-file` the boot
-    /// never loaded still loads here.
+    /// Two records, because the files reach it two ways. The boot report names
+    /// its root and every file it read relative to it, so that half is the
+    /// boot's own record rather than a second guess at the load order: a layer
+    /// that declares `phosphor/boot-files` gets each of those checked too, and
+    /// one that declares a `persist-file` the boot never loaded still loads
+    /// here. [`Layer::after_boot`] is the other half — the user's layer and the
+    /// persisted layer, which are one file whenever nothing declares a
+    /// [`PERSIST_FILE`].
     fn booted_already(&self, path: &Path) -> bool {
-        let Some(root) = self.report.root.as_deref() else {
-            return false;
+        let booted = self.report.root.as_deref().is_some_and(|root| {
+            self.report
+                .units
+                .iter()
+                .any(|unit| same_file(&root.join(&unit.file), path))
+        });
+        booted || self.after_boot.iter().any(|ran| same_file(ran, path))
+    }
+
+    /// Says so when **nothing loaded an editor layer at all** — §34's
+    /// disclosure half.
+    ///
+    /// *"So that an editor with no keymaps is a legible state rather than a
+    /// mystery"* is §34's own phrasing of what it wanted, and layering answers
+    /// most of it: a config home that used to replace the shipped tree now adds
+    /// to it, and a user's file that throws reaches the float like any other
+    /// fault. What layering cannot answer is the state where there was nothing
+    /// to layer over — an installed binary run from outside its checkout with
+    /// no `$PHOSPHOR_RUNTIME`. That editor has no keymaps, no statusline and no
+    /// way to quit, and until this it said **nothing**, because a boot that read
+    /// no files has no faults to report.
+    ///
+    /// # The guard is [`Layer::has_editor_layer`], and the first one was wrong
+    ///
+    /// It read `self.report.units.is_empty()`, which is *"nothing has loaded"*
+    /// and not *"no editor loaded"* — and the two part company for exactly the
+    /// population §34 is about. A user's own `init.scm` is a unit, so an
+    /// installed binary outside a checkout, no `$PHOSPHOR_RUNTIME`, config home
+    /// holding §34's own one-line file, reproduced §34's symptom verbatim and
+    /// still said nothing: measured on a pty, `soft-wrap` applied, no
+    /// statusline, no float, `SPC` drawing `unknown key <space>`, `ZQ` doing
+    /// nothing, the process killed. **Writing the file the float told you to
+    /// write is what turned the float off.** An empty `init.scm` did it too, on
+    /// the same arm: `load_after_boot` pushes a unit for a file that read,
+    /// whether or not it held a form.
+    ///
+    /// # Two remedies, and one of them is not always one
+    ///
+    /// *Write the file* is only advice when the file is not already there — a
+    /// reader who wrote it wants the other half of the answer, which is that
+    /// nothing shipped a layer for it to sit on. So the message names the file
+    /// when nothing in the config home ran, and names the variable when
+    /// something did. There is no config home at all on a third path
+    /// (`$XDG_CONFIG_HOME` unset and no `$HOME`), and then only the variable is
+    /// left.
+    ///
+    /// Called on the loop's path only ([`run`]) and not in [`vm`]/[`stack`]:
+    /// `--eval` answers the expression it was asked and has no float to open,
+    /// and a door that started printing boot findings would be answering a
+    /// different question than the one on the command line.
+    ///
+    /// **The path goes in the message, not in the `file`.** `float::fault_rows`
+    /// draws `place() · label` as one row and the float does not wrap, so a long
+    /// path in the `file` pushes `no editor layer` off the right edge — observed
+    /// on a pty, where the config home is a temp directory. The name of what is
+    /// missing is short and always the same, so it is the half that goes there.
+    ///
+    /// [`Layer::load_user_layer`] makes the opposite call one screen up and
+    /// both are right, which is worth saying because the reason above rules
+    /// the other one out if it is read as a rule. There, the path **is** the
+    /// fault's identity: two files are called `init.scm` once the layers stack,
+    /// and a row reading `init.scm:1:2 · free identifier` in front of a person
+    /// who has one of each has answered nothing, so the overflow is worth
+    /// paying and `config::abbreviated` is what keeps the bill down. Here
+    /// nothing is ambiguous — no file loaded — the label is the news, and the
+    /// path is a remedy rather than a name.
+    fn note_if_no_layer(&mut self, config: Option<&Path>) {
+        if self.has_editor_layer() {
+            return;
+        }
+
+        // Two ways out, and a reader with no keymaps needs both: write the file
+        // — named, because *where* is the question — or point the variable at a
+        // layer somebody else installed. Once the file exists the first is not
+        // a way out any more, and repeating it is what made this float useless
+        // to the person likeliest to see it.
+        let wrote_one = !self.report.units.is_empty();
+        let message = match config {
+            Some(config) if !wrote_one => format!(
+                "nothing loaded — write {}, or set $PHOSPHOR_RUNTIME",
+                config::abbreviated(&config.join(INIT)).display()
+            ),
+            Some(_) => {
+                "your init.scm ran over nothing — set $PHOSPHOR_RUNTIME to a layer".to_owned()
+            }
+            None => "nothing loaded — set $PHOSPHOR_RUNTIME to a layer".to_owned(),
         };
-        self.report
-            .units
-            .iter()
-            .any(|unit| same_file(&root.join(&unit.file), path))
+        self.report.faults.push(BootFault {
+            file: PathBuf::from(INIT),
+            at: None,
+            label: "no editor layer",
+            message,
+            source_line: None,
+        });
     }
 
     /// Evaluates source — the REPL, `--eval`, a keybinding's own form.
@@ -1015,8 +1262,18 @@ impl Layer {
     /// Composed from [`Layer::report`] rather than from `Runtime::boot_float`,
     /// because the persisted layer's faults are this type's and not the
     /// `Runtime`'s (`T101`).
+    ///
+    /// [`Layer::has_editor_layer`] and not the report's own units decides
+    /// whether the footer may teach `:repl` — the two disagree the moment a
+    /// user's `init.scm` is the only file that read, which is the state the
+    /// float most often opens in (§34).
     fn boot_float(&self) -> Option<phosphor_core::view::Float> {
-        phosphor_steel::float::boot_float(&self.report)
+        let ex = if self.has_editor_layer() {
+            ExLine::Bound
+        } else {
+            ExLine::Unbound
+        };
+        phosphor_steel::float::boot_float(&self.report, ex)
     }
 
     /// The boot report itself. Test-only: what the *program* does with a
@@ -1079,9 +1336,42 @@ impl Keymap for LayerKeymap<'_> {
 fn vm() -> (Layer, Arc<AppHost>) {
     // `T101`: the tree that *booted* and the directory that is *written to* are
     // two different places now. In a dev checkout the first is the repository.
-    let host = Arc::new(AppHost::new(config::config_dir().ok()));
-    let runtime = boot(Runtime::root().as_deref(), &host);
+    //
+    // Two environment reads and nothing else. Everything a test would want to
+    // vary is an argument to [`stack`], which is what makes the order below
+    // the *shipping* order rather than a second copy of it.
+    stack(Runtime::root().as_deref(), config::config_dir().ok())
+}
+
+/// [`vm`] over two values rather than over the environment — **the stack
+/// itself, and the only copy of it** (§34).
+///
+/// Split out for `phosphor_steel::runtime::root_from`'s reason and one more.
+/// The reason it shares: `std::env::set_var` is `unsafe` in edition 2024 and
+/// this workspace denies `unsafe_code`, so no in-process test can point
+/// `$PHOSPHOR_RUNTIME` or `$XDG_CONFIG_HOME` anywhere.
+///
+/// **The reason it does not.** The tests beside this file used to reach the
+/// stack through a hand-maintained reconstruction of `vm` — same four calls,
+/// written twice — and its own doc claimed it made *"every call `vm()` makes,
+/// in the same order"*. Nothing held that: a review moved the two `if let`
+/// blocks below past each other in `vm` and the whole suite, including
+/// `the_persisted_layer_runs_after_the_users_own_file`, stayed green. The
+/// duplicate is gone rather than tested twice — the order is one function now,
+/// and a test that calls it is looking at the editor the program builds.
+fn stack(root: Option<&Path>, config: Option<PathBuf>) -> (Layer, Arc<AppHost>) {
+    let host = Arc::new(AppHost::new(config));
+    let runtime = boot(root, &host);
     let mut layer = Layer::new(runtime);
+    // **The stack, and these three lines are the whole of the order** (§34).
+    // Shipped tree, then the file you hand-wrote, then the file `persist!`
+    // wrote for you. It is three call sites rather than three entries in a list
+    // for `T101`'s reason: a position in `phosphor/boot-files` is something a
+    // later edit can reorder, and the first time this order was a list the
+    // rebind at the bottom of it came back as a free-identifier fault.
+    if let Some(path) = host.user_layer() {
+        layer.load_user_layer(&path);
+    }
     if let Some(path) = host.persist_target() {
         layer.load_persisted(&path);
     }
@@ -1198,6 +1488,12 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // reach the float, and a fault reading the file has to be able to reach
     // stderr.
     let (mut layer, host) = vm();
+    // §34's disclosure half, and the loop is where it belongs: an editor that
+    // found no layer to load has no keymaps and no way out, and the float is
+    // the only surface that can say so before the keyboard is needed. The
+    // directory comes off the host rather than from a second `config_dir()` —
+    // see `AppHost::config_home`.
+    layer.note_if_no_layer(host.config_home().as_deref());
     let boot = layer.boot_float();
 
     // Whether the file named on the command line has nothing behind it yet, so
@@ -5316,18 +5612,24 @@ mod tests {
         host.apply(&Request::new(Actor::Steel, Door::Steel, action))
     }
 
-    /// A layer over a runtime tree with its own config home — **all four calls
-    /// `vm()` makes**, in the same order, so a test cannot be looking at a
-    /// differently wired editor than the program is. The fourth is `T101`'s:
-    /// the persisted layer loads after the whole boot order has run.
-    fn booted_with_config(root: &Path, config: &Path) -> (Layer, Arc<AppHost>) {
-        let host = Arc::new(AppHost::new(Some(config.to_path_buf())));
-        let runtime = boot(Some(root), &host);
-        let mut layer = Layer::new(runtime);
-        if let Some(path) = host.persist_target() {
-            layer.load_persisted(&path);
-        }
-        (layer, host)
+    /// A layer over a runtime tree with its own config home — **[`stack`]
+    /// itself**, which is the function `vm` is two environment reads and a
+    /// call to.
+    ///
+    /// It used to be a second copy of those calls, and the copy is what made
+    /// the order untested: a review swapped the two `if let` blocks in `vm`,
+    /// changed nothing here, and every test that claimed to protect the order
+    /// passed. There is one order now and this is a name for it, so a mutation
+    /// in the shipping path is a mutation in what these tests run.
+    ///
+    /// **`None` is a shape a test has to be able to ask for**, not a
+    /// convenience: it is what `Runtime::root` answers on an installed binary
+    /// run from outside a checkout with no `$PHOSPHOR_RUNTIME` — the machine
+    /// whose *only* layer is the config home, which is the population §34 is
+    /// about. A report with no root at all takes a different arm of
+    /// [`Layer::booted_already`].
+    fn booted_with_config(root: Option<&Path>, config: &Path) -> (Layer, Arc<AppHost>) {
+        crate::stack(root, Some(config.to_path_buf()))
     }
 
     /// The shipped layer, with nowhere to persist to: the host has no config
@@ -6618,7 +6920,7 @@ mod tests {
         let form = r#"(persist! (keymap-set! "gz" (lambda () (open-repl!))))"#;
 
         {
-            let (mut layer, _host) = booted_with_config(&root, &config);
+            let (mut layer, _host) = booted_with_config(Some(&root), &config);
             let mut session = Repl::new();
             for character in form.chars() {
                 session.insert(character);
@@ -6637,7 +6939,7 @@ mod tests {
         assert!(!root.join("persisted.scm").exists());
 
         // A second editor over the same pair — a restart, in one process.
-        let (mut layer, host) = booted_with_config(&root, &config);
+        let (mut layer, host) = booted_with_config(Some(&root), &config);
         assert!(
             layer.report().is_clean(),
             "a persisted form must not fault the next boot: {:?}",
@@ -6651,15 +6953,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&config);
     }
 
-    /// **A one-file layer in the config home runs once, not twice.**
+    /// **A layer that is also the boot root runs once, not twice.**
     ///
-    /// `Runtime::root`'s second candidate is the config home and `INIT`'s own
-    /// doc blesses a layer that is one file, so for that user the boot root and
-    /// the persist target are the same path — and `vm()` called
-    /// `load_persisted` on it unconditionally. Every form in their `init.scm`
-    /// ran at boot and again straight after: reproduced on the built binary
-    /// with `(displayln "BOOTED-ONCE")`, which printed twice before
-    /// `Layer::booted_already`.
+    /// The config home was `Runtime::root`'s second candidate when this was
+    /// written, so for a user with one file the boot root and the persist
+    /// target were the same path — and `vm()` called `load_persisted` on it
+    /// unconditionally. Every form in their `init.scm` ran at boot and again
+    /// straight after: reproduced on the built binary with `(displayln
+    /// "BOOTED-ONCE")`, which printed twice before `Layer::booted_already`.
+    ///
+    /// **§34 took the config home out of `Runtime::root` and this test kept its
+    /// teeth**, because the shape it describes did not go away — it is what
+    /// `$PHOSPHOR_RUNTIME` pointed at a config home gives you, and the boot
+    /// report is still the only thing that knows. The population that lost its
+    /// *only* root is covered by
+    /// [`the_only_file_a_machine_has_runs_once_though_it_is_both_layers`],
+    /// which takes the other arm of `booted_already`.
     ///
     /// `open-repl!` rather than a `define`, because a repeated `define` is
     /// invisible: the assertion has to be over something that *accumulates*.
@@ -6669,9 +6978,10 @@ mod tests {
         let config = scratch("one-file-layer");
         std::fs::write(config.join("init.scm"), "(open-repl!)\n").expect("a one-file layer");
 
-        // The shape `vm()` builds when `Runtime::root` picks candidate 2: one
-        // directory, playing both parts.
-        let (layer, host) = booted_with_config(&config, &config);
+        // One directory playing every part: the boot root, the user's layer
+        // and the persist target, which is what `$PHOSPHOR_RUNTIME` aimed at a
+        // config home builds.
+        let (layer, host) = booted_with_config(Some(&config), &config);
 
         assert_eq!(
             host.intents(),
@@ -6710,7 +7020,7 @@ mod tests {
         .expect("a layer that names a persist file");
         std::fs::write(config.join("persisted.scm"), "(open-repl!)\n").expect("a persisted layer");
 
-        let (layer, host) = booted_with_config(&config, &config);
+        let (layer, host) = booted_with_config(Some(&config), &config);
 
         assert!(layer.report().is_clean(), "{:?}", layer.report().faults);
         assert_eq!(
@@ -6737,7 +7047,7 @@ mod tests {
         )
         .expect("a hand-edited persisted layer");
 
-        let (mut layer, _host) = booted_with_config(&root, &config);
+        let (mut layer, _host) = booted_with_config(Some(&root), &config);
         let faults = &layer.report().faults;
         assert_eq!(faults.len(), 1, "{faults:#?}");
         // Column 2, not 1: the fault is placed at the identifier Steel
@@ -6764,6 +7074,380 @@ mod tests {
         assert_eq!(resolved(&mut layer, "gz"), Resolution::Ran);
 
         let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    // -----------------------------------------------------------------------
+    // §34 — a user's own `init.scm` layers over the shipped one
+    // -----------------------------------------------------------------------
+
+    /// **The defect §34 measured, at the seam that caused it.**
+    ///
+    /// A config home holding one `(set-option! "soft-wrap" #t)` used to *be*
+    /// the runtime tree, so the shipped fifteen files never loaded and the
+    /// editor had no keymaps, no statusline and no way to quit — with no boot
+    /// float, because that one form ran cleanly.
+    ///
+    /// Both halves are asserted because either alone would pass over the bug:
+    /// the option alone passed before this change too (the user's file ran —
+    /// it was the *only* thing that ran), and the keymap alone passes for a
+    /// config home nobody wrote in.
+    #[test]
+    fn a_user_init_scm_layers_over_the_shipped_layer_rather_than_replacing_it() {
+        let root = copy_of_the_layer("user-layer");
+        let config = scratch("user-layer-config");
+        std::fs::write(
+            config.join("init.scm"),
+            "(set-option! \"soft-wrap\" #t)\n(keymap-set! \"gz\" (lambda () (open-repl!)))\n",
+        )
+        .expect("the file a user writes first");
+
+        let (mut layer, host) = booted_with_config(Some(&root), &config);
+
+        assert!(layer.report().is_clean(), "{:?}", layer.report().faults);
+        assert_eq!(
+            host.flag("soft-wrap"),
+            Some(true),
+            "the user's own form never ran"
+        );
+        // `runtime/init.scm` sets `soft-wrap` to `#f`, so the assertion above
+        // is not that the user's value is *a* value — it is that it is the
+        // later one.
+        //
+        // And `ZQ` is the key §34 pressed and nothing happened: the whole
+        // reproduction ended in `kill`, so the binding that quits is the one
+        // worth naming here rather than any shipped binding at all.
+        assert_eq!(
+            resolved(&mut layer, "ZQ"),
+            Resolution::Role(Role::Run(vec![Action::App(
+                phosphor_core::action::AppAction::Quit { force: true }
+            )])),
+            "the shipped keymap did not survive a user's init.scm"
+        );
+        // And the user's own binding is live, which is only possible because
+        // `keymap-set!` — defined in the shipped `keymaps.scm` — was already
+        // bound when their file ran. That ordering is the whole ruling.
+        assert_eq!(resolved(&mut layer, "gz"), Resolution::Ran);
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// **Both directions, and neither needed a new verb.**
+    ///
+    /// Teej's ruling of 2026-08-14 settled the question §34 said needed
+    /// settling — whether a user's file may *remove* a shipped binding as well
+    /// as add one — by observing that layering already expresses it:
+    /// `keymap-remove!` is defined in `runtime/keymaps.scm` and listed among
+    /// `runtime/repl.scm`'s persistable heads.
+    ///
+    /// `gg` is rebound rather than added, because *overriding* and *adding* are
+    /// the same call and only the first proves the shipped entry was there to
+    /// be replaced: `runtime/keymaps.scm` binds `gg` to `(key/goto "first")`,
+    /// and `Resolution::Ran` is a thunk, which a goto role is not.
+    #[test]
+    fn a_user_init_scm_overrides_one_shipped_binding_and_removes_another() {
+        let root = copy_of_the_layer("user-override");
+        let config = scratch("user-override-config");
+        std::fs::write(
+            config.join("init.scm"),
+            "(keymap-set! \"gg\" (lambda () (open-repl!)))\n(keymap-remove! \"ZQ\")\n",
+        )
+        .expect("a layer that edits the shipped one");
+
+        let (mut layer, host) = booted_with_config(Some(&root), &config);
+
+        assert!(layer.report().is_clean(), "{:?}", layer.report().faults);
+        assert_eq!(
+            resolved(&mut layer, "gg"),
+            Resolution::Ran,
+            "the shipped `gg` goto was not overridden"
+        );
+        assert_eq!(host.intents(), vec![Intent::OpenRepl]);
+        assert_eq!(
+            resolved(&mut layer, "ZQ"),
+            Resolution::Unbound,
+            "keymap-remove! did not reach the shipped table"
+        );
+        // Removing one binding removes one binding: `ZZ` shares its prefix and
+        // is untouched.
+        assert!(matches!(resolved(&mut layer, "ZZ"), Resolution::Role(_)));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// A user's file that throws costs that form and nothing else — and the
+    /// fault says **which** `init.scm` it came from.
+    ///
+    /// There are two files with that name once the layers stack, so a float
+    /// reading `init.scm:1:2 · free identifier` in front of a person who has
+    /// one of each has answered nothing. `config::abbreviated` is what makes
+    /// the row name the config home without putting `$HOME` on a screenshot.
+    #[test]
+    fn a_broken_user_init_costs_one_form_and_names_itself_in_the_float() {
+        let root = copy_of_the_layer("broken-user");
+        let config = scratch("broken-user-config");
+        std::fs::write(
+            config.join("init.scm"),
+            "(no-such-verb 1)\n(keymap-set! \"gz\" (lambda () (open-repl!)))\n",
+        )
+        .expect("a hand-edited layer with a mistake in it");
+
+        let (mut layer, _host) = booted_with_config(Some(&root), &config);
+
+        let faults = &layer.report().faults;
+        assert_eq!(faults.len(), 1, "{faults:#?}");
+        assert_eq!(faults[0].label, "free identifier");
+        assert_eq!(
+            faults[0].place(),
+            format!("{}:1:2", config.join("init.scm").display()),
+            "a fault in the user's layer must name the user's file"
+        );
+        assert!(
+            layer.boot_float().is_some(),
+            "a fault outside the runtime tree still reaches the float"
+        );
+        // The form under it ran, and so did the whole shipped layer.
+        assert_eq!(resolved(&mut layer, "gz"), Resolution::Ran);
+        assert!(matches!(resolved(&mut layer, "gg"), Resolution::Role(_)));
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// **The order, where it is observable: the persisted layer wins.**
+    ///
+    /// Both files bind the same key, so whichever ran last is the one that
+    /// answers. A form you deliberately kept at the REPL is the later act and
+    /// the more explicit one; a hand-written `init.scm` beats the shipped
+    /// default and loses to that.
+    ///
+    /// **Swap the two `if let` blocks in [`stack`] and this goes red** —
+    /// checked by doing it, `1 test run: 0 passed, 1 failed`. That sentence
+    /// used to say `vm` and was false: `booted_with_config` was a second copy
+    /// of those calls, so the mutation had to be made twice to be seen, and a
+    /// review made it once and watched 187 tests pass. There is one copy now
+    /// and [`booted_with_config`] is a name for it.
+    #[test]
+    fn the_persisted_layer_runs_after_the_users_own_file() {
+        let root = copy_of_the_layer("stack-order");
+        let config = scratch("stack-order-config");
+        std::fs::write(
+            config.join("init.scm"),
+            "(keymap-set! \"gz\" (key/goto \"first\") \"hand-written\")\n",
+        )
+        .expect("a hand-written layer");
+        std::fs::write(
+            config.join("persisted.scm"),
+            "(persist! (keymap-set! \"gz\" (lambda () (open-repl!)) \"persisted\"))\n",
+        )
+        .expect("a persisted layer over the same key");
+
+        let (mut layer, host) = booted_with_config(Some(&root), &config);
+
+        assert!(layer.report().is_clean(), "{:?}", layer.report().faults);
+        assert_eq!(
+            resolved(&mut layer, "gz"),
+            Resolution::Ran,
+            "the hand-written binding outranked the persisted one"
+        );
+        assert_eq!(host.intents(), vec![Intent::OpenRepl]);
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// **One file playing two parts still runs once.**
+    ///
+    /// On a machine with no shipped tree nothing declares a [`PERSIST_FILE`],
+    /// so the persist target falls back to [`INIT`] — which is also the user's
+    /// own layer. Both call sites in `vm` then name the same path, and the boot
+    /// report cannot say so, because there is no boot: `Runtime::root` answers
+    /// `None` and the report has no root to measure a file against.
+    /// [`Layer::after_boot`] is the record that answers, and deleting it puts
+    /// every form in that file through the VM twice.
+    ///
+    /// `(open-repl!)` rather than a `define`, for
+    /// `a_one_file_layer_in_the_config_home_boots_once_rather_than_twice`'s
+    /// reason: a repeated `define` is invisible and an intent accumulates.
+    #[test]
+    fn the_only_file_a_machine_has_runs_once_though_it_is_both_layers() {
+        let config = scratch("only-file-config");
+        std::fs::write(config.join("init.scm"), "(open-repl!)\n").expect("the only layer there is");
+
+        let (layer, host) = booted_with_config(None, &config);
+
+        assert_eq!(
+            host.intents(),
+            vec![Intent::OpenRepl],
+            "the user's own init.scm ran twice — once as their layer and once \
+             as the persist target"
+        );
+        // One unit, and it is that file: the boot read nothing at all, so
+        // everything in this report came from a call site in `vm`.
+        assert_eq!(
+            layer.report().units.len(),
+            1,
+            "and the boot report said so: {:?}",
+            layer.report().units
+        );
+        assert!(
+            layer.report().units[0].file.ends_with("init.scm"),
+            "{:?}",
+            layer.report().units
+        );
+
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// **§34's disclosure half: an editor that loaded nothing says so.**
+    ///
+    /// The state is an installed binary run from outside its checkout with no
+    /// `$PHOSPHOR_RUNTIME` and no config home — no keymaps, no statusline, no
+    /// way to quit, and until this, no fault either, because a boot that read
+    /// no files has nothing to report. The float names the file to create.
+    #[test]
+    fn an_editor_that_loaded_no_layer_at_all_says_so_in_the_float() {
+        let nowhere = scratch("no-layer");
+        let config = scratch("no-layer-config");
+        let (mut layer, _host) = booted_with_config(Some(&nowhere), &config);
+        assert!(
+            layer.report().is_clean(),
+            "an empty root is not a fault on its own"
+        );
+        assert!(
+            layer.boot_float().is_none(),
+            "and it draws nothing until the loop asks"
+        );
+
+        layer.note_if_no_layer(Some(&config));
+
+        let faults = &layer.report().faults;
+        assert_eq!(faults.len(), 1, "{faults:#?}");
+        assert_eq!(faults[0].label, "no editor layer");
+        // The short half on the row that carries the label — see
+        // `note_if_no_layer` for why the path may not go here.
+        assert_eq!(faults[0].place(), "init.scm");
+        assert!(
+            faults[0]
+                .message
+                .contains(&config.join("init.scm").display().to_string()),
+            "the file to create is not named: {}",
+            faults[0].message
+        );
+        assert!(
+            faults[0].message.contains("PHOSPHOR_RUNTIME"),
+            "the other way out is not named: {}",
+            faults[0].message
+        );
+        assert!(layer.boot_float().is_some());
+
+        // **Said once, and only when there is nothing.** A layer that loaded
+        // anything at all is a working editor and this must stay silent — the
+        // float is `T021`'s alarm and an alarm that fires on a clean boot is
+        // one people learn to close.
+        let root = copy_of_the_layer("no-layer-shipped");
+        let (mut booted, _host) = booted_with_config(Some(&root), &config);
+        booted.note_if_no_layer(Some(&config));
+        assert!(booted.report().is_clean(), "{:?}", booted.report().faults);
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&nowhere);
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// **Writing the file the float tells you to write must not turn the float
+    /// off** — §34's own population, and the arm the first guard missed.
+    ///
+    /// An installed binary outside a checkout with no `$PHOSPHOR_RUNTIME` and a
+    /// config home holding §34's own one-line `init.scm`. That form runs, so
+    /// `report.units` is not empty — and the disclosure was guarded on exactly
+    /// that, so this state said nothing while reproducing §34's symptom
+    /// verbatim: measured on a pty, `soft-wrap` applied, no statusline, no
+    /// float, `SPC` drawing `unknown key <space>`, `ZQ` doing nothing, the
+    /// process killed.
+    ///
+    /// [`an_editor_that_loaded_no_layer_at_all_says_so_in_the_float`] passes an
+    /// **empty** config home and therefore cannot see this, which is why it is
+    /// a second test rather than a second assertion.
+    ///
+    /// The message differs from that one's, and the difference is the whole
+    /// point: *write the file* is not advice for somebody who wrote it. The
+    /// remaining remedy is the variable, and the assertion below is that the
+    /// float stopped repeating the other one.
+    #[test]
+    fn a_user_init_scm_with_nothing_under_it_is_still_an_editor_with_no_layer() {
+        let nowhere = scratch("wrote-it-anyway");
+        let config = scratch("wrote-it-anyway-config");
+        std::fs::write(config.join("init.scm"), "(set-option! \"soft-wrap\" #t)\n")
+            .expect("§34's own one-line file");
+
+        let (mut layer, host) = booted_with_config(Some(&nowhere), &config);
+        // The form ran — this is not a boot that read nothing.
+        assert_eq!(host.flag("soft-wrap"), Some(true));
+        assert_eq!(layer.report().units.len(), 1, "{:?}", layer.report().units);
+
+        layer.note_if_no_layer(Some(&config));
+
+        let faults = &layer.report().faults;
+        assert_eq!(
+            faults.len(),
+            1,
+            "an editor with no keymaps said nothing: {faults:#?}"
+        );
+        assert_eq!(faults[0].label, "no editor layer");
+        assert!(
+            faults[0].message.contains("PHOSPHOR_RUNTIME"),
+            "{}",
+            faults[0].message
+        );
+        assert!(
+            !faults[0].message.contains("write "),
+            "the file is already written — telling them to write it is the \
+             advice that made this float useless: {}",
+            faults[0].message
+        );
+        // And the footer may not teach `:repl` here: `:` is `keymaps.scm`'s and
+        // `keymaps.scm` did not load. `phosphor_steel::float::ExLine`.
+        let float = layer.boot_float().expect("a fault opens the float");
+        let phosphor_core::view::Node::KeyHints { hints, .. } =
+            float.footer.expect("a footer").node().clone()
+        else {
+            panic!("the footer is a keymap surface");
+        };
+        assert_eq!(hints.len(), 1, "{hints:?}");
+        assert_eq!(hints[0].key.0, "esc");
+
+        let _ = std::fs::remove_dir_all(&nowhere);
+        let _ = std::fs::remove_dir_all(&config);
+    }
+
+    /// **An `init.scm` with no forms in it is the same state**, and it reaches
+    /// the guard by a different door.
+    ///
+    /// `load_after_boot` pushes a [`BootUnit`] for any file that *reads*,
+    /// whether or not it held a form, so an empty file made `units` non-empty
+    /// and silenced the disclosure while leaving the editor with no bindings at
+    /// all. That is the literal shape of *"I created the file and nothing
+    /// happened"* — the first thing a person does after being told to create
+    /// one.
+    #[test]
+    fn an_empty_user_init_scm_does_not_buy_silence() {
+        let nowhere = scratch("empty-init");
+        let config = scratch("empty-init-config");
+        std::fs::write(config.join("init.scm"), "\n").expect("a file with nothing in it");
+
+        let (mut layer, _host) = booted_with_config(Some(&nowhere), &config);
+        assert_eq!(layer.report().forms_ran(), 0);
+
+        layer.note_if_no_layer(Some(&config));
+
+        let faults = &layer.report().faults;
+        assert_eq!(faults.len(), 1, "{faults:#?}");
+        assert_eq!(faults[0].label, "no editor layer");
+
+        let _ = std::fs::remove_dir_all(&nowhere);
         let _ = std::fs::remove_dir_all(&config);
     }
 

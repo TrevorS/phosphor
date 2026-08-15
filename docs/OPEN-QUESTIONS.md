@@ -926,6 +926,136 @@ the statusline, or a float naming which root was chosen — so that an editor wi
 legible state rather than a mystery. That is a `T09x`-sized change and is not being folded into a
 repair pass. → needs a task.
 
+**RULED AND BUILT — Teej, 2026-08-14: layer it, Emacs's model.** Shipped lisp loads, then the
+user's file runs on top; not Helix's replace-the-file model. The reproduction above, re-run
+against the built binary from the same cold config home **with the working directory inside the
+checkout**, so that `./runtime` answers and there is a shipped tree to layer over:
+
+```text
+$ cd <checkout>; XDG_CONFIG_HOME=<the cold config home> phosphor --eval '(length phosphor/boot-files)'
+15
+```
+
+**The cwd clause is load-bearing and this block said the opposite for one revision.** It claimed
+the same 15 *"from the same cold config home"* under the reproduction's own conditions — no
+`$PHOSPHOR_RUNTIME` and a working directory outside the checkout — and that is still `#raised`,
+because `Runtime::root` then answers `None` and there is no shipped tree anywhere on the machine.
+Both halves measured this session against `target/release/phosphor`: cwd `/tmp/pref/cwd` →
+`rc = 1`, `#raised · unbound identifier — Cannot reference an identifier before its definition:
+phosphor/boot-files`; cwd the checkout → `rc = 0`, `15`. What layering fixed is that a config-home
+`init.scm` no longer *displaces* a tree that exists. What no layering can fix is a machine with no
+shipped tree on it at all, and that is what the disclosure half below is for.
+
+Three files, in three call sites in `main.rs`'s `vm` — the shipped tree, then
+`$XDG_CONFIG_HOME/phosphor/init.scm`, then that directory's `persisted.scm`. Call sites rather
+than list positions for `T101`'s reason: a position in `phosphor/boot-files` is something a later
+edit can reorder, and the first time this order *was* a list the rebind at the bottom of it came
+back as a free-identifier fault a boot float found.
+
+- **The mechanism is the one that already existed.** `Layer::load_persisted` ran a file of forms
+  after `Runtime::boot` returned and merged its faults into the same `BootReport` the float draws;
+  it is now `Layer::load_after_boot`, called twice, and the user's layer gets the whole of that
+  behaviour — per-form isolation, faults in the boot's voice, and a place in the float — for free.
+- **`Runtime::root` has two candidates now**, `$PHOSPHOR_RUNTIME` and `./runtime`. The config home
+  is not one, and *being a candidate* was the defect rather than being second: a first-match-wins
+  search cannot express *"and also"*.
+- **Why the persisted layer beats the hand-written one.** A form you deliberately kept at the REPL
+  is the later act and the more explicit one; the other order would make `persist!` unable to
+  change anything you had ever written down. `the_persisted_layer_runs_after_the_users_own_file`
+  is that order, and swapping the two `if let` blocks in `stack` reddens it — checked by doing it,
+  `1 test run: 0 passed, 1 failed`. That sentence said `vm` for one revision and was false: the
+  test reached the stack through `booted_with_config`, a hand-maintained second copy of `vm`'s
+  four calls, so the mutation had to be made twice to be seen and a review made it once and
+  watched 187 tests pass. `vm` is now two environment reads and a call to `stack`, which is the
+  only copy of the order; `booted_with_config` is a name for `stack`.
+- **The direction question is settled by the ruling, with no new verb.** A user's file may remove
+  a shipped binding: `keymap-remove!` is defined in `runtime/keymaps.scm` and is already in
+  `repl.scm`'s persistable set, and it reaches the shipped table only because the shipped table
+  loaded first (`a_user_init_scm_overrides_one_shipped_binding_and_removes_another`).
+- **`$PHOSPHOR_RUNTIME` still replaces**, deliberately: it is how the pty harness and every tape
+  point the binary at a scratch tree, and the 54 `Editor::open` call sites in
+  `crates/phosphor/tests/loop_pty.rs` — `grep -c "Editor::open("`, this session — depend on it.
+  (55 is what you get from `grep -o "Editor::open"`, 56, minus the one `[Editor::open]` doc link;
+  it also counts the single `Editor::open_forced(` site.) A user layer
+  still loads on top of whatever it named — the same rule `T101` already gave `persisted.scm`,
+  *"whichever tree booted"*.
+
+**The disclosure half, and it is narrower than the entry asked for.** With layering in place the
+common case stops being silent — a config-home `init.scm` no longer costs the keymap, and one that
+throws reaches the float like any other fault. What was left was the state with nothing to layer
+over: an installed binary run from outside its checkout with no `$PHOSPHOR_RUNTIME`, which said
+nothing at all, because a boot that read no files has no faults to report. That now opens the boot
+float on `init.scm · no editor layer` with
+`nothing loaded — write ~/.config/phosphor/init.scm, or set $PHOSPHOR_RUNTIME` underneath it
+(`Layer::note_if_no_layer`; `an_editor_that_loaded_no_layer_at_all_says_so_in_the_float` for the
+sentence and `driven::a_boot_that_found_no_layer_says_so_on_the_first_frame` for the call site,
+which is the half that would otherwise have gone unwired without anyone noticing — its symptom is
+silence). The path goes in the message and not in the `file`, because the float does not wrap and
+a long one pushed the label off the row: seen on a pty before it was seen anywhere else.
+Deliberately **not** drawn: which root was chosen on a boot that succeeded. Every pty test and
+every tape sets `$PHOSPHOR_RUNTIME`, so a line saying so would be permanently on screen in the
+capture library and would teach nobody anything.
+
+**The first guard for it was silent for exactly this entry's population**, which is worth recording
+because it is the second time the same conflation cost the same thing. It read
+`report.units.is_empty()` — *"nothing has loaded"* — and a user's own `init.scm` is a unit. So an
+installed binary outside a checkout, no `$PHOSPHOR_RUNTIME`, config home holding §34's own one-line
+`(set-option! "soft-wrap" #t)`, reproduced this entry's opening measurement verbatim and still said
+nothing: driven on a pty, soft-wrap applied, no statusline row, no float, `SPC` answered
+`┊ unknown key <space>`, `ZQ` did nothing, the process was killed. **Writing the file the float
+tells you to write was what turned the float off.** An empty `init.scm` did it too, on the same arm:
+`Layer::load_after_boot` records a unit for any file that reads, form or no form. The guard is
+`Layer::has_editor_layer` now — the count of files the *boot* loaded, taken before anything can
+stack on top — and the message has a second arm, because *write the file* is not advice for
+somebody who wrote it: `your init.scm ran over nothing — set $PHOSPHOR_RUNTIME to a layer`.
+`driven::writing_the_file_the_float_asks_for_does_not_buy_silence` is the pty half and
+`a_user_init_scm_with_nothing_under_it_is_still_an_editor_with_no_layer` /
+`an_empty_user_init_scm_does_not_buy_silence` are the unit halves; restoring the old guard reddens
+all three.
+
+**The footer had the same defect and it is now `phosphor_steel::float::ExLine`.** The float taught
+`:repl open the repl · :reload-runtime run the boot again · esc close`, and in the one state this
+float is guaranteed to open in, two of those three cannot be typed: `:` is bound in
+`runtime/keymaps.scm`, which is precisely the file that did not run. Driven on a pty: `esc` closed
+the float (Rust handles it), pressing `:` changed nothing on the frame. A boot with no editor layer
+now gets a footer of `esc` alone, and the `n more · :repl to read them` overflow row loses its
+instruction for the same reason. §4's *"every legal key, always visible"* is satisfied by the
+reading that matters — **legal**.
+
+**The capture library was reading the operator's config, and `$PHOSPHOR_RUNTIME` is exactly why
+that was not obvious.** The override shields a tape from `./runtime`; it does not shield one from
+layer 2, because layer 2 runs *after* whatever the override named. Every tape set
+`PHOSPHOR_RUNTIME=../runtime` and nothing else, so `just tapes` recorded whoever ran it — and
+`CP-4` reads that library as a change detector. Measured with a probe tape and the release binary:
+an `$XDG_CONFIG_HOME` holding `phosphor/init.scm` = `(no-such-verb 1)` puts a boot float on a
+capture that has none without it. `tapes/tape-env.sh` exports a scratch config home and the three
+paths that run `vhs` source it (`run-tapes.sh`, `diff-tapes.sh`, `record-one.sh` behind
+`just tape <id>`); with it, the same environment captures byte-identical to a clean one. It could
+not go in `_config.tape`, which holds only `Set` lines so that a bare `Source` does not close vhs's
+before-first-command window, and vhs 0.11 has no `Env` command. `tapes/README.md` carries the
+writeup.
+
+**Two limits, recorded rather than discovered later.**
+
+- **A user's layer is one file.** Rust reads `phosphor/boot-files` once, after `init.scm`, and a
+  second `define` of that global in a user's file would either name the shipped fifteen — which do
+  not exist in their config home, so fifteen `unreadable` faults every start — or make them
+  restate the whole list to add one name. A second file of their own wants a name of its own,
+  which is a vocabulary question rather than a load-path one. → not filed as a task; nobody has
+  asked for it.
+- **`phosphor/persist-file` is read from the shipped layer only.** `main.rs`'s `boot` reads it,
+  `phosphor/persist-verb` and `phosphor/offered-heads` off the VM immediately after
+  `Runtime::boot` — before layer 2 runs — because the host is behind the barrier and may not
+  re-enter the VM when a form arrives. So a user redefining it in their own `init.scm` has no
+  effect, silently. Nothing writes that name today outside `runtime/repl.scm`.
+
+**One thing §34 measured is still true and is nobody's yet:** an editor with no layer cannot be
+quit. `ZQ` is `runtime/keymaps.scm`'s, the seed table is empty by construction
+(`no_bindings_in_rust.rs`), and the boot float teaches `esc` — so the float now says *why* the
+editor is inert, and killing it is still the way out. A rescue binding in Rust would be a
+deliberate exception to *"Rust holds no copy of the table"* and is a ruling, not a repair.
+→ needs a ruling if anyone wants it.
+
 ### 35 · `7a`'s always-allow writes a form that faults on the next boot until `T061`
 
 **The write half is intact and tested.** `a_head_the_layer_never_offered_is_written_as_given` puts

@@ -176,26 +176,66 @@ by form. The regressions are `a_persisted_rebind_survives_the_next_boot` and
 
 `Runtime::root()` takes the first of:
 
-1. `$PHOSPHOR_RUNTIME`, taken at its word;
-2. `phosphor_core::config::config_dir()` — `$XDG_CONFIG_HOME/phosphor` or `~/.config/phosphor` —
-   containing an `init.scm`. **The same function `persist-form!` writes through**, so the layer
-   that boots and the file that is appended to cannot disagree about where the config home is; a
-   *relative* `XDG_CONFIG_HOME` is ignored on both sides per the XDG spec
-   (`a_relative_xdg_config_home_boots_no_layer_at_all`);
-3. `./runtime` containing an `init.scm` — the checkout, so `cargo run` in the repo boots
+1. `$PHOSPHOR_RUNTIME`, taken at its word. Every pty test and every tape sets it, to point the
+   binary at a scratch copy of this tree; pointing it at an *empty* directory is separately how
+   you boot with nothing loaded, which only
+   `driven::a_boot_that_found_no_layer_says_so_on_the_first_frame` and its sibling do;
+2. `./runtime` containing an `init.scm` — the checkout, so `cargo run` in the repo boots
    the layer you are editing.
 
-**Still open, and narrower than it was:** whether a shipped layer and a user's own `init.scm` are
-two trees that both load. Today there is one tree, and candidate 2 *replaces* candidate 3 rather
-than layering over it. `T101` settled the half that was doing damage — where a *written* form
-goes, and that the persisted layer loads from the config home whichever tree booted — so what is
-left is a question about hand-written `init.scm`, not about `persist-form`.
+That is the whole list. **The config home is not on it**, and it was, until 2026-08-14.
 
-What a user actually hits when they take candidate 2 up on the offer — an editor with no keymaps,
-no statusline and no way to quit, with **no fault on screen** — is measured in
-[OPEN-QUESTIONS.md](../docs/OPEN-QUESTIONS.md)'s §34.
+## And what loads on top of it — the stack
 
-One thing candidate 2 does *not* cost, since the repair pass: a one-file layer there is the boot
-root **and** the persist target, and the binary used to evaluate it twice on every start.
-`Layer::booted_already` reads the boot report and skips a file the boot already ran
-(`a_one_file_layer_in_the_config_home_boots_once_rather_than_twice`).
+Three layers, in this order, and the order is three call sites in `main.rs`'s `vm` rather than
+three positions in a list:
+
+| # | file | who writes it |
+|---|---|---|
+| 1 | the tree above: `init.scm`, then every name in `phosphor/boot-files` | us |
+| 2 | `$XDG_CONFIG_HOME/phosphor/init.scm` | you, by hand |
+| 3 | `$XDG_CONFIG_HOME/phosphor/persisted.scm` | `(persist! …)`, above |
+
+**Each one runs after the one above and none replaces another.** Emacs's model — shipped lisp,
+then your `init.el` — which is the argument `T101` was decided on, and which Teej ruled on again
+on 2026-08-14 after `OPEN-QUESTIONS.md` §34 measured what the other reading cost. Both files in
+the config home resolve through `phosphor_core::config::config_dir()`, the same function
+`persist-form!` writes through, so the file you hand-write and the file that is appended to cannot
+disagree about where the config home is; a *relative* `XDG_CONFIG_HOME` is ignored on every side
+per the XDG spec (`a_relative_xdg_config_home_boots_no_layer_at_all`).
+
+**Your file may remove as well as add.** `keymap-remove!` is defined above and listed in
+`repl.scm`'s persistable heads, so `(keymap-remove! "ZQ")` in layer 2 unbinds a shipped key with
+no new verb for it — which is what settled the question §34 said needed settling.
+
+**Why 3 beats 2.** A form you deliberately kept at the REPL is the later act and the more explicit
+one; a hand-written `init.scm` beats the shipped default and loses to that. The other order would
+make `persist!` unable to change anything you had ever written down.
+
+**Layer 2 is one file, deliberately.** Rust reads `phosphor/boot-files` once, after `init.scm`;
+a second `define` of that global in your file would either name the shipped fifteen — which do not
+exist in your config home, so fifteen `unreadable` faults on every start — or make you restate the
+whole list to add one name. A second file of your own wants a name of its own, which is a
+vocabulary question rather than a load-path one. `(load …)` is not it: a binding that loaded a
+file would be re-entering the VM that is running it, which is why the shipped order is data.
+
+**A boot that loads nothing says so.** The trigger is *layer 1 loaded no files* — no
+`$PHOSPHOR_RUNTIME` and no `./runtime`, **or** a `$PHOSPHOR_RUNTIME` naming a directory with no
+`init.scm` in it, which is taken at its word and is how the pty test above boots with nothing.
+That is an editor with no keymaps and no way to quit, and it used to be silent, because a boot
+that read no files has no faults to report. It now opens the boot float on `init.scm · no editor
+layer` — `main.rs`'s `Layer::note_if_no_layer`, on the loop's path only, since `--eval` answers
+the expression it was asked and has no float.
+
+**Layers 2 and 3 do not switch it off**, and the first version did let them: a config-home
+`init.scm` is a loaded file, so writing the one the float asks for was what made the float stop
+asking. The guard counts layer 1's files only, and the message names the variable rather than the
+file once something in your config home has run — `your init.scm ran over nothing`. The footer
+loses `:repl` and `:reload-runtime` in that state too: `:` is bound in `keymaps.scm`, which is the
+file that did not load. `OPEN-QUESTIONS.md` §34 records the measurement.
+
+One thing layer 2 does *not* cost, since the repair pass: where it and the persist target are the
+same path, the binary used to evaluate it twice on every start. `Layer::booted_already` skips a
+file this process already ran, from the boot report and from the layers after it
+(`a_one_file_layer_in_the_config_home_boots_once_rather_than_twice`,
+`the_only_file_a_machine_has_runs_once_though_it_is_both_layers`).

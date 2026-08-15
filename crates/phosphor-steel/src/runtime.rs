@@ -27,11 +27,11 @@
 //!
 //! Owned by `spine`.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use phosphor_core::action::{Outcome, Raised, Receipt};
-use phosphor_core::config;
 use phosphor_core::value::Value;
 use phosphor_core::view::Float;
 use steel::rerrs::ErrorKind;
@@ -40,7 +40,7 @@ use steel::{SteelErr, SteelVal};
 
 use crate::boot::{BootReport, INIT, boot};
 use crate::convert::from_steel;
-use crate::float::boot_float;
+use crate::float::{ExLine, boot_float};
 use crate::host::{Host, Logged, ReceiptLog};
 use crate::registry::install;
 use crate::view::install as install_view;
@@ -126,45 +126,39 @@ impl Runtime {
         }
     }
 
-    /// Where the editor layer lives, or [`None`] if nothing looks like it.
+    /// Where the **shipped** editor layer lives, or [`None`] if nothing looks
+    /// like it.
     ///
-    /// Three places, in order, each with a reason:
+    /// Two places, in order:
     ///
-    /// 1. **`$PHOSPHOR_RUNTIME`** — the override. A test, a packager and
-    ///    `V006`'s reproducible seeding all need one, and an explicit
-    ///    environment variable beats three heuristics.
-    /// 2. **`$XDG_CONFIG_HOME/phosphor`** (or `~/.config/phosphor`) — the
-    ///    user's own layer. `persist-form` (`6b`'s *"persisted to init.scm"*)
-    ///    and `7a`'s always-allow rule both write here.
-    /// 3. **`./runtime`** — the checkout, so `cargo run` inside the repo boots
-    ///    the editor layer you are editing rather than the one you installed.
+    /// 1. **`$PHOSPHOR_RUNTIME`** — the override, taken at its word, so
+    ///    pointing at an empty directory is a way to boot with nothing loaded.
+    ///    A test, a packager and `V006`'s reproducible seeding all need one,
+    ///    and an explicit environment variable beats a heuristic.
+    /// 2. **`./runtime`** containing an `init.scm` — the checkout, so `cargo
+    ///    run` inside the repo boots the editor layer you are editing rather
+    ///    than the one you installed.
     ///
-    /// Each candidate has to actually contain an `init.scm`, except the
-    /// override, which is taken at its word so that pointing at an empty
-    /// directory is a way to boot with nothing loaded.
+    /// # The config home is not a candidate, and that is `OPEN-QUESTIONS.md` §34
     ///
-    /// **Candidate 2 comes from [`phosphor_core::config::config_dir`], not from
-    /// a second reading of the environment.** It used to walk
-    /// `XDG_CONFIG_HOME` → `HOME/.config` → `join("phosphor")` here, without
-    /// that module's `is_absolute` filter — so a relative `XDG_CONFIG_HOME` had
-    /// the layer read from the working directory while `persist-form!` wrote
-    /// under `$HOME/.config`, which is exactly the split
-    /// `AppHost::persist_target` exists to prevent. Two implementations of one
-    /// path can only disagree; there is one now.
+    /// It was the second of three until 2026-08-14, and being a *candidate* is
+    /// what made it destructive: this is a first-match-wins search, so a config
+    /// home holding a hand-written `init.scm` **became** the runtime tree and
+    /// the shipped fifteen files never loaded. Measured on the built binary
+    /// with a config home holding one `(set-option! "soft-wrap" #t)` — an empty
+    /// statusline, `:` drawing `unknown key :`, `ZQ` doing nothing, and **no
+    /// boot float**, because that one form ran cleanly.
     ///
-    /// **Candidate 2 *replaces* candidate 3 rather than layering over it** —
-    /// see `runtime/README.md`, where that choice and what is still open about
-    /// it are recorded.
+    /// A user's layer loads *after* this tree now rather than instead of it
+    /// (`crates/phosphor/src/main.rs`'s `vm`, and `Layer::load_user_layer`
+    /// beside the persisted layer it already ran that way). Nothing in this
+    /// crate resolves it: the config home is a place a **host** writes to and
+    /// reads from — `AppHost::persist_target` is the other half — and a second
+    /// resolution of it here is the split that `phosphor_core::config`'s header
+    /// records having already happened once.
     #[must_use]
     pub fn root() -> Option<PathBuf> {
-        if let Some(named) = std::env::var_os(RUNTIME_ENV) {
-            return Some(PathBuf::from(named));
-        }
-
-        [config::config_dir().ok(), Some(PathBuf::from("runtime"))]
-            .into_iter()
-            .flatten()
-            .find(|candidate| candidate.join(INIT).is_file())
+        root_from(std::env::var_os(RUNTIME_ENV), Path::new("runtime"))
     }
 
     /// What the boot did, and what it could not do.
@@ -174,9 +168,24 @@ impl Runtime {
     }
 
     /// The float describing the boot's faults, or [`None`] if it ran clean.
+    ///
+    /// The boot's own units decide whether the footer may teach an ex command
+    /// ([`ExLine`]): nothing here has stacked a layer on top of the boot, so
+    /// *"the boot loaded a file"* and *"an editor layer loaded"* are the same
+    /// fact. They stop being the same fact one crate up, which is why
+    /// `crates/phosphor/src/main.rs`'s `Layer::boot_float` answers it itself.
     #[must_use]
     pub fn boot_float(&self) -> Option<Float> {
-        boot_float(&self.report)
+        boot_float(&self.report, self.ex_line())
+    }
+
+    /// Whether `:` reached the command table on this boot.
+    const fn ex_line(&self) -> ExLine {
+        if self.report.units.is_empty() {
+            ExLine::Unbound
+        } else {
+            ExLine::Bound
+        }
     }
 
     /// Evaluates source in the live VM.
@@ -275,6 +284,33 @@ impl Runtime {
     pub fn call(&mut self, name: &str, args: Vec<SteelVal>) -> Result<SteelVal, SteelErr> {
         self.engine.call_function_by_name_with_args(name, args)
     }
+}
+
+/// [`Runtime::root`] over two values rather than over the environment and the
+/// working directory.
+///
+/// Split out **so the fallbacks have tests**, exactly as
+/// `phosphor_core::config::home_from` is: `std::env::set_var` is `unsafe` in
+/// edition 2024 and this workspace denies `unsafe_code`, so no in-process test
+/// can set `$PHOSPHOR_RUNTIME` — and until this split the resolution that
+/// decides *whether an editor has any keymaps at all* had no unit test of any
+/// kind. They are [`tests::the_override_answers_even_when_there_is_no_init_scm_behind_it`]
+/// and [`tests::without_an_override_the_checkout_answers_only_when_it_holds_an_init_scm`].
+///
+/// **The config home is not a third arm, and no test here can say so** — it is
+/// not a parameter, so there is nothing to pass and nothing to assert. A third
+/// test tried, asserting `root_from(None, &empty) == None` while building a
+/// config home it never passed to anything, and was deleted for saying in its
+/// name what its body did not check. Where the property *is* observable is
+/// against the built binary, in `door::a_config_home_layers_over_the_shipped_tree`.
+fn root_from(named: Option<OsString>, checkout: &Path) -> Option<PathBuf> {
+    if let Some(named) = named {
+        return Some(PathBuf::from(named));
+    }
+    checkout
+        .join(INIT)
+        .is_file()
+        .then(|| checkout.to_path_buf())
 }
 
 /// A result value on the wire, or its own printed form when it has no wire case.
@@ -380,6 +416,59 @@ mod tests {
             runtime.report().forms_ran() > 0,
             "runtime/init.scm ran no forms at all"
         );
+    }
+
+    /// A scratch directory that removes itself — `crate::boot::tests::Tree`
+    /// without the engine, since nothing here boots.
+    struct Dir(PathBuf);
+
+    impl Dir {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "phosphor-root-{name}-{}-{:?}",
+                std::process::id(),
+                std::thread::current().id()
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).expect("a temp directory");
+            Self(path)
+        }
+
+        fn with_init(self) -> Self {
+            std::fs::write(self.0.join(INIT), "(define a 1)\n").expect("an init.scm");
+            self
+        }
+    }
+
+    impl Drop for Dir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// **Taken at its word**, and the empty directory is the reason: pointing
+    /// `$PHOSPHOR_RUNTIME` at one is how you boot with nothing loaded, and
+    /// falling through to the checkout would silently boot the repo's layer
+    /// instead — which is the tape harness pointed at the wrong tree.
+    #[test]
+    fn the_override_answers_even_when_there_is_no_init_scm_behind_it() {
+        let named = Path::new("/nowhere/phosphor-does-not-exist");
+        assert_eq!(
+            root_from(Some(named.into()), Path::new("runtime")),
+            Some(named.to_path_buf())
+        );
+    }
+
+    #[test]
+    fn without_an_override_the_checkout_answers_only_when_it_holds_an_init_scm() {
+        let full = Dir::new("checkout").with_init();
+        assert_eq!(root_from(None, &full.0), Some(full.0.clone()));
+
+        // A directory that exists and holds no layer is not a layer. This is
+        // the arm that answers `None` for an installed phosphor run from
+        // anywhere but its own checkout.
+        let empty = Dir::new("bare");
+        assert_eq!(root_from(None, &empty.0), None);
     }
 
     #[test]

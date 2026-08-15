@@ -23,6 +23,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# The capture environment — a scratch `$XDG_CONFIG_HOME`, so a recording does
+# not load the operator's own `init.scm` into every screen. See tape-env.sh.
+# shellcheck source=tape-env.sh
+source ./tape-env.sh
+
 shopt -s nullglob
 candidates=(*.tape)
 shopt -u nullglob

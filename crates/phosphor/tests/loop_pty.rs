@@ -671,6 +671,167 @@ mod driven {
         editor.quit();
     }
 
+    /// **§34, driven: a cold config home with one form in it must not cost the
+    /// keyboard.**
+    ///
+    /// This is the exact state the review found unusable. A config home holding
+    /// a single `(set-option! "soft-wrap" #t)` *became* the runtime tree —
+    /// `Runtime::root` was a first-match-wins search with the config home
+    /// second — so the shipped fifteen files never loaded: an empty statusline,
+    /// `:` drawing `┊ unknown key : — SPC opens the keymap`, `ZQ` doing
+    /// nothing, and the process had to be killed. With **no boot float and no
+    /// fault**, because that one form ran cleanly.
+    ///
+    /// So the assertions are the three keys that were dead, plus the option
+    /// that was the whole reason the file existed. `editor.quit()` is the
+    /// fourth: it presses `ZQ` and asserts the child exited, which is the
+    /// difference between this test and the reproduction — that one ended in
+    /// `kill`.
+    ///
+    /// A pty test rather than a unit test for this file's own reason: what was
+    /// broken was not a value, it was *pressing a key*, and the unit tests
+    /// beside `vm` in `main.rs` all passed while it was broken.
+    #[test]
+    fn a_user_init_scm_costs_nothing_from_the_shipped_keymap() {
+        let scratch = Scratch::new("user-layer");
+        let runtime = copy_layer(&scratch.path);
+        // Written before the child starts, into the directory the product's own
+        // `config_dir_in` names — the same seeding `T101`'s persisted tests do,
+        // and the reason `Scratch::persisted` exists.
+        fs::write(
+            scratch.persisted().join("init.scm"),
+            "(set-option! \"soft-wrap\" #t)\n",
+        )
+        .expect("the file a user writes first");
+
+        // One line far wider than the 120-column screen. `TAILMARK` sits past
+        // column 114 — the body's width once the six-cell gutter is taken — so
+        // it is on the frame only if the line was wrapped, which is only true
+        // if the user's one form was read.
+        // `.txt` and not `.rs`: a rust file starts a server, whose first state
+        // change draws a frame this harness did not press a key for, and one
+        // frame per key is its whole synchronisation ([`Editor::press`]).
+        let file = scratch.path.join("sample.txt");
+        let long = format!("padding {} TAILMARK\n", "x".repeat(140));
+        fs::write(&file, long).expect("a fixture with one very wide line");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let opened = editor.since(0);
+        assert!(
+            opened.contains("TAILMARK"),
+            "the user's `(set-option! \"soft-wrap\" #t)` never ran, or ran \
+             instead of the shipped layer; frame was: {opened}"
+        );
+
+        // `SPC` — the leader popup, composed out of the shipped keymap.
+        let before = editor.mark();
+        editor.press(b" ");
+        let frame = editor.since(before);
+        assert!(
+            frame.contains("+claude"),
+            "the shipped keymap is gone: SPC drew no leader; frame was: {frame}"
+        );
+        editor.press(b"\x1b");
+
+        // `:` — the ex line. The reproduction's own symptom is the negative
+        // assertion here, spelled the way the frame spelled it.
+        let before = editor.mark();
+        editor.press(b":");
+        let frame = editor.since(before);
+        assert!(
+            !frame.contains("unknown key"),
+            "`:` is unbound, which is what §34 saw on a real terminal; frame \
+             was: {frame}"
+        );
+        editor.press(b"\x1b");
+
+        // `ZQ`, and the assertion is that this returns at all.
+        editor.quit();
+    }
+
+    /// **§34's disclosure half, on the shipping path: a boot that loaded
+    /// nothing says so on the first frame.**
+    ///
+    /// `Layer::note_if_no_layer` is called from `run` and nowhere else, so a
+    /// unit test over the method proves the sentence and not the call — and the
+    /// state it describes is precisely one nobody would notice was unwired,
+    /// because its symptom is *silence*.
+    ///
+    /// `kill` rather than `quit`, and that is the finding rather than a
+    /// convenience: `ZQ` is `runtime/keymaps.scm`'s, the seed table is empty by
+    /// construction (`no_bindings_in_rust.rs`), so an editor with no layer
+    /// still cannot be quit. What changed is that it now says why.
+    #[test]
+    fn a_boot_that_found_no_layer_says_so_on_the_first_frame() {
+        let scratch = Scratch::new("no-layer");
+        // An empty `$PHOSPHOR_RUNTIME` — taken at its word, which is what makes
+        // it a way to boot with nothing loaded — and a config home with no
+        // `init.scm` in it either.
+        let runtime = scratch.path.join("empty-runtime");
+        fs::create_dir_all(&runtime).expect("an empty runtime tree");
+        let _ = scratch.persisted();
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let frame = editor.since(0);
+
+        assert!(
+            shows(&frame, "no editor layer"),
+            "an editor with no keymaps drew no fault at all, which is the \
+             mystery §34 asked to end; frame was: {frame}"
+        );
+        assert!(
+            shows(&frame, "nothing loaded"),
+            "the float names no way out; frame was: {frame}"
+        );
+        editor.kill();
+    }
+
+    /// **The same state, with the file the float told you to write already
+    /// written** — §34's own population, and the one a review found still
+    /// silent.
+    ///
+    /// A config home holding one `(set-option! "soft-wrap" #t)` and nothing
+    /// shipped underneath it. The form runs, so the boot report has a unit in
+    /// it, and the disclosure was guarded on the report being empty — so this
+    /// editor applied soft-wrap, drew no statusline, answered `SPC` with
+    /// `unknown key <space>`, ignored `ZQ`, and said nothing about any of it.
+    /// Measured on a real pty before this test existed; the process had to be
+    /// killed.
+    ///
+    /// Two assertions, and the second is the one the unit test cannot make: the
+    /// float has to say something *other* than `write <path>`, because the path
+    /// it would name is the file already on disk.
+    #[test]
+    fn writing_the_file_the_float_asks_for_does_not_buy_silence() {
+        let scratch = Scratch::new("wrote-it");
+        let runtime = scratch.path.join("empty-runtime");
+        fs::create_dir_all(&runtime).expect("an empty runtime tree");
+        fs::write(
+            scratch.persisted().join("init.scm"),
+            "(set-option! \"soft-wrap\" #t)\n",
+        )
+        .expect("§34's own one-line file");
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let frame = editor.since(0);
+
+        assert!(
+            shows(&frame, "no editor layer"),
+            "the editor §34 measured — no keymaps, no statusline, no way out — \
+             still said nothing; frame was: {frame}"
+        );
+        assert!(
+            shows(&frame, "your init.scm ran over nothing"),
+            "the float repeated `write <path>` at somebody who had written it; \
+             frame was: {frame}"
+        );
+        editor.kill();
+    }
+
     /// `T034`'s liveness claim, through the loop: the popup reads the live
     /// table, so a binding written at the REPL is in the next popup with no
     /// wiring of its own.
@@ -2079,7 +2240,21 @@ mod driven {
         );
         editor.press_until(b"(close-repl!)\r", "NORMAL");
 
-        editor.press_quietly(format!(":e {}\r", file.display()).as_bytes());
+        // **Wait for the file to be on screen, not for the editor to go quiet.**
+        // `press_quietly` settles, and settling is a 250 ms window with no new
+        // frame — which an `:e` can satisfy *while still opening*, because the
+        // ex line draws, then there is a gap, then the buffer swaps. CI lost
+        // that race: `gcgc` commented the buffer that was still open
+        // (`start.txt`), `:w` wrote `sample.zz` untouched, and the assertion
+        // read `"local x = 1\n"` — the fixture, unchanged, which looks like
+        // `gc` not working rather than like `:e` not having finished.
+        //
+        // The fixture's own text is the signal, the same way
+        // `gd_opens_the_file_the_server_named_at_the_line_it_named` waits on its
+        // target's text: it is on screen only once the swap has happened, and
+        // `start.txt` says something else entirely so there is nothing to
+        // confuse it with.
+        editor.press_until(format!(":e {}\r", file.display()).as_bytes(), "local x = 1");
         editor.press_quietly(b"gcgc");
         editor.press_quietly(b":w\r");
         let written = fs::read_to_string(&file).expect("the buffer was written");
@@ -2408,13 +2583,13 @@ mod driven {
 
         let editor = Editor::open(&opened, &scratch.state(), &runtime);
         ready(&editor);
-        let mark = editor.mark();
-        editor.press_quietly(format!(":e {}\r", fresh.display()).as_bytes());
-        let drawn = editor.since(mark);
-        assert!(
-            shows(&drawn, "new file"),
-            "opening a free path says so instead of refusing; frames were: {drawn}"
-        );
+        // [`Editor::press_until`] rather than settle-then-assert: an `:e` can
+        // satisfy a 250 ms quiet window *while still opening* — the ex line
+        // draws, there is a gap, then the buffer swaps — so reading the frames
+        // straight after `press_quietly` races the thing being asserted. Its
+        // timeout IS the assertion here, which is why there is no `assert!`
+        // under it repeating the same claim.
+        editor.press_until(format!(":e {}\r", fresh.display()).as_bytes(), "new file");
 
         editor.press(b"i");
         let raised = editor.press_until(b"de", "default_delay");
@@ -2504,12 +2679,12 @@ mod driven {
         let nowhere = scratch.path.join("nope").join("x.txt");
 
         let editor = Editor::open(&file, &scratch.state(), &runtime);
-        let mark = editor.mark();
-        editor.press_quietly(format!(":e {}\r", nowhere.display()).as_bytes());
-        let drawn = editor.since(mark);
-        assert!(
-            shows(&drawn, "no directory"),
-            "the refusal names the directory rather than the file; frames were: {drawn}"
+        // Same reason as the sibling above — wait for the refusal rather than
+        // for quiet. The negative assertion below is still worth making, and
+        // needs the frames this returns.
+        let drawn = editor.press_until(
+            format!(":e {}\r", nowhere.display()).as_bytes(),
+            "no directory",
         );
         assert!(
             !shows(&drawn, "new file"),

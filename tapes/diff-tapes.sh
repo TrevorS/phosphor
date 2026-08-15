@@ -67,6 +67,12 @@ set -uo pipefail
 # loop on the very first mismatch.
 cd "$(dirname "$0")"
 
+# The same capture environment `run-tapes.sh` uses, and it has to be the same
+# one or this compares a capture made without the operator's config against a
+# reference made with it. See tape-env.sh.
+# shellcheck source=tape-env.sh
+source ./tape-env.sh
+
 USAGE="usage: diff-tapes.sh [--no-capture] [id...]"
 
 no_capture=0

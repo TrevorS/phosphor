@@ -9,33 +9,48 @@
 //! tracked `runtime/persisted.scm`. Emacs's equivalent would be writing
 //! `custom.el` into `emacs/lisp/`, and it does not.
 //!
-//! # One root, and a file after it — not a stack
+//! # A stack of three, and the order is a call site
 //!
 //! ```text
-//!   $XDG_CONFIG_HOME/phosphor/    the boot root, when it holds an init.scm
-//!                    …/init.scm   read by `phosphor_steel::boot`
-//!                    …/*.scm      whatever that init.scm's load order names
-//!   the persist file              read after it, by `Layer::load_persisted`
+//!   $PHOSPHOR_RUNTIME, or ./runtime     the shipped tree: init.scm, then the
+//!                                       whole load order it declares
+//!   $XDG_CONFIG_HOME/phosphor/init.scm  yours. hand-written. runs on top
+//!                    …/persisted.scm    machine-written by `persist!`. last
 //! ```
 //!
-//! **There is no layering, and this module must not be read as promising
-//! any.** `phosphor_steel::runtime::Runtime::root` is a first-match-wins
-//! search — `$PHOSPHOR_RUNTIME`, then the directory above, then `./runtime` —
-//! so a hand-written `init.scm` in the config home *replaces* the shipped tree
-//! rather than loading on top of it, and an editor booted that way has no
-//! keymaps and no way to quit. That is the state of the build, it is the
-//! decision `runtime/README.md` records under *"Where this tree is read
-//! from"*, and the half that is still open is `OPEN-QUESTIONS.md` §34. An
-//! earlier draft of this header drew three stacked layers, which invited
-//! exactly the file that bricks the editor.
+//! **Each layer loads after the one above it, and none replaces another.**
+//! Emacs's model — shipped lisp, then your `init.el` — which is the argument
+//! `T101` was decided on and the one Teej ruled on again on 2026-08-14
+//! (`OPEN-QUESTIONS.md` §34). A user's file may therefore *remove* as well as
+//! add: `keymap-remove!` is already in the vocabulary and already in the
+//! persistable set, so both directions cost no new verb.
+//!
+//! Until that ruling the config home was `Runtime::root`'s second *candidate*,
+//! so an `init.scm` here **became** the runtime tree and the shipped fifteen
+//! files never loaded — measured on the built binary: an empty statusline, `:`
+//! drawing `unknown key :`, `ZQ` doing nothing, and no boot float, because the
+//! user's one form ran cleanly. `Runtime::root` names two candidates now and
+//! the config home is not one of them; `crates/phosphor/src/main.rs`'s `vm`
+//! is where the three above are stacked, in that order, by three calls.
+//!
+//! **`$PHOSPHOR_RUNTIME` still replaces the shipped tree**, and that is not the
+//! same seam: it points the binary at a scratch layer, which is what every pty
+//! test and every tape does. A config home is not a runtime root, and reading
+//! one directory as both is the whole of what §34 measured.
 //!
 //! What this module owns is the *directory*: [`config_dir`] is the one
-//! resolution, and both `Runtime::root`'s second candidate and
-//! `AppHost::persist_target` go through it — so the layer that boots and the
-//! file `persist-form!` appends to cannot disagree about where the config home
-//! is. They did: `Runtime::root` had its own copy of the walk, without the
-//! `is_absolute` filter below, so a relative `XDG_CONFIG_HOME` read the layer
-//! from the working directory and wrote under `$HOME/.config`.
+//! resolution, **called once per process**, and `AppHost::user_layer`,
+//! `AppHost::persist_target` and `AppHost::config_home` are three joins and a
+//! read onto the one path it answers — so the file you hand-write and the file
+//! `persist-form!` appends to cannot disagree about where the config home is.
+//! (That sentence was narrowly false for one revision: `main.rs`'s `run` called
+//! `config_dir()` a second time to hand the boot float a directory the host
+//! already held. No drift was possible — one function, one process — but a
+//! claim that holds only by coincidence is one a later edit gets to break in
+//! silence, so `AppHost::config_home` exists and `run` reads it.)
+//! They did, when `Runtime::root` kept its own copy of the walk without the
+//! `is_absolute` filter below: a relative `XDG_CONFIG_HOME` read the layer from
+//! the working directory and wrote under `$HOME/.config`.
 //!
 //! # Config, not state — the one arguable call
 //!
@@ -151,6 +166,37 @@ pub fn config_dir_in(config_home: &Path) -> PathBuf {
     config_home.join(DIR)
 }
 
+/// `~/.config/phosphor/init.scm` — a path as a **float** should say it.
+///
+/// The boot float names the file a fault came from, and once a user's own
+/// `init.scm` layers over the shipped one (§34) there are two files with that
+/// name: naming both `init.scm` puts a reader in front of a fault with no way
+/// to tell whose file broke, which is the legibility §34 is about. The whole
+/// path answers that, and the leading `$HOME` is what stops it being an answer
+/// — `AppHost::persist`'s note already refuses to *"put somebody's `$HOME` on a
+/// screenshot"*, and a float is likelier to be screenshotted than a receipt.
+///
+/// Purely cosmetic: nothing opens what this returns. A path that is not under
+/// `$HOME` comes back unchanged, so the abbreviation can never be the reason a
+/// reader cannot find the file.
+#[must_use]
+pub fn abbreviated(path: &Path) -> PathBuf {
+    abbreviate(path, std::env::var_os("HOME"))
+}
+
+/// [`abbreviated`] over a value rather than over the environment, for
+/// [`home_from`]'s reason: the environment read is then one line with nothing
+/// in it to get wrong, and every branch has a test.
+fn abbreviate(path: &Path, home: Option<OsString>) -> PathBuf {
+    // A relative `$HOME` is ignored here for the same reason `home_from`
+    // ignores one: it would match a prefix of a relative path by accident.
+    let Some(home) = home.map(PathBuf::from).filter(|home| home.is_absolute()) else {
+        return path.to_path_buf();
+    };
+    path.strip_prefix(&home)
+        .map_or_else(|_| path.to_path_buf(), |rest| Path::new("~").join(rest))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,6 +248,47 @@ mod tests {
             NoConfigHome.to_string(),
             "neither XDG_CONFIG_HOME nor HOME names an absolute directory"
         );
+    }
+
+    /// The case the boot float draws: two `init.scm`s, and the reader has to
+    /// be able to tell which one faulted.
+    #[test]
+    fn a_path_under_home_is_abbreviated_for_a_reader() {
+        assert_eq!(
+            abbreviate(
+                Path::new("/home/teej/.config/phosphor/init.scm"),
+                Some("/home/teej".into())
+            ),
+            PathBuf::from("~/.config/phosphor/init.scm")
+        );
+    }
+
+    /// The abbreviation may never be the reason a path stops being findable, so
+    /// everything it does not recognise comes back byte for byte.
+    #[test]
+    fn a_path_outside_home_is_left_exactly_as_it_is() {
+        let elsewhere = Path::new("/etc/phosphor/init.scm");
+        assert_eq!(
+            abbreviate(elsewhere, Some("/home/teej".into())),
+            elsewhere.to_path_buf()
+        );
+        assert_eq!(abbreviate(elsewhere, None), elsewhere.to_path_buf());
+        // A prefix that matches by *characters* and not by path components:
+        // `/home/teejan` is not under `/home/teej`, and `strip_prefix` is what
+        // makes that true rather than a `starts_with` on the string.
+        let sibling = Path::new("/home/teejan/notes.scm");
+        assert_eq!(
+            abbreviate(sibling, Some("/home/teej".into())),
+            sibling.to_path_buf()
+        );
+    }
+
+    /// A relative `$HOME` is ignored on this side too — the same call
+    /// `home_from` makes, for the same reason.
+    #[test]
+    fn a_relative_home_abbreviates_nothing() {
+        let path = Path::new("/home/teej/.config/phosphor/init.scm");
+        assert_eq!(abbreviate(path, Some(".".into())), path.to_path_buf());
     }
 
     #[test]
