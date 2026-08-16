@@ -182,7 +182,7 @@ use phosphor_steel::source;
 use phosphor_steel::status::{self, ComposeError, StatusFile, StatusVm};
 use phosphor_term::{Frame, KeyboardProtocol, Term};
 use phosphor_ui::buffer_view::{self, BufferView, Editor, StateMark, editor_area};
-use phosphor_ui::diagnostics::DiagnosticsVm;
+use phosphor_ui::diagnostics::{DiagnosticsVm, RowPolicy, RowScope};
 use phosphor_ui::float::{
     self, Anchor, CompletionItemVm, CompletionList, CompletionVm, Float, FloatBody, FloatFooter,
     FloatHeader, FloatSlot, FooterHint, SignatureBody, SignatureVm, TextBody,
@@ -292,6 +292,58 @@ const DEFAULT_THEME: &str = "phosphor-dark";
 /// eager* is a preference and this build already has the mechanism for one:
 /// `runtime/init.scm` sets it beside `soft-wrap`.
 const COMPLETION_MIN_CHARS: &str = "completion-min-chars";
+
+/// Which lines hang an inline `┊ ■` diagnostic row — `cursor-line`, `all` or
+/// `off`.
+///
+/// **Reported at `CP-4`, and the report is the whole argument.** A half-typed
+/// `path:` in `crates/phosphor/src/main.rs` made rust-analyzer answer with
+/// eleven cascade parse errors — `expected COMMA`, `expected R_PAREN`,
+/// `expected field declaration` — and [`DiagnosticsVm::rows`] mapped the set
+/// one-to-one, so eleven rows of parser resynchronisation pushed the code being
+/// edited off the screen.
+///
+/// Named in the editor layer for the same reason [`COMPLETION_MIN_CHARS`] is:
+/// *how much should an error interrupt you* is a preference.
+const DIAGNOSTIC_ROWS: &str = "diagnostic-rows";
+
+/// The most inline rows one line may hang before the rest are counted.
+const DIAGNOSTIC_MAX_ROWS: &str = "diagnostic-max-rows";
+
+/// The row policy this pass draws with.
+///
+/// **Three surfaces, and this bounds only the third.** §3 gives a diagnostic
+/// the state bar in gutter column 1, an undercurl under its span, and an inline
+/// row — and the statusline's `■ N` counts every one of them
+/// ([`phosphor_ui::diagnostics::Tally`], `2b`). So a policy that draws no row
+/// hides nothing; it decides what *speaks*, and the default is the line you are
+/// on, which is helix's default too.
+fn diagnostic_rows(host: &AppHost, editor: &Editor) -> RowPolicy {
+    let scope = match host.text(DIAGNOSTIC_ROWS).as_deref() {
+        Some("all") => RowScope::Everywhere,
+        Some("off") => RowScope::Off,
+        // An unset option is the default, and so is a *misspelled* one: this
+        // is the frame path and there is nowhere here to say "that is not a
+        // scope" that would not say it sixty times a second. The REPL is where
+        // a typo is answered, and `set-option!` is where that belongs.
+        _ => RowScope::CursorLine,
+    };
+    let max = host
+        .number(DIAGNOSTIC_MAX_ROWS)
+        .and_then(|most| usize::try_from(most).ok())
+        .unwrap_or(RowPolicy::default().max);
+    // `point` answers a 0-based (row, col) and `Anchor::line` is 0-based too,
+    // so the two are the same number and neither is the statusline's 1-based
+    // `line` ([`cursor_of`]). Comparing against the wrong one puts the rows on
+    // the line above the cursor, which is exactly the off-by-one `T037`'s
+    // statusline entry records having shipped once already.
+    let (row, _) = editor.code_ref().point(editor.get_cursor());
+    RowPolicy {
+        scope,
+        cursor: row,
+        max,
+    }
+}
 
 /// What [`COMPLETION_MIN_CHARS`] is worth to a layer that never sets it.
 ///
@@ -732,10 +784,18 @@ impl AppHost {
 
     /// A numeric option, or `None` if `init.scm` never set it.
     ///
-    /// The reader [`AppHost::flag`] is for booleans and this is for counts, and
-    /// there is no third: `Value` has one integer case on purpose
+    /// The reader [`AppHost::flag`] is for booleans and this is for counts.
+    /// `Value` has one integer case on purpose
     /// (`phosphor_core::value::Value::Int`), so *every* number an option can
     /// carry — a minimum, a delay, a column — comes back through here.
+    ///
+    /// **This paragraph said *"and there is no third"* and now there is**
+    /// ([`AppHost::text`]). It was true of every option that existed when it
+    /// was written — all of them were counts or switches — and stopped being
+    /// true the first time an option had to name one of several *behaviours*
+    /// rather than tune a number. Recorded rather than quietly deleted,
+    /// because the sentence was a claim about the option vocabulary and the
+    /// vocabulary is what changed.
     ///
     /// **A key set to the wrong case reads as unset**, exactly as `flag`
     /// treats `(set-option! "soft-wrap" 3)`. There is nowhere to report a type
@@ -745,6 +805,24 @@ impl AppHost {
     fn number(&self, key: &str) -> Option<i64> {
         match self.state.lock().ok()?.options.get(key)? {
             Value::Int(number) => Some(*number),
+            _ => None,
+        }
+    }
+
+    /// A text option, or `None` if `init.scm` never set it.
+    ///
+    /// The third reader, for an option that names a *behaviour* rather than
+    /// tuning a number — `(set-option! "diagnostic-rows" "cursor-line")`. A
+    /// key set to the wrong case reads as unset, exactly as the two above
+    /// treat theirs, and for the same reason: the loop reads an option long
+    /// after `set-option!` returned, so there is nowhere to report a type
+    /// error that is not a frame.
+    ///
+    /// **Cloned rather than borrowed**, because the lock cannot outlive this
+    /// call and an option is read once per frame at most.
+    fn text(&self, key: &str) -> Option<String> {
+        match self.state.lock().ok()?.options.get(key)? {
+            Value::Text(text) => Some(text.clone()),
             _ => None,
         }
     }
@@ -1877,9 +1955,16 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             .map(|document| editing.diagnostics.of(&document.key))
             .unwrap_or_default();
         let shown = DiagnosticsVm::new(&published);
+        let tally = shown.tally();
         let mut regions = Vec::new();
         regions.extend(shown.regions(&editing.editor));
-        let rows = shown.rows(&theme);
+        // **How many of them may speak, reported at `CP-4`.** A half-typed
+        // `path:` made rust-analyzer answer with eleven cascade parse errors
+        // and every one became a row, so the code being edited went off the
+        // bottom of the screen. The policy is read per pass for the same
+        // reason the completion floor and `soft-wrap` are: an option changed
+        // at the REPL is a fact about now, not about the last restart.
+        let rows = shown.rows(&theme, &diagnostic_rows(&host, &editing.editor));
         let underlines = shown.underlines(&editing.editor, &theme);
         virtual_text::install(&mut editing.editor, &rows);
         editing.editor.set_styled_spans(underlines);
@@ -1944,6 +2029,12 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             since: None,
             ask_pending: false,
             unseen: 0,
+            // **The count `2b` draws and nothing computed until now.** It is
+            // over the whole file, never over what the rows drew: bounding the
+            // inline rows (`RowPolicy`) is only honest if the ones that stay
+            // quiet are still counted somewhere, and this is that somewhere.
+            trouble: tally.trouble,
+            attention: tally.attention,
             vcs: None,
             // `7c`'s `rust-analyzer ✓`, and the only place a failed server is
             // ever heard from — see `server_chip`.

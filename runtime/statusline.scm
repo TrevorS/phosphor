@@ -18,6 +18,8 @@
 ;;   since       when the current turn started, for the elapsed counter
 ;;   ask_pending a queued ask is waiting (Q9)
 ;;   unseen      unseen regions in this file
+;;   trouble     trouble-grade diagnostics in this file — 2b's `■ 1`
+;;   attention   attention-grade diagnostics in this file
 ;;   vcs         "jj ✓", or void outside a repo
 ;;   server      "rust-analyzer ✓", or void where the language declares none
 ;;   cursor      (hash "line" … "col" …), or void
@@ -285,12 +287,38 @@
 ;; the counter group — the only place a `│` appears.
 (define (status/counters vm)
   (let ([unseen (hash-try-get vm "unseen")]
+        [trouble (hash-try-get vm "trouble")]
+        [attention (hash-try-get vm "attention")]
         [server (status/present? (hash-try-get vm "server"))]
         [vcs (status/present? (hash-try-get vm "vcs"))]
         [cursor (status/present? (hash-try-get vm "cursor"))])
     (status/first-joins-with-a-gap
      (append
       ;; §11's first rung: the counters lose their words, not their glyphs.
+      ;;
+      ;; the diagnostic counters come first because they are the loudest fact
+      ;; on the row — `2b` draws `■ 1` to the left of `1 thread · 2 unseen`,
+      ;; and this is where the eleven rows `CP-4` reported went. the inline
+      ;; `┊ ■` rows are now bounded (`RowPolicy`), so this count is what makes
+      ;; that quieting rather than hiding: every diagnostic in the file is
+      ;; named here even when only the cursor's line speaks.
+      ;;
+      ;; no word at width, unlike `unseen`. `■ 3` needs no noun — the glyph is
+      ;; §2's lexicon and the number is what you wanted — and `3 errors` would
+      ;; be this file inventing a severity name the vocabulary spells
+      ;; `trouble`. so both forms are the same, and the rung is a no-op for it.
+      (if (> trouble 0)
+          (list (status/segment 'counter-words
+                                (view/counter 'diagnostic trouble void 'trouble)
+                                (view/counter 'diagnostic trouble void 'trouble)
+                                'bar))
+          '())
+      (if (> attention 0)
+          (list (status/segment 'counter-words
+                                (view/counter 'diagnostic attention void 'attention)
+                                (view/counter 'diagnostic attention void 'attention)
+                                'bar))
+          '())
       (if (> unseen 0)
           (list (status/segment 'counter-words
                                 (view/counter 'unseen unseen void 'meta)

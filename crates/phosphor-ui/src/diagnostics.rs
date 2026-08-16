@@ -138,6 +138,102 @@ pub struct DiagnosticsVm<'a> {
 
 impl ViewModel for DiagnosticsVm<'_> {}
 
+/// How many diagnostics a file has, by grade.
+///
+/// Three counters rather than one total, because §1 gives each grade its own
+/// hue and a statusline that said `■ 4` in trouble-red over three warnings and
+/// one error would be colouring a number it had already merged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Tally {
+    /// Trouble-red — something is wrong.
+    pub trouble: u32,
+    /// Attention-amber — worth your eyes.
+    pub attention: u32,
+    /// Meta-grey — something happened.
+    pub info: u32,
+}
+
+impl Tally {
+    /// Whether there is anything at all to say. Zero draws nothing (§5).
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.trouble == 0 && self.attention == 0 && self.info == 0
+    }
+}
+
+/// Which lines may hang an inline `┊ ■` row.
+///
+/// **A diagnostic is never hidden by any of these** — that is the whole reason
+/// a policy is allowed to exist. §3 gives diagnostics *three* surfaces and this
+/// is only the third: column 1's state bar marks every line that has one, the
+/// undercurl sits under every span, and the statusline carries the count
+/// ([`Tally`]'s `■ N`, which `2b` draws beside `1 thread · 2 unseen`).
+/// What a policy chooses is how many of them also *speak*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RowScope {
+    /// Only the line the cursor is on.
+    ///
+    /// **The default, and it is helix's** — its `InlineDiagnosticsConfig`
+    /// defaults to `cursor_line: Enable(Warning)` with `other_lines: Disable`
+    /// (`helix-view/src/annotations/diagnostics.rs`). The reasoning is the same
+    /// one §11 applies everywhere else: a row is a line of the buffer that is
+    /// not the buffer, so it is charged against the code it pushes off screen,
+    /// and it is worth that only where you are looking.
+    #[default]
+    CursorLine,
+    /// Every line with a diagnostic.
+    Everywhere,
+    /// None. The bar, the undercurl and the count still say so.
+    Off,
+}
+
+/// How many rows may hang, and from where.
+///
+/// **Reported at `CP-4`, and the screenshot is the argument.** A half-typed
+/// `path:` in `main.rs` made rust-analyzer answer with eleven cascade parse
+/// errors — `expected COMMA`, `expected R_PAREN`, `expected field declaration`
+/// — and every one became a row, so eleven rows of parser noise pushed the code
+/// being edited off the screen. Nothing bounded them: [`DiagnosticsVm::rows`]
+/// mapped the set one-to-one.
+///
+/// **No mockup ever draws more than one.** Grepped this session: `■` appears
+/// twice in all 37 screens of `docs/design/TUI Mockups.dc.html` — once as the
+/// single inline row `■ E0308: expected Duration, found u128`, and once as the
+/// statusline count `■ 1`. So a bound is what the design already said, and the
+/// unbounded version was the departure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowPolicy {
+    /// Which lines may speak.
+    pub scope: RowScope,
+    /// The cursor's **source** line, 0-based, for [`RowScope::CursorLine`].
+    ///
+    /// Source rather than visual, because a soft-wrapped line is one line to
+    /// the person on it: a diagnostic hanging off its third segment is still
+    /// about the line the cursor is in.
+    pub cursor: usize,
+    /// The most rows to draw before the rest are counted instead.
+    ///
+    /// The overflow is **said, not swallowed** — see [`DiagnosticsVm::rows`].
+    pub max: usize,
+}
+
+impl Default for RowPolicy {
+    /// Cursor line, three rows, cursor at the top.
+    ///
+    /// **Three rather than helix's ten**, and the difference is that helix
+    /// soft-wraps its inline diagnostics into a width-bounded block while §11
+    /// forbids wrapping outright — so a row here is always exactly one line of
+    /// the buffer's height, and ten of them is a third of an 80×24 screen.
+    /// Three shows a genuine multi-error line without burying what produced it.
+    fn default() -> Self {
+        Self {
+            scope: RowScope::CursorLine,
+            cursor: 0,
+            max: 3,
+        }
+    }
+}
+
 impl<'a> DiagnosticsVm<'a> {
     /// A projection over one file's set.
     #[must_use]
@@ -221,15 +317,76 @@ impl<'a> DiagnosticsVm<'a> {
     /// Duration, found u128` — is one colour end to end. The drawing wins where
     /// it is specific, which is the same rule the rest of this file follows.
     #[must_use]
-    pub fn rows(&self, theme: &Theme) -> Vec<virtual_text::Row> {
-        self.diagnostics
-            .iter()
-            .map(|diagnostic| {
+    pub fn rows(&self, theme: &Theme, policy: &RowPolicy) -> Vec<virtual_text::Row> {
+        if policy.scope == RowScope::Off {
+            return Vec::new();
+        }
+        // **Identical sentences at the same anchor are one sentence.** A parse
+        // cascade is not a list of findings — `expected COMMA` four times off
+        // one line is the parser resynchronising, and the second copy tells a
+        // reader nothing the first did not. Deduped on (anchor, severity,
+        // message) rather than on message alone, because the *same* words about
+        // two different lines are two different facts.
+        let mut seen: Vec<(Anchor, Severity, &str)> = Vec::new();
+        let mut speaking = Vec::new();
+        let mut counted = 0usize;
+        for diagnostic in self.diagnostics {
+            let anchor = anchor_of(diagnostic.span);
+            if policy.scope == RowScope::CursorLine && anchor.line != policy.cursor {
+                continue;
+            }
+            let key = (anchor, diagnostic.severity, diagnostic.message.as_str());
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.push(key);
+            if speaking.len() < policy.max {
                 let text = format!("{GLYPH} {}", one_line(&diagnostic.message));
                 let style = Style::new().fg(hue(diagnostic.severity, theme));
-                virtual_text::Row::new(anchor_of(diagnostic.span), vec![Run::new(text, style)])
-            })
-            .collect()
+                speaking.push(virtual_text::Row::new(anchor, vec![Run::new(text, style)]));
+            } else {
+                counted += 1;
+            }
+        }
+        // **The overflow says so.** A cap that draws nothing about what it
+        // dropped reads as *"these are all of them"*, which is the one thing a
+        // diagnostic surface may not imply. The extra row is charged against
+        // `max` honestly: asking for three and getting four is the fourth one
+        // telling you there are more, which is a trade a reader makes gladly
+        // and cannot make at all if it is silent.
+        if counted > 0
+            && let Some(last) = speaking.last()
+        {
+            let anchor = last.anchor;
+            let more = format!("{GLYPH} {counted} more here");
+            let style = Style::new().fg(theme.neutrals.meta);
+            speaking.push(virtual_text::Row::new(anchor, vec![Run::new(more, style)]));
+        }
+        speaking
+    }
+
+    /// How many diagnostics of each grade this file has, for the statusline.
+    ///
+    /// **§3's third surface, and it was missing entirely.** `2b` draws `■ 1`
+    /// beside `1 thread · 2 unseen` and nothing in the build ever computed it —
+    /// grepped this session, neither `runtime/statusline.scm` nor
+    /// `phosphor_steel::status` mentioned a diagnostic. That absence is what
+    /// made [`RowPolicy`] a *hiding* change rather than a *quieting* one, so
+    /// the two land together: the rows stop shouting and the count starts
+    /// speaking.
+    ///
+    /// Counted over the whole set, never over what a policy drew.
+    #[must_use]
+    pub fn tally(&self) -> Tally {
+        let mut tally = Tally::default();
+        for diagnostic in self.diagnostics {
+            match diagnostic.severity {
+                Severity::Trouble => tally.trouble = tally.trouble.saturating_add(1),
+                Severity::Attention => tally.attention = tally.attention.saturating_add(1),
+                Severity::Info => tally.info = tally.info.saturating_add(1),
+            }
+        }
+        tally
     }
 
     /// An undercurl under every diagnostic's span, in its grade's colour.
@@ -788,11 +945,26 @@ let next = delay * 2;
 
     // -- the row ------------------------------------------------------------
 
+    /// A policy that bounds nothing, for the tests that are about a row's
+    /// *content* rather than about how many of them there are.
+    ///
+    /// Written out rather than defaulted: [`RowPolicy::default`] draws the
+    /// cursor line only, so a test that took the default would be asserting
+    /// the policy as well as the thing it is about, and would go quiet — not
+    /// red — if the default ever changed.
+    fn everywhere() -> RowPolicy {
+        RowPolicy {
+            scope: RowScope::Everywhere,
+            cursor: 0,
+            max: usize::MAX,
+        }
+    }
+
     #[test]
     fn the_row_is_the_glyph_and_the_message_in_the_grades_colour() {
         let theme = theme();
         let set = [e0308()];
-        let rows = DiagnosticsVm::new(&set).rows(&theme);
+        let rows = DiagnosticsVm::new(&set).rows(&theme, &everywhere());
         let [row] = rows.as_slice() else {
             panic!("one diagnostic, one row: {rows:?}");
         };
@@ -816,7 +988,7 @@ let next = delay * 2;
             "expected Duration,\n   found u128\nnote: in this expansion",
         );
         let set = [wrapped];
-        let rows = DiagnosticsVm::new(&set).rows(&theme);
+        let rows = DiagnosticsVm::new(&set).rows(&theme, &everywhere());
         let text = &rows[0].runs[0].text;
         assert_eq!(
             text,
@@ -834,10 +1006,181 @@ let next = delay * 2;
         let mut editor = editor(&theme);
         let lines = editor.code_ref().len_lines();
         let set = [e0308()];
-        let rows = DiagnosticsVm::new(&set).rows(&theme);
+        let rows = DiagnosticsVm::new(&set).rows(&theme, &everywhere());
         virtual_text::install(&mut editor, &rows);
         assert_eq!(editor.code_ref().len_lines(), lines, "no line was added");
         assert!(virtual_text::is_virtual_row(&editor, TROUBLE_LINE as usize));
+    }
+
+    // -- the policy ---------------------------------------------------------
+
+    /// The `CP-4` screenshot, as a fixture: one line, eleven cascade errors.
+    ///
+    /// The messages are rust-analyzer's own, transcribed from the report —
+    /// including the repeats, which are the point. A parse cascade is a parser
+    /// resynchronising, not eleven findings.
+    fn cascade() -> Vec<Diagnostic> {
+        [
+            "Syntax Error: expected type",
+            "Syntax Error: expected COMMA",
+            "Syntax Error: expected field declaration",
+            "Syntax Error: expected COMMA",
+            "Syntax Error: expected COLON",
+            "Syntax Error: expected R_PAREN",
+            "Syntax Error: expected COMMA",
+            "Syntax Error: expected field declaration",
+            "Syntax Error: expected COMMA",
+            "Syntax Error: expected field declaration",
+            "Syntax Error: expected COMMA",
+        ]
+        .into_iter()
+        .map(|message| diagnostic(span(TROUBLE_LINE, 9..38), Severity::Trouble, message))
+        .collect()
+    }
+
+    /// **Eleven diagnostics on one line do not become eleven rows.**
+    ///
+    /// Reported at `CP-4`: a half-typed `path:` and the code being edited went
+    /// off the bottom of the screen. Nothing bounded the rows.
+    #[test]
+    fn a_parse_cascade_is_bounded_rather_than_drawn_one_row_per_error() {
+        let theme = theme();
+        let set = cascade();
+        let policy = RowPolicy {
+            scope: RowScope::Everywhere,
+            cursor: 0,
+            max: 3,
+        };
+        let rows = DiagnosticsVm::new(&set).rows(&theme, &policy);
+
+        // Three that speak, plus the one that says how many did not — four,
+        // against eleven. The fourth is the honesty and is asserted as such.
+        assert_eq!(rows.len(), 4, "three rows and an overflow: {rows:?}");
+        let last = &rows[3].runs[0];
+        assert!(
+            last.text.contains("more here"),
+            "a cap that says nothing about what it dropped reads as \
+             `these are all of them`: {:?}",
+            last.text
+        );
+        assert_eq!(
+            last.style.fg,
+            Some(theme.neutrals.meta),
+            "the overflow row is meta — it is our sentence, not the server's"
+        );
+
+        // And the number it reports is against the DEDUPED set, not the raw
+        // eleven: `expected COMMA` four times is one thing the parser said
+        // four times. Five distinct messages, three drawn, two counted.
+        assert!(
+            last.text.contains('2'),
+            "eleven errors are five distinct ones here; three drew and two \
+             remain: {:?}",
+            last.text
+        );
+    }
+
+    /// Identical sentences at one anchor collapse; the same words on two lines
+    /// do not.
+    #[test]
+    fn the_same_message_twice_on_one_line_is_one_row_and_on_two_lines_is_two() {
+        let theme = theme();
+        let twice = [
+            diagnostic(
+                span(TROUBLE_LINE, 9..38),
+                Severity::Trouble,
+                "expected COMMA",
+            ),
+            diagnostic(
+                span(TROUBLE_LINE, 9..38),
+                Severity::Trouble,
+                "expected COMMA",
+            ),
+        ];
+        let rows = DiagnosticsVm::new(&twice).rows(&theme, &everywhere());
+        assert_eq!(rows.len(), 1, "one anchor, one sentence, one row: {rows:?}");
+
+        // A different line is a different fact even in the same words.
+        let elsewhere = [
+            diagnostic(
+                span(TROUBLE_LINE, 9..38),
+                Severity::Trouble,
+                "expected COMMA",
+            ),
+            diagnostic(
+                span(TROUBLE_LINE + 1, 9..38),
+                Severity::Trouble,
+                "expected COMMA",
+            ),
+        ];
+        let rows = DiagnosticsVm::new(&elsewhere).rows(&theme, &everywhere());
+        assert_eq!(rows.len(), 2, "two lines are two facts: {rows:?}");
+    }
+
+    /// The default draws the cursor's line and nothing else — helix's rule.
+    #[test]
+    fn the_default_policy_speaks_only_for_the_line_the_cursor_is_on() {
+        let theme = theme();
+        let set = [
+            diagnostic(span(TROUBLE_LINE, 9..38), Severity::Trouble, "here"),
+            diagnostic(span(TROUBLE_LINE + 1, 0..4), Severity::Trouble, "elsewhere"),
+        ];
+        let vm = DiagnosticsVm::new(&set);
+
+        let on_it = RowPolicy {
+            cursor: TROUBLE_LINE as usize - 1,
+            ..RowPolicy::default()
+        };
+        let rows = vm.rows(&theme, &on_it);
+        assert_eq!(rows.len(), 1, "only the cursor's line speaks: {rows:?}");
+        assert!(rows[0].runs[0].text.contains("here"));
+
+        // …and the one it did not draw is still counted, still barred and
+        // still underlined. The count is the half that makes this quieting
+        // rather than hiding, so it is asserted in the same test.
+        assert_eq!(vm.tally().trouble, 2, "both are counted whatever drew");
+        assert_eq!(
+            vm.regions(&editor(&theme)).len(),
+            2,
+            "both still mark the gutter"
+        );
+    }
+
+    /// `off` draws no rows at all, and the other two surfaces are untouched.
+    #[test]
+    fn the_off_policy_leaves_the_bar_and_the_count_speaking() {
+        let theme = theme();
+        let set = [e0308()];
+        let vm = DiagnosticsVm::new(&set);
+        let silent = RowPolicy {
+            scope: RowScope::Off,
+            ..RowPolicy::default()
+        };
+        assert!(vm.rows(&theme, &silent).is_empty());
+        assert_eq!(vm.tally().trouble, 1, "still counted");
+        assert_eq!(vm.regions(&editor(&theme)).len(), 1, "still barred");
+        assert_eq!(
+            vm.underlines(&editor(&theme), &theme).len(),
+            1,
+            "still underlined"
+        );
+    }
+
+    /// The tally counts by grade, because each grade has its own hue.
+    #[test]
+    fn the_tally_counts_each_grade_on_its_own() {
+        let set = [
+            diagnostic(span(TROUBLE_LINE, 9..38), Severity::Trouble, "wrong"),
+            diagnostic(span(TROUBLE_LINE, 9..38), Severity::Attention, "eyes"),
+            diagnostic(span(TROUBLE_LINE, 9..38), Severity::Attention, "eyes too"),
+            diagnostic(span(TROUBLE_LINE, 9..38), Severity::Info, "happened"),
+        ];
+        let tally = DiagnosticsVm::new(&set).tally();
+        assert_eq!(tally.trouble, 1);
+        assert_eq!(tally.attention, 2);
+        assert_eq!(tally.info, 1);
+        assert!(!tally.is_empty());
+        assert!(Tally::default().is_empty(), "zero draws nothing");
     }
 
     // -- the undercurl ------------------------------------------------------
@@ -899,7 +1242,7 @@ let next = delay * 2;
         // and `install` drops it by the same rule rather than hanging the row
         // off the last line.
         let before = editor.visual_len_lines();
-        virtual_text::install(&mut editor, &vm.rows(&theme));
+        virtual_text::install(&mut editor, &vm.rows(&theme, &everywhere()));
         assert_eq!(editor.visual_len_lines(), before, "and no `┊ ■` row");
     }
 

@@ -27,6 +27,9 @@ unsolicited push arrives on its own schedule:
 
     completion   answer lookups; publish nothing
     diagnostics  publish one error on didOpen; answer nothing
+    diagnostic-cascade
+                 publish ELEVEN errors on one line on didOpen — the parse
+                 cascade `CP-4` reported, for the row policy that bounds it
     definition-here
                  answer `definition` with *this* document rather than a
                  sibling — `gd` into the file you are already editing, which is
@@ -149,27 +152,59 @@ COMPLETIONS = [
 ]
 
 
+# The eleven a real rust-analyzer answered with when Teej half-typed `path:`
+# at CP-4, transcribed from the report — repeats included, because the repeats
+# are the point. A parse cascade is one parser resynchronising, not eleven
+# findings, and it is what `diagnostic-rows` exists to bound.
+CASCADE = [
+    "Syntax Error: expected type",
+    "Syntax Error: expected COMMA",
+    "Syntax Error: expected field declaration",
+    "Syntax Error: expected COMMA",
+    "Syntax Error: expected COLON",
+    "Syntax Error: expected R_PAREN",
+    "Syntax Error: expected COMMA",
+    "Syntax Error: expected field declaration",
+    "Syntax Error: expected COMMA",
+    "Syntax Error: expected field declaration",
+    "Syntax Error: expected COMMA",
+]
+
+
 def publish(uri):
+    if MODE == "diagnostic-cascade":
+        # All eleven on ONE line, which is what a half-typed line produces.
+        found = [
+            {
+                "range": {
+                    "start": {"line": 1, "character": 0},
+                    "end": {"line": 1, "character": 5},
+                },
+                "severity": 1,
+                "message": message,
+                "source": "toy",
+            }
+            for message in CASCADE
+        ]
+    else:
+        found = [
+            {
+                # Line 1, columns 1..5, zero-based and half-open as LSP
+                # counts them. The fixture puts a word there.
+                "range": {
+                    "start": {"line": 1, "character": 0},
+                    "end": {"line": 1, "character": 5},
+                },
+                "severity": 1,
+                "message": "expected Duration, found u128",
+                "source": "toy",
+            }
+        ]
     send(
         {
             "jsonrpc": "2.0",
             "method": "textDocument/publishDiagnostics",
-            "params": {
-                "uri": uri,
-                "diagnostics": [
-                    {
-                        # Line 1, columns 1..5, zero-based and half-open as LSP
-                        # counts them. The fixture puts a word there.
-                        "range": {
-                            "start": {"line": 1, "character": 0},
-                            "end": {"line": 1, "character": 5},
-                        },
-                        "severity": 1,
-                        "message": "expected Duration, found u128",
-                        "source": "toy",
-                    }
-                ],
-            },
+            "params": {"uri": uri, "diagnostics": found},
         }
     )
 
@@ -228,7 +263,7 @@ def main():
         elif method == "exit":
             return
         elif method == "textDocument/didOpen":
-            if MODE == "diagnostics":
+            if MODE in ("diagnostics", "diagnostic-cascade"):
                 publish(message["params"]["textDocument"]["uri"])
         elif method == "textDocument/definition":
             # A place in a *different* file, so the jump is observable: the

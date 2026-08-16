@@ -160,6 +160,10 @@ fn status_vm() -> StatusVm {
         since: None::<Millis>,
         ask_pending: false,
         unseen: 0,
+        // No diagnostic on this screen. `2b` is the one that
+        // draws `■ N`, and it has no golden frame.
+        trouble: 0,
+        attention: 0,
         vcs: None,
         server: None,
         cursor: None,

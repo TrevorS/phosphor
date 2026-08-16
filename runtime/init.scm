@@ -83,6 +83,31 @@
 ;; on an empty line.
 (set-option! "completion-min-chars" 2)
 
+;; which lines hang an inline `┊ ■` diagnostic row, and how many.
+;;
+;; reported at CP-4 and the report is the argument: a half-typed `path:` made
+;; rust-analyzer answer with **eleven** cascade parse errors — `expected COMMA`,
+;; `expected R_PAREN`, `expected field declaration` — and every one became a
+;; row, so eleven rows of the parser resynchronising pushed the code being
+;; edited off the bottom of the screen.
+;;
+;; **nothing is hidden by this.** §3 gives a diagnostic three surfaces and this
+;; bounds only the third: the state bar in gutter column 1 still marks every
+;; line that has one, the undercurl still sits under every span, and the
+;; statusline still counts every one of them (`■ 3`, screen 2b). what the option
+;; decides is how many also *speak*.
+;;
+;; `"cursor-line"` is helix's default (`other-lines: disable`) and is ours.
+;; `"all"` is the old behaviour, bounded; `"off"` leaves the bar and the count.
+(set-option! "diagnostic-rows" "cursor-line")
+
+;; three rather than helix's ten, because helix soft-wraps its inline block into
+;; a bounded width and §11 forbids wrapping outright — so a row here is always
+;; a whole line of the buffer's height, and ten is a third of an 80x24 screen.
+;; the overflow is said rather than swallowed: a fourth row reads `■ n more
+;; here`.
+(set-option! "diagnostic-max-rows" 3)
+
 ;; how many cells a tab is worth — the tabstop. this is **two answers in one
 ;; number** and that is deliberate: it is how wide a `\t` in the file *draws*,
 ;; and it is how wide one indent level is when levels are made of spaces.

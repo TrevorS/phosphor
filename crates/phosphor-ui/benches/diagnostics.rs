@@ -73,7 +73,7 @@ use std::time::{Duration, Instant};
 
 use phosphor_core::request::{Diagnostic, Position, Severity, Span};
 use phosphor_ui::buffer_view::{Editor, configure as configure_buffer};
-use phosphor_ui::diagnostics::DiagnosticsVm;
+use phosphor_ui::diagnostics::{DiagnosticsVm, RowPolicy, RowScope};
 use phosphor_ui::gutter;
 use phosphor_ui::theme::Theme;
 use phosphor_ui::virtual_text;
@@ -166,6 +166,22 @@ impl Measured {
     }
 }
 
+/// The policy this benchmark measures under — **every row, no cap**.
+///
+/// Deliberately not the shipped default. `RowPolicy::default` draws the cursor
+/// line only, so a benchmark that took it would measure *one* row however many
+/// diagnostics the file has, and would report that building rows got 500x
+/// faster the day the policy landed. What this asks is what it always asked:
+/// what does turning N diagnostics into N rows cost. The bound is a product
+/// decision and is asserted where product decisions are, in the tests.
+fn unbounded() -> RowPolicy {
+    RowPolicy {
+        scope: RowScope::Everywhere,
+        cursor: 0,
+        max: usize::MAX,
+    }
+}
+
 /// One publish onto a file that already carries the previous one's rows — the
 /// steady state, and the only state a running editor is in after the first
 /// publish.
@@ -174,11 +190,11 @@ fn measure(theme: &Theme, lines: usize, count: usize) -> Measured {
     let diagnostics = diagnostics(&source, count);
     let mut editor = editor(theme, &source);
     let vm = DiagnosticsVm::new(&diagnostics);
-    virtual_text::install(&mut editor, &vm.rows(theme));
+    virtual_text::install(&mut editor, &vm.rows(theme, &unbounded()));
 
     let (regions, t_regions) = timed(|| vm.regions(&editor));
     let (_marks, t_column) = timed(|| gutter::state_column(&regions, editor.visual_len_lines()));
-    let (rows, t_build) = timed(|| vm.rows(theme));
+    let (rows, t_build) = timed(|| vm.rows(theme, &unbounded()));
     let (_, t_install) = timed(|| virtual_text::install(&mut editor, &rows));
     let (spans, t_underlines) = timed(|| vm.underlines(&editor, theme));
     editor.set_styled_spans(spans);

@@ -2764,9 +2764,21 @@ mod driven {
     ///
     /// Nothing presses a key for this one and that is the property: a server
     /// publishes when it has something, and the editor was parked in
-    /// `Queue::recv` with no timeout and no tick. The row is
-    /// `phosphor_ui::virtual_text`'s and the `■` is §2's lexicon; the state
-    /// column beside it is `gutter::state_column`, computed once by the loop.
+    /// `Queue::recv` with no timeout and no tick. The `■` is §2's lexicon; the
+    /// state column beside it is `gutter::state_column`, computed once by the
+    /// loop.
+    ///
+    /// **What arrives unasked is the count, and the sentence is one motion
+    /// away.** This test asserted the row itself until `CP-4`, where eleven
+    /// cascade parse errors from a half-typed line stacked eleven rows and
+    /// pushed the code off the screen. `RowPolicy` bounds them to the cursor's
+    /// line, so the file's diagnostic — the fixture puts it on line 2 and the
+    /// cursor opens on line 1 — reaches the screen through the statusline's
+    /// `■ n` rather than through a row.
+    ///
+    /// So both halves are pressed here, in order, and they are the argument
+    /// that this is quieting rather than hiding: the count with **no key at
+    /// all**, and then the server's own sentence after a single `j`.
     #[test]
     fn a_published_diagnostic_reaches_the_screen_with_nobody_asking() {
         let (scratch, runtime, file) = toy(
@@ -2777,10 +2789,60 @@ mod driven {
         let editor = Editor::open(&file, &scratch.state(), &runtime);
         // No key is pressed. The editor is idle and the server pushes into the
         // same queue the keyboard uses.
-        let frame = editor.press_until(b"", "expected Duration, found u128");
+        let frame = editor.press_until(b"", "\u{25a0}1");
         assert!(
-            shows(&frame, "\u{25a0}"),
-            "§2's lexicon opens a diagnostic row with a filled square; frame was: {frame}"
+            !shows(&frame, "expected Duration, found u128"),
+            "the cursor is on line 1 and the diagnostic is on line 2, so the \
+             sentence has not interrupted anything yet; frame was: {frame}"
+        );
+
+        // …and one motion onto its line is what makes it speak.
+        let arrived = editor.press_until(b"j", "expected Duration, found u128");
+        assert!(
+            shows(&arrived, "\u{25a0}"),
+            "§2's lexicon opens a diagnostic row with a filled square; frame was: {arrived}"
+        );
+        editor.quit();
+    }
+
+    /// **Eleven cascade errors on one line do not bury the file** — `CP-4`,
+    /// in the running binary.
+    ///
+    /// The screenshot that produced this: a half-typed `path:` in
+    /// `crates/phosphor/src/main.rs`, rust-analyzer answering with eleven
+    /// `Syntax Error: expected …` diagnostics, and every one drawn as its own
+    /// row. `phosphor-ui` bounds them and is unit-tested for it; this is the
+    /// half that proves the **host** passes a bounded policy rather than the
+    /// default-constructed one, which is the composition defect this repo has
+    /// shipped four times.
+    #[test]
+    fn a_pile_of_diagnostics_on_one_line_does_not_bury_the_buffer() {
+        let (scratch, runtime, file) = toy(
+            "diagnostic-pile",
+            "diagnostic-cascade",
+            "let retry = RetryPolicy\nbase = 3\nlet tail = 9\n",
+        );
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // Onto the line the cascade is about, so the rows are drawn at all.
+        let frame = editor.press_until(b"j", "expected COMMA");
+        let rows = frame
+            .lines()
+            .filter(|line| line.contains('\u{25a0}') && line.contains("expected"))
+            .count();
+        assert!(
+            rows <= 4,
+            "three rows and an overflow at most, not one per error; \
+             {rows} were drawn. Frame was: {frame}"
+        );
+        assert!(
+            shows(&frame, "more here"),
+            "and the ones that did not draw are said, not swallowed; \
+             frame was: {frame}"
+        );
+        // The buffer is still on screen, which is the whole complaint.
+        assert!(
+            shows(&frame, "let tail = 9"),
+            "the code below the cascade survived it; frame was: {frame}"
         );
         editor.quit();
     }

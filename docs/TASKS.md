@@ -1422,6 +1422,38 @@ is exact.
   > correct against — the ladder is unit-tested in `phosphor-ui`'s `gutter`, and the claim this
   > criterion makes is about a composition that cannot exist yet. Tick it when `T041` puts a
   > second source in that `Vec`; the line that concatenates them is already written.
+  >
+  > **What `CP-4`'s second sitting found, 2026-08-16 — and it is not the criterion above.** Teej
+  > half-typed `path:` in `crates/phosphor/src/main.rs`, rust-analyzer answered with **eleven**
+  > cascade parse errors (`expected COMMA`, `expected R_PAREN`, `expected field declaration` —
+  > four of them the same sentence twice or more), and `DiagnosticsVm::rows` mapped the set
+  > one-to-one. Eleven rows of a parser resynchronising pushed the code being edited off the
+  > bottom of the screen. *"we have to do better with these error msgs"*.
+  >
+  > **Two things were wrong and only one of them was the rows.** §3 gives a diagnostic three
+  > surfaces — the state bar in gutter column 1, the undercurl, and the inline row — and screen
+  > `2b` draws a fourth thing beside them: the statusline count `■ 1`, next to
+  > `1 thread · 2 unseen`. **Nothing had ever computed it.** Grepped this session before the fix:
+  > neither `runtime/statusline.scm` nor `phosphor_steel::status` mentioned a diagnostic at all.
+  > So the only place a file's error count appeared was one row per error, which is precisely why
+  > eleven of them had to be drawn to say *"there are eleven"*.
+  >
+  > Both landed together, because either alone is worse than neither: `DiagnosticsVm::rows` takes
+  > a `RowPolicy` (`cursor-line` by default, capped at three, identical sentences at one anchor
+  > deduped, and the overflow **said** — a fourth row reads `■ n more here`), and `StatusVm` grew
+  > `trouble`/`attention` so the ones that stay quiet are still counted. Bounding without the
+  > count would have been hiding.
+  >
+  > **The design agrees, and `6c` is the proof rather than the assertion.** `■` appears exactly
+  > twice in all 37 mockup screens — once as a single inline row, once as that count — so an
+  > unbounded row was the departure and this is the return. `crates/phosphor-ui/tests/screen_6c.rs`
+  > now draws under the **shipped default** and its golden frame is byte-identical: `6c`'s cursor
+  > is on line 64 and line 64 is the one carrying `E0308`, so the mockup and the default are the
+  > same picture. One space of divergence is left and is flagged rather than folded —
+  > [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) §39.
+  >
+  > **None of this ticks `T040`.** The criterion is still *"against other states"* and there is
+  > still one source of regions until `T041`.
 
 ### ✋ CP-4 — Boring on purpose
 
@@ -2502,7 +2534,7 @@ graph names at all, while `T104` extends `T026`'s operator machine and `T033`'s 
 
 > **A second sitting, 2026-08-16, and it produced no new tasks — which is itself the finding.**
 > Teej ran the binary again after `T104`–`T107` landed and reported five things. Four of them
-> resolved into work or rulings that already had a home, and **not one needed a `T109`**:
+> resolved into work or rulings that already had a home, and **not one needed a new task row**:
 >
 > * **`<tab>` should drive the completion list.** §38 re-ruled by its first option; `T105` ticked.
 >   The report's other half — *"enter or space doesnt accept"* — was the same fact, not a second
@@ -2522,6 +2554,41 @@ graph names at all, while `T104` extends `T026`'s operator machine and `T033`'s 
 >
 > The fifth is `T106`'s, still open and still Teej's: the kind and source columns are built and
 > screen `7c` draws neither, which is a design amendment rather than an agent's call.
+
+> **A third sitting, the same day, one finding — and it is worth more than the four above.**
+> Teej, on a half-typed `path:` in `main.rs`: *"we have to do better with these error msgs"*.
+> Eleven cascade parse errors from rust-analyzer, each drawn as its own row, the code being
+> edited pushed off the bottom of the screen. The fix and its reasoning are recorded at `T040`,
+> which it does **not** tick.
+>
+> **The part to carry forward is what the investigation found rather than what the report said.**
+> The unbounded rows were the visible half. The invisible half is that screen `2b` draws a
+> statusline diagnostic count — `■ 1`, beside `1 thread · 2 unseen` — and **nothing in the build
+> had ever computed it**. That absence is *why* the rows had to be unbounded to stay truthful:
+> with no count, the only way the editor could say *"there are eleven"* was to draw eleven.
+>
+> That is the same shape as `T016`'s folds and the four dead `S3` surfaces, one layer over:
+> **a design element no task's acceptance criterion happened to name, shipped absent rather than
+> broken.** `T040`'s criterion is about gutter *priority*; nothing in it says *count*, so nothing
+> was ever red and no lint could have been. What found it was a person typing — and what made it
+> findable in one pass was **grepping the mockups for the glyph** rather than re-reading the
+> task. `■` occurs twice in 37 screens, and the second occurrence was the whole finding.
+>
+> **And the sitting above shipped a red lint, which is worth recording where it happened.** The
+> paragraph introducing it cited a task number one past the highest that exists, in a sentence
+> saying no new task was needed — and `lint-doc-claims.py`'s *"every `T0xx` cited must be a task
+> that exists"* names exactly that. It reached `master` because the docs were edited **after**
+> that window's `just gate` run and committed without a second one: the gate was green when it
+> was read, and the claim it would have caught was written afterwards. `CLAUDE.md` calls
+> `just gate` *"the command to run before saying something is green"*; the gap is that it ran
+> before the last edit rather than before the commit, and a green gate three edits old is a green
+> gate for a tree that no longer exists. Caught one commit later, by the lint, on this window's
+> run.
+>
+> **The correction could not be written in the obvious words**, which is the lint being stricter
+> than it looks: naming the offending id here — even inside backticks, even to say it is wrong —
+> is itself a citation of a task that does not exist, and the second `just lint` failed on this
+> very paragraph. Hence the circumlocution. Worth knowing before someone spends a run on it.
 
 > **The review of this section found a defect older than any of it, and four the section caused**
 > — the last two by the review *of* the fixes, which is the same seam catching the same shape a

@@ -1361,6 +1361,32 @@ for"*. It was chosen, and then the user said which one he wanted.
 
 ---
 
+### 39 · The statusline's diagnostic count is `■ 1` and the `Counter` node cannot spell it
+
+**Raised by building `2b`'s count**, which `CP-4`'s second sitting found had never been built at
+all — see `TASKS.md` §`D`. The count is now composed, and it draws `■1` where the mockup draws
+`■ 1`. One space, and it is a real one: read out of the raw HTML this session,
+`docs/design/TUI Mockups.dc.html` carries `<span style="color:#d97b6c;padding-right:12px;">■ 1</span>`.
+
+**The node has two renderings and neither is that one.** `Node::Counter` (`view.rs`) is *"a glyph
+and a number, with an optional word"*, and `interpret.rs` draws it as `{count} {word}` with a
+label and `{glyph}{count}` without. The second is what `●6` needs — checked against the same file,
+which spells the unseen counter `●6` with **no** space, seventeen times. So the two are not one
+rendering used twice: `●6` is §11's *contracted* form and `■ 1` is a full-width form that happens
+to use a glyph instead of a word, and the node has no case for it.
+
+**Not folded in, per `CLAUDE.md`.** Adding the space to the no-label arm would respell `●6` as
+`● 6` in every frame that draws it; a third rendering means a new field on a node kind, which
+moves counts `lint-doc-claims.py` recomputes and touches the node-kinds lint — a large change to
+buy one space. The build ships `■1`.
+
+*Recommendation: rule whether the space matters before spending a node field on it. If it does,
+the cheapest honest shape is a third arm keyed on the label being `Some("")` rather than a new
+field — but that is a spelling trick and should be weighed against just amending `2b`. Nothing
+downstream depends on the answer, which is why this is a question rather than a task.*
+
+---
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

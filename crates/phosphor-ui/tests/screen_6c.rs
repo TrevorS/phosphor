@@ -25,7 +25,7 @@ use phosphor_core::request::{Diagnostic, Position, Severity, Span};
 use phosphor_ui::buffer_view::{
     self, BufferView, Editor, ScrollRequest, apply_scroll, gutter_width,
 };
-use phosphor_ui::diagnostics::DiagnosticsVm;
+use phosphor_ui::diagnostics::{DiagnosticsVm, RowPolicy};
 use phosphor_ui::gutter::{self, RegionSpan, RegionState};
 use phosphor_ui::status_line::{CursorVm, FileVm, Mode, SessionState, StatusLine, StatusLineVm};
 use phosphor_ui::theme::Theme;
@@ -122,6 +122,27 @@ const TROUBLE_LINE: usize = 64;
 /// The three lines claude wrote and you have not looked at: the signature it
 /// hoisted and the two lines of body it moved.
 const UNSEEN_LINES: [usize; 3] = [62, 63, 64];
+
+/// The row policy this frame draws under — **the shipped default**, with the
+/// cursor where `6c` puts it.
+///
+/// **That it is the default is the finding, not a convenience.** `RowPolicy`
+/// was added because `CP-4` reported eleven cascade rows burying the code, and
+/// its default draws the cursor's line only. This screen has its cursor on
+/// line 64 (`CursorVm { line: 64, .. }` below) and that is exactly the line
+/// carrying `E0308` — so the mockup the design drew and the default the build
+/// now ships are the same picture, and this frame is what proves it. A policy
+/// spelled `Everywhere` here would have made this file pass while saying
+/// nothing about what a person actually sees.
+///
+/// `- 1` because [`TROUBLE_LINE`] is 1-based, as `line_span` below documents,
+/// and `virtual_text::Anchor::line` is 0-based.
+fn at_the_trouble_line() -> RowPolicy {
+    RowPolicy {
+        cursor: TROUBLE_LINE - 1,
+        ..RowPolicy::default()
+    }
+}
 
 /// The half-open character range of a 1-based line, excluding its newline —
 /// the coordinate space `set_marks_colored` and [`StyledSpan`] both take.
@@ -257,7 +278,7 @@ fn screen_6c() {
     // the thread's rows first, so `6c`'s exchange sits directly under the
     // signature it is about.
     let mut rows = thread_rows(&theme);
-    rows.extend(vm.rows(&theme));
+    rows.extend(vm.rows(&theme, &at_the_trouble_line()));
     virtual_text::install(&mut editor, &rows);
 
     // §3's anchored region: tint + undercurl over the whole line (row 20),
@@ -433,7 +454,7 @@ fn a_second_install_would_delete_the_threads_rows_which_is_why_they_are_merged()
     // The frame's shape: one list, built from both sources.
     let merged = editor(&|editor| {
         let mut rows = thread_rows(&theme);
-        rows.extend(vm.rows(&theme));
+        rows.extend(vm.rows(&theme, &at_the_trouble_line()));
         virtual_text::install(editor, &rows);
     });
     assert_eq!(
@@ -445,7 +466,7 @@ fn a_second_install_would_delete_the_threads_rows_which_is_why_they_are_merged()
     // The shape a host reaches for first, and what it costs.
     let replaced = editor(&|editor| {
         virtual_text::install(editor, &thread_rows(&theme));
-        virtual_text::install(editor, &vm.rows(&theme));
+        virtual_text::install(editor, &vm.rows(&theme, &at_the_trouble_line()));
     });
     assert_eq!(
         virtual_rows(&replaced),

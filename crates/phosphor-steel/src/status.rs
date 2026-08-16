@@ -102,6 +102,22 @@ pub struct StatusVm {
     pub ask_pending: bool,
     /// Unseen regions in this file. Zero draws nothing.
     pub unseen: u32,
+    /// Diagnostics in this file, by grade. Zero of a grade draws nothing.
+    ///
+    /// **§3's third diagnostic surface, and it was missing for a whole
+    /// window.** `2b` draws `■ 1` beside `1 thread · 2 unseen` and nothing
+    /// computed it: before this field neither this struct nor
+    /// `runtime/statusline.scm` mentioned a diagnostic at all, so the only
+    /// place a file's error count appeared was as one inline row per
+    /// diagnostic — which is what made eleven of them land on one screen at
+    /// `CP-4`. The count is what lets `phosphor_ui::diagnostics::RowPolicy`
+    /// quiet the rows without hiding anything.
+    ///
+    /// Three counters because §1 gives each grade its own hue, and a merged
+    /// total would be a number with no honest colour.
+    pub trouble: u32,
+    /// Attention-grade diagnostics in this file.
+    pub attention: u32,
     /// The VCS chip, e.g. `jj ✓` (`T071`). [`None`] outside a repo.
     pub vcs: Option<String>,
     /// The language-server chip, e.g. `rust-analyzer ✓` (`7c`, `T036`).
@@ -136,6 +152,8 @@ impl Default for StatusVm {
             since: None,
             ask_pending: false,
             unseen: 0,
+            trouble: 0,
+            attention: 0,
             vcs: None,
             server: None,
             cursor: None,
@@ -176,6 +194,8 @@ impl StatusVm {
                 .with("since", self.since.to_value())
                 .with("ask_pending", self.ask_pending.to_value())
                 .with("unseen", self.unseen.to_value())
+                .with("trouble", self.trouble.to_value())
+                .with("attention", self.attention.to_value())
                 .with("vcs", self.vcs.to_value())
                 .with("server", self.server.to_value())
                 .with("cursor", cursor)
