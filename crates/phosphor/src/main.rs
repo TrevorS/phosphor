@@ -139,6 +139,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, ValueEnum};
 use crossterm::event::{
@@ -163,9 +164,9 @@ use phosphor_core::language::{self, Languages};
 use phosphor_core::query::{Answer, Answers, Query, QueryError, Revision};
 use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
-    CharRange as SignatureRange, Completion as WireCompletion, EditMode, FoldState, KeySeq,
-    LanguageId, Position, PromptKind, RegisterName, SelectionKind, Signature as WireSignature,
-    Span, Target, TextObject,
+    Binding, CharRange as SignatureRange, Completion as WireCompletion, EditMode, FoldState,
+    KeySeq, LanguageId, Position, PromptKind, RegisterName, SelectionKind,
+    Signature as WireSignature, Span, Target, TextObject,
 };
 use phosphor_core::value::Value;
 use phosphor_core::view::{
@@ -324,6 +325,26 @@ fn completion_floor(host: &AppHost) -> usize {
             usize::try_from(least).unwrap_or(0)
         })
 }
+
+/// How long typing must pause before the editor asks the server anything.
+///
+/// **Reported at `CP-4`: *"completion seemed to take longer than it should
+/// have"*, and the cause was that there was no timer at all.** The only gate
+/// was one-request-in-flight, so a burst of typing sent a request, waited a
+/// whole server round trip, and sent the next — every list you saw was one
+/// round trip behind the word you had already finished. A pause is what makes
+/// the answer be about the prefix you stopped on.
+///
+/// **250ms is helix's number**, read from its source rather than picked:
+/// `completion_timeout: Duration::from_millis(250)` in `helix-view/src/editor.rs`.
+/// Taking a measured default from a shipping editor is worth more here than a
+/// figure derived from nothing, and this is the one value in this file with an
+/// upstream to be wrong against.
+///
+/// **`<C-x>` does not wait**, for the same reason it ignores
+/// [`completion_floor`]: a person who pressed the key has asked, and a delay on
+/// an explicit ask is the editor being slow rather than being quiet.
+const COMPLETION_DEBOUNCE: Duration = Duration::from_millis(250);
 
 // ---------------------------------------------------------------------------
 // `T104` — what one indent level is
@@ -942,12 +963,7 @@ fn declined(reason: &str) -> Outcome {
 /// precisely because no `SteelVal` may ride in a payload; both spellings land
 /// in `runtime/keymaps.scm`'s own vocabulary here, so there is one table and
 /// one writer of it.
-fn bind_form(
-    keys: &KeySeq,
-    binding: &phosphor_core::request::Binding,
-    mode: Option<&EditMode>,
-) -> String {
-    use phosphor_core::request::Binding;
+fn bind_form(keys: &KeySeq, binding: &Binding, mode: Option<&EditMode>) -> String {
     let scope = Scope::of(mode.copied().unwrap_or(EditMode::Normal));
     let what = match binding {
         Binding::Capability { name, args } => {
@@ -1779,6 +1795,10 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // re-derivation, because *"the edit stream moved"* is only knowable across
     // the call that moved it.
     let mut typing = false;
+    // When the debounce is up, and so when typing may ask the server anything.
+    // [`None`] is *nothing is pending* — which is most of the time, and is what
+    // keeps a quiet editor parked in `recv` with no deadline at all.
+    let mut due: Option<Instant> = None;
     // Whether the *previous* turn ended in insert mode. What makes "the
     // signature closes when the insert session that raised it ends" a
     // transition rather than a state — read one way it would close a hover the
@@ -2002,15 +2022,36 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             );
         })?;
 
-        // **The one blocking point, and the only one.** `recv` parks until a
-        // producer has something — no timeout, no tick, no sleep — so a quiet
-        // editor costs nothing, exactly as it did when this line was a blocking
-        // `event::read`. `None` is *every* producer gone, the terminal reader
-        // included: nothing left in the process could ever wake this loop, and
-        // waiting forever on that is the one state a modal editor must not be
-        // able to reach.
-        let Some(event) = queue.recv() else {
-            break;
+        // **The one blocking point, and the only one.** `recv_until` parks
+        // until a producer has something — or until a pending deadline passes,
+        // which today is only the completion debounce. `Wake::Closed` is
+        // *every* producer gone, the terminal reader included: nothing left in
+        // the process could ever wake this loop, and waiting forever on that is
+        // the one state a modal editor must not be able to reach.
+        //
+        // **The deadline is dropped while a request is in flight**, and that is
+        // the line that keeps a quiet editor quiet. A deadline already in the
+        // past makes `recv_until` return immediately, so keeping one here while
+        // nothing may be sent would spin the loop at full tilt for the length
+        // of a server round trip. The answer arriving is itself an event, so
+        // parking is right: `due` survives the wait and is honoured on the pass
+        // after the answer lands, which is the same re-arm the one-in-flight
+        // gate has always had.
+        let deadline = if outstanding.awaiting(Lookup::Completion) {
+            None
+        } else {
+            due
+        };
+        let event = match queue.recv_until(deadline) {
+            events::Wake::Event(event) => event,
+            // Nothing happened; the deadline is what woke us, and what was due
+            // is decided below with everything else this pass decides. `Woke`
+            // is the variant its own doc reserved for exactly this — *"the
+            // spinner frame and the elapsed tick are the other two waiting on
+            // this variant"* — and its arm is already a no-op, which is the
+            // whole of what a debounce wake has to do here.
+            events::Wake::Elapsed => events::AppEvent::Woke("debounce"),
+            events::Wake::Closed => break,
         };
         match event {
             // Everything a terminal can send. **A new producer adds no arm
@@ -2317,9 +2358,29 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             .language
             .as_ref()
             .filter(|language| servers.state(language).is_ready());
+        // **Typing arms the deadline; it does not send.** Every keystroke
+        // pushes it out again, so a burst of typing costs one request placed
+        // where the fingers stopped rather than a chain of them each answering
+        // about a prefix the cursor has already left. That was `CP-4`'s
+        // *"completion seemed to take longer than it should have"* — not a slow
+        // server, a list that was always one round trip stale.
+        if core::mem::take(&mut typing) {
+            due = Some(Instant::now() + COMPLETION_DEBOUNCE);
+        }
+        // Cleared whether or not the ask happens. A deadline left set after it
+        // has passed is one `recv_until` would answer instantly forever, and
+        // the floor and the ready-server gate below are both reasons it can
+        // pass with nothing sent. The re-arm the one-in-flight gate needs is
+        // *above* this, in the deadline the loop parks on: while a request is
+        // outstanding the loop takes no deadline at all, so this line is not
+        // reached until the answer has landed.
+        let elapsed = due.is_some_and(|at| Instant::now() >= at);
+        if elapsed {
+            due = None;
+        }
         if editing.lookup.is_none()
             && !outstanding.awaiting(Lookup::Completion)
-            && core::mem::take(&mut typing)
+            && elapsed
             && let Some(language) = ready
             && (editing.prefix_len() >= floor
                 || editing.after_trigger(&servers.completion_triggers(language)))
@@ -3675,6 +3736,17 @@ struct Editing {
     /// steered in**, because dropping a session and replacing one are the only
     /// two exits and both clear it.
     chosen: bool,
+    /// Whether a keystroke's `otherwise` capability is running right now.
+    ///
+    /// **A depth stop, and one level is all any binding needs.** A fall-through
+    /// runs an Action, and that Action may be another `move-completion` with an
+    /// `otherwise` of its own — the data is finite so it terminates, but the
+    /// depth is whatever a `runtime/keymaps.scm` wrote and the recursion is on
+    /// the stack. One level is the whole of what a key means by *"and if there
+    /// is no list, do the ordinary thing"*; a second level is a keymap asking
+    /// for something this argument does not offer, and it gets a sentence
+    /// rather than a stack.
+    falling_through: bool,
     /// The live signature-help or hover answer (`T039`). One field for two
     /// features because they are one surface — see `float::SignatureVm`.
     signature: Option<SignatureVm>,
@@ -3817,6 +3889,7 @@ impl Editing {
             completion: None,
             offered: Vec::new(),
             chosen: false,
+            falling_through: false,
             signature: None,
             diagnostics,
             registers: BTreeMap::new(),
@@ -4183,7 +4256,7 @@ impl Editing {
             // with a sentence rather than doing nothing when there is no
             // session, because `<C-n>` with no float open is a key that must
             // say why (`T098`'s rule, applied to a surface instead of a task).
-            Action::Lsp(LspAction::MoveCompletion { delta }) => {
+            Action::Lsp(LspAction::MoveCompletion { delta, otherwise }) => {
                 let offered = &self.offered;
                 // `stepped` and not `moved`: the free function [`moved`] is
                 // called inside this binding's own initializer, and it resolves
@@ -4215,10 +4288,22 @@ impl Editing {
                 // because the session is borrowed inside it.
                 self.chosen |= stepped;
                 if stepped {
-                    done()
-                } else {
-                    declined("no completion list is open")
+                    return done();
                 }
+                // **The fall-through, and it is why `<tab>` can mean both
+                // things.** With no list open this key is not a completion key
+                // at all, so it does what it would have done — `insert-indent`
+                // for `<tab>` — and the *condition* stays here where the state
+                // is while the *alternative* stays in the keymap where the
+                // key's meaning is. That is the same split `accept-completion`
+                // already uses for `<space>` and `<cr>`; the only difference is
+                // that this one names a capability instead of literal text,
+                // because an indent level is a per-language value no keymap can
+                // spell (`OPEN-QUESTIONS.md` §38).
+                let Some(binding) = otherwise else {
+                    return declined("no completion list is open");
+                };
+                self.fall_through(binding)
             }
             Action::Lsp(LspAction::AcceptCompletion {
                 index,
@@ -4877,6 +4962,48 @@ impl Editing {
             // session this one replaces.
             width_floor: 0,
         }
+    }
+
+    /// Runs a keystroke's `otherwise` capability — what the key does when the
+    /// surface it drives is not there.
+    ///
+    /// **This is the general half of a mechanism `accept-completion` has the
+    /// literal half of.** `<space>` falls through to *text*, because typing is
+    /// what that key would have done and text is a thing a keymap can spell.
+    /// `<tab>` falls through to a *capability*, because one indent level is a
+    /// per-language value (`set-option!`, `define-language!`) that a keymap
+    /// spelling as four spaces would freeze for every language — the
+    /// rust-table-in-scheme shape `T033` exists to forbid. Same split either
+    /// way: the condition is the host's, the alternative is the binding's.
+    ///
+    /// [`Binding::Source`] is representable here and is **refused**. Scheme
+    /// source needs the VM, and this runs inside [`Editing::act`], which is the
+    /// buffer's own state machine and holds no [`Layer`]. A binding that wants
+    /// to run scheme on a key already has a door — `keymap-set!` takes a
+    /// [`Binding`] and the VM resolves it — and routing a second path to the VM
+    /// through here would put arbitrary evaluation inside an arm that is
+    /// supposed to be a text edit.
+    fn fall_through(&mut self, binding: &Binding) -> Outcome {
+        let (name, args) = match binding {
+            Binding::Capability { name, args } => (name, args),
+            Binding::Source { .. } => {
+                return declined(
+                    "a key's fall-through runs a capability, not scheme — \
+                     use keymap-set! for a binding that evaluates source",
+                );
+            }
+        };
+        if self.falling_through {
+            return declined("a fall-through may not fall through again");
+        }
+        let action = match Action::from_call(name, args) {
+            Ok(action) => action,
+            Err(error) => return declined(&error.to_string()),
+        };
+        self.falling_through = true;
+        let outcome = self.act(&action);
+        self.falling_through = false;
+        outcome
     }
 
     /// Drops the completion session, whatever ended it.
@@ -7463,11 +7590,33 @@ mod tests {
             );
         }
         // And the key is bound, or none of the above is reachable by typing.
+        //
+        // **Two substrings rather than the whole row**, and that is the repair
+        // this assertion needed rather than a loosening. It read the row
+        // verbatim — `(list "<tab>" (key/run (key/cmd "insert-indent"))` — so
+        // it broke the moment `<tab>` grew the completion fall-through
+        // (`OPEN-QUESTIONS.md` §38, re-ruled at `CP-4`) even though the key
+        // still types an indent level, which is the one thing this test is
+        // about. What it can honestly claim from a file's text is that the key
+        // is bound and that the indent verb is what it reaches for; that the
+        // Action actually comes out is
+        // `phosphor-steel`'s `tab_in_insert_steps_the_completion_list_and_carries_the_indent_fall_through`,
+        // which presses the key, and the host running it is `loop_pty.rs`'s
+        // `tab_with_no_completion_list_open_types_one_indent_level`.
         let keymaps = std::fs::read_to_string(tree().join("keymaps.scm"))
             .expect("the shipped keymap is where the workspace keeps it");
         assert!(
-            keymaps.contains(r#"(list "<tab>" (key/run (key/cmd "insert-indent"))"#),
+            keymaps.contains(r#"(list "<tab>""#),
             "runtime/keymaps.scm does not bind <tab>"
+        );
+        // The `"otherwise"` is carried deliberately: `key/capability`'s own doc
+        // comment shows `(key/capability "insert-indent")` as its example, so
+        // the bare form matches the *prose* and would pass with every binding
+        // deleted. Matching the argument position is what makes this about a
+        // row.
+        assert!(
+            keymaps.contains(r#""otherwise" (key/capability "insert-indent")"#),
+            "runtime/keymaps.scm binds <tab> without reaching insert-indent"
         );
     }
 

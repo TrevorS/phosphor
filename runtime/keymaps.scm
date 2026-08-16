@@ -382,6 +382,16 @@
 ;; a binding that is capability calls, in order.
 (define (key/run . calls) (cons 'run calls))
 
+;; a capability named *as an argument to another capability* — `request.rs`'s
+;; `Binding`, spelled as its wire union. this is not `key/cmd`: that one is a
+;; call the machine runs, this one is a call some other call carries, and the
+;; only place it is used is a fall-through (`<tab>` below).
+;;
+;; `(key/capability "insert-indent")` — arguments follow the name in pairs,
+;; exactly like `key/cmd`.
+(define (key/capability name . pairs)
+  (hash "kind" "capability" "name" name "args" (apply hash pairs)))
+
 ;; the viewport's only door (`ScrollRequest`), spelled as its wire union.
 (define (key/rows n) (hash "kind" "rows" "rows" n))
 (define (key/pages n) (hash "kind" "pages" "pages" n))
@@ -788,18 +798,33 @@
 ;; this file for every language, which is the rust-table-in-scheme shape `T033`
 ;; exists to forbid.
 ;;
-;; **it does not accept a completion, and that was a decision.**
-;; `OPEN-QUESTIONS.md` §38 is *"two tasks want `<tab>`"*: `T105` wanted it to
-;; take the highlighted row, `T104` wanted an indent level, and a binding cannot
-;; ask which because it cannot read whether a list is open. §38's third option
-;; — *"give it to one of them, and the other gets a different key"* — is the one
-;; taken, and the residue is small enough to say exactly: `<space>`, `<cr>` and
-;; `<C-y>` already accept (three keys, one of them vim's own), so completion
-;; loses nothing it did not have; indenting had no key at all. reversing it
-;; needs the mechanism §38's first option describes — `otherwise` widening from
-;; *text to type* to *a capability to run* — because `insert-indent` is now a
-;; capability that argument could name, which is the one thing that was missing
-;; when §38 was written.
+;; **it also steps the completion list, and that is one key with one meaning
+;; rather than two.** `OPEN-QUESTIONS.md` §38 is *"two tasks want `<tab>`"*:
+;; `T105` wanted it to drive the float, `T104` wanted an indent level. it was
+;; first ruled by §38's *third* option — give the key to one and the other a
+;; different key — and Teej reversed that at `CP-4`'s manual half after running
+;; the binary: *"in this form i should be able to hit tab or something to
+;; select"*.
+;;
+;; **helix is the prior art and it is exact.** its completion menu binds `Tab`,
+;; `Down` and `C-n` to the same `move_down()` (`helix-term/src/ui/menu.rs`), and
+;; `move_down` from a `cursor` of `None` lands on row 0 — so the first `<tab>`
+;; *selects the first row* rather than accepting it, and `<cr>` then accepts.
+;; that is why the report's other half — *"enter or space doesnt accept"* — was
+;; never a bug in `<cr>`: nothing had been chosen, `select = false` held, and
+;; there was no comfortable key to choose with. one mechanism answers both.
+;; helix's `smart-tab.supersede-menu` defaults to `#false`, which is this same
+;; precedence: the menu gets the key while it is open.
+;;
+;; so the binding is `move-completion` with §38's **first** option — `otherwise`
+;; widened from *text to type* to *a capability to run*, which `insert-indent`
+;; became a name for at `T104`. with a list open `<tab>` steps it; with no list
+;; open it types one indent level, and the width still comes from `set-option!`
+;; and `define-language!` rather than from anything here.
+;;
+;; `<S-tab>` steps backwards and carries no `otherwise`: un-indenting is `<<`'s
+;; job in normal mode and vim has no insert-mode dedent key to match, so with no
+;; list open it says so rather than inventing one.
 (keymap-set-rows!
  '("insert")
  (list
@@ -807,7 +832,14 @@
   (list "<right>" (key/motion "char-right") "right")
   (list "<up>" (key/motion "line-up") "up a line")
   (list "<down>" (key/motion "line-down") "down a line")
-  (list "<tab>" (key/run (key/cmd "insert-indent")) "indent one level")))
+  (list "<tab>"
+        (key/run (key/cmd "move-completion"
+                          "delta" 1
+                          "otherwise" (key/capability "insert-indent")))
+        "next completion, or indent one level")
+  (list "<S-tab>"
+        (key/run (key/cmd "move-completion" "delta" -1))
+        "previous completion")))
 
 ;; ---------------------------------------------------------------------------
 ;; the language server — T036, T038, T039

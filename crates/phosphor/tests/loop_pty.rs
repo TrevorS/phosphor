@@ -2196,13 +2196,31 @@ mod driven {
     /// `mode` picks which half of the server runs; see the fixture's header for
     /// why one process cannot do both under a frame-counting harness.
     fn declare_toy(scratch: &Scratch, mode: &str) {
+        declare_toy_logging(scratch, mode, None);
+    }
+
+    /// The same declaration, with the server told to record every completion
+    /// request it receives.
+    ///
+    /// **Only the debounce test passes a log**, and the reason is that the
+    /// thing it tests is invisible in a frame: a 250ms pause and no pause at
+    /// all draw the same float, and what separates them is how many times the
+    /// server was asked. Every other toy test passes [`None`] and the fixture
+    /// writes nothing.
+    fn declare_toy_logging(scratch: &Scratch, mode: &str, log: Option<&Path>) {
         let server = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/toy_language_server.py")
             .canonicalize()
             .expect("the toy server is beside this file");
+        // `.to_string()` before `{:?}` for the same reason the server path
+        // below does it: `Path::Display`'s Debug is not its Display, and a
+        // quoted-and-escaped *string* is what the scheme list needs.
+        let recording = log.map_or_else(String::new, |log| {
+            format!(" {:?}", log.display().to_string())
+        });
         let form = format!(
             "(define-language! \"toy\"\n  (hash \"extensions\" '(\"toy\")\n        \
-             \"grammar\" void\n        \"lsp_command\" (list \"python3\" {:?} {mode:?})\n        \
+             \"grammar\" void\n        \"lsp_command\" (list \"python3\" {:?} {mode:?}{recording})\n        \
              \"comment_prefix\" \";\"))\n",
             server.display().to_string(),
         );
@@ -2463,6 +2481,148 @@ mod driven {
             fs::read_to_string(&file).expect("the buffer was written"),
             "let base = default_delay\n",
             "enter accepted rather than splitting the line, and added nothing after"
+        );
+    }
+
+    /// **`<tab>` steps the list, and this is the sequence `CP-4` reported.**
+    ///
+    /// Teej, at the keyboard, on a float that was up with nothing highlighted:
+    /// *"in this form i should be able to hit tab or something to select"*, and
+    /// *"enter or space doesnt accept"*. Both halves are one fact — nothing had
+    /// been **chosen**, so `select = false` held and the two accept keys
+    /// correctly fell through — and the missing piece was a comfortable key to
+    /// choose with. Helix binds `Tab` to the same `move_down()` as `C-n` and its
+    /// menu cursor starts at `None`, so the first press lands on row 0; that is
+    /// what this presses.
+    ///
+    /// The `<cr>` afterwards is the point rather than a detail: it is the key
+    /// the report says *"doesn't accept"*, and after one `<tab>` it does.
+    #[test]
+    fn tab_steps_the_completion_list_and_then_enter_accepts() {
+        let (scratch, runtime, file) = toy("tab-step", "completion", "let base = def\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        editor.press_until(b"\x18", "default_delay");
+        // One `<tab>`: from nothing chosen to row 0, exactly as `<C-n>` would.
+        editor.press_until(TAB, "The base delay");
+        editor.press_quietly(b"\r");
+        editor.press_quietly(b"\x1b");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the buffer was written"),
+            "let base = default_delay\n",
+            "<tab> chose the first row and <cr> took it"
+        );
+    }
+
+    /// **A burst of typing costs one request, not one per character.**
+    ///
+    /// `CP-4`, from Teej at the keyboard: *"completion seemed to take longer
+    /// than it should have"*. The cause was that there was no timer — the only
+    /// gate was one-request-in-flight, so typing sent a request, waited a whole
+    /// server round trip, sent the next, and every list drawn was about a
+    /// prefix the cursor had already left. [`COMPLETION_DEBOUNCE`] is helix's
+    /// 250ms, and what it changes is invisible in a frame: the float looks the
+    /// same either way. So this counts what reached the server.
+    ///
+    /// **Nine characters in one write**, which is the burst the `Outstanding`
+    /// docs describe reproducing against a real rust-analyzer. Written as one
+    /// `press` so the pty delivers them together and the loop coalesces them,
+    /// which is what human typing looks like from in here.
+    ///
+    /// The assertion is `<= 2` rather than `== 1`, and the bound is what makes
+    /// it a debounce test rather than a timing test: one request is the
+    /// intended outcome, and a second is legitimate if the deadline happened to
+    /// fall mid-burst on a loaded machine.
+    ///
+    /// **Watched going red on `COMPLETION_DEBOUNCE = 0`, and it does not fail
+    /// on the count — it fails on the wait, which is the report itself.** With
+    /// no pause the nine edits each ask as fast as the round trip allows, every
+    /// answer is about a prefix the cursor has already left, the `at` guard in
+    /// the ingest arm drops it, and `default_delay` is *never drawn for the
+    /// word that was typed* — the 30s `press_until` deadline is what goes off.
+    /// That is exactly *"completion seemed to take longer than it should have"*
+    /// reproduced: not a slow server, a list that never catches up. The count
+    /// below is the tighter statement of the same thing, and it is what stops
+    /// this passing again for some other reason.
+    #[test]
+    fn a_burst_of_typing_asks_the_server_once_rather_than_once_per_character() {
+        let scratch = Scratch::new("debounce");
+        let runtime = copy_layer(&scratch.path);
+        let asked = scratch.path.join("completion-requests.log");
+        declare_toy_logging(&scratch, "completion", Some(&asked));
+        let file = scratch.path.join("sample.toy");
+        fs::write(&file, "let base = d\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        // Wait for the server to be through `initialize`, then start counting
+        // from a known point: this explicit ask is one request and it is
+        // subtracted below.
+        editor.press_until(b"\x18", "default_delay");
+        editor.press_quietly(b"\x05");
+        let explicit = fs::read_to_string(&asked).map_or(0, |log| log.lines().count());
+
+        // The burst. One write, nine characters — and every one of them keeps
+        // the word a prefix of `default_delay`, because the *editor* narrows
+        // the server's answer (`phosphor_buffer::lsp::narrow`) and a burst that
+        // typed past the item would empty the list and close the float, which
+        // is a different test failing for a reason that is not the debounce.
+        editor.press_until(b"efault_de", "default_delay");
+        editor.press_quietly(b"\x1b");
+        editor.quit();
+
+        let total = fs::read_to_string(&asked)
+            .expect("the server recorded what it was asked")
+            .lines()
+            .count();
+        let burst = total - explicit;
+        assert!(
+            burst >= 1,
+            "the burst still raises a list — {burst} requests for nine characters"
+        );
+        assert!(
+            burst <= 2,
+            "nine characters typed together are one pause and so one ask; \
+             got {burst} requests, which is a request per keystroke rather than \
+             a request per pause"
+        );
+    }
+
+    /// …and with **no** list open the same key still types one indent level.
+    ///
+    /// This is the half that makes the fall-through a fall-through rather than
+    /// a handover: `move-completion`'s `otherwise` names `insert-indent`, and a
+    /// binding that had simply been reassigned to the float would leave `<tab>`
+    /// dead in every buffer without a server — which is most of them.
+    ///
+    /// The fixture is the toy server's language with the cursor somewhere no
+    /// completion is offered, so the difference from
+    /// `tab_in_insert_mode_advances_to_the_tabstop` is that a server **is**
+    /// attached here. That test proves the key in a buffer with no server at
+    /// all; this one proves the fall-through is reached rather than the float
+    /// merely being absent.
+    #[test]
+    fn tab_with_no_completion_list_open_types_one_indent_level() {
+        let (scratch, runtime, file) = toy("tab-fallthrough", "completion", "ab\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        // `I` puts the cursor at column 0 with no word behind it, so the
+        // typing trigger's floor is not met and no float is ever raised.
+        editor.press(b"I");
+        editor.press(TAB);
+        editor.press(b"\x1b");
+        editor.press(b":w\r");
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the buffer was written"),
+            "    ab\n",
+            "<tab> with no list open types the cells left to the next stop"
         );
     }
 

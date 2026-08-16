@@ -36,12 +36,33 @@ unsolicited push arrives on its own schedule:
 
 `7c`'s own labels and detail column are used for the completion items so the
 frame a test reads is the frame the mockup draws.
+
+A SECOND ARGUMENT, optional, is a path to append one line to per
+`textDocument/completion` received. It exists for the debounce
+(`COMPLETION_DEBOUNCE`): *how long the editor waits* is not visible in any
+frame, and the only honest question to ask about it is how many requests a
+burst of typing produced. Absent, nothing is written and this file behaves
+exactly as it did.
 """
 
 import json
 import sys
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else "completion"
+REQUEST_LOG = sys.argv[2] if len(sys.argv) > 2 else None
+
+
+def record(method):
+    """Append one line naming a request, when a log was asked for.
+
+    Opened per write and closed again rather than held: the reader is another
+    process watching the file grow, and a buffered handle in this one would
+    make the count a fact about flushing.
+    """
+    if not REQUEST_LOG:
+        return
+    with open(REQUEST_LOG, "a", encoding="utf-8") as log:
+        log.write(method + "\n")
 
 
 def read_message():
@@ -228,6 +249,7 @@ def main():
                 },
             )
         elif method == "textDocument/completion":
+            record(method)
             reply(
                 request_id,
                 offered(label_details) if MODE == "completion" else [],

@@ -355,8 +355,13 @@ built on an unverified foundation.
 | **H** | `CP-9` | agent, harness | T074–T077 |
 
 > **Window D's `S4` half ran with `harness` absent, and the row above is the plan rather than the
-> record.** No `7c` tape and no diagnostics tape exist in `tapes/` (listed 2026-08-14), so `CP-4`'s
-> *"VHS produces"* half is unproduced. This is not a blocked task — `V006`, `V008` and `V009` are
+> record.** ~~No `7c` tape and no diagnostics tape exist in `tapes/` (listed 2026-08-14), so
+> `CP-4`'s *"VHS produces"* half is unproduced.~~ **Both halves of that are false and were false
+> when written** — corrected 2026-08-16 against `git ls-files tapes/`, which lists three `7c`
+> tapes, `diagnostics`, `diagnostics-undercurl` and `signature-help`, every one added by
+> `4a41700`, the same commit as this paragraph. `CP-4`'s entry in [TASKS.md](TASKS.md) carries the
+> correction and what is genuinely outstanding (the captures are **stale**, not missing —
+> `just tapes-diff`, not `just tapes`). This is not a blocked task — `V006`, `V008` and `V009` are
 > each unticked for their own reasons, recorded at each of them, and none of them is *"capture this
 > window's screens"*. Producing a checkpoint's tapes under `V005`'s convention is **standing work
 > rather than a numbered task**, which the note further down already says of Windows E onward; what

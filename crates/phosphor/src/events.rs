@@ -100,6 +100,7 @@
 
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
+use std::time::Instant;
 
 use crossterm::event::{self, Event};
 use phosphor_core::action::Action;
@@ -254,6 +255,46 @@ impl Queue {
         // in hand rather than lose it.
         Some(coalesce(first, || self.events.try_recv().ok()))
     }
+
+    /// Blocks until something happens **or** `deadline` passes.
+    ///
+    /// [`None`] for `deadline` is exactly [`Queue::recv`] — park forever — so
+    /// the paragraph above still describes a quiet editor: a deadline exists
+    /// only while something is actually pending, and the loop sets none while
+    /// nothing is.
+    ///
+    /// **This is what the completion debounce is hung off**, and it is the tick
+    /// [`Queue::recv`]'s own doc says the queue *"could close it, and does not
+    /// yet"*. It is deliberately not a general one: nothing here fires
+    /// repeatedly, so §8's two timed animations are still out of reach and
+    /// still want a producer rather than a deadline. A wake with nothing queued
+    /// is [`Wake::Elapsed`], and the caller decides what was due.
+    pub(crate) fn recv_until(&self, deadline: Option<Instant>) -> Wake {
+        let Some(deadline) = deadline else {
+            return self.recv().map_or(Wake::Closed, Wake::Event);
+        };
+        // `saturating_duration_since` rather than a subtraction: a deadline
+        // already in the past is a zero wait, which `recv_timeout` answers as
+        // `Timeout` without blocking. That is the right answer and not an edge
+        // case — a slow frame is exactly how a deadline goes by unnoticed.
+        let wait = deadline.saturating_duration_since(Instant::now());
+        match self.events.recv_timeout(wait) {
+            Ok(first) => Wake::Event(coalesce(first, || self.events.try_recv().ok())),
+            Err(mpsc::RecvTimeoutError::Timeout) => Wake::Elapsed,
+            Err(mpsc::RecvTimeoutError::Disconnected) => Wake::Closed,
+        }
+    }
+}
+
+/// Why the loop woke.
+#[derive(Debug)]
+pub(crate) enum Wake {
+    /// A producer had something.
+    Event(AppEvent),
+    /// The deadline passed with nothing queued.
+    Elapsed,
+    /// Every producer is gone — the one state a modal editor must not park in.
+    Closed,
 }
 
 // ---------------------------------------------------------------------------

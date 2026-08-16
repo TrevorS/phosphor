@@ -57,6 +57,17 @@ group at the end. The five tasks that half produced are work rather than questio
 cannot decide between them**, which is the only shape that belongs in this file. The pass also
 corrected the *"Five entries"* line on the group above, which had been six since §37 landed.
 
+**Swept again after `CP-4`'s second sitting, 2026-08-16, and it added no entries and closed two.**
+Teej ran the binary again after `T104`–`T107` and both things he reported were already questions
+in this file rather than new ones: §38 is **re-ruled**, by the first option it had weighed and not
+taken, and §29's item 3 is **ruled** — the judgement it said *"cannot be answered without typing"*
+got typed. Both rulings stay here rather than moving to *Closed*, because §29 and §38 each carry
+live residue their entries name. **The pattern is worth stating: a register earns its keep when
+the next session's findings land in entries that already exist**, and this is the first sweep
+where every finding did. It also corrects the claim §29 item 3 made about *why* there was no
+timer — *"the loop blocks on `recv` and has no tick to hang one off"* — which was true when
+written and is what changed.
+
 ---
 
 ## Doc-versus-tree disagreements
@@ -640,6 +651,29 @@ tests; none is a defect; each is a place a vim user's hands will land differentl
 > was the reasoning available, and because the thing it got wrong is instructive: it framed the
 > choice as *"may a binding ask a question"* when the answer was *"widen what the capability
 > takes"*. Items 2 and 3 are untouched.
+>
+> **Item 1 went further at `CP-4`'s manual half, and item 3 is now ruled — by typing.** The
+> fall-through argument widened again, from text to a capability (`move-completion`'s `otherwise`,
+> a `Binding`), so `<tab>` steps the list and still indents when there is no list. §38 carries the
+> ruling and the helix reading behind it.
+>
+> **Item 3's answer is *annoying*, and the reason was not the period — it was that there was no
+> period.** This entry framed the question as *"whether a throttle whose period is the server's
+> round trip feels right"*. Teej at the keyboard: *"completion seemed to take longer than it
+> should have"*. Reproduced by a pty test that counts what reached the server
+> (`a_burst_of_typing_asks_the_server_once_rather_than_once_per_character`): with one-in-flight as
+> the only gate, nine characters typed together ask as fast as the round trip allows, every answer
+> is about a prefix the cursor has already left, the `at` guard drops it, and the list **never
+> catches up to the word** — the test fails on its 30s wait, not on its count. So the symptom was
+> never latency in the ordinary sense; it was a list that was permanently stale.
+>
+> `COMPLETION_DEBOUNCE` is **250ms**, which is helix's `completion_timeout`
+> (`helix-view/src/editor.rs`), taken as a measured default from a shipping editor rather than
+> invented. The claim this entry made about *why* there was no timer — *"the loop blocks on `recv`
+> and has no tick to hang one off"* — was true and is now false: `Queue::recv_until` takes a
+> deadline, and the loop carries none while nothing is pending, so a quiet editor is still parked.
+> `AppEvent::Woke` is the wake, which is the variant its own doc reserved for *"the elapsed
+> tick"*. **`<C-x>` does not wait**, for the same reason it ignores the floor.
 
 *Recommendation: none of these is a build change today. Items 1 and 4 are one question wearing two
 hats — whether a binding may carry a **role** that reads host state — and answering it yes would
@@ -1282,6 +1316,48 @@ build is a condition in the host with its text in the binding. That shape has no
 keys (`<space>`, `<CR>`, and `<C-y>` by passing neither argument) and refused a fourth. If a
 fourth arrives — the Picker's `<CR>`, the prompt's — the argument for widening `otherwise` gets
 its second and third surfaces and should be re-weighed then.
+
+**RE-RULED by the first option, 2026-08-16, and the fourth surface was Teej's hands.** The
+paragraph above says to re-weigh when a fourth key arrives and names two that had not been built
+yet; what actually arrived was the *same* key, from the person the third option had told to use a
+different one. Running the shipped binary at `CP-4`'s manual half: *"in this form i should be able
+to hit tab or something to select"*, and — on the same float — *"enter or space doesnt accept"*.
+
+**Both halves are one fact, and it is the guard working exactly as designed.** Nothing had been
+chosen, so `select = false` held and `<space>` and `<CR>` correctly fell through. The keys were
+not broken; there was no comfortable key to *choose* with. `<C-n>` was the only one, and it is not
+where a hand goes first — which is `7c`'s no-footer exception in as many words.
+
+**Helix is the prior art, read this session rather than recalled.** `helix-term/src/ui/menu.rs`
+binds `Tab`, `Down` and `C-n` to the same `move_down()`, and `Menu::cursor` is an
+`Option<usize>` starting at `None`, so `move_down` lands on row 0 — **the first `Tab` selects,
+it does not accept**, and `Enter` (which accepts only when `selection()` is `Some`, else returns
+`Ignored(close_fn)` and lets the newline through) then takes it. Helix is `select = false` too;
+what it has that this build did not is `Tab` on the stepper. Its `smart-tab.supersede-menu`
+defaults to `#false`, which is the same precedence: the menu gets the key while it is open.
+
+So `otherwise` widened after all, and on `move-completion` rather than on `accept-completion`:
+
+- **It is a [`Binding`], not a new nested-Action type.** `request.rs` already answers *"a
+  capability to run, as data, across three doors"* — `Binding::Capability { name, args }` — and a
+  parallel type would be a second answer to that question plus a second `ParamType::Any` site.
+- **`accept-completion`'s `otherwise` stays text**, and the split is not an inconsistency: what
+  `<space>` falls through to is *what the key would have typed*, which is text a keymap can spell;
+  what `<tab>` falls through to is one indent level, which is a per-language value from
+  `set-option!` and `define-language!` that a keymap spelling as four spaces would freeze.
+- **`Binding::Source` is representable and refused**, with a sentence. Scheme needs the VM and
+  this runs inside `Editing::act`, which holds none; a binding that wants to evaluate source has
+  `keymap-set!` already.
+- **One level of fall-through**, guarded by `Editing::falling_through` — a finite `Binding` tree
+  terminates on its own, but the depth would be whatever a `keymaps.scm` wrote, on the stack.
+
+`<tab>` steps forwards, `<S-tab>` backwards with no `otherwise` at all, and with no list open
+`<tab>` is `insert-indent` exactly as `T104` left it. Proven by a keymap-level test that presses
+the key (`phosphor-steel`'s `shipped_grammar.rs`) and two pty tests that run it in the binary,
+one for each state — the both-states rule `T105`'s *done when* already set. The third option's
+own sentence is what expired: it said *"it must be chosen, because the default today is that
+`<tab>` types a character that renders in one cell and neither task's user gets what they asked
+for"*. It was chosen, and then the user said which one he wanted.
 
 ---
 

@@ -1000,9 +1000,29 @@ actions! {
         RequestCompletion = "request-completion" [S4 / "T038" / Deny]
             "asks for completions at the cursor" {
         }
+        // **`otherwise` is §38's first option, taken.** That entry ruled
+        // `<tab>` to `insert-indent` by its *third* option — give the key to
+        // one task and the other a different key — and recorded what would
+        // reverse it: *"`otherwise` widens from text to a capability to run
+        // instead"*. Teej ruled it reversed at `CP-4`'s manual half, on Helix:
+        // its completion menu binds `Tab`/`Down`/`C-n` to `move_down()` and
+        // `move_down` from `None` lands on row 0, so **the first `<tab>`
+        // selects the first row** and `<cr>` then accepts it. Both keys the
+        // report asked about are one mechanism.
+        //
+        // **It is a [`Binding`] rather than a nested `Action`** because that
+        // type already exists for exactly this — *"a binding is either a named
+        // capability with its arguments, or scheme source text"* — and it is
+        // already wire-safe across all three doors. A parallel nested-Action
+        // type would be a second answer to a question `request.rs` answered
+        // once, and would add a second [`ParamType::Any`] site to carry the
+        // arguments that one already carries.
+        //
+        // [`ParamType::Any`]: crate::registry::ParamType::Any
         MoveCompletion = "move-completion" [S4 / "T038" / Deny]
             "moves the completion selection" {
             delta: i64 = "rows, negative goes up",
+            otherwise: Option<Binding> = "the capability to run when no completion list is open; present is what makes a key step the list and still do its ordinary job when there is no list",
         }
         AcceptCompletion = "accept-completion" [S4 / "T038" / Deny]
             "accepts a completion" {

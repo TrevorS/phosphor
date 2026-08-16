@@ -518,3 +518,82 @@ fn a_range_changes_nothing_for_a_command_that_does_not_read_one() {
     // and still answers for itself.
     assert_eq!(keymap::ex(&mut runtime, "12,"), Ex::Unknown);
 }
+
+// ---------------------------------------------------------------------------
+// `<tab>` — the completion list and the indent level, one key
+// ---------------------------------------------------------------------------
+
+/// `<tab>` in insert mode steps the completion list, carrying the capability it
+/// runs when there is no list.
+///
+/// **This is `OPEN-QUESTIONS.md` §38 re-ruled, and it is a keymap row rather
+/// than a host branch.** The row was `insert-indent` outright until Teej ran
+/// `CP-4`'s manual half and asked for helix's behaviour — its menu binds `Tab`
+/// to the same `move_down()` as `C-n`, so the first press *selects* row 0 and
+/// `<cr>` then accepts. What crosses here is the argument that makes it
+/// possible: `otherwise` naming a capability rather than carrying text.
+///
+/// This test's claim stops at the vocabulary, per the module header. That
+/// `move-completion` with no list open actually *runs* `insert-indent` is the
+/// host's half, pressed in `crates/phosphor/tests/loop_pty.rs`.
+#[test]
+fn tab_in_insert_steps_the_completion_list_and_carries_the_indent_fall_through() {
+    use phosphor_core::action::LspAction;
+    use phosphor_core::request::Binding;
+
+    let mut session = Session::on("banana bread");
+
+    // `i` first: `<tab>` means this only in the insert scope.
+    session.typed("i");
+    let emitted = session.typed("<tab>");
+
+    let Some(Action::Lsp(LspAction::MoveCompletion { delta, otherwise })) = emitted
+        .iter()
+        .find(|action| matches!(action, Action::Lsp(LspAction::MoveCompletion { .. })))
+    else {
+        panic!("`<tab>` in insert steps the completion list: {emitted:?}");
+    };
+    assert_eq!(*delta, 1, "it steps forwards, like `<C-n>`");
+
+    let Some(Binding::Capability { name, args }) = otherwise else {
+        panic!("`<tab>` carries a capability to run when no list is open: {otherwise:?}");
+    };
+    assert_eq!(
+        name, "insert-indent",
+        "with no list open `<tab>` types one indent level — `T104`'s verb"
+    );
+    assert!(
+        args.is_empty(),
+        "`insert-indent` names no width: the level comes from `set-option!` and \
+         `define-language!`, so a keymap that passed one would freeze it: {args:?}"
+    );
+}
+
+/// `<S-tab>` steps backwards, and carries no fall-through.
+///
+/// The spelling is the load-bearing half: `KeyCode::BackTab` is decoded to
+/// `Tab` + `SHIFT` in `main.rs`, and this asserts the shipped table is written
+/// in the same notation that decoding produces. A row spelled any other way
+/// would be a binding nothing can ever match.
+#[test]
+fn shift_tab_steps_the_completion_list_backwards_and_falls_through_to_nothing() {
+    use phosphor_core::action::LspAction;
+
+    let mut session = Session::on("banana bread");
+
+    session.typed("i");
+    let emitted = session.typed("<S-tab>");
+
+    let Some(Action::Lsp(LspAction::MoveCompletion { delta, otherwise })) = emitted
+        .iter()
+        .find(|action| matches!(action, Action::Lsp(LspAction::MoveCompletion { .. })))
+    else {
+        panic!("`<S-tab>` in insert steps the completion list: {emitted:?}");
+    };
+    assert_eq!(*delta, -1, "it steps backwards, like `<C-p>`");
+    assert!(
+        otherwise.is_none(),
+        "un-indenting is `<<`'s job and vim has no insert-mode dedent key to \
+         match, so with no list open this says so rather than inventing one: {otherwise:?}"
+    );
+}

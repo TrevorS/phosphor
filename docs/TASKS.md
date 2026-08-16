@@ -1469,11 +1469,26 @@ Tier 3.
 > * **Diagnostic gutter priority against other region states: no, and not in this window.** There
 >   is one source of regions until `T041`. That is exactly why `T040` is unticked, and it is the
 >   item most worth reading the task entry for before judging the screen.
-> * **The VHS half has not been produced.** No `7c` tape and no diagnostics tape exist (`tapes/`,
->   listed this session). The undercurl precondition *is* settled the right way —
->   `tapes/README.md` records *"does undercurl survive VHS capture? — Answered: yes"*, so it does
->   not stay Tier 3 — but nothing has captured this window's screens. That is `harness`'s standing
->   instruction, and no agent in this window claimed it.
+> * **~~The VHS half has not been produced.~~ It was produced, in the same commit that wrote this
+>   line, and the line was false the moment it was committed.** Corrected 2026-08-16 against
+>   `git ls-files tapes/`: `tapes/7c-rust.tape`, `tapes/7c-python.tape`,
+>   `tapes/7c-typescript.tape`, `tapes/diagnostics.tape`, `tapes/diagnostics-undercurl.tape` and
+>   `tapes/signature-help.tape` are all tracked, each with a `.png` and a `.gif` under
+>   `tapes/artifacts/`, and **`git log` says every one of them arrived in `4a41700`** — the S4
+>   commit this paragraph is part of. The undercurl precondition is settled the right way —
+>   `tapes/README.md` records *"does undercurl survive VHS capture? — Answered: yes"* — so it does
+>   not stay Tier 3.
+>
+>   **What is true, and is a different claim, is that the captures are stale.** `e096f88`'s own
+>   message says *"Tier-2 tapes were NOT re-run and drawing changed"*, and it changed a tab's
+>   width in five measuring walks; §36 already records the whole library as a window or three old.
+>   So the work outstanding is `just tapes-diff`, not `just tapes` from nothing.
+>
+>   **Worth more than the correction is how it got here**, because it is this repo's own rule
+>   failing in the one place nothing lints: a claim about a directory, written in the same change
+>   that filled the directory. `CLAUDE.md`'s *"state a fact about a file only if you read that file
+>   in this session"* is exactly the standard it missed, and a checkpoint's own mechanical half is
+>   the worst place to miss it — it is the paragraph a later reader trusts instead of looking.
 >
 > **No verdict is recorded, and none may be recorded here by anyone but Teej.** The manual half —
 > is completion fast enough to be useful or fast enough to be annoying, the undercurl pass on two
@@ -2485,6 +2500,29 @@ the two that are new surfaces rather than repairs**: `T107` and `T108` name thin
 graph names at all, while `T104` extends `T026`'s operator machine and `T033`'s keymap and
 `T105`/`T106` extend a ticked `T038`.
 
+> **A second sitting, 2026-08-16, and it produced no new tasks — which is itself the finding.**
+> Teej ran the binary again after `T104`–`T107` landed and reported five things. Four of them
+> resolved into work or rulings that already had a home, and **not one needed a `T109`**:
+>
+> * **`<tab>` should drive the completion list.** §38 re-ruled by its first option; `T105` ticked.
+>   The report's other half — *"enter or space doesnt accept"* — was the same fact, not a second
+>   bug: nothing had been chosen, so the `select = false` guard held correctly and what was
+>   missing was a key to choose *with*.
+> * **Completion felt slow.** §29 item 3, ruled *annoying*. There was no timer at all;
+>   `COMPLETION_DEBOUNCE` is 250ms, helix's number. The symptom was not latency — with
+>   one-in-flight as the only gate the list never caught up to the word being typed.
+> * **`gr` does nothing.** Working as designed and **not fixable in this window**:
+>   `request-references` is `[S5 / T047 / Deny]`, it declines out loud on the statusline
+>   (`loop_pty.rs`, *"not built yet — T047 builds it"*), and the chain to make it real is
+>   `T047 → T046 → T045 → T041` — the whole S5 spine, which is Window E and does not open until
+>   `CP-4` passes. What Teej remembered fixing was the keymap rewrite that made the key *speak*.
+> * **`taplo ✗ could not start` on `Cargo.toml`.** Not a defect: the binary is not installed on
+>   the machine, and the chip saying so is
+>   `a_server_that_cannot_start_says_so_on_the_statusline` working. Teej is installing it.
+>
+> The fifth is `T106`'s, still open and still Teej's: the kind and source columns are built and
+> screen `7c` draws neither, which is a design amendment rather than an agent's call.
+
 > **The review of this section found a defect older than any of it, and four the section caused**
 > — the last two by the review *of* the fixes, which is the same seam catching the same shape a
 > second time. Recorded here rather than as tasks, because they are fixes rather than work: adding
@@ -2544,6 +2582,16 @@ depending on whether a list is open. `T105`'s mechanism (a fall-through argument
 `accept-completion`) settles `<space>` and `<CR>` and **does not settle this one**, because the
 fall-through it takes is literal text and an indent level is a per-language value a keymap cannot
 name. Neither task may decide it alone; it is [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s §38.
+
+> **Settled twice, and the second time is the one that shipped.** §38 was first ruled by its
+> *third* option on 2026-08-15 — `<tab>` to `insert-indent`, completion keeping `<C-y>`,
+> `<space>` and `<CR>` — and **re-ruled by its first option on 2026-08-16**, after Teej ran the
+> binary and asked for the key back: *"in this form i should be able to hit tab or something to
+> select"*. `move-completion` grew an `otherwise` that names a **capability** rather than
+> carrying text, so `<tab>` steps the list while one is open and runs `insert-indent` when none
+> is. **Both tasks got the key**, which is the outcome the paragraph above says was unavailable —
+> and it was unavailable, until `T104` created the verb the argument had to name. `<S-tab>` steps
+> backwards. Neither task's *done when* changed; both are met.
 
 - [x] **T104 · `<tab>`, and what one indent level is**
   Reported at `CP-4`: *"tab only seems to go a space at a time when indenting"*. **Four things are
@@ -2645,6 +2693,18 @@ name. Neither task may decide it alone; it is [OPEN-QUESTIONS.md](OPEN-QUESTIONS
   > to *a capability to run* — and that is now a smaller change than it was, because
   > `insert-indent` is the capability such an argument would name. See §38 for the whole ruling.
   >
+  > **It was reversed on 2026-08-16, and the paragraph above is the reason it was cheap.** Teej
+  > ran the shipped binary and asked for `<tab>` on the completion list; the reversal is exactly
+  > the change this paragraph predicted, and it named the right capability. `<tab>` binds
+  > `move-completion` with `"otherwise" (key/capability "insert-indent")` — stepping the list when
+  > one is open, typing one indent level when none is — so **nothing in this task's own claim
+  > changed**: the width still comes from `set-option!` and `define-language!`, `insert-indent`
+  > still names no width, and `tab_in_insert_mode_advances_to_the_tabstop` and its CJK and
+  > replace-mode neighbours pass untouched, because a buffer with no server has no list and takes
+  > the fall-through on every press. What the reversal cost was one optional argument on one
+  > capability, no new verb, and **no movement in the 216/648 counts** — which is what makes an
+  > argument the right shape for this and a second verb the wrong one.
+  >
   > **Two things the review of this entry found, and neither was a gate failure.**
   >
   > *The rebuild went quadratic in one line's length.* `soft_wrap::segments` opened each segment
@@ -2710,7 +2770,7 @@ name. Neither task may decide it alone; it is [OPEN-QUESTIONS.md](OPEN-QUESTIONS
   test presses `<tab>` and `>>` in the running binary** — an arm and a binding both already exist
   for `>` and neither has ever been pressed. *Needs:* T021, T026, T033
 
-- [ ] **T105 · The completion keys a hand already reaches for**
+- [x] **T105 · The completion keys a hand already reaches for**
   Reported at `CP-4`: *"i like being able to hit space to select and put a space after or enter to
   select without a space after"*. The float raises itself while you type (`T038`) and then answers
   to five keys nobody's fingers go to first.
@@ -2774,6 +2834,26 @@ name. Neither task may decide it alone; it is [OPEN-QUESTIONS.md](OPEN-QUESTIONS
   tests for. `<C-x>`/`<C-n>`/`<C-p>`/`<C-y>`/`<C-e>` keep working, because they are what `7c`'s
   no-footer exception means by *"every key that drives it has to be one your hands already know"*.
   **`<tab>` is not settled by this task alone** — §38. *Needs:* T026, T033, T038
+
+  > **Ticked 2026-08-16, after §38 was re-ruled and `<tab>` came to this task after all.** The
+  > *done when* asked for the contested keys pressed **in both states**, and that is what exists:
+  > `<space>` and `<cr>` each have a pair in `crates/phosphor/tests/loop_pty.rs` (over an
+  > untouched float, and over a chosen row), and `<tab>` now has its own pair —
+  > `tab_steps_the_completion_list_and_then_enter_accepts` and
+  > `tab_with_no_completion_list_open_types_one_indent_level`. `<C-x>`/`<C-n>`/`<C-p>`/`<C-y>`/`<C-e>`
+  > are untouched and still pressed by the tests that always pressed them.
+  >
+  > **It was held unticked for the right reason and released by a ruling rather than by more
+  > code.** The sentence above — *"`<tab>` is not settled by this task alone"* — was the blocker,
+  > and Teej settled it at `CP-4`'s manual half by asking for helix's behaviour. What that took
+  > was `move-completion` growing an `otherwise` of its own, which is §38's *first* option landing
+  > two days after its third one shipped.
+  >
+  > **The report is answered line for line now.** *"i like being able to hit space to select and
+  > put a space after or enter to select without a space after"* — both, since `49ca8da`. *"in
+  > this form i should be able to hit tab or something to select"* — `<tab>`, and `<S-tab>`
+  > backwards. And *"enter or space doesnt accept"* needed no change to either key: it was the
+  > absence of a stepping key, which is why one fix closed two complaints.
 
 - [ ] **T106 · What a completion row says about itself**
   Reported at `CP-4`: a row is a label and a type and nothing else, and every completion UI a
