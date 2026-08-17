@@ -25,5 +25,6 @@ pub mod picker;
 pub mod soft_wrap;
 pub mod status_line;
 pub mod theme;
+pub mod tints;
 pub mod unknown_key;
 pub mod virtual_text;

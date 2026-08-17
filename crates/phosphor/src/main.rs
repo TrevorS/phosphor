@@ -2379,6 +2379,11 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // shape for this and `phosphor-ui` defers it to `T058`, so what S3 can hold
     // is the primitives — a row of labels where the statusline goes, which is
     // where vim puts it too.
+    // `T087`'s side table: what the fork's marks currently hold, so a frame
+    // with no news can upload nothing. Owned by the loop rather than by
+    // `Editing`, because it describes the *editor's* decoration and is
+    // rebuilt from the store rather than mutated alongside it.
+    let mut tints = phosphor_ui::tints::Tints::new();
     // `T047`'s landing slot for a `request-references` answer. See
     // [`References`] for why it is a slot and not an Action payload.
     let references: References = Arc::new(Mutex::new(Vec::new()));
@@ -2580,6 +2585,15 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 })
                 .collect();
             regions.extend(gutter::spans(&editing.editor, &spans));
+            // `T087` — §3's row tints, through the fork's marks API. The same
+            // `spans` the gutter's column is built from, so the tint and the
+            // marker cannot disagree about a row.
+            //
+            // Called every frame and **uploads on almost none of them**:
+            // `Tints::sync` diffs first, because `set_marks` replaces wholesale
+            // and a 500-region file would otherwise re-upload the whole set on
+            // every keystroke. That diff is what keeps this off the hot path.
+            tints.sync(&mut editing.editor, &theme, &spans);
             spans
                 .iter()
                 .filter(|(_, state)| *state == gutter::RegionState::Unseen)

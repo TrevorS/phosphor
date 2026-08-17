@@ -2155,7 +2155,7 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   *Done when:* screen `6d`'s nouns are functional, and `viu` selects an unseen region.
   *Needs:* T028, T041
 
-- [ ] **T087 · Region tints via a marks side table** 📌
+- [x] **T087 · Region tints via a marks side table** 📌
   The seam the T008 spike said the bought marks API *is* good for, and the one nothing was
   tasked to build. Design Language §3 tints the whole row per region state — `#141d16` anchor,
   `#26332a` selection-in-float, `#211114` failure — and the marks API carries exactly that

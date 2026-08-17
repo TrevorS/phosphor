@@ -122,6 +122,14 @@ harness = false
 name = "picker"
 harness = false
 
+# `T087`. Same pair, same silent failure without it. What it measures is the one
+# thing the marks API forces: `set_marks` replaces wholesale, so the number that
+# decides whether the side table earns its keep is what a frame with *no news*
+# costs against a frame that changed.
+[[bench]]
+name = "tints"
+harness = false
+
 [features]
 default = []
 # Rich markdown in the transcript. Per-language highlight features stay off:
