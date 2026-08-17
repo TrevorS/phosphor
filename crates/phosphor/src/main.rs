@@ -165,9 +165,10 @@ use phosphor_core::language::{self, Languages};
 use phosphor_core::query::{Answer, Answers, Query, QueryError, RegionQuery, Revision};
 use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
-    Actor, AnchorId, Binding, CharRange as SignatureRange, Completion as WireCompletion, EditMode,
-    FoldState, KeySeq, LanguageId, Position, PromptKind, RegionFilter, RegionId, RegisterName,
-    Seek, SelectionKind, Signature as WireSignature, SourceId, Span, Target, TextObject,
+    AcceptHow, Actor, AnchorId, Binding, CharRange as SignatureRange, Completion as WireCompletion,
+    EditMode, FoldState, KeySeq, LanguageId, Position, PromptKind, RegionFilter, RegionId,
+    RegisterName, Seek, SelectionKind, Signature as WireSignature, SourceId, Span, Target,
+    TextObject,
 };
 // `Scope` is already the input table's (`keymaps.scm`'s normal/insert/visual),
 // and a second one under the same name in a 9,000-line file is a trap rather
@@ -2021,6 +2022,14 @@ impl Layer {
         phosphor_steel::picker::rows(&mut self.runtime, id, args)
     }
 
+    /// `T047` — the source order tab cycles, as the layer declares it.
+    ///
+    /// Reads a global; runs nothing. Through this type anyway, because `Layer`
+    /// owns the `Runtime` and nothing else may hold one.
+    fn source_order(&mut self) -> Vec<String> {
+        phosphor_steel::picker::order(&mut self.runtime)
+    }
+
     /// `T021`'s boot report, as a float. Reads a value; runs nothing.
     ///
     /// Composed from [`Layer::report`] rather than from `Runtime::boot_float`,
@@ -2345,6 +2354,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // shape for this and `phosphor-ui` defers it to `T058`, so what S3 can hold
     // is the primitives — a row of labels where the statusline goes, which is
     // where vim puts it too.
+    // `T047`'s landing slot for a `request-references` answer. See
+    // [`References`] for why it is a slot and not an Action payload.
+    let references: References = Arc::new(Mutex::new(Vec::new()));
     let mut ex_line = String::new();
     // A journal that could not be opened outranks *"new file"* for the reason
     // the `:e` arm gives: one row, two true things, and the surprising one has
@@ -2848,6 +2860,30 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         if let Some(session) = editing.picker.as_mut() {
                             match picker_key(key, session) {
                                 PickerStep::Typing => {}
+                                PickerStep::Cycle(delta) => {
+                                    let outcome = editing.apply(&Action::Picker(
+                                        PickerAction::CyclePickerSource { delta },
+                                    ));
+                                    if let Outcome::Refused(why) = outcome {
+                                        notice = Some(phosphor_steel::answer::why(&why));
+                                    }
+                                }
+                                PickerStep::Accept => {
+                                    let outcome = editing.apply(&Action::Picker(
+                                        PickerAction::PickerAccept {
+                                            how: AcceptHow::Open,
+                                        },
+                                    ));
+                                    match outcome {
+                                        Outcome::Refused(why) => {
+                                            notice = Some(phosphor_steel::answer::why(&why));
+                                        }
+                                        _ => {
+                                            host.publish_picker(None);
+                                            surface = Surface::Buffer;
+                                        }
+                                    }
+                                }
                                 PickerStep::Close => {
                                     editing.picker = None;
                                     // Or `picker-rows` answers a list nothing
@@ -3210,7 +3246,17 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 (Some(language), Some(document)) => {
                     let at = editing.text().cursor();
                     let path = document.path.clone();
-                    servers.ask(&language, question, path, at, jumping(&post));
+                    // `T036` answers in *places*, and what a place means
+                    // depends on the question: a definition is one place and
+                    // you go there; references are a *list* and `8a` draws them
+                    // in the picker. Two callbacks rather than one branching
+                    // inside, because the client must not know which surface
+                    // is downstream (`lsp::Locations`).
+                    let answer = match question {
+                        Question::Definition => jumping(&post),
+                        Question::References => referencing(&post, &references),
+                    };
+                    servers.ask(&language, question, path, at, answer);
                 }
                 _ => notice = Some("no language server for this buffer".to_owned()),
             }
@@ -3337,8 +3383,61 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         {
             {
                 let id = session.source.0.clone();
-                let args =
-                    Value::Record(Args::new().with("filter", Value::Text(session.filter.clone())));
+                // **What the host knows and a source cannot ask.** A source
+                // runs inside the VM and a query from there cannot reach the
+                // editor (`OPEN-QUESTIONS.md` §42), so the focused path is
+                // handed *down* as an argument rather than queried — the same
+                // shape `Scope` uses for the cursor and `Languages::new` for
+                // grammar names. `grep` is the caller that needs it: it reads
+                // the open buffer's lines and has to know which buffer.
+                let args = Value::Record(
+                    Args::new()
+                        .with("filter", Value::Text(session.filter.clone()))
+                        .with(
+                            "path",
+                            editing.file.as_deref().map_or(Value::Null, |path| {
+                                Value::Text(store::key_for(path).display().to_string())
+                            }),
+                        )
+                        // The buffer's lines, for the same reason as the path
+                        // and with a cost worth naming: this is a copy of the
+                        // open file, per open. It is the same order as the rows
+                        // the source is about to build out of them, so it does
+                        // not change the shape — and the alternative is a
+                        // `buffer-lines` query a source cannot reach, because
+                        // `AppHost` has no editor (`T026` answers it on the
+                        // keystroke side only).
+                        .with(
+                            "lines",
+                            Value::List(
+                                editing
+                                    .editor
+                                    .code_ref()
+                                    .get_content()
+                                    .lines()
+                                    .map(|line| Value::Text(line.to_owned()))
+                                    .collect(),
+                            ),
+                        )
+                        // `T047` — whatever the last `request-references`
+                        // answered, for the `references` source to draw. Empty
+                        // for every other source, which is what makes this one
+                        // argument rather than a second call shape.
+                        .with(
+                            "places",
+                            Value::List(
+                                references
+                                    .lock()
+                                    .map(|held| {
+                                        held.iter()
+                                            .map(phosphor_core::request::FileSpan::to_value)
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
+                            ),
+                        ),
+                );
+                let order = layer.source_order();
                 match layer.source(&id, &args) {
                     Ok(spans) => {
                         session.matcher.feed(spans.iter().map(picker::row_of));
@@ -3348,6 +3447,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // `HostState::picker_rows`.
                         host.publish_picker(Some((id, spans)));
                         surface = Surface::Picker;
+                        // Read on every open, so a layer that grows a source
+                        // is one `open-picker` away from tab reaching it.
+                        editing.source_order = order;
                     }
                     // A source that does not exist or raised does **not** open
                     // an empty picker: `T045`'s `0/0` is the honest drawing of
@@ -3663,6 +3765,42 @@ fn jumping(post: &Post) -> phosphor_buffer::lsp::Locations {
             path: place.path,
             at: place.span.map(|span| span.start),
             pane: phosphor_core::request::PaneRef::Focused {},
+        }));
+    })
+}
+
+/// Where a `request-references` answer lands on its way to the picker
+/// (`T047`).
+///
+/// **A slot rather than an `Action`, and that is the re-homing note made
+/// concrete.** `TASKS.md` records why this task owns `request-references` at
+/// all: *"`LanguageServers::ask` answers a `Vec<FileSpan>` and nothing in the
+/// vocabulary carries a list of places"*. It still does not. So the answer
+/// arrives here, the callback posts an ordinary `open-picker`, and the loop
+/// hands the places to the `references` source as arguments — the same
+/// *"the host resolves what only the host can"* seam `grep` uses for the
+/// buffer's lines.
+///
+/// The alternative is a capability whose payload is a list of places, which is
+/// a vocabulary change to carry one answer to one surface. If a second consumer
+/// ever wants the list, that is the moment to make it one.
+type References = Arc<Mutex<Vec<phosphor_core::request::FileSpan>>>;
+
+/// The `Locations` callback for `request-references`.
+///
+/// Fills the slot and asks for the picker. Answering *no* places still opens
+/// it: `0/0` is the honest drawing of *"nothing uses this"*, where silence is
+/// indistinguishable from a server that never replied.
+fn referencing(post: &Post, slot: &References) -> phosphor_buffer::lsp::Locations {
+    let post = Arc::clone(post);
+    let slot = Arc::clone(slot);
+    Arc::new(move |places: Vec<phosphor_core::request::FileSpan>| {
+        if let Ok(mut held) = slot.lock() {
+            *held = places;
+        }
+        post(Action::Picker(PickerAction::OpenPicker {
+            source: SourceId("references".to_owned()),
+            query: None,
         }));
     })
 }
@@ -4645,6 +4783,13 @@ struct Editing {
     /// `set-picker-query` and `toggle-picker-preview` act on it, and `esc`
     /// drops it.
     picker: Option<PickerSession>,
+    /// The order `cycle-picker-source` walks, refreshed by the loop from the
+    /// layer's `phosphor/picker-sources` (`T047`).
+    ///
+    /// Cached on this side because the arm runs during event handling and
+    /// `Layer` is `&mut` there — the same reason `Editing` holds a keymap
+    /// snapshot rather than asking the VM per keystroke.
+    source_order: Vec<String>,
     /// An `open-picker` the loop has not put on screen yet, drained the way
     /// [`Editing::open`] and [`Editing::help`] are.
     open_picker: bool,
@@ -4800,6 +4945,7 @@ impl Editing {
             store,
             collapsed: BTreeSet::new(),
             picker: None,
+            source_order: Vec::new(),
             open_picker: false,
             jumplist: Vec::new(),
             jump_at: 0,
@@ -5418,15 +5564,46 @@ impl Editing {
                 session.matcher.select_to(target);
                 done()
             }
+            // `T047`. A float's primary verb, which for the only float with
+            // rows is accepting one — so this is `picker-accept` under the
+            // float's name, and it delegates rather than duplicating.
             Action::Float(FloatAction::FloatAccept {}) => {
                 if self.picker.is_none() {
                     return declined("no float with a primary verb is focused");
                 }
-                // `picker-accept` is `T047`'s — *"↵ open, or every row into the
-                // quickfix list"* — and it needs a row that names a *place*,
-                // which is what a source supplies. Declined by the task that
-                // builds it rather than silently closing the picker.
-                Outcome::Refused(Refusal::NotYetImplemented { task: "T047" })
+                self.accept_picker(AcceptHow::Open)
+            }
+            Action::Picker(PickerAction::PickerAccept { how }) => self.accept_picker(*how),
+            // `T047` — tab. The *order* is the layer's, so this arm knows how
+            // to walk a list and not what is in it. A picker over a source the
+            // order does not name starts from the first, which is what makes
+            // tab work on a picker opened by id from a door.
+            Action::Picker(PickerAction::CyclePickerSource { delta }) => {
+                let Some(session) = self.picker.as_ref() else {
+                    return declined("no picker open");
+                };
+                let order = std::mem::take(&mut self.source_order);
+                if order.is_empty() {
+                    return declined("no source order — (define phosphor/picker-sources …)");
+                }
+                let at = order
+                    .iter()
+                    .position(|id| id == &session.source.0)
+                    .unwrap_or(0);
+                let len = i64::try_from(order.len()).unwrap_or(1);
+                let next = (i64::try_from(at).unwrap_or(0) + delta).rem_euclid(len);
+                let id = order[usize::try_from(next).unwrap_or(0)].clone();
+                self.source_order = order;
+                // Re-opened rather than mutated: a source change is a new
+                // corpus, and `open-picker` is the one path that fills one.
+                let filter = self.picker.as_ref().map(|s| s.filter.clone());
+                self.picker = Some(PickerSession::open(SourceId(id.clone()), filter));
+                self.open_picker = true;
+                Outcome::Done(Receipt {
+                    capability: "cycle-picker-source",
+                    value: Value::Text(id),
+                    note: None,
+                })
             }
             Action::Picker(PickerAction::TogglePickerPreview {}) => {
                 let Some(session) = self.picker.as_mut() else {
@@ -5443,6 +5620,14 @@ impl Editing {
             // `open-file` rather than by a float: a definition is a *place*.
             Action::Lsp(LspAction::RequestDefinition {}) => {
                 self.question = Some(Question::Definition);
+                done()
+            }
+            // `T047`, and the arm the `S4` wiring pass re-homed here.
+            // `Question::References` and its whole client path were *"built and
+            // unreached"* until this task, because what a list of places needs
+            // is a surface to be drawn in — which is the picker.
+            Action::Lsp(LspAction::RequestReferences {}) => {
+                self.question = Some(Question::References);
                 done()
             }
             // `T036`. Recorded, for the same reason the lookups are.
@@ -5889,6 +6074,60 @@ impl Editing {
             }
         }
         snapshot
+    }
+
+    /// **`picker-accept`.** Opens the highlighted row's place (`T047`).
+    ///
+    /// # The row's *text* is the address, and that is the design
+    ///
+    /// A row is styled runs and nothing else — no hidden payload, no id
+    /// alongside. So what a row means is what it *says*, and every source
+    /// writes its first run as `path:line`, which is a spelling
+    /// [`Target`] already decodes (`request.rs`'s `target_from_text`, the
+    /// `text =` clause on its `wire_union!`). `8a` draws exactly that —
+    /// `src/retry.rs:9` — so what you read is what gets opened.
+    ///
+    /// The alternative is a parallel array of targets beside the rows, and it
+    /// fails the moment a source is redefined at the REPL: the rows change and
+    /// the shadow list does not. This cannot go out of step because there is
+    /// only one thing.
+    ///
+    /// `AcceptHow::Split` and `AcceptHow::Quickfix` decline by naming their
+    /// tasks. A split needs `T088` and there is one pane; the quickfix list is
+    /// *"drawn once and named in no task"* (`request.rs`) and building it here
+    /// would be inventing a surface nobody has asked for.
+    fn accept_picker(&mut self, how: AcceptHow) -> Outcome {
+        let Some(session) = self.picker.as_ref() else {
+            return declined("no picker open");
+        };
+        match how {
+            AcceptHow::Open => {}
+            AcceptHow::Split => return declined("one pane until T088 splits it"),
+            AcceptHow::Quickfix => {
+                return declined("no quickfix list — drawn in 8a, named in no task");
+            }
+        }
+        let Some(text) = session.matcher.selected_text() else {
+            return declined("no row selected");
+        };
+        // The first whitespace-separated token: `8a`'s rows are
+        // `src/retry.rs:9  ● pub max_delay: Duration,` and the address is the
+        // head of that, not the whole line.
+        let head = text.split_whitespace().next().unwrap_or_default();
+        let Ok(target) = Target::from_value(&Value::Text(head.to_owned())) else {
+            return declined("that row does not name a place — sources write `path:line` first");
+        };
+        let Target::Explicit { path, span } = target else {
+            return declined("that row does not name a place");
+        };
+        self.picker = None;
+        self.open = Some(path);
+        self.open_at = Some(span.start);
+        Outcome::Done(Receipt {
+            capability: "picker-accept",
+            value: Value::Text(head.to_owned()),
+            note: None,
+        })
     }
 
     /// Give the focused file's regions a way to find themselves again
@@ -7329,6 +7568,10 @@ enum PickerStep {
     Typing,
     /// Close it.
     Close,
+    /// `<tab>` — cycle to the next source (`T047`).
+    Cycle(i64),
+    /// `↵` — open the highlighted row (`T047`).
+    Accept,
 }
 
 /// One key, while the picker has the frame.
@@ -7345,6 +7588,14 @@ fn picker_key(key: KeyEvent, session: &mut PickerSession) -> PickerStep {
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::Esc => return PickerStep::Close,
+        // `8a`'s tab, and `↵`. Routed out as steps rather than acted on here
+        // because both are *capabilities* — `cycle-picker-source` and
+        // `picker-accept` — and a second implementation beside the arms is the
+        // thing `T033`'s "no second path from a command to the buffer" rules
+        // out. The loop applies the Action.
+        KeyCode::Tab => return PickerStep::Cycle(1),
+        KeyCode::BackTab => return PickerStep::Cycle(-1),
+        KeyCode::Enter => return PickerStep::Accept,
         KeyCode::Backspace => {
             if session.filter.pop().is_none() {
                 return PickerStep::Close;

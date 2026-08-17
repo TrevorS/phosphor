@@ -2071,7 +2071,7 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > intent list gained `after_boot`, which drops registrations and keeps the question *"what did
   > this keystroke ask for"* answerable.
 
-- [ ] **T047 · Grep / symbols source**
+- [x] **T047 · Grep / symbols source**
   Tab cycles source. Results carry who-touched-them. **And `request-references`**, which was
   re-homed here by the `S4` wiring pass: `LanguageServers::ask` answers a `Vec<FileSpan>` and
   nothing in the vocabulary carries a list of places, so this is the task that builds the surface
@@ -2086,6 +2086,54 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > task tag to an unticked task instead made the lint stop asking — no recorded row, no line in
   > the summary, nothing that expires. Found by the `CP-4` review, which is the second reader this
   > build has had for a re-homing and the first to check whether the creditor knew.
+
+  > **`symbols` is not built, and that is a gap rather than a cut.** The vocabulary's LSP
+  > `Question` has `Definition` and `References` and no `DocumentSymbol`, so there is nothing to
+  > ask a server for. Adding one is a capability change plus a client path plus a fixture arm —
+  > real work, and work for a task that names it. What tab cycles is
+  > `phosphor/picker-sources`, which the *layer* owns, so the day a symbols source exists it joins
+  > the list with no Rust change. Recorded in `runtime/pickers.scm` at the list itself.
+
+  > **`grep` reads the open buffer, not the workspace** — the same limit `files` states, from the
+  > same absence: no capability searches files on disk. What it can read is the buffer's lines, so
+  > grep is a fuzzy search over what is open. **The matching is nucleo's**, which is the part
+  > worth saying: the source hands over every line and the filter narrows them, so typing in the
+  > picker *is* grep's prompt and the source does no searching at all.
+  >
+  > `8a`'s *"results know who touched them"* is the store's, per row: the unseen dot comes from
+  > `unseen-regions`, built once per open into a set keyed by `path:line` rather than queried per
+  > row.
+
+  > **A row's text is its address**, and that is the design rather than a shortcut. A row is
+  > styled runs and nothing else — no hidden payload, no id alongside — so every source writes
+  > `path:line` first and `picker-accept` parses the row's own head through `Target`'s `text =`
+  > clause, the same spelling `mark-seen!` takes. `8a` draws exactly that. The alternative is a
+  > parallel array of targets beside the rows, and it goes out of step the moment a source is
+  > redefined at the REPL: the rows change and the shadow list does not. This cannot, because
+  > there is only one thing.
+  >
+  > `AcceptHow::Split` and `AcceptHow::Quickfix` decline by naming what they need — one pane
+  > until `T088`, and a quickfix list that `request.rs` records as *"drawn once and named in no
+  > task"*. Building one here would be inventing a surface nobody asked for.
+
+  > **`request-references` answers into a slot, not an Action**, and the entry above is why: *"no
+  > `Action` carries a list of places"*, and it still does not. The callback fills a
+  > `Arc<Mutex<Vec<FileSpan>>>`, posts an ordinary `open-picker`, and the loop hands the places to
+  > the `references` source as arguments — the same *"the host resolves what only the host can"*
+  > seam `grep` uses for the buffer's lines. A capability whose payload is a list of places would
+  > be a vocabulary change to carry one answer to one surface; if a second consumer ever wants the
+  > list, that is the moment to make it one.
+  >
+  > The toy language server gained `textDocument/references`, answering **three places in two
+  > files**. One place would not have separated a working references picker from a working `gd`:
+  > a single place can be answered by opening it, and `8a` exists because a list needs a surface.
+
+  > **The `Needs: T036` debt is paid.** `Question::References` and its whole client path were
+  > *"built and unreached"*; `gr` reaches them now, and
+  > `gr_fills_the_picker_from_a_real_server` presses the key against a real process.
+  > `gr_declines_by_naming_the_task_that_builds_the_list` was that state's pin and is replaced by
+  > `gr_is_bound_and_does_not_spend_the_session_hint` — the half of `CP-4`'s finding that outlives
+  > the fix, which is that a *bound* key must not spend `8e`'s one teaching row.
 
 - [ ] **T048 · `:arch` / ArchDiagram**
   A float body over a store query (Q11), **built entirely from the `spans` hatch** (T080) — no

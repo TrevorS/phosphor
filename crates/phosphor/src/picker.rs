@@ -226,6 +226,23 @@ impl Picker {
         }
     }
 
+    /// The selected row's text, flattened — what `picker-accept` reads.
+    ///
+    /// The **haystack**, not the runs: it is the same string the filter
+    /// matched against, so what a person picked and what the accept parses are
+    /// the same text by construction rather than by two joins agreeing.
+    pub(crate) fn selected_text(&self) -> Option<String> {
+        let snapshot = self.nucleo.snapshot();
+        let at = self.selected;
+        if at >= snapshot.matched_item_count() {
+            return None;
+        }
+        snapshot
+            .matched_items(at..at.saturating_add(1))
+            .next()
+            .map(|item| item.data.haystack.clone())
+    }
+
     /// How many rows currently match. Read without ticking, for a caller that
     /// only wants the count.
     pub(crate) fn matched(&self) -> usize {

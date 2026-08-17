@@ -100,6 +100,36 @@ pub fn rows(
     }
 }
 
+/// The global holding the order `cycle-picker-source` walks.
+///
+/// **The layer owns the list, not Rust** (`T047`). `8a`'s caption is *"grep,
+/// files, symbols — one float, one grammar"*, and which three is a
+/// configuration question: a user who defines a fourth source wants tab to
+/// reach it, and a Rust list would make that a rebuild. Same argument
+/// `phosphor/boot-files` settles for the load order.
+pub const SOURCE_ORDER: &str = "phosphor/picker-sources";
+
+/// The source ids tab cycles through, in order.
+///
+/// An empty answer is not an error: a layer that defines no order has nothing
+/// for tab to do, and the caller declines by saying so rather than inventing a
+/// list.
+pub fn order(runtime: &mut crate::runtime::Runtime) -> Vec<String> {
+    let Ok(value) = runtime.global(SOURCE_ORDER) else {
+        return Vec::new();
+    };
+    let Ok(phosphor_core::value::Value::List(items)) = crate::convert::from_steel(&value) else {
+        return Vec::new();
+    };
+    items
+        .into_iter()
+        .filter_map(|item| match item {
+            phosphor_core::value::Value::Text(id) => Some(id),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Why a source did not produce rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceError {

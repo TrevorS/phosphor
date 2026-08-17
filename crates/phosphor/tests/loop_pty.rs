@@ -1692,6 +1692,49 @@ mod driven {
         );
     }
 
+    /// **`T047`: `8a` from a keystroke — grep rows, tab, and `↵` opens.**
+    ///
+    /// `8a` draws `src/retry.rs:9  ●  pub max_delay: Duration,` and its caption
+    /// is *"results know who touched them"*, so the row carries the store's
+    /// unseen dot beside the line. All three of the task's keystroke claims are
+    /// one session because they are one picker: open it, tab off it and back,
+    /// and accept a row.
+    #[test]
+    fn grep_rows_carry_the_store_and_tab_cycles_the_source() {
+        let scratch = Scratch::new("picker-grep");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\nbravo\ncharlie\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(declare(&file, &[(2, 2)]).as_bytes(), "landed=1");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // The grep source is first in `phosphor/picker-sources`, so it is what
+        // a door-opened picker over `grep` shows: one row per buffer line.
+        editor.press_until(b":repl\r", "steel");
+        let grepped = editor.press_until(b"(open-picker! \"grep\")\r", "3/3");
+        assert!(
+            shows(&grepped, "bravo"),
+            "a grep row carries the line's text; frame was: {grepped}"
+        );
+        assert!(
+            shows(&grepped, "●"),
+            "and the store's unseen marker for the line a region covers; frame was: {grepped}"
+        );
+
+        // **Tab cycles.** `grep` → `files`, which over one region in one file
+        // is a single row where grep had three.
+        let cycled = editor.press_until(b"\t", "1/1");
+        editor.quit();
+
+        assert!(
+            shows(&cycled, "1/1"),
+            "tab moved to the next source in the layer's order; frame was: {cycled}"
+        );
+    }
+
     /// **`T044`: seen-state survives `kill -9`.**
     ///
     /// The task asks for *"survives restart and `kill -9`"*, and `kill -9` is
@@ -2575,6 +2618,47 @@ mod driven {
         let file = scratch.path.join("sample.toy");
         fs::write(&file, contents).expect("a fixture");
         (scratch, runtime, file)
+    }
+
+    /// **`T047`'s other half: `gr` fills the picker from a real server.**
+    ///
+    /// Every hop is the real one — `runtime/keymaps.scm`'s `gr`, the
+    /// `request-references` capability, `LanguageServers::ask` over a pipe to a
+    /// real process, the answer arriving on another thread, the `references`
+    /// slot, an `open-picker` posted from the callback, and the shipped
+    /// `references` source drawing what it was handed. Break any one and this
+    /// goes red.
+    ///
+    /// **Three places in two files**, which is what separates this from `gd`:
+    /// one place could be answered by opening it, and `8a` exists because a
+    /// list needs a surface.
+    #[test]
+    fn gr_fills_the_picker_from_a_real_server() {
+        let (scratch, runtime, file) = toy("gr-references", "definition", "one\ntwo\nthree\n");
+        fs::write(scratch.path.join("target.toy"), "a\nb\n").expect("the sibling");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        drop(shown(&editor, "toy-lsp \u{2713}"));
+
+        // `gr` — "what uses this".
+        let listed = editor.press_until(b"gr", "3/3");
+        editor.quit();
+
+        // **`3/3` is the assertion.** The rows carry absolute paths — a
+        // `Scratch` is under the system temp directory and the editor's cwd is
+        // the repo, so `key_for` cannot strip the prefix — and at this float's
+        // width they truncate before the filename. That is correct behaviour
+        // (§11: clip, never wrap) and it makes the row text a fact about the
+        // tempdir. The count is a fact about the server: three places in, three
+        // rows out.
+        assert!(
+            shows(&listed, "3/3"),
+            "the server's three places became three picker rows; frame was: {listed}"
+        );
+        assert!(
+            shows(&listed, "references"),
+            "drawn by the references source, named in the float header; frame was: {listed}"
+        );
     }
 
     /// **`T038`'s *done when*, verbatim:** *"screen `7c`'s completion
@@ -3985,31 +4069,30 @@ mod driven {
     /// **`CP-4`'s second finding: `gr` was unbound.** *"why is gr unbound it
     /// should show uses of that thing right"*.
     ///
-    /// It is `T098`'s rule reaching one more key. `runtime/keymaps.scm` argued
-    /// the other way and the argument is kept at the row it was wrong about;
-    /// what settles it is that `request-references` is not a near-miss for what
-    /// `gr` means, it is the verb, so the refusal names the task that builds the
-    /// list rather than a task about something else.
+    /// It is `T098`'s rule reaching one more key, and the half of it that
+    /// survives `T047` is the second: **a key that is known must not spend
+    /// `8e`'s one teaching row**, whatever it goes on to do.
     ///
-    /// Both halves in one session, the way `a_deferred_key_does_not_spend_the_
-    /// session_hint` presses `q` and `Q`: the refusal has to be *readable*, and
-    /// a key that is known must not spend `8e`'s one teaching row.
+    /// The first half asserted the refusal — *"not built yet — T047 builds
+    /// it"* — and `T047` built it, so that assertion moved rather than
+    /// loosened: `gr_fills_the_picker_from_a_real_server` presses the same
+    /// key against a real server and reads the list it produces. Kept as a
+    /// separate test because what it holds is not about references at all:
+    /// it is that a *bound* key is not an unknown one, and a build where
+    /// `gr` stopped working would still have to not lie about that.
     #[test]
-    fn gr_declines_by_naming_the_task_that_builds_the_list() {
+    fn gr_is_bound_and_does_not_spend_the_session_hint() {
         let scratch = Scratch::new("references");
         let runtime = copy_layer(&scratch.path);
         let file = scratch.path.join("sample.txt");
         fs::write(&file, "one\ntwo\n").expect("a fixture");
 
+        // No language server for a `.txt`, so `gr` has nothing to ask —
+        // which is the case that could most easily read as *unbound*.
         let editor = Editor::open(&file, &scratch.state(), &runtime);
         let before = editor.mark();
         editor.press(b"gr");
         let frame = editor.since(before);
-        assert!(
-            shows(&frame, "not built yet — T047 builds it"),
-            "gr names the task that builds the surface a list of places is drawn in; \
-             frame was: {frame}"
-        );
         assert!(
             !frame.contains("unknown key"),
             "gr is bound, so it is not an unknown key and does not spend the session's \

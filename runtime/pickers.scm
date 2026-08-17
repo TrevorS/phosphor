@@ -91,3 +91,112 @@
 (define-picker-source!
   "files"
   "(lambda (args) (view/spans (picker/files-rows)))")
+
+;; ---------------------------------------------------------------------------
+;; grep — screen 8a
+;; ---------------------------------------------------------------------------
+;;
+;; 8a's caption: "same picker anatomy as unseen/files/inbox · results know who
+;; touched them". a row is `path:line`, then the unseen dot if the store knows
+;; that line, then the line's text — which is exactly what the mockup draws:
+;;
+;;   ▸ src/retry.rs:9   ●  pub max_delay: Duration,
+;;
+;; **the open buffer, not the workspace**, and it is the same limit `files`
+;; states for the same reason: no capability searches files on disk. what this
+;; can read is `buffer-lines`, so grep is a fuzzy search over what is open. the
+;; matching itself is nucleo's — a source hands over every line and the filter
+;; narrows it, which is why this does no matching of its own and why typing in
+;; the picker is grep's own prompt.
+
+;; the lines the store has an unseen region on, as a set keyed by `path:line`.
+;; built once per open rather than per row: `8a`'s dot is a *store* fact and
+;; asking per line would be a query per row.
+(define (picker/unseen-lines)
+  (let ([marked (hash)])
+    (for-each
+     (lambda (region)
+       (let* ([path (hash-ref region "path")]
+              [span (hash-ref region "span")]
+              [from (hash-ref (hash-ref span "start") "line")]
+              [to (hash-ref (hash-ref span "end") "line")])
+         (let walk ([line from])
+           (when (<= line to)
+             (set! marked (hash-insert marked
+                                       (string-append path ":" (number->string line))
+                                       #true))
+             (walk (+ line 1))))))
+     (unseen-regions))
+    marked))
+
+(define (picker/grep-rows args)
+  ;; the path is handed *down* in `args` rather than queried: a source runs
+  ;; inside the VM and a query from there cannot reach the editor
+  ;; (OPEN-QUESTIONS §42). that is the same shape `Scope` uses for the cursor —
+  ;; the host resolves what only the host can, and passes coordinates.
+  (let* ([path (hash-ref args "path")]
+         ;; handed down too, and for the same reason: `buffer-lines` answers on
+         ;; the keystroke side only (T026) and a source runs inside the VM.
+         [lines (hash-ref args "lines")]
+         [marked (picker/unseen-lines)])
+    (if (not path)
+        '()
+        (let walk ([rest lines] [n 1] [rows '()])
+          (if (null? rest)
+              (reverse rows)
+              (let* ([at (string-append path ":" (number->string n))]
+                     [seen? (hash-contains? marked at)])
+                (walk (cdr rest)
+                      (+ n 1)
+                      (cons (picker/row
+                             (picker/run at 'text)
+                             (picker/run "  " 'meta)
+                             ;; §2: one cell, one concept. `●` is the unseen
+                             ;; marker the gutter draws, and a space keeps the
+                             ;; text column aligned when there is nothing to
+                             ;; say.
+                             (picker/run (if seen? "●" " ") 'claude)
+                             (picker/run "  " 'meta)
+                             (picker/run (car rest) 'text))
+                            rows))))))))
+
+(define-picker-source!
+  "grep"
+  "(lambda (args) (view/spans (picker/grep-rows args)))")
+
+;; ---------------------------------------------------------------------------
+;; references — `gr`, filled by the language server
+;; ---------------------------------------------------------------------------
+;;
+;; `gr` is bound to `request-references`, the server answers a list of places,
+;; and this draws them. the places arrive in `args` for the reason the buffer's
+;; lines do: **nothing in the vocabulary carries a list of places**, which is
+;; the sentence that put `request-references` on T047 in the first place.
+;;
+;; a row is `path:line` and the file's name, which is what `↵` needs — accept
+;; reads the row's own first token, so what you see is what opens.
+(define (picker/place-row place)
+  (let* ([path (hash-ref place "path")]
+         [span (hash-ref place "span")]
+         [line (if span (hash-ref (hash-ref span "start") "line") 1)])
+    (picker/row
+     (picker/run (string-append path ":" (number->string line)) 'text)
+     (picker/run "  " 'meta)
+     (picker/run "reference" 'steel))))
+
+(define-picker-source!
+  "references"
+  "(lambda (args) (view/spans (map picker/place-row (hash-ref args \"places\"))))")
+
+;; ---------------------------------------------------------------------------
+;; the order tab cycles — 8a's "one float, one grammar"
+;; ---------------------------------------------------------------------------
+;;
+;; **the layer owns this list and rust reads it**, which is what makes a user's
+;; fourth source reachable by tab without a rebuild — the same argument
+;; `phosphor/boot-files` settles for the load order.
+;;
+;; `symbols` is absent and that is a gap rather than a choice: the vocabulary's
+;; LSP `Question` has `Definition` and `References` and no `DocumentSymbol`, so
+;; there is nothing to ask. adding it is a capability change; T047 records it.
+(define phosphor/picker-sources '("grep" "files" "unseen"))

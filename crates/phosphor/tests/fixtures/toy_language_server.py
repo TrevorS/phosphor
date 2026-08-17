@@ -112,6 +112,8 @@ CAPABILITIES = {
     "hoverProvider": True,
     "signatureHelpProvider": {"triggerCharacters": ["("]},
     "definitionProvider": True,
+    # `T047` — `gr`. Announced so the client asks; the handler is below.
+    "referencesProvider": True,
 }
 
 # `7c`, verbatim: three labels, a meta detail column, and one row of prose —
@@ -282,6 +284,43 @@ def main():
                         "end": {"line": 1, "character": 0},
                     },
                 },
+            )
+        elif method == "textDocument/references":
+            # `T047`. **Three places, in two files**, because that is what
+            # separates a working references picker from a working *definition*
+            # jump: one place could be drawn by opening it, and the whole point
+            # of `8a` is that a list needs a surface. Two of them are in the
+            # document itself and one is in a sibling, so a row that named the
+            # wrong file would be visible.
+            uri = message["params"]["textDocument"]["uri"]
+            sibling = uri.rsplit("/", 1)[0] + "/target.toy"
+            reply(
+                request_id,
+                []
+                if MODE == "references-none"
+                else [
+                    {
+                        "uri": uri,
+                        "range": {
+                            "start": {"line": 0, "character": 0},
+                            "end": {"line": 0, "character": 3},
+                        },
+                    },
+                    {
+                        "uri": uri,
+                        "range": {
+                            "start": {"line": 2, "character": 4},
+                            "end": {"line": 2, "character": 7},
+                        },
+                    },
+                    {
+                        "uri": sibling,
+                        "range": {
+                            "start": {"line": 1, "character": 0},
+                            "end": {"line": 1, "character": 3},
+                        },
+                    },
+                ],
             )
         elif method == "textDocument/completion":
             record(method)
