@@ -407,6 +407,29 @@ impl Shared {
             .next()
     }
 
+    /// The span of the lowest-id **unseen** region covering a position
+    /// (`T049`).
+    ///
+    /// `viu`'s answer. Lowest id for [`Shared::covering`]'s reason — the answer
+    /// must not depend on iteration order — and unseen only because `viu` is
+    /// *"select the unseen region"*: a noun that also caught regions you had
+    /// read would make `s` over it a no-op that looked like a bug.
+    pub(crate) fn unseen_covering(
+        &self,
+        path: &Path,
+        at: phosphor_core::request::Position,
+    ) -> Option<Span> {
+        let key = key_for(path);
+        self.lock()
+            .regions()
+            .in_scope(&Scope::Span {
+                path: key,
+                span: Span { start: at, end: at },
+            })
+            .find(|region| region.state.unseen())
+            .map(|region| region.span)
+    }
+
     /// One file's regions as spans, for the gutter.
     ///
     /// Answers `(span, seen)` pairs rather than the ui's own `RegionState`,

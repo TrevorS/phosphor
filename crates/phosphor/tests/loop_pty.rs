@@ -1460,14 +1460,22 @@ mod driven {
         );
 
         // `n` walks the search matches, and walking a sequence is
-        // `goto-sequence` — declared at `T049` and not applied, so the refusal
-        // is derived from that row rather than written anywhere.
+        // `goto-sequence`.
+        //
+        // **The task it names moved from `T049` to `T058`, and that is the
+        // refusal getting more precise rather than the rule bending.** While
+        // the whole verb was unapplied the answer came off its capability row —
+        // *"`T049` builds it"* — which was true and unhelpful: `T049` built the
+        // verb, and `n` was still not going to work, because what `n` needs is
+        // a *search* to have left matches behind. `goto-sequence` now answers
+        // per sequence, so `]u` walks regions and `n` names `T058`, which is
+        // the task that would actually make it move.
         let after = editor.mark();
         editor.press(b"n");
         let frame = editor.since(after);
         assert!(
-            shows(&frame, "not built yet — T049 builds it"),
-            "the task comes off the capability's own row; frame was: {frame}"
+            shows(&frame, "not built yet — T058 builds it"),
+            "the task comes off the *sequence*, not the verb; frame was: {frame}"
         );
         editor.quit();
     }
@@ -1779,6 +1787,75 @@ mod driven {
         assert!(
             shows(&filled, "2 unseen"),
             "the diagram is a query, not a drawing; frame was: {filled}"
+        );
+    }
+
+    /// **`T049`: `viu` selects an unseen region.**
+    ///
+    /// `6d`'s agent nouns *"parse here and resolve at `T049`"* — the keymap's
+    /// own words, written when `viu` selected nothing. It selects now, over the
+    /// same store the gutter draws from, so the noun and the marker cannot
+    /// disagree.
+    ///
+    /// **Read off the file, not the frame.** A selection is a highlight and a
+    /// highlight is hard to assert on; what is unambiguous is what an operator
+    /// over it *does*. So this deletes the object — `diu` — and reads what is
+    /// left, which is three lines only if the noun covered exactly the region.
+    #[test]
+    fn viu_selects_the_unseen_region_under_the_cursor() {
+        let scratch = Scratch::new("agent-nouns");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        // **Lines 2 and 3, not 2 through 4.** The declaration is
+        // `[2:1, 4:1)` and a span is half-open (`store::region::overlaps` —
+        // *"touching is not overlapping"*), so line 4 column 1 is the first
+        // position *after* the region. Asserting `one\nfive\n` here is what a
+        // first draft did, and the span convention is the answer rather than
+        // the bug.
+        editor.press_until(declare(&file, &[(2, 4)]).as_bytes(), "landed=1");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // Cursor onto line 3, inside the region, then delete the noun.
+        editor.press_quietly(b"jj");
+        editor.press_quietly(b"diu");
+        editor.press_until(b":w\r", "sample.txt");
+        editor.quit();
+
+        let after = fs::read_to_string(&file).expect("written");
+        assert_eq!(
+            after, "one\nfour\nfive\n",
+            "`diu` took the region's lines and nothing else — linewise, 2 and 3",
+        );
+    }
+
+    /// The three nouns whose stores do not exist select nothing, rather than
+    /// selecting something wrong (`T049`).
+    ///
+    /// `6d` draws four. `T063` builds hunks, `T068` threads and `T053` review
+    /// blocks; until then `dih` has to be a no-op, and a no-op that quietly
+    /// deleted a paragraph would be far worse than an unbound key.
+    #[test]
+    fn the_nouns_without_a_store_select_nothing() {
+        let scratch = Scratch::new("agent-nouns-unbuilt");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_quietly(b"dih");
+        editor.press_quietly(b"dit");
+        editor.press_quietly(b"dib");
+        editor.press_until(b":w\r", "sample.txt");
+        editor.quit();
+
+        let after = fs::read_to_string(&file).expect("written");
+        assert_eq!(
+            after, "one\ntwo\nthree\n",
+            "none of the three took anything"
         );
     }
 

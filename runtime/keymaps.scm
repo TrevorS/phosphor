@@ -522,8 +522,14 @@
 (keymap-set-rows! phosphor/motion-scopes phosphor/operators)
 
 ;; the text objects, named after `i` or `a`. the last four are 6d's agent
-;; nouns: they parse here and resolve at T049, so `viu` selects nothing yet and
-;; errors at nothing either (T028).
+;; nouns.
+;;
+;; **`u` resolves** (T049): `viu` selects the unseen region under the cursor,
+;; linewise, over the same store the gutter draws from — so the noun and the
+;; marker cannot disagree. the other three still select nothing, because their
+;; stores do not exist: hunks are T063, threads T068, review blocks T053. they
+;; parse and answer nothing rather than guessing, which is what makes `dih` a
+;; no-op instead of a delete of the wrong thing.
 (keymap-set-rows!
  '("object")
  (list

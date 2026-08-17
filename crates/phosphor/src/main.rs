@@ -167,8 +167,8 @@ use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
     AcceptHow, Actor, AnchorId, Binding, CharRange as SignatureRange, Completion as WireCompletion,
     EditMode, FoldState, KeySeq, LanguageId, Position, PromptKind, RegionFilter, RegionId,
-    RegisterName, Seek, SelectionKind, Signature as WireSignature, SourceId, Span, Target,
-    TextObject,
+    RegisterName, Seek, SelectionKind, Sequence, Signature as WireSignature, SourceId, Span,
+    Target, TextObject,
 };
 // `Scope` is already the input table's (`keymaps.scm`'s normal/insert/visual),
 // and a second one under the same name in a 9,000-line file is a trap rather
@@ -3850,6 +3850,41 @@ fn referencing(post: &Post, slot: &References) -> phosphor_buffer::lsp::Location
 /// drifts silently is the Rust one. `runtime/arch.scm` registers it.
 const ARCH_SURFACE: &str = "arch";
 
+/// The start line of a region record, if it names `path` (`T049`).
+///
+/// Reads the record the `regions` query already answers rather than reaching
+/// into the store a second way — so what `]u` walks and what a door reads
+/// cannot diverge.
+fn region_line(value: &Value, path: &Path) -> Option<u32> {
+    let Value::Record(fields) = value else {
+        return None;
+    };
+    let Some(Value::Text(named)) = field(fields, "path") else {
+        return None;
+    };
+    if Path::new(named.as_str()) != path {
+        return None;
+    }
+    let Some(Value::Record(span)) = field(fields, "span") else {
+        return None;
+    };
+    let Some(Value::Record(start)) = field(span, "start") else {
+        return None;
+    };
+    match field(start, "line") {
+        Some(Value::Int(n)) => u32::try_from(*n).ok(),
+        _ => None,
+    }
+}
+
+/// One field of a record, by name.
+fn field<'a>(fields: &'a Args, name: &str) -> Option<&'a Value> {
+    fields
+        .iter()
+        .find(|(key, _)| *key == name)
+        .map(|(_, value)| value)
+}
+
 /// A count as the wire's integer, saturating rather than wrapping.
 fn count(n: usize) -> Value {
     Value::Int(i64::try_from(n).unwrap_or(i64::MAX))
@@ -5032,6 +5067,10 @@ impl Editing {
         EditorText {
             editor: &self.editor,
             height: self.area.height,
+            regions: self
+                .file
+                .as_deref()
+                .map(|path| (&*self.store, store::key_for(path))),
         }
     }
 
@@ -5574,6 +5613,16 @@ impl Editing {
                 exact,
             }) => self.goto_anchor(*anchor, label.as_deref(), *exact),
             Action::Motion(MotionAction::Jump { seek }) => self.jump(*seek),
+            // `T049` — `]u` / `[u` and `SPC u n`. The other seven sequences
+            // decline by naming what builds them, which is the same rule the
+            // agent nouns follow one layer down: a sequence with no store is a
+            // no-op, and a no-op that moved the cursor somewhere plausible
+            // would be worse than one that says nothing happened.
+            Action::Motion(MotionAction::GotoSequence {
+                sequence,
+                seek,
+                filter,
+            }) => self.goto_sequence(*sequence, *seek, filter.as_ref()),
             // `T048` — the float verbs, from a *key*. `T093` applied these on
             // the door side; `:arch` is the first keystroke that opens a
             // registered surface, and an ex command's Actions come through
@@ -6155,6 +6204,92 @@ impl Editing {
             }
         }
         snapshot
+    }
+
+    /// **`goto-sequence`.** Walks a sequence of store rows (`T049`).
+    ///
+    /// Only [`Sequence::UnseenRegion`] has a store to walk. The other seven
+    /// name what builds them rather than doing nothing quietly — `]!` needs
+    /// `T060`'s ask queue, `]]` needs `T053`'s review blocks, and so on. That
+    /// is `T098`'s rule reaching a motion: a bound key that cannot act says
+    /// which task will let it.
+    ///
+    /// **Wraps**, because `]u` is *"the next one"* and a list you can fall off
+    /// the end of makes the last region a dead end — vim's own `n` wraps for
+    /// the same reason.
+    fn goto_sequence(
+        &mut self,
+        sequence: Sequence,
+        seek: Seek,
+        filter: Option<&RegionFilter>,
+    ) -> Outcome {
+        let task = match sequence {
+            Sequence::UnseenRegion => None,
+            Sequence::Hunk => Some("T063"),
+            Sequence::BlockFile => Some("T053"),
+            Sequence::Diagnostic => Some("T085"),
+            Sequence::Thread => Some("T068"),
+            Sequence::Ask => Some("T060"),
+            Sequence::SearchMatch => Some("T058"),
+            // A jumplist entry is an anchor and `jump` already walks them, so
+            // this arm would be a second spelling of one behaviour.
+            Sequence::Jump => return self.jump(seek),
+        };
+        if let Some(task) = task {
+            return Outcome::Refused(Refusal::NotYetImplemented { task });
+        }
+        let Some(path) = self.file.clone() else {
+            return declined("no file open");
+        };
+        // The filter is honoured where it can be: an author narrows the set,
+        // and §7 says only claude's writes make regions, so `you` is an empty
+        // set rather than an error.
+        let key = store::key_for(&path);
+        let lens = Lens {
+            author: filter.and_then(|filter| filter.author),
+            unseen_only: true,
+            // Narrowed to this file in the *lens* rather than by filtering the
+            // answers, so the store does the work it is built for.
+            within: RegionScope::File(key.clone()),
+        };
+        let mut lines: Vec<u32> = self
+            .store
+            .answer_regions(&lens)
+            .iter()
+            .filter_map(|value| region_line(value, &key))
+            .collect();
+        lines.sort_unstable();
+        lines.dedup();
+        if lines.is_empty() {
+            return declined("nothing unseen in this file");
+        }
+        let here = self.text().cursor().line;
+        let to = match seek {
+            Seek::First => lines[0],
+            Seek::Last => lines[lines.len() - 1],
+            Seek::Next => lines
+                .iter()
+                .copied()
+                .find(|line| *line > here)
+                .unwrap_or(lines[0]),
+            Seek::Prev => lines
+                .iter()
+                .copied()
+                .rev()
+                .find(|line| *line < here)
+                .unwrap_or(lines[lines.len() - 1]),
+        };
+        self.push_jump();
+        let offset = self
+            .editor
+            .code_ref()
+            .offset(usize::try_from(to.saturating_sub(1)).unwrap_or(0), 0);
+        self.editor.set_cursor(offset);
+        Outcome::Done(Receipt {
+            capability: "goto-sequence",
+            value: Value::Int(i64::from(to)),
+            note: None,
+        })
     }
 
     /// **`picker-accept`.** Opens the highlighted row's place (`T047`).
@@ -7100,6 +7235,13 @@ impl Editing {
 struct EditorText<'a> {
     editor: &'a Editor,
     height: u16,
+    /// The store and the file it is being read for (`T049`).
+    ///
+    /// Both, because a region is *"a path and a span"* and a store with no path
+    /// to key on cannot answer *"the region under the cursor"*. [`None`] for a
+    /// buffer with no file, which is the honest answer: a scratch buffer has no
+    /// path a declaration could have named.
+    regions: Option<(&'a store::Shared, PathBuf)>,
 }
 
 impl std::fmt::Debug for EditorText<'_> {
@@ -7112,6 +7254,22 @@ impl std::fmt::Debug for EditorText<'_> {
 }
 
 impl Text for EditorText<'_> {
+    /// `T049` — `viu`, over the same store the gutter draws from.
+    ///
+    /// The **lowest-id** region when more than one covers the cursor, which is
+    /// `store::Shared::covering`'s rule and is here for its reason: the answer
+    /// must not depend on how a set happened to be iterated, and the lowest id
+    /// is the one a surface has been showing longest.
+    ///
+    /// Seen regions are excluded. `viu` is *"select the **unseen** region"* —
+    /// `6d` draws it in the unseen list — and a noun that also selected regions
+    /// you had already read would make `s` over it a no-op that looked like a
+    /// bug.
+    fn unseen_at(&self, at: Position) -> Option<Span> {
+        let (store, path) = self.regions.as_ref()?;
+        store.unseen_covering(path, at)
+    }
+
     fn lines(&self) -> u32 {
         u32::try_from(self.editor.code_ref().len_lines())
             .unwrap_or(1)

@@ -67,6 +67,29 @@ pub trait Text {
             height: self.lines(),
         }
     }
+
+    /// The unseen region covering a position, if the store holds one
+    /// (`T049`).
+    ///
+    /// **The seam `6d`'s agent nouns were waiting for**, and it is here rather
+    /// than as a parameter on [`object_span`] because this trait is already
+    /// *"what the machine may ask about the buffer"* — the machine holds one of
+    /// these and nothing else. A parameter would have to be threaded through
+    /// every caller including three test helpers, to carry a fact only one
+    /// object reads.
+    ///
+    /// Defaults to [`None`], which is what a headless driver answers and what
+    /// `viu` then degrades to: selecting nothing rather than selecting wrongly.
+    /// The binary's implementation reads the same store the gutter draws from,
+    /// so the noun and the marker cannot disagree.
+    ///
+    /// **Only the unseen region, of `6d`'s four.** A hunk needs `T063`, a
+    /// thread `T068` and a review block `T053` — none of those stores exists,
+    /// so their objects still answer `None` and say which task builds them.
+    fn unseen_at(&self, at: Position) -> Option<Span> {
+        let _ = at;
+        None
+    }
 }
 
 /// What is on screen, in buffer lines.
@@ -726,15 +749,23 @@ pub fn object_span(
         TextObject::Sentence => sentence_object(text, at_position, inner),
         TextObject::Paragraph => paragraph_object(text, at_position, inner),
         TextObject::Delimited => delimited_object(text, at_position, inner, delimiter?),
-        // `T028` binds these; `T049` resolves them. A markup tag needs the
-        // grammar (`T037`); the other four need a *neighbour* that can answer a
-        // region query — the store itself landed at `T041` and this file still
-        // has no way to reach one, which is the module header's point.
-        TextObject::Tag
-        | TextObject::UnseenRegion
-        | TextObject::Hunk
-        | TextObject::Thread
-        | TextObject::Block => None,
+        // `T049`. `viu` — *"select the unseen region under the cursor"* —
+        // through [`Text::unseen_at`], which is the seam this file was missing
+        // when it said so. Linewise, because a region is a span of *rows* and
+        // §7 tints whole rows: a characterwise selection of one would put the
+        // cursor mid-line and leave the rest of the row out of the operator.
+        //
+        // `inner` and `around` are the same span. A region has no delimiters to
+        // be inside or outside of, and inventing a one-row margin for `vau`
+        // would be a second meaning nobody asked for.
+        TextObject::UnseenRegion => text
+            .unseen_at(at_position)
+            .map(|span| (span, SelectionKind::Line)),
+        // A markup tag needs the grammar (`T037`); the other three need a store
+        // that does not exist yet — hunks are `T063`, threads `T068`, review
+        // blocks `T053`. They stay `None` rather than guessing, which is what
+        // makes `vih` select nothing instead of selecting something wrong.
+        TextObject::Tag | TextObject::Hunk | TextObject::Thread | TextObject::Block => None,
     }
 }
 

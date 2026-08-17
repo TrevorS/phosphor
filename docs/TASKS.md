@@ -2150,7 +2150,7 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   *actual* store rather than a static drawing, and it adds zero lines to `phosphor-ui`.
   *Needs:* T041, T080, T084
 
-- [ ] **T049 · Agent nouns resolve**
+- [x] **T049 · Agent nouns resolve**
   `viu` / `sib` / `dih` now bind to real regions (completes T028, per Q8).
   *Done when:* screen `6d`'s nouns are functional, and `viu` selects an unseen region.
   *Needs:* T028, T041
