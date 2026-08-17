@@ -113,6 +113,20 @@ pub struct Region {
     /// unseen again looks exactly like one that was never seen — and this is
     /// how a surface tells the two apart.
     pub revisions: u32,
+    /// How to find this region again after a rewrite (`T043`).
+    ///
+    /// **Optional, and absent is the honest state rather than a hole.** A
+    /// declaration carries a path and a span and nothing else — `RegionSpec` is
+    /// a wire type and a fingerprint needs the file's *text*, which the store
+    /// does not have. So [`Regions::declare`] creates regions positionally, as
+    /// it always did, and the host fills this in through
+    /// [`Regions::fingerprint_in`] once, from the same [`Snapshot`] it would
+    /// hand to a reanchor. A region declared by a door for a file nobody has
+    /// open keeps `None` and simply does not move — which is correct, because
+    /// nothing has told the store what that file looks like.
+    ///
+    /// [`Snapshot`]: super::anchor::Snapshot
+    pub fingerprint: Option<super::anchor::Fingerprint>,
 }
 
 impl Region {
@@ -301,6 +315,9 @@ impl Regions {
                         declared_by: asked_by,
                         state: SeenState::Unseen,
                         revisions: 0,
+                        // Positional until the host says otherwise. See the
+                        // field's own note: a declaration carries no text.
+                        fingerprint: None,
                     },
                 );
                 declared.created.push(id);
@@ -323,10 +340,117 @@ impl Regions {
                 region.declared_by = asked_by;
                 region.state = SeenState::Unseen;
                 region.revisions = region.revisions.saturating_add(1);
+                // The span moved, so the fingerprint describes a line this
+                // region no longer starts at. Dropped rather than kept: a
+                // stale fingerprint would reanchor the region to wherever its
+                // *old* first line went, which is a wrong answer arrived at
+                // confidently. The host refills it on the next pass.
+                region.fingerprint = None;
             }
             declared.revised.push(keep);
         }
         declared
+    }
+
+    /// Give every region in a file a fingerprint, from the text it currently
+    /// covers (`T043`).
+    ///
+    /// **This is what makes an unseen marker survive an edit**, and it is the
+    /// second half of invariant 4: the first half is that a marker is a store
+    /// row rather than a language feature, and this is that row learning to
+    /// find itself again *without* a grammar. A `.env`, a `Makefile` and an
+    /// extensionless script all get it, because [`resolve`]'s floor is the
+    /// line's own text.
+    ///
+    /// Only fills what is missing. A region already carrying a fingerprint has
+    /// one taken when its span was current, and recomputing it here — after a
+    /// rewrite the host has not reanchored through yet — would replace a good
+    /// description of the location with a description of whatever now sits at
+    /// the old line number.
+    ///
+    /// Answers how many it filled.
+    ///
+    /// [`resolve`]: super::anchor::resolve
+    pub fn fingerprint_in(&mut self, path: &Path, snapshot: &super::anchor::Snapshot) -> usize {
+        let ids: Vec<RegionId> = self
+            .by_id
+            .values()
+            .filter(|region| region.path == path && region.fingerprint.is_none())
+            .map(|region| region.id)
+            .collect();
+        let mut filled = 0;
+        for id in ids {
+            let Some(region) = self.by_id.get_mut(&id) else {
+                continue;
+            };
+            let line = region.span.start.line;
+            let index = usize::try_from(line.saturating_sub(1)).unwrap_or(0);
+            let Some(row) = snapshot.lines.get(index) else {
+                // The region starts past the end of the file it claims. Left
+                // unfingerprinted rather than given an empty one: an empty
+                // fingerprint matches nothing and would make the region
+                // permanently lost, where `None` leaves it exactly as
+                // positional as it is today.
+                continue;
+            };
+            region.fingerprint = Some(super::anchor::Fingerprint::new(
+                row.syntax.clone(),
+                &row.text,
+                line,
+            ));
+            filled += 1;
+        }
+        filled
+    }
+
+    /// Move every fingerprinted region in a file to where its text is now
+    /// (`T042`, `T043`).
+    ///
+    /// The regions' half of a reanchor, and it runs the *same* ladder anchors
+    /// do — [`resolve`], one function, so *"node tier, then line, then lost"*
+    /// cannot mean two different things for the two row types.
+    ///
+    /// **A region keeps its height.** Only the start moves; the span is shifted
+    /// by the same delta rather than recomputed, because the ladder resolves a
+    /// *line* and a region's extent is a property of the declaration, not of
+    /// the text. A region whose start is lost is left exactly where it was, for
+    /// the reason [`super::anchor::Anchors::reanchor`] gives.
+    ///
+    /// Answers how many moved.
+    ///
+    /// [`resolve`]: super::anchor::resolve
+    pub fn reanchor_in(&mut self, path: &Path, snapshot: &super::anchor::Snapshot) -> usize {
+        let ids: Vec<RegionId> = self
+            .by_id
+            .values()
+            .filter(|region| region.path == path && region.fingerprint.is_some())
+            .map(|region| region.id)
+            .collect();
+        let mut moved = 0;
+        for id in ids {
+            let Some(region) = self.by_id.get_mut(&id) else {
+                continue;
+            };
+            let Some(fingerprint) = region.fingerprint.as_ref() else {
+                continue;
+            };
+            let Some((found, _)) = super::anchor::resolve(fingerprint, snapshot) else {
+                continue;
+            };
+            let was = region.span.start.line;
+            let now = found.start.line;
+            if was == now {
+                continue;
+            }
+            let height = region.span.end.line.saturating_sub(was);
+            region.span.start.line = now;
+            region.span.end.line = now.saturating_add(height);
+            if let Some(fingerprint) = region.fingerprint.as_mut() {
+                fingerprint.line = now;
+            }
+            moved += 1;
+        }
+        moved
     }
 
     /// **The arms of `mark-seen` and `mark-unseen`.** Answers how many regions
@@ -860,18 +984,8 @@ mod tests {
             },
             SeenState::Seen,
         );
-        assert_eq!(
-            regions
-                .unseen_in(std::path::Path::new("src/retry.rs"))
-                .count(),
-            2
-        );
-        assert_eq!(
-            regions
-                .unseen_in(std::path::Path::new("src/fetch.rs"))
-                .count(),
-            3
-        );
+        assert_eq!(regions.unseen_in(Path::new("src/retry.rs")).count(), 2);
+        assert_eq!(regions.unseen_in(Path::new("src/fetch.rs")).count(), 3);
     }
 
     // -----------------------------------------------------------------------
@@ -887,7 +1001,7 @@ mod tests {
         assert!(
             regions
                 .all()
-                .all(|region| region.path == std::path::Path::new("src/retry.rs"))
+                .all(|region| region.path == Path::new("src/retry.rs"))
         );
     }
 
@@ -1004,5 +1118,147 @@ mod tests {
         regions.declare(&[claude("a.rs", (1, 1), (2, 1))], Actor::Claude);
         let held: Region = regions.all().next().expect("one region").clone();
         assert_eq!(regions.get(held.id), Some(&held));
+    }
+
+    // -- `T043` — markers that survive a rewrite, with no grammar ------------
+
+    use super::super::anchor::Snapshot;
+    use std::path::Path;
+
+    /// The `.env`-shaped case: no extension, no grammar, and the marker still
+    /// has to work. `Snapshot::of` leaves every line's syntax empty, which is
+    /// exactly what a file with no grammar produces.
+    #[test]
+    fn a_marker_on_a_grammar_free_file_follows_its_line() {
+        let mut regions = Regions::new();
+        regions.declare(&[claude("deploy", (2, 1), (2, 1))], Actor::Claude);
+
+        let before = Snapshot::of("#!/bin/sh\nrun_the_thing --now\nexit 0\n");
+        assert_eq!(
+            regions.fingerprint_in(Path::new("deploy"), &before),
+            1,
+            "the region learns what line 2 says",
+        );
+
+        // Two lines inserted above it.
+        let after = Snapshot::of("#!/bin/sh\nset -e\nset -u\nrun_the_thing --now\nexit 0\n");
+        assert_eq!(regions.reanchor_in(Path::new("deploy"), &after), 1);
+
+        let region = regions.all().next().expect("one region");
+        assert_eq!(
+            region.span.start.line, 4,
+            "the marker moved with its line, on a file with no grammar at all",
+        );
+    }
+
+    /// A region is a *span*, and its height is a property of the declaration
+    /// rather than of the text — so only the start resolves and the extent
+    /// rides along.
+    #[test]
+    fn a_multi_line_region_keeps_its_height() {
+        let mut regions = Regions::new();
+        regions.declare(&[claude("notes.txt", (2, 1), (5, 1))], Actor::Claude);
+        let before = Snapshot::of("a\nb\nc\nd\ne\nf\n");
+        regions.fingerprint_in(Path::new("notes.txt"), &before);
+
+        let after = Snapshot::of("x\ny\nz\na\nb\nc\nd\ne\nf\n");
+        regions.reanchor_in(Path::new("notes.txt"), &after);
+
+        let region = regions.all().next().expect("one region");
+        assert_eq!(region.span.start.line, 5);
+        assert_eq!(region.span.end.line, 8, "still three lines tall");
+    }
+
+    /// A region whose line is gone stays exactly where it was. Same rule
+    /// anchors follow, and for the same reason: a marker that moved somewhere
+    /// plausible would be a lie a person acts on.
+    #[test]
+    fn a_region_whose_line_vanished_does_not_move() {
+        let mut regions = Regions::new();
+        regions.declare(&[claude("a.txt", (2, 1), (2, 1))], Actor::Claude);
+        let before = Snapshot::of("one\ntwo\nthree\n");
+        regions.fingerprint_in(Path::new("a.txt"), &before);
+
+        let after = Snapshot::of("one\nthree\n");
+        assert_eq!(regions.reanchor_in(Path::new("a.txt"), &after), 0);
+
+        let region = regions.all().next().expect("one region");
+        assert_eq!(region.span.start.line, 2, "stale, and not silently moved");
+    }
+
+    /// Fingerprinting is fill-only. Recomputing an existing one *after* a
+    /// rewrite would replace a good description of the location with a
+    /// description of whatever now sits at the old line number.
+    #[test]
+    fn fingerprinting_never_overwrites_one_that_is_already_there() {
+        let mut regions = Regions::new();
+        regions.declare(&[claude("a.txt", (1, 1), (1, 1))], Actor::Claude);
+        let before = Snapshot::of("original\n");
+        assert_eq!(regions.fingerprint_in(Path::new("a.txt"), &before), 1);
+
+        let rewritten = Snapshot::of("something else entirely\n");
+        assert_eq!(
+            regions.fingerprint_in(Path::new("a.txt"), &rewritten),
+            0,
+            "already fingerprinted, so nothing is refilled",
+        );
+
+        // And the original description is what still resolves.
+        let moved = Snapshot::of("a new first line\noriginal\n");
+        assert_eq!(regions.reanchor_in(Path::new("a.txt"), &moved), 1);
+        assert_eq!(
+            regions.all().next().expect("one").span.start.line,
+            2,
+            "found `original`, not whatever replaced it",
+        );
+    }
+
+    /// A revision moves the span, so the fingerprint it had describes a line it
+    /// no longer starts at. Dropped rather than kept.
+    #[test]
+    fn revising_a_region_drops_its_stale_fingerprint() {
+        let mut regions = Regions::new();
+        regions.declare(&[claude("a.txt", (1, 1), (1, 1))], Actor::Claude);
+        regions.fingerprint_in(Path::new("a.txt"), &Snapshot::of("one\ntwo\nthree\n"));
+        assert!(regions.all().next().expect("one").fingerprint.is_some());
+
+        // A second declaration overlapping it — §7's revise.
+        regions.declare(&[claude("a.txt", (1, 1), (3, 1))], Actor::Claude);
+        assert!(
+            regions.all().next().expect("one").fingerprint.is_none(),
+            "the span moved, so the description of its old first line went",
+        );
+    }
+
+    /// A region for a file nobody has described keeps `None` and stays exactly
+    /// as positional as it was — which is the pre-`T043` behaviour, preserved
+    /// rather than degraded.
+    #[test]
+    fn an_undescribed_file_leaves_its_regions_positional() {
+        let mut regions = Regions::new();
+        regions.declare(&[claude("never-opened.rs", (7, 1), (7, 1))], Actor::Claude);
+
+        assert_eq!(
+            regions.reanchor_in(Path::new("never-opened.rs"), &Snapshot::of("x\n")),
+            0
+        );
+        let region = regions.all().next().expect("one region");
+        assert!(region.fingerprint.is_none());
+        assert_eq!(region.span.start.line, 7);
+    }
+
+    /// A region starting past the end of the file it claims is left
+    /// unfingerprinted, not given an empty one — an empty fingerprint matches
+    /// nothing and would make the region permanently lost.
+    #[test]
+    fn a_region_past_the_end_is_not_given_an_empty_fingerprint() {
+        let mut regions = Regions::new();
+        regions.declare(&[claude("short.txt", (99, 1), (99, 1))], Actor::Claude);
+
+        assert_eq!(
+            regions.fingerprint_in(Path::new("short.txt"), &Snapshot::of("one\n")),
+            0
+        );
+        assert!(regions.all().next().expect("one").fingerprint.is_none());
     }
 }

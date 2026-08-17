@@ -1587,6 +1587,57 @@ mod driven {
         );
     }
 
+    /// **`T043`'s criterion: markers work correctly on an extensionless file
+    /// with no grammar.**
+    ///
+    /// The file is called `deploy`, has no extension, and nothing in the
+    /// bundled ten parses it — so the node tier never applies and the line tier
+    /// is the *only* thing holding the marker on. That is the task's whole
+    /// argument: *"the floor, not a degraded extra"*, and it is what makes an
+    /// unseen marker a store feature rather than a language feature
+    /// (invariant 4).
+    ///
+    /// The proof is that the region's span **moves** when text is inserted
+    /// above it. A positional region — what the store did before this task —
+    /// would still claim line 2 while the code it described sat on line 4.
+    #[test]
+    fn a_marker_on_a_grammar_free_file_survives_the_edit_that_moves_it() {
+        let scratch = Scratch::new("no-grammar-marker");
+        let runtime = copy_layer(&scratch.path);
+        // No extension, and `run_the_thing --now` is the line the marker is on.
+        let file = scratch.path.join("deploy");
+        fs::write(&file, "#!/bin/sh\nrun_the_thing --now\nexit 0\n").expect("a fixture");
+
+        let line_of = "(string-append \"line=\" (number->string (hash-ref (hash-ref (hash-ref \
+             (car (regions)) \"span\") \"start\") \"line\")))\r";
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(declare(&file, &[(2, 2)]).as_bytes(), "landed=1");
+        editor.press_until(line_of.as_bytes(), "line=2");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // Two lines inserted above it, by duplicating the shebang twice.
+        editor.press_quietly(b"gg");
+        editor.press_quietly(b"yy");
+        editor.press_quietly(b"P");
+        editor.press_quietly(b"P");
+        // `reanchor` reads the file, so the buffer has to be on disk first.
+        editor.press_until(b":w\r", "deploy");
+
+        editor.press_until(b":repl\r", "steel");
+        let reanchored = format!("(reanchor! \"{}\")\r", file.display());
+        editor.press_until(reanchored.as_bytes(), "moved");
+        editor.press_until(line_of.as_bytes(), "line=4");
+        editor.quit();
+
+        let after = fs::read_to_string(&file).expect("written");
+        assert_eq!(
+            after, "#!/bin/sh\n#!/bin/sh\n#!/bin/sh\nrun_the_thing --now\nexit 0\n",
+            "the fixture edit is what the assertion above depends on",
+        );
+    }
+
     /// The other half: a mark that was never set declines by name rather than
     /// jumping somewhere plausible.
     #[test]

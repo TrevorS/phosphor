@@ -164,18 +164,47 @@ impl Store {
         id
     }
 
-    /// **`reanchor`.** Re-resolves one file's anchors against its rewritten
-    /// text, node tier then line tier.
+    /// **`reanchor`.** Re-resolves one file's anchors *and its regions* against
+    /// its rewritten text, node tier then line tier.
+    ///
+    /// **Both row types, one ladder, one call.** `T043`'s acceptance is that
+    /// markers work on a file with no grammar, and a marker is a region — so a
+    /// reanchor that moved only the anchors would leave every unseen marker
+    /// behind on the line it used to be on. They share [`anchor::resolve`]
+    /// rather than each having a copy, which is what stops *"node tier, then
+    /// line, then lost"* from meaning two different things.
+    ///
+    /// Regions are fingerprinted here too, on the way past: a region declared
+    /// before anyone described the file has no way to find itself, and this is
+    /// the first moment the store is told what the file looks like. Filling
+    /// only what is missing is deliberate — see [`Regions::fingerprint_in`].
     ///
     /// Moves the revision only when something actually moved or was lost — a
-    /// rewrite that leaves every anchor where it was is not news, and `T079`'s
+    /// rewrite that leaves everything where it was is not news, and `T079`'s
     /// cache is the reader that would otherwise redraw on every save.
     pub fn reanchor(&mut self, path: &Path, snapshot: &Snapshot) -> Reanchored {
         let outcome = self.anchors.reanchor(path, snapshot);
-        if outcome.changed() {
+        let regions_moved = self.regions.reanchor_in(path, snapshot);
+        self.regions.fingerprint_in(path, snapshot);
+        if outcome.changed() || regions_moved > 0 {
             self.moved();
         }
         outcome
+    }
+
+    /// Describe a file to the store, so the regions in it can find themselves
+    /// again later (`T043`).
+    ///
+    /// The host calls this after declaring regions for a file it has open. It
+    /// is separate from [`Store::declare_regions`] because a `RegionSpec` is a
+    /// wire type carrying a path and a span — a fingerprint needs the file's
+    /// *text*, and the store has none.
+    ///
+    /// Answers how many regions gained one. Never moves the revision: nothing a
+    /// query can see changed, which is the same rule `mark-seen` over an
+    /// already-seen region follows.
+    pub fn fingerprint_regions(&mut self, path: &Path, snapshot: &Snapshot) -> usize {
+        self.regions.fingerprint_in(path, snapshot)
     }
 
     /// Forget one file's anchors — a deleted file, a closed buffer.

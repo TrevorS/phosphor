@@ -1784,10 +1784,47 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > third mechanism. `store::Shared::covering`, which gives a diagnostic's virtual-text rail its
   > owner, is positional for the same reason and moves with it.
 
-- [ ] **T043 · Line + content fallback anchoring**
+- [x] **T043 · Line + content fallback anchoring**
   **The floor, not a degraded extra** — this is what makes unseen markers a store feature rather
   than a language feature (invariant 4).
   *Done when:* markers work correctly on an extensionless file with no grammar. *Needs:* T041
+
+  > **The tier shipped with `T042` and the criterion was met here**, which is why the two commits
+  > are separate. `anchor::resolve` is one function with both rungs in it — writing the node tier
+  > without the line tier underneath would have meant a `Tier::Lost` for every `.env` in the
+  > world and a second pass to fix it. What `T042` could not tick is this task's actual sentence:
+  > *markers*, not anchors. A marker is a **region**, and regions were positional.
+  >
+  > **So regions ride the same ladder now.** `Region` gained an optional [`Fingerprint`],
+  > `Regions::fingerprint_in` fills it from the host's snapshot, and `Regions::reanchor_in` moves
+  > the span — through `anchor::resolve`, the same call anchors make, so *"node tier, then line,
+  > then lost"* cannot come to mean two things. `Store::reanchor` runs both halves in one call
+  > because a reanchor that moved only the anchors would leave every unseen marker behind on the
+  > line it used to be on.
+  >
+  > **Optional, and absent is a state rather than a hole.** A `RegionSpec` is a wire type
+  > carrying a path and a span; a fingerprint needs the file's *text*, which the store does not
+  > have. So a declaration still creates regions positionally and the host describes the file
+  > afterwards — from the buffer on the keystroke side, from disk on the door side, one parse per
+  > distinct path. A region for a file nobody has opened keeps `None` and stays exactly as
+  > positional as it was before this task, which is the honest degradation.
+  >
+  > **Three rules that are each a wrong answer avoided**, all with a test: filling is
+  > *fill-only*, because recomputing after a rewrite replaces a good description of a location
+  > with a description of whatever has since moved onto that line; a **revision drops** the
+  > fingerprint, because the span moved and the old description points at a line the region no
+  > longer starts at; and a region whose start is **lost stays where it was** — same rule anchors
+  > follow, since a marker that moved somewhere plausible is a lie a person acts on.
+  >
+  > A region keeps its **height**: only the start resolves and the extent is shifted by the same
+  > delta, because a region's extent is a property of the declaration and not of the text.
+  >
+  > Pressed by `a_marker_on_a_grammar_free_file_survives_the_edit_that_moves_it` — a file called
+  > `deploy`, no extension, nothing in the bundled ten parses it, so the node tier never applies
+  > and the line tier is the only thing holding the marker on. Two lines inserted above it and
+  > the region's span moves from 2 to 4. A positional region would still have claimed line 2.
+  >
+  > [`Fingerprint`]: ../crates/phosphor-core/src/store/anchor.rs
 
 - [ ] **T044 · Seen-state persistence**
   `$XDG_STATE_HOME/phosphor/<hash-of-canonical-root>/`, keyed on path never VCS identity (Q1).

@@ -1057,6 +1057,46 @@ impl AppHost {
         Fingerprint::new(syntax, &text, line)
     }
 
+    /// The file's lines and syntax, as the store's [`AnchorSnapshot`].
+    ///
+    /// Shared by `reanchor` and by the fingerprinting a declaration triggers,
+    /// so the two cannot describe the same file differently.
+    fn snapshot_of(&self, path: &Path) -> Option<AnchorSnapshot> {
+        let code = self.parse(path)?;
+        let text = code.get_content();
+        let mut snapshot = AnchorSnapshot::of(&text);
+        for line in 0..snapshot.len() {
+            let byte = code.char_to_byte(code.line_to_char(line));
+            let steps: Vec<AnchorStep> = code
+                .syntax_path(byte)
+                .into_iter()
+                .map(|step| AnchorStep::new(step.kind, step.name))
+                .collect();
+            if !steps.is_empty() {
+                snapshot = snapshot.with_syntax(line, steps);
+            }
+        }
+        Some(snapshot)
+    }
+
+    /// Fingerprint the regions of every file a declaration named (`T043`).
+    ///
+    /// One parse per *distinct* path rather than per spec: a declaration of
+    /// forty spans in one file is the ordinary shape, and parsing it forty
+    /// times would make the common case the expensive one.
+    fn fingerprint_declared(&self, regions: &[phosphor_core::request::RegionSpec]) {
+        let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+        for spec in regions {
+            let key = store::key_for(&spec.path);
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            if let Some(snapshot) = self.snapshot_of(&key) {
+                self.store.fingerprint_regions(&key, &snapshot);
+            }
+        }
+    }
+
     /// **`place-anchor`, from a door.**
     fn place_anchor(&self, name: &'static str, at: &Target, label: Option<&String>) -> Outcome {
         let scope = match self.scope(name, Some(at)) {
@@ -1086,22 +1126,9 @@ impl AppHost {
     /// text now on disk.
     fn reanchor_file(&self, name: &'static str, path: &Path) -> Outcome {
         let key = store::key_for(path);
-        let Some(code) = self.parse(&key) else {
+        let Some(snapshot) = self.snapshot_of(&key) else {
             return declined("cannot read that file");
         };
-        let text = code.get_content();
-        let mut snapshot = AnchorSnapshot::of(&text);
-        for line in 0..snapshot.len() {
-            let byte = code.char_to_byte(code.line_to_char(line));
-            let steps: Vec<AnchorStep> = code
-                .syntax_path(byte)
-                .into_iter()
-                .map(|step| AnchorStep::new(step.kind, step.name))
-                .collect();
-            if !steps.is_empty() {
-                snapshot = snapshot.with_syntax(line, steps);
-            }
-        }
         let outcome = self.store.reanchor(&key, &snapshot);
         Outcome::Done(Receipt {
             capability: name,
@@ -1276,7 +1303,13 @@ impl Host for AppHost {
             // resolve the same targets — a door with no cursor genuinely does
             // not know what `selection` means.
             Action::Region(RegionAction::DeclareRegions { regions }) => {
-                Outcome::Done(declared(name, &self.store.declare(regions, request.actor)))
+                let answer = declared(name, &self.store.declare(regions, request.actor));
+                // `T043`'s door half. An agent declaring regions is the most
+                // common way regions are created at all, so leaving *those*
+                // positional would make "markers survive a rewrite" true only
+                // for the ones a person declared by hand.
+                self.fingerprint_declared(regions);
+                Outcome::Done(answer)
             }
             Action::Region(RegionAction::MarkSeen { target }) => {
                 self.mark(name, target, SeenState::Seen)
@@ -4996,7 +5029,15 @@ impl Editing {
                 self.mark(target, SeenState::Unseen)
             }
             Action::Region(RegionAction::DeclareRegions { regions }) => {
-                Outcome::Done(declared(name, &self.store.declare(regions, Actor::You)))
+                let answer = declared(name, &self.store.declare(regions, Actor::You));
+                // `T043`. A declaration carries a path and a span; finding that
+                // span again after a rewrite needs the file's *text*, and this
+                // is the side that has it. Done here rather than lazily at the
+                // next reanchor because the text a region was declared against
+                // is the text it was declared against — a fingerprint taken
+                // later describes whatever has since moved onto that line.
+                self.fingerprint_declared();
+                Outcome::Done(answer)
             }
             Action::Region(RegionAction::DropRegions { target }) => match self.scope_of(target) {
                 Ok(scope) => Outcome::Done(Receipt {
@@ -5477,6 +5518,22 @@ impl Editing {
             }
         }
         snapshot
+    }
+
+    /// Give the focused file's regions a way to find themselves again
+    /// (`T043`).
+    ///
+    /// Only ever the *focused* file: this side describes what it has open, and
+    /// a declaration naming some other path is left positional until something
+    /// opens it. The door's half ([`AppHost::place_anchor`]'s neighbour) covers
+    /// the rest by reading off disk.
+    fn fingerprint_declared(&mut self) {
+        let Some(path) = self.file.clone() else {
+            return;
+        };
+        let snapshot = self.snapshot();
+        self.store
+            .fingerprint_regions(&store::key_for(&path), &snapshot);
     }
 
     /// A fingerprint of a 1-based line in the focused buffer.

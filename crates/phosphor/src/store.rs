@@ -94,9 +94,15 @@ impl Shared {
         self.lock().place_anchor(path, span, label, fingerprint)
     }
 
-    /// **`reanchor`.** One file's anchors, re-resolved against its new text.
+    /// **`reanchor`.** One file's anchors *and* regions, against its new text.
     pub(crate) fn reanchor(&self, path: &Path, snapshot: &Snapshot) -> Reanchored {
         self.lock().reanchor(path, snapshot)
+    }
+
+    /// Describe a file to the store so its regions can find themselves again
+    /// (`T043`). Answers how many gained a fingerprint.
+    pub(crate) fn fingerprint_regions(&self, path: &Path, snapshot: &Snapshot) -> usize {
+        self.lock().fingerprint_regions(path, snapshot)
     }
 
     /// One anchor, cloned out from behind the lock.
