@@ -5867,13 +5867,25 @@ impl Editing {
         for step in steps {
             self.editor.apply_batch(&step.to_batch());
             self.editor.set_cursor(step.caret.offset);
-            match step.caret.selection {
-                Some(range) => self
-                    .editor
-                    .set_selection(Some(Selection::new(range.start, range.end))),
-                None => self.editor.clear_selection(),
-            }
         }
+        // **The selection is cleared, not restored**, and this used to replay
+        // `step.caret.selection`. Reported at a real terminal: *"when you undo
+        // it leaves the selection in place"*.
+        //
+        // Recording the selection on the caret is right — an undo step is a
+        // place, and where you were includes what was selected. Replaying it is
+        // not: `u` returns the machine to normal mode, so a restored highlight
+        // belongs to no mode. Nothing will clear it, because nothing thinks a
+        // selection is open; the next `v` then extends from an anchor the
+        // person cannot see, which is the same class of defect
+        // `SelectRange`'s own containment note above records.
+        //
+        // Vim's `u` is normal mode, cursor at the change, no selection. The
+        // journal keeps the field, so a future *"restore my visual selection"*
+        // still has its data — what changed is only that the walk stops
+        // painting it.
+        self.editor.clear_selection();
+        self.selection_from = None;
         self.editor.reset_highlight_cache();
         let to = self.timeline.tree.current().0;
         self.timeline.append(wire_undo::Record::Cursor { to });
@@ -8560,6 +8572,60 @@ mod tests {
             None,
             std::rc::Rc::new(std::cell::Cell::new(false)),
         )
+    }
+
+    /// **`u` leaves a selection painted on screen.** Reported by Teej at a real
+    /// terminal: *"when you undo it leaves the selection in place"*.
+    ///
+    /// [`Editing::walk`] restored `step.caret.selection` — the selection as it
+    /// stood *before* the edit being undone. That is the right thing to
+    /// **record** (an undo step is a place, and where you were includes what
+    /// was selected) and the wrong thing to replay: the machine is in normal
+    /// mode after `u`, so what a person sees is a highlight belonging to no
+    /// mode, which no key will clear because nothing thinks a selection is
+    /// open.
+    ///
+    /// Vim's `u` leaves you in normal mode with the cursor at the change and no
+    /// selection. So the caret's selection stays in the journal — `T030`'s
+    /// record is unchanged and a future *"restore my visual selection"* still
+    /// has its data — and the walk stops painting it.
+    #[test]
+    fn undo_does_not_leave_a_selection_painted() {
+        let mut editing = editing("alpha\nbravo\ncharlie\n");
+
+        let span = Span {
+            start: Position { line: 1, column: 1 },
+            end: Position { line: 3, column: 1 },
+        };
+        // Select the first two lines and delete them, the way `v j d` does.
+        editing.apply(&Action::Motion(
+            phosphor_core::action::MotionAction::SelectRange {
+                span,
+                kind: phosphor_core::request::SelectionKind::Line,
+            },
+        ));
+        editing.apply(&Action::Buffer(
+            phosphor_core::action::BufferAction::Delete { span },
+        ));
+        editing.apply(&Action::History(
+            phosphor_core::action::HistoryAction::CommitUndoGroup {},
+        ));
+
+        editing.apply(&Action::History(
+            phosphor_core::action::HistoryAction::Undo { count: 1 },
+        ));
+
+        assert_eq!(
+            editing.editor.get_selection(),
+            None,
+            "undo restores the text and the cursor, not a highlight the machine \
+             has no mode for",
+        );
+        assert!(
+            editing.selection_from.is_none(),
+            "and the machine's own anchor goes with it, or the next `v` extends \
+             from a selection nobody can see",
+        );
     }
 
     /// **The second producer, reaching the buffer.** A posted event is applied
