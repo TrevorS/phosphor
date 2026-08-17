@@ -947,10 +947,19 @@ fn the_eval_route_reaches_what_no_flag_can_express() {
         };
         let output = run(&["--eval".to_owned(), source.clone()]);
         let printed = String::from_utf8_lossy(&output.stdout).into_owned();
-        if printed.trim() == "#ok" {
-            // The `S2` host carries this one out (`main.rs`, `AppHost`). It
-            // reached the VM and then reached the host, which is more than the
-            // refusal below proves.
+        // **Not answered yet** is what has to name a task; anything else was
+        // carried out and reached the VM and then the host, which is more than
+        // the refusal below proves.
+        //
+        // This read `printed.trim() == "#ok"` until `T041`, which is the same
+        // check for a build where every carried-out capability answered
+        // `Value::Null`. `mark-seen` answers *how many regions were in scope* —
+        // a number is the composable answer for something a script calls — so
+        // the narrow form started failing on capabilities that had just been
+        // built. The claim was never about the shape of a success.
+        let unanswered = printed.contains("refused") || printed.contains("raised");
+        if !unanswered {
+            // Carried out.
         } else if !printed.contains(capability.since.task) {
             failures.push(format!(
                 "{} — `--eval {source}` answered {printed:?}, which names no task of its own",
@@ -973,12 +982,21 @@ fn the_eval_route_reaches_what_no_flag_can_express() {
 /// The eval one also happens to be the `§8` spelling — a plain `path:line`
 /// where a tagged target used to be required — so this pins both rulings at the
 /// shipping binary rather than at a unit boundary.
+///
+/// **It was `mark-seen` until `T041` built it.** `place-watch` keeps both
+/// claims — a `Target` argument, so the `path:line` spelling is still what the
+/// eval route exercises — and is `S8`/`T077`, so it stays a refusal for as long
+/// as this test is about refusals.
 #[test]
 fn the_two_cli_routes_agree_on_what_a_refusal_exits() {
-    let verb = run(&["mark-seen".to_owned(), "--target=cursor".to_owned()]);
+    let verb = run(&[
+        "place-watch".to_owned(),
+        "--anchor=cursor".to_owned(),
+        "--expr=delay".to_owned(),
+    ]);
     let eval = run(&[
         "--eval".to_owned(),
-        "(mark-seen! \"src/retry.rs:24\")".to_owned(),
+        "(place-watch! \"src/retry.rs:24\" \"delay\")".to_owned(),
     ]);
 
     for (route, output) in [("verb", &verb), ("eval", &eval)] {

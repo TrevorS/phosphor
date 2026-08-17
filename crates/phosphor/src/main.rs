@@ -131,7 +131,7 @@
 //!   see the on state before `T026` has a key for it.
 
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs::OpenOptions;
 use std::io::Write as _;
@@ -152,7 +152,8 @@ use phosphor_buffer::lsp::{
 use phosphor_buffer::undo::{Caret, CharRange, Edit as TreeEdit, NodeId, Step, UndoTree};
 use phosphor_core::action::{
     Action, AppAction, BufferAction, FileAction, HistoryAction, InputAction, LspAction,
-    MotionAction, Outcome, PromptAction, Receipt, Refusal, Request, RuntimeAction, ViewAction,
+    MotionAction, Outcome, PromptAction, Receipt, Refusal, RegionAction, Request, RuntimeAction,
+    ViewAction,
 };
 use phosphor_core::config;
 use phosphor_core::input::key::{Code, Key, Mods, Named};
@@ -161,14 +162,19 @@ use phosphor_core::input::text::{Text, Viewport};
 use phosphor_core::input::{Machine, key, text as motion};
 use phosphor_core::journal::{self, Log, undo as wire_undo};
 use phosphor_core::language::{self, Languages};
-use phosphor_core::query::{Answer, Answers, Query, QueryError, Revision};
+use phosphor_core::query::{Answer, Answers, Query, QueryError, RegionQuery, Revision};
 use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
-    Binding, CharRange as SignatureRange, Completion as WireCompletion, EditMode, FoldState,
-    KeySeq, LanguageId, Position, PromptKind, RegisterName, SelectionKind,
+    Actor, Binding, CharRange as SignatureRange, Completion as WireCompletion, EditMode, FoldState,
+    KeySeq, LanguageId, Position, PromptKind, RegionFilter, RegionId, RegisterName, SelectionKind,
     Signature as WireSignature, Span, Target, TextObject,
 };
-use phosphor_core::value::Value;
+// `Scope` is already the input table's (`keymaps.scm`'s normal/insert/visual),
+// and a second one under the same name in a 9,000-line file is a trap rather
+// than an ambiguity the compiler catches — both are `Scope::File`-shaped
+// enums.
+use phosphor_core::store::{Lens, Scope as RegionScope, SeenState};
+use phosphor_core::value::{Value, Wire as _};
 use phosphor_core::view::{
     Child, Density, Emphasis, Float as ViewFloat, KeyHint, Mood, Node, SessionState, Tone, Tree,
 };
@@ -208,6 +214,7 @@ use ratatui_code_editor::selection::Selection;
 mod door;
 mod events;
 mod lsp;
+mod store;
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -565,9 +572,10 @@ struct AppHost {
     /// `define-language`, which is what makes the shipped twelve
     /// indistinguishable from a thirteenth typed at `:repl`.
     languages: Mutex<Languages>,
-    /// `T040`'s set, shared with the loop. See `crate::lsp::Diagnostics` for
-    /// why one store has two handles.
-    diagnostics: Arc<lsp::Diagnostics>,
+    /// `T041`'s store — regions, seen-state and the diagnostics `T040` folded
+    /// into it — shared with the loop. See [`crate::store`] for why one store
+    /// has two handles.
+    store: Arc<store::Shared>,
 }
 
 /// Everything the host owns that Steel can reach.
@@ -673,7 +681,7 @@ impl AppHost {
             // declaration names with what the binary contains — see
             // `phosphor_buffer::grammar`.
             languages: Mutex::new(Languages::new(grammar::BUNDLED)),
-            diagnostics: Arc::new(lsp::Diagnostics::default()),
+            store: Arc::new(store::Shared::default()),
         }
     }
 
@@ -918,8 +926,88 @@ fn head(source: &str) -> Option<&str> {
     Some(&rest[..end]).filter(|head| !head.is_empty())
 }
 
+/// The target tags a door can resolve on its own.
+///
+/// **A query has no cursor.** Four `Target` arms mean something different
+/// depending on where focus is (`request.rs`), and the thing that knows where
+/// focus is, is the loop — `Editing::scope_of` is the other half of this split
+/// and resolves all seven. So a query narrowed by `selection` is refused here
+/// by naming the three it does take, rather than silently widening to the
+/// workspace: a count that quietly answered about the wrong scope is worse than
+/// one that did not answer.
+const RESOLVABLE: &[&str] = &["file", "explicit", "region"];
+
+impl AppHost {
+    /// An [`Answer`] at the store's current revision.
+    ///
+    /// One place, so no arm can answer at `Revision::INITIAL` by forgetting —
+    /// which is what every arm did before `T041` gave the store a revision to
+    /// have.
+    fn answered(&self, value: Value) -> Answer {
+        Answer {
+            value,
+            revision: self.store.revision(),
+        }
+    }
+
+    /// A [`Target`] as a store [`Scope`], for the arms a door can resolve.
+    fn scope(
+        &self,
+        name: &'static str,
+        within: Option<&Target>,
+    ) -> Result<RegionScope, QueryError> {
+        let Some(target) = within else {
+            return Ok(RegionScope::Everywhere);
+        };
+        match target {
+            Target::File { path } => Ok(RegionScope::File(store::key_for(path))),
+            Target::Explicit { path, span } => Ok(RegionScope::Span {
+                path: store::key_for(path),
+                span: *span,
+            }),
+            Target::Region { id } => Ok(RegionScope::One(*id)),
+            other => Err(QueryError::Argument {
+                name,
+                source: phosphor_core::value::WireError::Field {
+                    field: "within",
+                    source: Box::new(phosphor_core::value::WireError::Tag {
+                        got: other.to_value().tag().unwrap_or("that").to_owned(),
+                        expected: RESOLVABLE,
+                    }),
+                },
+            }),
+        }
+    }
+
+    /// **`mark-seen` and `mark-unseen`, from a door.** Answers how many
+    /// regions were in scope.
+    fn mark(&self, name: &'static str, target: &Target, state: SeenState) -> Outcome {
+        match self.scope(name, Some(target)) {
+            Ok(scope) => Outcome::Done(Receipt {
+                capability: name,
+                value: Value::Int(i64::try_from(self.store.set_seen(&scope, state)).unwrap_or(0)),
+                note: None,
+            }),
+            Err(why) => declined(&why.to_string()),
+        }
+    }
+
+    /// A [`RegionFilter`] as a store [`Lens`].
+    fn lens(&self, name: &'static str, filter: Option<&RegionFilter>) -> Result<Lens, QueryError> {
+        let Some(filter) = filter else {
+            return Ok(Lens::everything());
+        };
+        Ok(Lens {
+            author: filter.author,
+            unseen_only: filter.unseen_only,
+            within: self.scope(name, filter.within.as_ref())?,
+        })
+    }
+}
+
 impl Answers for AppHost {
     fn answer(&self, query: &Query) -> Result<Answer, QueryError> {
+        let name = query.spec().name;
         match query {
             // `T037`. Built by the table itself rather than assembled here, so
             // the host cannot disagree with `Languages::tier` about what it
@@ -933,9 +1021,41 @@ impl Answers for AppHost {
             }),
             // `T040`. Answered off the same store the gutter draws from.
             Query::Review(phosphor_core::query::ReviewQuery::Diagnostics { path }) => Ok(Answer {
-                value: Value::List(self.diagnostics.answer(path.as_deref())),
-                revision: Revision::INITIAL,
+                value: Value::List(self.store.answer_diagnostics(path.as_deref())),
+                revision: self.store.revision(),
             }),
+            // `T041` — invariant 4's core. Every one of these is a read of the
+            // same store the gutter and the statusline draw from, at the same
+            // revision, which is what "every surface is a query over this"
+            // means when it is true rather than claimed.
+            Query::Region(RegionQuery::Regions { filter }) => {
+                let lens = self.lens(name, filter.as_ref())?;
+                Ok(self.answered(Value::List(self.store.answer_regions(&lens))))
+            }
+            Query::Region(RegionQuery::UnseenRegions { path }) => {
+                Ok(self.answered(Value::List(self.store.answer_unseen(path.as_deref()))))
+            }
+            Query::Region(RegionQuery::Region { region }) => self
+                .store
+                .answer_region(*region)
+                .map(|value| self.answered(value))
+                // Not a `NotYetImplemented`: the query is built and the id is
+                // wrong. `Null` rather than an error, because *"is there a
+                // region with this id"* is a question with a legitimate no —
+                // a surface holding an id across a `drop-regions` asks it.
+                .map_or_else(|| Ok(self.answered(Value::Null)), Ok),
+            Query::Region(RegionQuery::UnseenCount { within }) => {
+                let scope = self.scope(name, within.as_ref())?;
+                Ok(self.answered(Value::Int(
+                    i64::try_from(self.store.unseen_count(&scope)).unwrap_or(0),
+                )))
+            }
+            Query::Region(RegionQuery::SeenCount { within }) => {
+                let scope = self.scope(name, within.as_ref())?;
+                Ok(self.answered(Value::Int(
+                    i64::try_from(self.store.seen_count(&scope)).unwrap_or(0),
+                )))
+            }
             // Everything else, by its own row. Derived, never listed.
             query => Err(QueryError::NotYetImplemented {
                 task: query.spec().since.task,
@@ -979,6 +1099,34 @@ impl Host for AppHost {
                 done(Value::Null)
             }
             Action::Runtime(RuntimeAction::PersistForm { form }) => self.persist(form),
+            // `T041` — §7's state machine, reached from a door rather than from
+            // a keystroke. `Editing::act` has the same four; the difference is
+            // that this side has no editor, so a focus-relative target is
+            // refused by name here and resolved there. Invariant 2 is kept by
+            // both applying to the *same* store, not by both being able to
+            // resolve the same targets — a door with no cursor genuinely does
+            // not know what `selection` means.
+            Action::Region(RegionAction::DeclareRegions { regions }) => {
+                Outcome::Done(declared(name, &self.store.declare(regions, request.actor)))
+            }
+            Action::Region(RegionAction::MarkSeen { target }) => {
+                self.mark(name, target, SeenState::Seen)
+            }
+            Action::Region(RegionAction::MarkUnseen { target }) => {
+                self.mark(name, target, SeenState::Unseen)
+            }
+            Action::Region(RegionAction::DropRegions { target }) => {
+                match self.scope(name, Some(target)) {
+                    Ok(scope) => Outcome::Done(Receipt {
+                        capability: name,
+                        value: Value::Int(
+                            i64::try_from(self.store.drop_regions(&scope)).unwrap_or(0),
+                        ),
+                        note: None,
+                    }),
+                    Err(why) => declined(&why.to_string()),
+                }
+            }
             // Invariant 2, on the keymap: the Steel door types
             // `(keymap-set! …)` directly and these two carry the CLI's and
             // MCP's version of the same form into the same table.
@@ -1024,6 +1172,28 @@ impl Host for AppHost {
                 task: action.spec().since.task,
             }),
         }
+    }
+}
+
+/// What `declare-regions` answers.
+///
+/// The count of regions that now exist because of this call, and a note when
+/// §7 dropped part of the batch on the floor. **Silence there would be the
+/// wrong receipt**: a door that declared six spans and got `#ok` back has no
+/// way to learn that four of them claimed an author the machine does not track,
+/// and *"your own edits never create regions"* is a rule it is better to be
+/// told about once than to discover from an empty gutter.
+fn declared(capability: &'static str, declared: &phosphor_core::store::Declared) -> Receipt {
+    let landed = declared.created.len() + declared.revised.len();
+    Receipt {
+        capability,
+        value: Value::Int(i64::try_from(landed).unwrap_or(0)),
+        note: (declared.ignored > 0).then(|| {
+            format!(
+                "{} not claude's — only claude's writes become regions",
+                declared.ignored
+            )
+        }),
     }
 }
 
@@ -1790,7 +1960,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         path,
         Rc::clone(&dirty),
         timeline,
-        Arc::clone(&host.diagnostics),
+        Arc::clone(&host.store),
     );
 
     // `T033`'s ex line, and the one line of chrome that answers it. Both live
@@ -1952,12 +2122,45 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // here changes.
         let published = synced
             .as_ref()
-            .map(|document| editing.diagnostics.of(&document.key))
+            .map(|document| editing.store.diagnostics_of(&document.key))
             .unwrap_or_default();
         let shown = DiagnosticsVm::new(&published);
         let tally = shown.tally();
         let mut regions = Vec::new();
         regions.extend(shown.regions(&editing.editor));
+        // **`T041` — the second source this `Vec` was built for.** The comment
+        // above has said since `T040` that *"there is one source today; `T041`
+        // adds the rest to this `Vec` and nothing else here changes"*, and
+        // nothing else here does: the ladder in `gutter::resolve` folds the two
+        // together, so a line carrying both an unseen edit and an error is
+        // trouble-red by §3's own priority rather than by whichever source ran
+        // second.
+        //
+        // Seen regions are handed over as well as unseen ones, deliberately.
+        // `RegionState::Seen` resolves to `StateMark::None` — §3's row 18,
+        // *"seen — marker cleared, line is plain"* — so the ladder is what
+        // decides they draw nothing, in the one place that decides it.
+        let unseen = editing.file.as_deref().map_or(0, |path| {
+            let spans: Vec<_> = editing
+                .store
+                .spans_in(path)
+                .into_iter()
+                .map(|(span, state)| {
+                    (
+                        span,
+                        match state {
+                            SeenState::Unseen => gutter::RegionState::Unseen,
+                            SeenState::Seen => gutter::RegionState::Seen,
+                        },
+                    )
+                })
+                .collect();
+            regions.extend(gutter::spans(&editing.editor, &spans));
+            spans
+                .iter()
+                .filter(|(_, state)| *state == gutter::RegionState::Unseen)
+                .count()
+        });
         // **How many of them may speak, reported at `CP-4`.** A half-typed
         // `path:` made rust-analyzer answer with eleven cascade parse errors
         // and every one became a row, so the code being edited went off the
@@ -1965,6 +2168,32 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // reason the completion floor and `soft-wrap` are: an option changed
         // at the REPL is a fact about now, not about the last restart.
         let rows = shown.rows(&theme, &diagnostic_rows(&host, &editing.editor));
+        // **`T041` gives a diagnostic's rail an owner, and that is what makes
+        // it collapsible.** `phosphor_ui::diagnostics::rows` hands them back
+        // unowned and says why: *"a region id is the store's and there are no
+        // regions until `T041`, at which point a diagnostic's row is owned by
+        // the region anchored to its node"*. Positional here, anchored at
+        // `T042`; a row on a line no region covers stays unowned, which is
+        // honest — there is nothing to collapse it by.
+        //
+        // The filter is the whole of `set-virtual-text-visible`'s per-owner
+        // half: a collapsed owner's rows are not in the list installed, so the
+        // fork's single global flag never has to become a per-region one.
+        let rows: Vec<_> = editing.file.clone().map_or(rows.clone(), |path| {
+            rows.into_iter()
+                .filter_map(|row| {
+                    let at = Position {
+                        line: u32::try_from(row.anchor.line.saturating_add(1)).unwrap_or(u32::MAX),
+                        column: u32::try_from(row.anchor.col.saturating_add(1)).unwrap_or(u32::MAX),
+                    };
+                    match editing.store.covering(&path, at) {
+                        Some(owner) if editing.collapsed.contains(&owner) => None,
+                        Some(owner) => Some(row.owned_by(owner)),
+                        None => Some(row),
+                    }
+                })
+                .collect()
+        });
         let underlines = shown.underlines(&editing.editor, &theme);
         virtual_text::install(&mut editing.editor, &rows);
         editing.editor.set_styled_spans(underlines);
@@ -2021,14 +2250,18 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 path,
                 dirty: dirty.get(),
             }),
-            // Truthful, and the truth at S3 is that there is no session, no
-            // store to count unseen regions in, and no VCS adapter. `T050`,
-            // `T041` and `T071` fill these in; a fixture here would be a lie
-            // on a real terminal.
+            // Truthful, and the truth at S4 is that there is no session and no
+            // VCS adapter. `T050` and `T071` fill those two in; a fixture here
+            // would be a lie on a real terminal.
             session: SessionState::None,
             since: None,
             ask_pending: false,
-            unseen: 0,
+            // **`T041` — §5's `●n`, counted rather than zero.** Over the file
+            // on screen, which is what `runtime/statusline.scm`'s own VM doc
+            // says it is: *"unseen regions in this file"*. The workspace-wide
+            // count is `(unseen-count)` with no `within`, and it is a different
+            // question — `2a`'s picker asks it, the statusline does not.
+            unseen: u32::try_from(unseen).unwrap_or(u32::MAX),
             // **The count `2b` draws and nothing computed until now.** It is
             // over the whole file, never over what the rows drew: bounding the
             // inline rows (`RowPolicy`) is only honest if the ones that stay
@@ -3841,9 +4074,13 @@ struct Editing {
     /// The live signature-help or hover answer (`T039`). One field for two
     /// features because they are one surface — see `float::SignatureVm`.
     signature: Option<SignatureVm>,
-    /// `T040`'s set, shared with [`AppHost`] so the gutter and the
-    /// `diagnostics` query cannot disagree.
-    diagnostics: Arc<lsp::Diagnostics>,
+    /// `T041`'s store, shared with [`AppHost`] so the gutter, the statusline
+    /// and the `region` queries cannot disagree about a file.
+    store: Arc<store::Shared>,
+    /// Regions whose virtual-text rail is collapsed — `set-virtual-text-visible`
+    /// with `on: false`. See [`Editing::collapse`] for why the set lives here
+    /// rather than in the fork.
+    collapsed: BTreeSet<RegionId>,
     /// The unnamed register is `"`; `"a` is `a` (`request::RegisterName`).
     registers: BTreeMap<String, Register>,
     /// What the last `SelectRange` said, so a yank knows whether it is linewise.
@@ -3942,7 +4179,7 @@ impl Editing {
             file,
             dirty,
             Timeline::detached(),
-            Arc::new(lsp::Diagnostics::default()),
+            Arc::new(store::Shared::default()),
         )
     }
 
@@ -3951,7 +4188,7 @@ impl Editing {
         file: Option<PathBuf>,
         dirty: Rc<Cell<bool>>,
         timeline: Timeline,
-        diagnostics: Arc<lsp::Diagnostics>,
+        store: Arc<store::Shared>,
     ) -> Self {
         Self {
             editor,
@@ -3982,7 +4219,8 @@ impl Editing {
             chosen: false,
             falling_through: false,
             signature: None,
-            diagnostics,
+            store,
+            collapsed: BTreeSet::new(),
             registers: BTreeMap::new(),
             selection_kind: SelectionKind::Char,
             selection_from: None,
@@ -4496,8 +4734,33 @@ impl Editing {
             // queue was built ahead of, and the only `Lsp` verb a producer is
             // allowed to reach (`deliver`).
             Action::Lsp(LspAction::IngestDiagnostics { path, diagnostics }) => {
-                self.diagnostics.replace(path.clone(), diagnostics.clone());
+                self.store.publish(path.clone(), diagnostics.clone());
                 done()
+            }
+            // `T041` — §7's state machine, reached from a keystroke. The door's
+            // copy of these four is in `AppHost::apply`; the difference is
+            // exactly the focus-relative targets, which only this side can
+            // resolve because only this side has an editor.
+            Action::Region(RegionAction::MarkSeen { target }) => self.mark(target, SeenState::Seen),
+            Action::Region(RegionAction::MarkUnseen { target }) => {
+                self.mark(target, SeenState::Unseen)
+            }
+            Action::Region(RegionAction::DeclareRegions { regions }) => {
+                Outcome::Done(declared(name, &self.store.declare(regions, Actor::You)))
+            }
+            Action::Region(RegionAction::DropRegions { target }) => match self.scope_of(target) {
+                Ok(scope) => Outcome::Done(Receipt {
+                    capability: name,
+                    value: Value::Int(i64::try_from(self.store.drop_regions(&scope)).unwrap_or(0)),
+                    note: None,
+                }),
+                Err(why) => declined(&why),
+            },
+            // `T041`'s owed arm, recorded against this task in
+            // `scripts/lint-action-arms.sh`: collapsing a virtual-text rail
+            // addresses it by owning region, and regions are this task.
+            Action::View(ViewAction::SetVirtualTextVisible { owner, on }) => {
+                self.collapse(owner, *on)
             }
             // `T036` — `gd`. Recorded like the lookups, and answered by an
             // `open-file` rather than by a float: a definition is a *place*.
@@ -4770,6 +5033,123 @@ impl Editing {
             }
             _ => None,
         }
+    }
+
+    /// A [`Target`] as a store [`Scope`] — **the resolution only this side can
+    /// do.**
+    ///
+    /// [`Editing::target_range`]'s own doc has said since `T031` that
+    /// everything past the two focus-relative arms is *"the store's to resolve
+    /// (`T041`)"*. This is that resolution, and the split it lands on is the
+    /// one `request.rs` already draws: an arm that means something different
+    /// depending on where focus is needs an editor, and the editor is here.
+    ///
+    /// The arms that refuse say so in one sentence rather than guessing,
+    /// because a target the store silently widened is how `S` over a group
+    /// marks a file.
+    fn scope_of(&mut self, target: &Target) -> Result<RegionScope, String> {
+        match target {
+            Target::File { path } => Ok(RegionScope::File(store::key_for(path))),
+            Target::Explicit { path, span } => Ok(RegionScope::Span {
+                path: store::key_for(path),
+                span: *span,
+            }),
+            Target::Region { id } => Ok(RegionScope::One(*id)),
+            // The three that mean "here", and the only three that need an
+            // editor to say where that is.
+            Target::Buffer { .. } | Target::Cursor {} | Target::Selection {} => {
+                let Some(path) = self.file.clone() else {
+                    return Err("no file open — name a path".to_owned());
+                };
+                let path = store::key_for(&path);
+                if matches!(target, Target::Buffer { .. }) {
+                    return Ok(RegionScope::File(path));
+                }
+                let Some((from, to)) = self.target_range(target) else {
+                    return Err("nothing selected".to_owned());
+                };
+                Ok(RegionScope::Span {
+                    path,
+                    span: self.span_between(from, to),
+                })
+            }
+            // Named by the vocabulary rather than by a list here, so an arm
+            // added to `Target` cannot quietly refuse under the wrong word.
+            other => Err(format!(
+                "{} is not a target the store resolves yet",
+                other.to_value().tag().unwrap_or("that")
+            )),
+        }
+    }
+
+    /// Two character offsets as the vocabulary's span. The inverse of
+    /// [`Editing::target_range`], and the only place the loop crosses back.
+    fn span_between(&self, from: usize, to: usize) -> Span {
+        let point = |offset: usize| {
+            let (row, col) = self.editor.code_ref().point(offset);
+            Position {
+                line: u32::try_from(row.saturating_add(1)).unwrap_or(u32::MAX),
+                column: u32::try_from(col.saturating_add(1)).unwrap_or(u32::MAX),
+            }
+        };
+        Span {
+            start: point(from.min(to)),
+            end: point(to.max(from)),
+        }
+    }
+
+    /// **`mark-seen` and `mark-unseen`.** Answers how many regions were in
+    /// scope, so `s` on a line with no region says `0` rather than nothing.
+    fn mark(&mut self, target: &Target, state: SeenState) -> Outcome {
+        let capability = match state {
+            SeenState::Seen => "mark-seen",
+            SeenState::Unseen => "mark-unseen",
+        };
+        match self.scope_of(target) {
+            Ok(scope) => Outcome::Done(Receipt {
+                capability,
+                value: Value::Int(i64::try_from(self.store.set_seen(&scope, state)).unwrap_or(0)),
+                note: None,
+            }),
+            Err(why) => declined(&why),
+        }
+    }
+
+    /// **`set-virtual-text-visible`.** `T041`'s owed arm.
+    ///
+    /// # Per owner, without touching the fork
+    ///
+    /// The fork's own toggle is one flag for the whole editor
+    /// ([`virtual_text::set_visible`]), and this capability addresses a rail
+    /// *by owning region* — which is the entire reason it waited for the
+    /// store. The gap is closed above the fork rather than inside it: the host
+    /// installs the row list every frame, so a collapsed owner's rows are
+    /// simply not in the list it installs. A vendored patch would have been
+    /// permanent and this is not, which is the standing rule for `vendor/`.
+    ///
+    /// A rail no region owns cannot be collapsed, and that is honest rather
+    /// than a gap: there is nothing to name it by.
+    fn collapse(&mut self, owner: &Target, on: bool) -> Outcome {
+        let scope = match self.scope_of(owner) {
+            Ok(scope) => scope,
+            Err(why) => return declined(&why),
+        };
+        let owners = self.store.ids_in(&scope);
+        if owners.is_empty() {
+            return declined("no region there — a rail is collapsed by its owner");
+        }
+        for id in &owners {
+            if on {
+                self.collapsed.remove(id);
+            } else {
+                self.collapsed.insert(*id);
+            }
+        }
+        Outcome::Done(Receipt {
+            capability: "set-virtual-text-visible",
+            value: Value::Int(i64::try_from(owners.len()).unwrap_or(0)),
+            note: None,
+        })
     }
 
     fn yank(&mut self, target: &Target, register: Option<&RegisterName>) {
@@ -6775,7 +7155,7 @@ mod tests {
             },
         );
         assert_eq!(note, None, "an applied Action says nothing");
-        let held = editing.diagnostics.of(&path);
+        let held = editing.store.diagnostics_of(&path);
         assert_eq!(held.len(), 1);
         assert_eq!(held[0].message, "expected Duration, found u128");
     }

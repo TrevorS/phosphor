@@ -292,11 +292,20 @@ The three things `V006`'s brief names, and how each is met:
 
 Read against the tree this session, not assumed:
 
-1. **`T041` (store core + region state machine, `S5`).** Until this exists,
-   `declare-regions!` and `mark-seen!` cannot persist anything — verified
-   above, both refuse today naming `T041`. This is the one every later item
-   in this list also needs, since `S6`/`S7`/`S8`'s capabilities all write
-   through the same store.
+1. ~~**`T041` (store core + region state machine, `S5`).**~~ **Landed, and it
+   was not the blocker this entry thought it was.** `declare-regions!` answers
+   `6` now and both `mark-seen!` lines answer — but the fixture still holds
+   nothing, because **`scripts/seed-fixtures.sh` runs one `phosphor --eval`
+   process per line**. The store the declaration writes to is gone before the
+   next line starts, so line 16 marks two spans in an empty store and answers
+   `0`. This entry read *"cannot persist anything"* and the operative word
+   turned out to be **persist**, not *declare*: what a seeded fixture needs is
+   `T044` (seen-state persistence), and regions need the same treatment on the
+   same terms. Recorded in full at `T041` in `docs/TASKS.md`.
+
+   Running the script for the first time since `T100` also found two bugs in
+   it — it aborted on its own first line under `set -e`, and its classifier
+   still matched the pre-`T100` refusal shape. Both fixed there.
 2. **`T050`/`T054`/`T057` (ACP session, transcript, session lifecycle,
    `S6`).** The eight session-shaped calls in the seed plan
    (`start-session!` through `session-seam!`) need these before the "canned

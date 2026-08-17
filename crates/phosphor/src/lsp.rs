@@ -13,16 +13,19 @@
 //! Owned by `spine`, because everything here is the loop's half of the seam
 //! rather than the client's.
 //!
-//! # Why the diagnostics live here and not in `Editing`
+//! # Where the diagnostics went
 //!
-//! Two readers, and they are on different sides of the Steel barrier. The
-//! gutter reads them per frame off the buffer that is on screen
-//! (`phosphor_ui::diagnostics::DiagnosticsVm`); the `diagnostics` **query**
-//! answers them to Steel through [`crate::AppHost`], which is `Send + Sync`
-//! and behind an `Arc` because a binding runs inside the running VM. One store
-//! with two handles is what keeps those two from disagreeing about a file — the
-//! alternative is the host answering a query about a set the frame does not
-//! draw.
+//! This module held them until `T041`, in a `BTreeMap<PathBuf, Vec<Diagnostic>>`
+//! behind a `Mutex` with its own `replace`/`of`/`answer` — written at `T040`
+//! because the map that should have held them,
+//! `phosphor_core::store::diagnostics`, has no lock and this binary needed one.
+//! So the documented store and the real one were two maps with one name, and
+//! that module had **no importer at all**.
+//!
+//! They are in [`crate::store`] now, beside the regions and behind the same
+//! revision, and the argument this header used to make for two handles is made
+//! there instead — it was always an argument about the *store*, not about the
+//! LSP.
 //!
 //! # What a server may not do to this editor
 //!
@@ -33,15 +36,12 @@
 //! server could name is `Deny`. So a server can publish what it found and
 //! cannot, for instance, open a completion float the user did not ask for.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use phosphor_buffer::lsp::{LanguageServers, Post, ServerSpec};
 use phosphor_core::action::Action;
 use phosphor_core::language::Languages;
-use phosphor_core::request::{Diagnostic, LanguageId};
-use phosphor_core::value::{Value, Wire as _};
+use phosphor_core::request::LanguageId;
 
 use crate::events;
 
@@ -166,152 +166,4 @@ pub(crate) fn absolute(file: &Path) -> PathBuf {
     file.canonicalize()
         .or_else(|_| std::env::current_dir().map(|cwd| cwd.join(file)))
         .unwrap_or_else(|_| file.to_path_buf())
-}
-
-// ---------------------------------------------------------------------------
-// Diagnostics
-// ---------------------------------------------------------------------------
-
-/// Every diagnostic the servers have published, by file.
-///
-/// **Replace, never merge.** `ingest-diagnostics` is declared as *"the
-/// diagnostics, replacing that file's set"* and the protocol agrees: a
-/// `textDocument/publishDiagnostics` is the whole current set for that file, so
-/// a server that fixes an error publishes a shorter list rather than a
-/// retraction. Merging would make an error that has been fixed permanent.
-#[derive(Debug, Default)]
-pub(crate) struct Diagnostics {
-    by_file: Mutex<BTreeMap<PathBuf, Vec<Diagnostic>>>,
-}
-
-impl Diagnostics {
-    /// Takes one file's whole set.
-    ///
-    /// An empty publish **removes the key** rather than storing an empty
-    /// vector, so `answer(None)` does not accumulate a row per file anyone has
-    /// ever opened.
-    pub(crate) fn replace(&self, path: PathBuf, diagnostics: Vec<Diagnostic>) {
-        let mut by_file = self.lock();
-        if diagnostics.is_empty() {
-            by_file.remove(&path);
-        } else {
-            by_file.insert(path, diagnostics);
-        }
-    }
-
-    /// One file's set, cloned out from behind the lock.
-    ///
-    /// Cloned because the frame holds it across a `&mut Editor` borrow —
-    /// `DiagnosticsVm::rows` installs virtual text — and a guard held that long
-    /// would be a lock held across a redraw.
-    pub(crate) fn of(&self, path: &Path) -> Vec<Diagnostic> {
-        self.lock().get(path).cloned().unwrap_or_default()
-    }
-
-    /// The `diagnostics` query's answer: every diagnostic, or one file's.
-    ///
-    /// Each record is the [`Diagnostic`] itself with its `path` added, because
-    /// the query may answer for every file at once and a record that did not
-    /// say which file it was about would be unreadable in that shape.
-    pub(crate) fn answer(&self, only: Option<&Path>) -> Vec<Value> {
-        let by_file = self.lock();
-        by_file
-            .iter()
-            .filter(|(path, _)| only.is_none_or(|wanted| wanted == path.as_path()))
-            .flat_map(|(path, diagnostics)| {
-                diagnostics.iter().map(move |diagnostic| {
-                    let mut args = phosphor_core::value::Args::new()
-                        .with("path", Value::Text(path.display().to_string()));
-                    if let Value::Record(fields) = diagnostic.to_value() {
-                        for (field, value) in fields.into_pairs() {
-                            args.set(&field, value);
-                        }
-                    }
-                    Value::Record(args)
-                })
-            })
-            .collect()
-    }
-
-    /// The map, with a poisoned lock read through rather than panicked on —
-    /// a diagnostic set is not worth taking the editor down for.
-    fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<PathBuf, Vec<Diagnostic>>> {
-        self.by_file
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use phosphor_core::request::{Position, Severity, Span};
-
-    use super::Diagnostics;
-
-    fn diagnostic(message: &str) -> phosphor_core::request::Diagnostic {
-        phosphor_core::request::Diagnostic {
-            span: Span {
-                start: Position { line: 1, column: 1 },
-                end: Position { line: 1, column: 2 },
-            },
-            severity: Severity::Trouble,
-            message: message.to_owned(),
-            source: Some("rust-analyzer".to_owned()),
-        }
-    }
-
-    /// The protocol's rule: a publish is the whole current set, so the second
-    /// one is not added to the first.
-    #[test]
-    fn a_second_publish_replaces_the_first_rather_than_adding_to_it() {
-        let store = Diagnostics::default();
-        let path = std::path::PathBuf::from("/tmp/a.rs");
-        store.replace(
-            path.clone(),
-            vec![diagnostic("first"), diagnostic("second")],
-        );
-        store.replace(path.clone(), vec![diagnostic("only")]);
-        let held = store.of(&path);
-        assert_eq!(held.len(), 1);
-        assert_eq!(held[0].message, "only");
-    }
-
-    /// A server that fixed everything publishes an empty list, and the file
-    /// stops being one the query has anything to say about.
-    #[test]
-    fn an_empty_publish_clears_the_file_out_of_the_query() {
-        let store = Diagnostics::default();
-        let path = std::path::PathBuf::from("/tmp/a.rs");
-        store.replace(path.clone(), vec![diagnostic("boom")]);
-        assert_eq!(store.answer(None).len(), 1);
-        store.replace(path.clone(), Vec::new());
-        assert!(store.of(&path).is_empty());
-        assert!(
-            store.answer(None).is_empty(),
-            "an empty set must not leave a row behind"
-        );
-    }
-
-    /// The query narrows by path, and every record says which file it is about.
-    #[test]
-    fn the_query_narrows_to_one_file_and_every_record_names_its_file() {
-        let store = Diagnostics::default();
-        store.replace("/tmp/a.rs".into(), vec![diagnostic("a")]);
-        store.replace("/tmp/b.rs".into(), vec![diagnostic("b")]);
-        assert_eq!(store.answer(None).len(), 2);
-
-        let one = store.answer(Some(std::path::Path::new("/tmp/b.rs")));
-        assert_eq!(one.len(), 1);
-        let phosphor_core::value::Value::Record(fields) = &one[0] else {
-            panic!("a diagnostic answers as a record");
-        };
-        assert_eq!(
-            fields.get("path"),
-            Some(&phosphor_core::value::Value::Text("/tmp/b.rs".to_owned())),
-        );
-        assert_eq!(
-            fields.get("message"),
-            Some(&phosphor_core::value::Value::Text("b".to_owned())),
-        );
-    }
 }

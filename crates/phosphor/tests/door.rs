@@ -20,11 +20,16 @@ use std::process::{Command, Output, Stdio};
 
 /// The expression both front-ends are asked for.
 ///
-/// Deliberately one the editor cannot answer yet — `unseen-regions` is a query
-/// and the store is `T041` — because what is under test is that the two doors
-/// agree, and they have to agree about a refusal exactly as much as about a
-/// result. `6b` types this very line.
-const EXPR: &str = "(unseen-regions \"src/retry.rs\")";
+/// Deliberately one the editor cannot answer yet, because what is under test is
+/// that the two doors agree, and they have to agree about a refusal exactly as
+/// much as about a result.
+///
+/// **It was `(unseen-regions "src/retry.rs")` — `6b`'s own line — until `T041`
+/// answered it.** That is the hazard of picking the nearest unbuilt thing:
+/// three tests here went red the day the store landed, on a change that broke
+/// nothing they are about. `watches` is `S8`/`T074`, four phases out, so this
+/// one is stable for as long as anything in this file can be.
+const EXPR: &str = "(watches)";
 
 fn phosphor() -> Command {
     Command::new(env!("CARGO_BIN_EXE_phosphor"))
@@ -153,21 +158,26 @@ fn an_unanswerable_query_raises_and_keeps_the_task_that_builds_it() {
     // which is the pair that let the envelope live here unnoticed.
     let out = run(&["--eval", EXPR]);
     let printed = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(printed, "#raised · not built yet — T041 builds it\n");
+    assert_eq!(printed, "#raised · not built yet — T074 builds it\n");
 }
 
 #[test]
 fn a_generated_verb_is_reachable_end_to_end() {
     // `T024`'s CLI third: the verb parses, assembles a call, decodes into the
     // Action, and answers. Every flag here came out of the registry row.
-    let out = run(&["mark-seen", "--target", "region", "--target.region.id", "3"]);
+    // `remove-watch` since `T041`, for the same reason [`EXPR`] moved: this was
+    // `mark-seen --target region --target.region.id 3`, which the store answers
+    // now. The claim is about the *plumbing* — a flag becomes a call becomes an
+    // Action becomes an answer — so any capability with an id-shaped argument
+    // proves it, and one four phases out proves it for longer.
+    let out = run(&["remove-watch", "--watch", "3"]);
     let printed = String::from_utf8_lossy(&out.stdout);
     // The whole line, from the real binary. `T100` collapsed this door's own
     // phrasing into `Refusal::why`, so what a shell sees here is byte-for-byte
     // what the REPL and a float show — asserted rather than assumed, because
     // "they agree" is the claim that was false before.
     assert_eq!(
-        printed, "#refused · not built yet — T041 builds it\n",
+        printed, "#refused · not built yet — T074 builds it\n",
         "unexpected answer: {printed:?}"
     );
 }

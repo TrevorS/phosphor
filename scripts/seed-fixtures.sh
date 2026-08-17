@@ -90,16 +90,38 @@ while IFS= read -r line; do
         ';;'*) continue ;;
     esac
 
-    out="$(cd "$fixtures" && phosphor --eval "$trimmed" 2>&1)"
-    code=$?
+    # **`if`, not a bare assignment, and `set -e` is why.** A refusal exits
+    # nonzero — `T100`'s ruling, *"one door, one refusal, one exit code"* — so
+    # `out="$(…)"; code=$?` aborts the whole script on the first line of the
+    # plan under `set -euo pipefail`, before printing a single row. That is
+    # what this script did from `T100` until `T041` ran it: the header below
+    # describes a per-line transcript it could not produce, and nothing caught
+    # it because this file is deliberately outside the glob `just lint` walks.
+    # An `if` condition is the one context where `set -e` is suspended.
+    #
+    # `</dev/null` because the loop is reading the plan on stdin, and a child
+    # that read any of it would eat the rest of the file.
+    if out="$(cd "$fixtures" && phosphor --eval "$trimmed" 2>&1 </dev/null)"; then
+        code=0
+    else
+        code=$?
+    fi
 
+    # **The shapes below are `T100`'s, not the ones this file was written
+    # against.** It matched `(#refused "not built yet — T0xx builds it")` — a
+    # bare list, which is what `--eval` printed before the door had a voice —
+    # so after `T100` every line in the plan classified as BROKEN and the
+    # summary said the plan had drifted from the registry. It had not; the
+    # classifier had. Corrected at `T041` by running it.
     case "$out" in
-        '(#refused "not built yet'*)
+        '#refused · not built yet'* | '#raised · not built yet'*)
             expected=$((expected + 1))
             printf '  ok      %s\n' "$trimmed"
             printf '            -> %s\n' "$out"
             ;;
-        '#refused · Error:'*)
+        '#refused · '* | '#raised · '*)
+            # A refusal that is not *"not built yet"* is this file's own scheme
+            # disagreeing with the registry — a wrong argument, a wrong shape.
             broken=$((broken + 1))
             printf '  BROKEN  %s\n' "$trimmed"
             printf '            -> %s\n' "$out"
@@ -129,6 +151,15 @@ fi
 if [ "$landed" -gt 0 ]; then
     echo "seed-fixtures: $landed line(s) are no longer refusals — a task landed. This script only reports;"
     echo "  it does not yet persist anything or assert CP-5's fixed-point. See fixtures/README.md's residue table."
+    echo
+    echo "  ONE PROCESS PER LINE, AND NOTHING SURVIVES BETWEEN THEM. Every line above is its own"
+    echo "  'phosphor --eval', so the store a line writes to is gone before the next line starts."
+    echo "  T041 made 'declare-regions!' answer 6 and the two 'mark-seen!' lines below it answer 0"
+    echo "  against the empty store of a fresh process — three landed capabilities and nothing seeded."
+    echo "  Seen-state persistence is T044 and regions need the same; until one of them lands, this"
+    echo "  file reports what each call DOES, not what the fixture HOLDS. Recorded at T041 in"
+    echo "  docs/TASKS.md rather than worked around here, because a seeding mechanism that quietly"
+    echo "  seeds nothing is exactly what CP-5's tapes would be built on."
 fi
 
 exit 0

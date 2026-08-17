@@ -118,10 +118,11 @@ RECORDED = {
                                    "be one that skipped asking. (It also edits files that are "
                                    "not open, which is `T088`; the ask is the nearer of the "
                                    "two.)"),
-    "SetVirtualTextVisible": ("T041", "Collapsing a virtual-text rail addresses it by owning "
-                                      "region, and regions arrive with the store at `T041`. The "
-                                      "one live rail today is the unknown-key hint, which is "
-                                      "unowned by design (`Node::VirtualText.owner` is None)."),
+    # `SetVirtualTextVisible` was recorded here against `T041` and is gone: the
+    # store landed, so a rail can be named by its owning region and the arm is
+    # in `Editing::collapse`. It is per-owner without a fork patch — the host
+    # installs the row list every frame, so a collapsed owner's rows are simply
+    # not in the list it installs.
     # `Jump` and `ApplyEdits` were recorded here and are gone. Neither was ever a
     # missing arm: both were declared against a task that was ticked and had
     # demonstrably not built them, so a refusal derived from the row named the

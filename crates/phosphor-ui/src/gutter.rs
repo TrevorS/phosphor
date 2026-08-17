@@ -56,13 +56,15 @@
 
 use core::ops::Range;
 
+use phosphor_core::request::{Position, Span};
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Style};
 use ratatui_core::widgets::Widget;
 
-use crate::buffer_view::{STATE_BAR_WIDTH, StateMark};
+use crate::buffer_view::{Editor, STATE_BAR_WIDTH, StateMark};
 use crate::theme::Theme;
+use crate::virtual_text;
 
 /// §8's degraded marker: *"markers become `▎`"*. `U+258E LEFT ONE QUARTER
 /// BLOCK` — one cell, present in default terminal fonts, and the same width as
@@ -182,6 +184,126 @@ impl RegionSpan {
     pub const fn new(rows: Range<usize>, state: RegionState) -> Self {
         Self { rows, state }
     }
+}
+
+// ---------------------------------------------------------------------------
+// The vocabulary's coordinates, in the buffer's
+// ---------------------------------------------------------------------------
+
+/// A [`Position`] as the fork counts: 0-based line, 0-based char column.
+///
+/// The vocabulary is 1-based in both (`request::Position`) and the buffer is
+/// 0-based in both, and this is the only place the two meet. A `0` from a
+/// producer that counted from zero saturates to the first line rather than
+/// wrapping to the last one, which is what `saturating_sub` is doing here.
+pub(crate) const fn zero_based(at: Position) -> (usize, usize) {
+    (
+        at.line.saturating_sub(1) as usize,
+        at.column.saturating_sub(1) as usize,
+    )
+}
+
+/// The last position *inside* a half-open span.
+///
+/// [`Span`] ends at the first position after it, so a span covering all of line
+/// 12 ends at line 13 column 1 — and asking which row *that* is on marks a line
+/// the region does not touch. Column 1 of a line means "the end of the line
+/// before"; anything else steps back one column.
+pub(crate) fn last_inside(span: Span) -> Position {
+    if span.end.column > 1 {
+        Position {
+            line: span.end.line,
+            column: span.end.column - 1,
+        }
+    } else {
+        Position {
+            line: span.end.line.saturating_sub(1).max(span.start.line),
+            // Past any line's end, which
+            // [`Editor::visual_row_for_position`] resolves to its last segment.
+            column: u32::MAX,
+        }
+    }
+}
+
+/// `at` as a buffer cell, or [`None`] when the buffer has no such line.
+///
+/// **Never clamped**: a start the buffer does not have is a region about text
+/// that is gone, and the last line of the buffer is not where it belongs.
+pub(crate) fn cell(editor: &Editor, at: Position) -> Option<(usize, usize)> {
+    let (line, column) = zero_based(at);
+    (line < editor.code_ref().len_lines()).then_some((line, column))
+}
+
+/// The same for a span's **end**, which is clamped rather than dropped.
+///
+/// A span is `[start, end)`, so the part of a stale one a shortened buffer
+/// still has ends where the buffer does. Clamping only ever shortens a span,
+/// which is why it is safe here and not on a start. The sentinel column is what
+/// both consumers read as *"the end of that line"* —
+/// `Editor::visual_row_for_position` takes its last segment.
+pub(crate) fn end_cell(editor: &Editor, at: Position) -> (usize, usize) {
+    let last = editor.code_ref().len_lines().saturating_sub(1);
+    let (line, column) = zero_based(at);
+    if line > last {
+        (last, usize::MAX)
+    } else {
+        (line, column)
+    }
+}
+
+/// Spans in the vocabulary's coordinates, as the visual rows this module's
+/// ladder takes.
+///
+/// **The seam `T041` was cut for.** The module header has said since `T031`
+/// that *"real regions arrive from the store at `T041`, and this is the shape
+/// they arrive as"*; this is the function that turns the one into the other,
+/// and it is here rather than in the host because the conversion needs an
+/// `&Editor` — folds, soft wrap and virtual rows all move a line's *visual*
+/// row, and none of that is knowable from a `Span`.
+///
+/// Two callers, deliberately: the store's regions and
+/// [`crate::diagnostics::DiagnosticsVm::regions`], which had this loop to
+/// itself until now. One conversion is what keeps the two from disagreeing
+/// about which row a span is on — the same argument the header makes for one
+/// ladder.
+///
+/// # Three cases the loop is shaped by
+///
+/// A span whose **start** the buffer no longer has is dropped entirely; a span
+/// whose **end** it no longer has is clamped ([`cell`] and [`end_cell`] say
+/// why the two differ). An **inverted** span — the ends crossed during a
+/// rewrite — marks its start and nothing else, rather than nothing at all or a
+/// range running backwards. And a **virtual row** inside the range splits it:
+/// virtual text is not buffer text, so a region must not paint a state bar
+/// beside a row the region does not cover. That is why one span can answer
+/// more than one [`RegionSpan`].
+#[must_use]
+pub fn spans(editor: &Editor, regions: &[(Span, RegionState)]) -> Vec<RegionSpan> {
+    let mut rows = Vec::new();
+    for (span, state) in regions {
+        let Some(first) = cell(editor, span.start)
+            .and_then(|(line, column)| editor.visual_row_for_position(line, column))
+        else {
+            continue;
+        };
+        let (line, column) = end_cell(editor, last_inside(*span));
+        let Some(last) = editor.visual_row_for_position(line, column) else {
+            continue;
+        };
+        let last = last.max(first);
+        let mut run: Option<Range<usize>> = None;
+        for row in first..=last {
+            if virtual_text::is_virtual_row(editor, row) {
+                rows.extend(run.take().map(|rows| RegionSpan::new(rows, *state)));
+            } else if let Some(rows) = run.as_mut() {
+                rows.end = row + 1;
+            } else {
+                run = Some(row..row + 1);
+            }
+        }
+        rows.extend(run.map(|rows| RegionSpan::new(rows, *state)));
+    }
+    rows
 }
 
 /// **The ladder.** A row's whole region set, resolved to one mark.

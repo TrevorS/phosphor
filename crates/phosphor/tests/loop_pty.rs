@@ -2904,6 +2904,131 @@ mod driven {
         editor.quit();
     }
 
+    // -----------------------------------------------------------------------
+    // T041 — the store, and §7's one state machine
+    // -----------------------------------------------------------------------
+
+    /// One `declare-regions!` form for `file`, covering `from..to` by line.
+    ///
+    /// The path is the **absolute** one this harness opens with, and that is
+    /// the point rather than an accident: `store::key_for` normalises a
+    /// declaration and a lookup the same way, so the two agree whatever form
+    /// arrives. A test that declared a relative path here would prove the store
+    /// works only for a door that happened to spell it the way the editor did.
+    fn declare(file: &Path, spans: &[(u32, u32)]) -> String {
+        let regions = spans
+            .iter()
+            .map(|(from, to)| {
+                format!(
+                    "(hash \"path\" \"{}\" \"span\" (hash \"start\" (hash \"line\" {from} \
+                     \"column\" 1) \"end\" (hash \"line\" {to} \"column\" 1)) \"author\" \
+                     \"claude\")",
+                    file.display()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!(
+            "(string-append \"landed=\" (number->string (declare-regions! (list {regions}))))\r"
+        )
+    }
+
+    /// `(unseen-count)`, spelled so the answer is a sentinel rather than a
+    /// digit.
+    ///
+    /// `press_until` searches the frame for a substring, and a bare `3` is on
+    /// the screen already — it is a line number, a column, a diagnostic count.
+    /// `unseen=3` is on the screen only because this query answered it.
+    const COUNT: &[u8] = b"(string-append \"unseen=\" (number->string (unseen-count)))\r";
+
+    /// **`T041`, end to end on the shipping binary: a region declared is a
+    /// region counted, and a keystroke clears it.**
+    ///
+    /// Every hop is the real one — `runtime/keymaps.scm`'s `SPC u s`, the input
+    /// machine, `Editing::act`, the shared store, and the `unseen-count` query
+    /// coming back out through the Steel door. Nothing here composes a
+    /// ViewModel or hand-builds a region, which is what `loop_pty`'s own header
+    /// means by *"a test that presses a key proves the editor"*.
+    ///
+    /// The two halves that could not be proved separately are that the *door*
+    /// and the *keyboard* reach the same store. `declare-regions!` arrives
+    /// through `AppHost::apply` and `SPC u s` through `Editing::act` — two
+    /// dispatchers, deliberately, because only one of them has an editor to
+    /// resolve `cursor` with — so a build where they held two stores would pass
+    /// every unit test in the repository and fail this line.
+    #[test]
+    fn a_region_declared_at_the_repl_is_counted_and_a_keystroke_clears_it() {
+        let scratch = Scratch::new("regions");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        // Three regions: lines 2, 3 and 5, each half-open over its own line.
+        editor.press_until(
+            declare(&file, &[(2, 3), (3, 4), (5, 6)]).as_bytes(),
+            "landed=3",
+        );
+        editor.press_until(COUNT, "unseen=3");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // Line 1, which no region covers. `s` there has to answer *nothing
+        // here* rather than mark the nearest thing — a store that widened a
+        // miss to the file would read as working right up until it marked five
+        // regions the user never looked at.
+        editor.press_quietly(b" us");
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(COUNT, "unseen=3");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // Line 3, which the second region covers.
+        editor.press_quietly(b"jj");
+        editor.press_quietly(b" us");
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(COUNT, "unseen=2");
+
+        // **And claude revising it puts it back.** §7's third edge, which is
+        // the one a count alone cannot see: this re-declares the *same* span,
+        // so a store that treated every declaration as new would answer
+        // `landed=1` here and `unseen=3` below — the right numbers for the
+        // wrong reason, with four regions in a file that has three.
+        editor.press_until(declare(&file, &[(3, 4)]).as_bytes(), "landed=1");
+        editor.press_until(COUNT, "unseen=3");
+        editor.press_until(
+            b"(string-append \"total=\" (number->string (+ (unseen-count) (seen-count))))\r",
+            "total=3",
+        );
+        editor.quit();
+    }
+
+    /// **§7's other rule, through the door: your own edits never create
+    /// regions.**
+    ///
+    /// *"the machine tracks claude only"*, and a declaration claiming anyone
+    /// else is a no-op the store records rather than an error — so the receipt
+    /// says how many were dropped instead of refusing the whole batch. A door
+    /// that got a bare `#ok` back would have no way to learn the rule.
+    #[test]
+    fn a_declaration_that_is_not_claudes_creates_no_region() {
+        let scratch = Scratch::new("not-claudes");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let mine = format!(
+            "(declare-regions! (list (hash \"path\" \"{}\" \"span\" (hash \"start\" \
+             (hash \"line\" 1 \"column\" 1) \"end\" (hash \"line\" 2 \"column\" 1)) \
+             \"author\" \"you\")))\r",
+            file.display()
+        );
+        editor.press_until(mine.as_bytes(), "only claude's writes become regions");
+        editor.press_until(COUNT, "unseen=0");
+        editor.quit();
+    }
+
     /// `T037`'s locale hook, from a keystroke: `gc` uses the prefix the
     /// **declaration** named, and nothing in Rust knows what it is.
     ///

@@ -330,6 +330,18 @@ lifetime: the harness outlives any single phase and gets extended at every check
   > is nothing to make a `CP-5` tape deterministic *with*, and `CP-5`'s tapes do not exist to
   > compare. This criterion cannot be met before `T041`.
 
+  > **`T041` landed and it is still not met — the blocker was one layer under the one recorded
+  > above.** Three of the plan's lines are live now (`declare-regions!` answers `6`, the two
+  > `mark-seen!` lines answer), and the fixture still holds nothing, because **each line is its
+  > own `phosphor --eval` process**. The regions declared on line 9 are gone before line 16 runs,
+  > so it marks two spans in an empty store. Nothing about that is fixable by building more
+  > capabilities: what makes a seeded fixture possible is **persistence**, which is `T044` for
+  > seen-state and is owed for regions on the same terms. Recorded in full at `T041`, and
+  > `scripts/seed-fixtures.sh` now says it in its own summary — a seeding mechanism that reports
+  > three landed capabilities and seeds nothing is exactly what `CP-5`'s tapes would be built on.
+  > Two bugs in that script were found by being the first task to actually run it; both are at
+  > `T041` too.
+
 - [x] **V007 · Pixel-diff runner**
   Compare fresh captures against committed references; on mismatch, emit a side-by-side diff
   image and **fail soft with a request to look**, not a build break. Reference updates are an
@@ -1568,7 +1580,7 @@ Tier 3.
 
 Where Phosphor stops being an editor. The highest-value checkpoint follows it.
 
-- [ ] **T041 · Store core + region state machine**
+- [x] **T041 · Store core + region state machine**
   `claude writes → unseen --s--> seen`, and `claude revises → unseen again`. Seen-state is the
   only mutable flag the user owns; everything else derives. **Your own edits never create
   regions.**
@@ -1576,6 +1588,80 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   **`V006`'s seeded store state is reachable through `phosphor --eval`** — regions, seen-state,
   threads and a canned transcript — so `CP-5`'s tapes produce identical output on two machines.
   *Needs:* T019
+
+  > **Ticked on the first criterion. The second is answered rather than met, and the answer is
+  > that it cannot be met by this task** — see the three findings below. Nothing is quietly
+  > deferred: what closes it is named.
+  >
+  > **What landed.** `crates/phosphor-core/src/store/region.rs` is §7's machine — `Region`,
+  > `SeenState`, `Scope`, `Lens`, `Regions` — and `store.rs` is the `Store` that owns it behind
+  > one `Revision`. The arms are in two dispatchers on purpose: `Editing::act` for the keyboard,
+  > `AppHost::apply` for the three doors. **Only one of them has an editor**, so `cursor` and
+  > `selection` resolve on the loop's side and are refused by name on the door's — a query has no
+  > cursor, and widening one to the workspace is how `s` on an empty line would mark a whole file.
+  > Both apply to the *same* `Arc<store::Shared>`, which is what
+  > `a_region_declared_at_the_repl_is_counted_and_a_keystroke_clears_it` presses: the region is
+  > declared through the Steel door and cleared with `SPC u s`.
+  >
+  > **The owed arm is wired.** `set-virtual-text-visible` is `Editing::collapse`, and its RECORDED
+  > row is gone from `scripts/lint-action-arms.sh`. It is **per owner without a fork patch**: the
+  > host installs the row list every frame, so a collapsed owner's rows are simply not in the list
+  > it installs. The fork's own toggle is one global flag and a vendored patch would have been
+  > permanent. A diagnostic's row gets its owner from the region covering it, which is what
+  > `phosphor_ui::diagnostics` has promised since `T040` — positional here, anchored at `T042`.
+  >
+  > **The fold happened, and it was not cosmetic.** `store.rs`'s header has said since `T007` that
+  > `T041` folds `store::diagnostics` in. Reading it against the tree found that module had **no
+  > importer at all**: `crates/phosphor/src/lsp.rs` had its own
+  > `BTreeMap<PathBuf, Vec<Diagnostic>>` with its own `replace`/`of`/`answer`, written at `T040`
+  > because it needed a `Mutex` and `phosphor-core` holds no locks. Two maps, one name, and the
+  > documented one dead. The binary's copy is deleted; `crates/phosphor/src/store.rs` is the lock.
+  >
+  > **Finding 1 — `scripts/seed-fixtures.sh` has not run since `T100`, and nothing noticed.** It
+  > does `out="$(… phosphor --eval …)"; code=$?` under `set -euo pipefail`. `T100` ruled *"one
+  > door, one refusal, one exit code"* and made a refusal exit non-zero, so the assignment aborts
+  > the script on the **first line of the plan**, before one row is printed. Its own header
+  > describes a per-line transcript it could not produce. Fixed with an `if` condition (the one
+  > context where `set -e` is suspended). It is deliberately outside the `scripts/lint-*.sh` glob
+  > `just lint` walks, which is why a year of gates stayed green over it.
+  >
+  > **Finding 2 — its classifier was stale in the same way.** It matched
+  > `(#refused "not built yet — …")`, the bare list `--eval` printed before the door had a voice.
+  > After `T100` every line classified as BROKEN and the summary said *"plan.scm has drifted from
+  > the registry"*. The plan had not; the classifier had. It now reads `T100`'s shapes and the run
+  > is 15 expected refusals, 3 landed, 0 broken.
+  >
+  > **Finding 3 — and this is the one that governs the second criterion. `--eval` is one process
+  > per line, so the plan seeds nothing.** Line 9 declares six regions and answers `6`; lines 16
+  > and 17 `mark-seen!` two of them in a **fresh process with an empty store** and answer `0`. The
+  > calls are all real and all reach the store; there is no store left to reach by the time the
+  > next one starts. **Seen-state persistence is `T044`**, and regions need the same thing — so
+  > `V006`'s seeded state becomes reachable at `T044`, not here, and `CP-5`'s
+  > *"identical output on two machines"* rests on it. The script says so in its own summary rather
+  > than reporting three landed capabilities and letting a reader infer a seeded fixture.
+  >
+  > **Two door tests and two parity tests were pinned to `T041` being unbuilt** and went red the
+  > moment it was: `door.rs`'s `EXPR` was `(unseen-regions "src/retry.rs")` and `parity.rs` used
+  > `mark-seen`. Repointed at `watches`/`place-watch` (`S8`, `T074`/`T077`) with the hazard written
+  > down at each — picking the nearest unbuilt capability as a stand-in guarantees churn at the
+  > task that builds it. One of them, `the_eval_route_reaches_what_no_flag_can_express`, was also
+  > *narrow* rather than merely stale: it treated `#ok` as the only shape a carried-out capability
+  > answers in, and `mark-seen` answers a count.
+  >
+  > **Scope**
+  > - Files: `crates/phosphor-core/src/store.rs` (+335/-27), `crates/phosphor-core/src/store/region.rs` (+1010/-0),
+  >   `crates/phosphor/src/store.rs` (+316/-0), `crates/phosphor/src/main.rs` (+330/-40),
+  >   `crates/phosphor/src/lsp.rs` (-92), `crates/phosphor-ui/src/gutter.rs` (+140/-0),
+  >   `crates/phosphor-ui/src/diagnostics.rs` (-80/+15), `scripts/seed-fixtures.sh`,
+  >   `scripts/lint-action-arms.sh`, `crates/phosphor/tests/{loop_pty,door,parity}.rs`
+  > - Named units: 5 action arms × 2 dispatchers, 5 query arms, 1 owed arm, `gutter::spans`
+  >   (one span→row conversion where there were two), 28 core unit tests, 4 handle tests,
+  >   2 pty tests
+  > - Verification: `just gate` green — 1192 tests, 18 lints; two planted mutations, each named a
+  >   pty test that went red (a revision that stopped un-seeing drew `unseen=2`; a cursor miss
+  >   widened to the file drew `unseen=0`)
+  > - Risk: public API change yes (`phosphor_core::store`) · data migration no · cross-module yes
+  >   (`phosphor-core`, `phosphor-ui`, `phosphor`) · reversible yes · external blocker no
 
   > **The second criterion arrived from `V006` at the `CP-3` audit**, on the `T022` precedent.
   > `V006` built the fixture tree and `scripts/seed-fixtures.sh`, and every capability its plan

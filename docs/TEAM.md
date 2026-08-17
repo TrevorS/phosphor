@@ -440,6 +440,17 @@ built on an unverified foundation.
 > of the twelve languages shipped with a server that could not `initialize`. **Every one is a
 > composition defect**, invisible to a green crate and to every widget test in the repository.
 >
+> **Window E is open at Teej's instruction, with `CP-4`'s manual half still outstanding.** The
+> rule two paragraphs up — nobody starts the next window until the current checkpoint passes — is
+> the team's, and the person it protects is the one who waived it here; it is recorded rather than
+> amended, because the next agent to read this file should not learn it as precedent. `T041` is
+> ticked: the store, §7's state machine, the arms on both dispatchers, and the `store::diagnostics`
+> fold that `T007` promised and nothing had done. Its second criterion — `V006`'s seeded state
+> through `phosphor --eval` — is **answered rather than met**, and what closes it is `T044`; the
+> reasoning is at the task, in `fixtures/README.md`'s residue list, and in
+> `scripts/seed-fixtures.sh`'s own summary, which is three places rather than one because a
+> criterion nobody can close is exactly the kind that goes quiet.
+>
 > That bookkeeping gap is closed. `TASKS.md` now carries `CP-2 · **PASSED**` and dates the verdict
 > to 2026-08-12, where it belonged all along: the manual half was run and answered in conversation,
 > and never written down, so this file and `TASKS.md` disagreed with the build for a whole window.

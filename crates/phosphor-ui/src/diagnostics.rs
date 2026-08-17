@@ -70,13 +70,17 @@
 //!
 //! Owned by `surface`.
 
-use phosphor_core::request::{Diagnostic, Position, Severity, Span};
+use phosphor_core::request::{Diagnostic, Severity, Span};
 use phosphor_core::vm::ViewModel;
 use ratatui_code_editor::phosphor::cell_style::StyledSpan;
 use ratatui_core::style::{Color, Style};
 
 use crate::buffer_view::Editor;
-use crate::gutter::{RegionSpan, RegionState};
+// `cell`, `end_cell` and `zero_based` moved to `gutter` at `T041`, with the
+// span → visual-row loop that needed them. They are imported rather than
+// duplicated for the reason that loop was moved: two copies of "which row is
+// this position on" is two ladders.
+use crate::gutter::{self, RegionSpan, RegionState, cell, end_cell, zero_based};
 use crate::theme::Theme;
 use crate::virtual_text::{self, Anchor, Run};
 
@@ -264,37 +268,18 @@ impl<'a> DiagnosticsVm<'a> {
     /// claiming to cover more of the buffer than it does.
     #[must_use]
     pub fn regions(&self, editor: &Editor) -> Vec<RegionSpan> {
-        let mut regions = Vec::new();
-        for diagnostic in self.diagnostics {
-            let Some(state) = state(diagnostic.severity) else {
-                continue;
-            };
-            let Some(first) = cell(editor, diagnostic.span.start)
-                .and_then(|(line, column)| editor.visual_row_for_position(line, column))
-            else {
-                continue;
-            };
-            let (line, column) = end_cell(editor, last_inside(diagnostic.span));
-            let Some(last) = editor.visual_row_for_position(line, column) else {
-                continue;
-            };
-            // An inverted span — the two ends crossed during a rewrite — marks
-            // its start and nothing else, rather than nothing at all or a range
-            // running backwards.
-            let last = last.max(first);
-            let mut run: Option<core::ops::Range<usize>> = None;
-            for row in first..=last {
-                if virtual_text::is_virtual_row(editor, row) {
-                    regions.extend(run.take().map(|rows| RegionSpan::new(rows, state)));
-                } else if let Some(rows) = run.as_mut() {
-                    rows.end = row + 1;
-                } else {
-                    run = Some(row..row + 1);
-                }
-            }
-            regions.extend(run.map(|rows| RegionSpan::new(rows, state)));
-        }
-        regions
+        // The loop that used to be here is `gutter::spans` now, because `T041`
+        // gave it a second caller — the store's own regions — and one span
+        // arriving on two different rows in the same frame is exactly the
+        // disagreement the gutter module header calls two ladders.
+        let spans: Vec<_> = self
+            .diagnostics
+            .iter()
+            .filter_map(|diagnostic| {
+                state(diagnostic.severity).map(|state| (diagnostic.span, state))
+            })
+            .collect();
+        gutter::spans(editor, &spans)
     }
 
     /// One `┊ ■ message` row per diagnostic, hung from where it applies.
@@ -433,72 +418,10 @@ impl<'a> DiagnosticsVm<'a> {
 // Positions — the vocabulary's coordinates, in the buffer's
 // ---------------------------------------------------------------------------
 
-/// A [`Position`] as the fork counts: 0-based line, 0-based char column.
-///
-/// The vocabulary is 1-based in both (`request::Position`) and the buffer is
-/// 0-based in both, and this is the only place the two meet. A `0` from a
-/// producer that counted from zero saturates to the first line rather than
-/// wrapping to the last one, which is what `saturating_sub` is doing here.
-const fn zero_based(at: Position) -> (usize, usize) {
-    (
-        at.line.saturating_sub(1) as usize,
-        at.column.saturating_sub(1) as usize,
-    )
-}
-
-/// The last position *inside* a half-open span.
-///
-/// [`Span`] ends at the first position after it, so a span covering all of line
-/// 12 ends at line 13 column 1 — and asking which row *that* is on marks a line
-/// the diagnostic does not touch. Column 1 of a line means "the end of the line
-/// before"; anything else steps back one column.
-fn last_inside(span: Span) -> Position {
-    if span.end.column > 1 {
-        Position {
-            line: span.end.line,
-            column: span.end.column - 1,
-        }
-    } else {
-        Position {
-            line: span.end.line.saturating_sub(1).max(span.start.line),
-            // Past any line's end, which
-            // [`Editor::visual_row_for_position`] resolves to its last segment.
-            column: u32::MAX,
-        }
-    }
-}
-
 /// Where a diagnostic's row hangs: its span's start.
 const fn anchor_of(span: Span) -> Anchor {
     let (line, column) = zero_based(span.start);
     Anchor::at(line, column)
-}
-
-/// `at` as a buffer cell, or `None` when the buffer has no such line.
-///
-/// **The start half of the module header's rule.** Never clamped: a start the
-/// buffer does not have is a diagnostic about text that is gone, and the last
-/// line of the buffer is not where it belongs.
-fn cell(editor: &Editor, at: Position) -> Option<(usize, usize)> {
-    let (line, column) = zero_based(at);
-    (line < editor.code_ref().len_lines()).then_some((line, column))
-}
-
-/// The same for a span's **end**, which is clamped rather than dropped.
-///
-/// A span is `[start, end)`, so the part of a stale one a shortened buffer
-/// still has ends where the buffer does. Clamping only ever shortens a span,
-/// which is why it is safe here and not on a start. The sentinel column is what
-/// both consumers read as *"the end of that line"* — [`char_of`] takes the
-/// line's own length and `Editor::visual_row_for_position` its last segment.
-fn end_cell(editor: &Editor, at: Position) -> (usize, usize) {
-    let last = editor.code_ref().len_lines().saturating_sub(1);
-    let (line, column) = zero_based(at);
-    if line > last {
-        (last, usize::MAX)
-    } else {
-        (line, column)
-    }
 }
 
 /// A buffer cell as a character offset into the document — the coordinate
@@ -527,7 +450,7 @@ fn one_line(message: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use phosphor_core::request::Severity;
+    use phosphor_core::request::{Position, Severity};
     use ratatui_code_editor::phosphor::cell_style::{Underline, UnderlineCapability};
     use ratatui_core::layout::Rect;
 
