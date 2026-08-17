@@ -2777,8 +2777,25 @@ mod driven {
     /// `■ n` rather than through a row.
     ///
     /// So both halves are pressed here, in order, and they are the argument
-    /// that this is quieting rather than hiding: the count with **no key at
+    /// that this is quieting rather than hiding: the glyph with **no key at
     /// all**, and then the server's own sentence after a single `j`.
+    ///
+    /// **The sentinel is `■` and not `■1`, and the reason is a finding worth
+    /// keeping.** This harness opens its fixture by absolute path, and that
+    /// path is a 110-character temp directory — so at this terminal's 120
+    /// columns the statusline is genuinely out of room, §11's ladder does its
+    /// job, and the *count* is one of the things it gives up. Probed rather
+    /// than guessed: the row reads
+    /// `" N  /var/folders/…/sample.toy  │ toy-lsp ✓"`, with even the mode word
+    /// already contracted to `N`.
+    ///
+    /// That is the ladder working, not a defect — `file` is the last rung, so
+    /// a monstrous path outlives everything by design. It does mean **this
+    /// test cannot assert the count**, and asserting it here is what a first
+    /// draft did. The count's own visibility is asserted where width is
+    /// controllable, in `compose.rs`'s
+    /// `the_diagnostic_counters_never_take_a_second_row`, at 80, 120 and 200
+    /// columns against a path a person might actually have.
     #[test]
     fn a_published_diagnostic_reaches_the_screen_with_nobody_asking() {
         let (scratch, runtime, file) = toy(
@@ -2789,7 +2806,7 @@ mod driven {
         let editor = Editor::open(&file, &scratch.state(), &runtime);
         // No key is pressed. The editor is idle and the server pushes into the
         // same queue the keyboard uses.
-        let frame = editor.press_until(b"", "\u{25a0}1");
+        let frame = editor.press_until(b"", "\u{25a0}");
         assert!(
             !shows(&frame, "expected Duration, found u128"),
             "the cursor is on line 1 and the diagnostic is on line 2, so the \

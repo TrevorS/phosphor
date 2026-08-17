@@ -1522,6 +1522,37 @@ Tier 3.
 >   in this session"* is exactly the standard it missed, and a checkpoint's own mechanical half is
 >   the worst place to miss it — it is the paragraph a later reader trusts instead of looking.
 >
+> **The recurring sweep, run 2026-08-16.** Five items across three tiers; three are Tier 1/2 and
+> were run, two are Tier 3 and are Teej's by definition. **The 80-column item found a defect and
+> it was this window's own.**
+>
+> * **80 columns — run, and it failed first.** The statusline's diagnostic counters (added hours
+>   earlier, `T040`'s note above) passed the *same node* for their contracted and full forms, so
+>   §11's first rung was a no-op for them and they could not shed. At 17 columns the row came out
+>   `" N ✻ ■11 │ ■3 │ ●"` — the two counts intact and the **unseen** counter clipped to a bare
+>   glyph. That is *"drop, never squeeze"* broken by a segment that could not drop, and it took
+>   `●6` — one of §11's last-standing three — with it. Fixed in `runtime/statusline.scm` (`#false`
+>   contracted, so they drop on `unseen`'s rung) and pinned by
+>   `compose.rs::the_diagnostic_counters_never_take_a_second_row`, which walks 24→200 and asserts
+>   the counts at 80, 120 and 200. **Nothing covered it before**: every width test in the
+>   repository builds its ViewModel from `screen_9c`, which takes `..StatusVm::default()` — so
+>   `trouble` and `attention` were zero in all of them. A new segment with no width coverage is
+>   exactly what a sweep is for.
+> * **Degradation — run, and short by one for a reason that is not a defect.** Markers →
+>   `▎` (`gutter::the_degraded_form_is_the_marker_in_the_same_hue`) and undercurl → underline
+>   (three tests, including `phosphor-buffer`'s two against a real terminal profile) all pass.
+>   **The spinner's static `✻` has no test and cannot have one yet** — `SessionState::Working` is
+>   `T050`, so there is no spinner to degrade. Checked by running the suite: `test(spinner)`
+>   matches **zero** tests.
+> * **Nothing moves unless you asked — half reachable.** The viewport half is pressed
+>   (`loop_pty.rs`, forty newlines and line 1 must be gone). The half the sweep actually
+>   describes — *"the file changes underneath"* — is `T069`'s `✱`, which is `S7`. `CP-8b` is
+>   where that item first has both halves.
+> * **No torn frames — Teej's, and only Teej's.** The sweep's own wording: *"No recording can
+>   show you this."*
+> * **tmux — Teej's.** *"Passthrough is the thing being tested, so a captured tmux proves
+>   little."*
+>
 > **No verdict is recorded, and none may be recorded here by anyone but Teej.** The manual half —
 > is completion fast enough to be useful or fast enough to be annoying, the undercurl pass on two
 > terminals, the REPL language, the recurring sweep — has not happened. The first of those

@@ -306,16 +306,30 @@
       ;; no word at width, unlike `unseen`. `■ 3` needs no noun — the glyph is
       ;; §2's lexicon and the number is what you wanted — and `3 errors` would
       ;; be this file inventing a severity name the vocabulary spells
-      ;; `trouble`. so both forms are the same, and the rung is a no-op for it.
+      ;; `trouble`.
+      ;;
+      ;; **so they DROP rather than contract, and that is `#false`.** a
+      ;; counter with no word has nothing to give up but itself, and the
+      ;; alternative was measured rather than reasoned about: passing the same
+      ;; node for both forms made the rung a no-op, so at 17 columns the row
+      ;; came out ` N ✻ ■11 │ ■3 │ ●` — these two intact and the *unseen*
+      ;; counter clipped to a bare glyph. that is §11's "drop, never squeeze"
+      ;; broken by a segment that could not drop, and it took `●6` — one of
+      ;; §11's last-standing three — down with it.
+      ;;
+      ;; they share `unseen`'s rung, so one step gives up both counts and
+      ;; contracts the one that has a contraction. the diagnostic count is not
+      ;; in §11's surviving set (`✻` / `●n` / `!`) and nothing is lost by it
+      ;; going: gutter column 1 still marks every line that has one.
       (if (> trouble 0)
           (list (status/segment 'counter-words
-                                (view/counter 'diagnostic trouble void 'trouble)
+                                #false
                                 (view/counter 'diagnostic trouble void 'trouble)
                                 'bar))
           '())
       (if (> attention 0)
           (list (status/segment 'counter-words
-                                (view/counter 'diagnostic attention void 'attention)
+                                #false
                                 (view/counter 'diagnostic attention void 'attention)
                                 'bar))
           '())

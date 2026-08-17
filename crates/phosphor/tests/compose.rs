@@ -220,6 +220,81 @@ fn the_last_standing_set_survives_every_width() {
     }
 }
 
+/// **The sweep's 80-column claim, with the diagnostic counters present.**
+///
+/// `docs/TASKS.md`'s recurring sweep asks the same question at every checkpoint
+/// — *"Nothing wraps. A second statusline row is a bug"* — and the fixture
+/// every other test in this file uses (`screen_9c`) takes
+/// `..StatusVm::default()`, so `trouble` and `attention` are **zero** in all of
+/// them. They were zero in every width test in the repository on the day the
+/// counters were added, which means the segments this build gained at `CP-4`
+/// had no width coverage at all.
+///
+/// **They are also the only counters that cannot contract.** `unseen` sheds
+/// `6 unseen` → `●6` on §11's first rung; `runtime/statusline.scm` passes
+/// `void` for *both* forms of the diagnostic counters deliberately — `■ 3`
+/// needs no noun — so the rung is a no-op for them and they occupy their cells
+/// at every width down to the floor. That is the shape worth a test rather
+/// than a comment: two segments that never shrink, on a row that must stay one
+/// row.
+///
+/// Eleven is `CP-4`'s own number, from the cascade that started all of this.
+#[test]
+fn the_diagnostic_counters_never_take_a_second_row() {
+    let mut runtime = layer();
+    let vm = StatusVm {
+        trouble: 11,
+        attention: 3,
+        ..screen_9c()
+    };
+    let line = compose(&mut runtime, &vm).expect("composes");
+
+    for width in 24..=200u16 {
+        let drawn = row_of(&line, width);
+        assert!(
+            !drawn.contains('\n'),
+            "§11: nothing wraps — width {width}: {drawn:?}"
+        );
+        // The chip is §5's floor and outlives every rung, counters included.
+        assert!(
+            drawn.starts_with(" N"),
+            "width {width}: the chip went — {drawn:?}"
+        );
+    }
+
+    // At width the count is drawn, and it is the file's whole set rather than
+    // whatever the rows happened to show (`RowPolicy` bounds those).
+    //
+    // **80 and 120 are asserted by name**, not just "some wide width": 80 is
+    // the sweep's own number and 120 is what `loop_pty.rs` gives its terminal,
+    // so a count that survived only at 200 would be a count nobody ever sees.
+    for width in [80u16, 120, 200] {
+        let drawn = row_of(&line, width);
+        assert!(
+            drawn.contains("■11"),
+            "the trouble count is gone at {width}: {drawn:?}"
+        );
+        assert!(
+            drawn.contains("■3"),
+            "the attention count is gone at {width}: {drawn:?}"
+        );
+    }
+
+    // And they shed with the counter group rather than outliving it: `unseen`
+    // is on the same rung, so a width that has dropped `●6` has dropped these
+    // too. Read off the composition rather than assumed — the alternative is a
+    // row whose last surviving segment is a number nobody can act on.
+    let floor = (4u16..=200)
+        .find(|width| row_of(&line, *width).contains("●6"))
+        .expect("the unseen counter is drawn at some width");
+    let below = row_of(&line, floor - 1);
+    assert!(
+        !below.contains("■11") && !below.contains("■3"),
+        "the diagnostic counters outlived the counter rung at width {}: {below:?}",
+        floor - 1
+    );
+}
+
 #[test]
 fn a_working_session_animates_without_being_recomposed() {
     // The composed tree carries a *mark*, not a rendered string, so the elapsed
