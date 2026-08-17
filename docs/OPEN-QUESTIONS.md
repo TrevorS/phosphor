@@ -1445,9 +1445,11 @@ the bulk run dropped one. **The lesson is the sequence:** a regeneration is not 
 `tapes-diff` against it comes back all-matched, because that is what proves the recorder wrote
 what it said it wrote.
 
-**What this does not settle** is `7c-{rust,python,typescript}`, which regenerated with everything
-else and now carry `T106`'s kind and source columns. The reference agreeing with the build is
-what a Tier-2 reference *is*; whether the build should draw them is §`D`'s open ruling.
+~~**What this does not settle** is `7c-{rust,python,typescript}`~~ — **settled 2026-08-17.** They
+regenerated with everything else and carry `T106`'s kind and source columns; the reference
+agreeing with the build is what a Tier-2 reference *is*, and Teej ruled that the build is right
+and the *drawing* gains the columns. `T106` is ticked and the amendment is the sixteenth entry in
+[README.md](README.md)'s list, pending Teej's hand edit at claude.ai.
 
 ---
 

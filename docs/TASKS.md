@@ -2805,8 +2805,21 @@ graph names at all, while `T104` extends `T026`'s operator machine and `T033`'s 
 >   the machine, and the chip saying so is
 >   `a_server_that_cannot_start_says_so_on_the_statusline` working. Teej is installing it.
 >
-> The fifth is `T106`'s, still open and still Teej's: the kind and source columns are built and
-> screen `7c` draws neither, which is a design amendment rather than an agent's call.
+> The fifth was `T106`'s, and it is **ruled**: Teej, 2026-08-17 — *"add the columns to `7c`"*. The
+> drawing gains `kind` and `source`; the build loses nothing. Recorded as the sixteenth entry in
+> [README.md](README.md)'s amendment list, which is where a pending-upstream design change lives,
+> because `docs/design/*.dc.html` is imported verbatim and is Teej's to edit at claude.ai.
+>
+> **The push half was re-checked rather than assumed**, since it decides whether an agent can
+> carry this out: `DesignSync`'s `get_project` on `9234741f-228d-4014-9e3c-aea1475f8270` answers
+> `type: PROJECT_TYPE_PROJECT` with `canEdit: true`, and the tool's own contract is that only a
+> `PROJECT_TYPE_DESIGN_SYSTEM` accepts a write and *"that type is immutable at creation"*. So
+> `canEdit` is not the gate and the edit stays a hand edit. README's claim of 2026-08-13 still
+> holds.
+>
+> **What this settles downstream:** the three `7c-{rust,python,typescript}` Tier-2 captures
+> already draw all four columns, and `OPEN-QUESTIONS.md` recorded that as *"whether the build
+> should draw them is §D's open ruling"*. It is not open now — the references are correct.
 
 > **A third sitting, the same day, one finding — and it is worth more than the four above.**
 > Teej, on a half-typed `path:` in `main.rs`: *"we have to do better with these error msgs"*.
@@ -3175,7 +3188,7 @@ name. Neither task may decide it alone; it is [OPEN-QUESTIONS.md](OPEN-QUESTIONS
   > backwards. And *"enter or space doesnt accept"* needed no change to either key: it was the
   > absence of a stepping key, which is why one fix closed two complaints.
 
-- [ ] **T106 · What a completion row says about itself**
+- [x] **T106 · What a completion row says about itself**
   Reported at `CP-4`: a row is a label and a type and nothing else, and every completion UI a
   person has used says more.
   **The prior art, recorded because it is the reason for the shape rather than as decoration.**

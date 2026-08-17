@@ -72,11 +72,19 @@ project round-trips; edit them there, not here.
 ## Amendments to the design docs
 
 The design docs are the contract, and they are imported unmodified — so where a decision has
-since changed one, the change lives in the plan's decision log, not in the doc. **Fourteen so
-far** — four from the decision log, three from `CP-1`, two from `CP-2`, three from `CP-3`, and two
-from reading the docs against the tree. The same groups are tabled in
-[§5](IMPLEMENTATION-PLAN.md#5-decisions); this list was two behind it until the `CP-3` audit,
-which is its own small lesson about a list nothing recomputes.
+since changed one, the change lives in the plan's decision log, not in the doc. **Sixteen so
+far** — four from the decision log, three from `CP-1`, two from `CP-2`, three from `CP-3`, two
+from reading the docs against the tree, one from the repair window after `CP-4`, and one from
+`CP-4`'s manual half.
+
+The same groups are tabled in [§5](IMPLEMENTATION-PLAN.md#5-decisions); this list was two behind
+it until the `CP-3` audit, which is its own small lesson about a list nothing recomputes.
+
+> **And it had gone stale again.** This sentence said *"fourteen"* while **fifteen** bullets stood
+> below it — corrected on 2026-08-17 by counting them, at the same time the sixteenth landed. It
+> is exactly the defect the lints exist for, one layer out from where they reach:
+> `scripts/doc_claims.py` recomputes task, wave, capability and lint counts and has no rule for
+> this list. The bullets are the authority; the sentence is a summary of them.
 
 > **Every one of them is still pending upstream.** Audited against the live claude.ai project on
 > 2026-08-13 by fetching `Design Brief`, `Design Language` and `Component Breakdown` and reading
@@ -230,6 +238,26 @@ them down:
   `S4`'s acceptance target and `CP-4`'s snapshot, while the plain-editor milestone is `CP-3`,
   whose screens are `3c`, `6d` and `8e`. Recording it so the two orderings stop disagreeing.
   **Where:** Component Breakdown's build-order step 3.
+
+**And one from `CP-4`'s manual half, ruled by Teej on 2026-08-17** — the first amendment in this
+build that *adds* to a drawing rather than correcting one:
+
+- **A completion row has four columns, not two.** `7c` draws `label` and `detail`; the build
+  draws **`kind label detail source`**, and Teej ruled the drawing gains the two rather than the
+  build losing them. `T106`'s own entry has the argument: five independent completion UIs
+  (`nvim-cmp`+`lspkind`, `corfu`+`kind-icon`, `company-box`, VS Code, Helix) converge on that one
+  row grammar, and `kind` was *"the first thing a reader wants and the last thing this build
+  carries"* — `lsp-types` supplied it all along and nothing read it.
+  Two design laws shaped it and both held: §2's *"one cell, one concept … Nerd-Font-free"* rules
+  out the icon every one of the five uses, so **the kind is a word** (`fn`, `cnst`, `meth`); and
+  §1's *"each color names exactly one actor or state, never decoration"* rules out
+  `kind-icon`'s per-kind hue.
+  §11's shed order is **source → detail → kind → then the label elides**, which is why at 80
+  columns the source is gone and the label has lost nothing.
+  **Where:** TUI Mockups `7c`, whose float body becomes four columns. The three
+  `7c-{rust,python,typescript}` Tier-2 captures already draw them — a reference agreeing with the
+  build is what a reference *is* — so this amendment is what makes those captures correct rather
+  than pending.
 
 If you are reading the design docs cold, read this list first — everything else in them stands.
 
