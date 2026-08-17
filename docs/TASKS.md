@@ -2004,7 +2004,7 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > matched, **not** `u16::MAX` the way `Node::Buffer` does — §8 is *"no surface is ever taller
   > than its content"*, and a picker over an empty source has one row of content.
 
-- [ ] **T046 · Steel picker sources — unseen, files**
+- [x] **T046 · Steel picker sources — unseen, files**
   `(define-picker-source …)`. Files carries unseen counts and activity columns.
   *Done when:* screens `2a` and `3d` reproduce **from a keystroke** — the binding that opens the
   picker opens it in the running binary — and a source added from the REPL appears with no
@@ -2022,6 +2022,54 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > the loop the way Actions do**, rather than the host keeping a copy of the cursor — a second
   > copy of editor state is exactly the staleness `Target`'s own doc says late binding exists to
   > avoid.
+
+  > **§42 is still owed, and this task turned out not to be its caller.** Neither shipped source
+  > asks about the cursor: `2a` lists every unseen region in the workspace and `3d` groups them by
+  > path, so both are whole-store reads that `unseen-regions` already answers. The ruling put §42
+  > here on a prediction, and the prediction was wrong in a way worth recording rather than
+  > quietly satisfying — building the routing with no caller would be the *"built, tested and
+  > uncomposed"* shape this build has already found twice.
+  >
+  > What **did** meet §42's edge is `picker-rows`, which is a query tagged `T045` and answers from
+  > a snapshot the loop publishes rather than by running a source. Running a source is running
+  > scheme; a query arrives from *inside* the VM and `Host::query` takes `&self`. So it answers
+  > for the **open** picker and every miss answers an empty list — `query.rs`'s own *"an absent
+  > thing answers empty"*, which is also why no refusal variant was added to `QueryError`. The
+  > limit is stated at `HostState::picker_rows` rather than hidden. §42's routing is what would
+  > lift it, and it now has a concrete second caller instead of a predicted one.
+
+  > **A source answers a `spans` node**, which is `T080`'s hatch — *"styled rows straight from
+  > Steel"* is already the vocabulary for this shape. A second one would mean a constructor for
+  > scheme to learn, a decoder to maintain, and two places for *"a row is runs, left to right"* to
+  > drift. It also keeps the barrier honest: `SpanRow` is `phosphor-core`'s, so `phosphor-steel`
+  > answers a core type and never names `phosphor-ui`, and `crate::picker::row_of` is the whole
+  > conversion.
+
+  > **The registry is `T093`'s, called rather than copied.** `valid_source_id` *is*
+  > `valid_surface_id` — two spellings of one validation is how the weaker one gets found by
+  > somebody else — and `define_form`, the prefix and the three-step call are the same shape for
+  > the same reasons. An id is validated because it is interpolated into a `define` form and the
+  > capability is `Allow` on MCP.
+
+  > **`files` lists the files claude has touched, not every file in the workspace**, and that
+  > limit is stated in `runtime/pickers.scm` rather than hidden: **no capability walks a
+  > directory**. What the store knows is exactly the activity column `3d` draws, so the rows are
+  > right and the corpus is smaller than a files picker eventually wants. When a directory-walking
+  > capability lands, the source grows a second half and its rows keep their shape.
+
+  > **A door-opened picker took a keystroke to appear**, because the `open_picker` drain sat
+  > *before* the `Intent` drain: a keystroke sets the flag during event handling and is drained
+  > later the same iteration, but an `Intent` posted from the VM set it after the drain had
+  > already run — and with no further keys the loop simply waits. Moved below the intents, which
+  > is where `Intent::OpenSurface` already does its whole job inline. Found by the pty test doing
+  > the last thing a person would do: opening it and pressing nothing else.
+
+  > **A seven-step pty session went red under the full suite and green alone**, so it is two tests
+  > now. Each `press_until` carries its own deadline, which makes a long test one whose budget is
+  > the sum of everything before it — a flake with a cause rather than a mystery. Boot also posts
+  > intents now (one `DefineSource` per shipped source), so five tests that asserted an exact
+  > intent list gained `after_boot`, which drops registrations and keeps the question *"what did
+  > this keystroke ask for"* answerable.
 
 - [ ] **T047 · Grep / symbols source**
   Tab cycles source. Results carry who-touched-them. **And `request-references`**, which was

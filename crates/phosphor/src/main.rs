@@ -178,7 +178,7 @@ use phosphor_core::store::{
     Fingerprint, Lens, Scope as RegionScope, SeenState, Snapshot as AnchorSnapshot,
     SyntaxStep as AnchorStep,
 };
-use phosphor_core::value::{Value, Wire as _};
+use phosphor_core::value::{Args, Value, Wire as _};
 use phosphor_core::view::{
     Child, Density, Emphasis, Float as ViewFloat, KeyHint, Mood, Node, SessionState, Tone, Tree,
 };
@@ -569,6 +569,18 @@ enum Intent {
     DefineSurface(String, String),
     /// `open-float` — the surface id and its own arguments.
     OpenSurface(String, Value),
+    /// `define-picker-source` — `T046`, and the same shape as
+    /// [`Intent::DefineSurface`] for the same reason: a body crosses the
+    /// barrier as **source text**, and the [`Layer`] is what evaluates it.
+    DefineSource(String, String),
+    /// `open-picker` from a **door** — the source id and a seed filter.
+    ///
+    /// A separate arm from the keystroke path rather than a shared one, and it
+    /// is the seam `T041` established: this side has no editor, so it posts an
+    /// ask and the loop performs it against `Editing`, which does.
+    OpenPicker(String, Option<String>),
+    /// `invalidate-picker-source` — drop a source's cached rows.
+    InvalidateSource(String),
     /// `close-float` — §9's *"esc closes top-down"*, reached by a door instead
     /// of by the key.
     CloseFloat,
@@ -626,6 +638,21 @@ struct HostState {
     /// The head [`AppHost::persist`] writes without asking. See
     /// [`PERSIST_VERB`].
     verb: String,
+    /// The open picker's source id and its rows, published by the loop so the
+    /// `picker-rows` query has something to answer (`T045`, `T046`).
+    ///
+    /// **A published snapshot and not a live call, and the difference is
+    /// `OPEN-QUESTIONS.md` §42.** Running a source is running scheme, and a
+    /// query arrives from *inside* the VM — `Host::query` takes `&self` and
+    /// must answer without re-entering the runtime. So the loop publishes what
+    /// it derived on the frame it derived it, and the door reads that.
+    ///
+    /// The consequence is stated rather than hidden: this answers for the
+    /// **open** picker only. A `picker-rows` naming some other source refuses
+    /// by saying so, because the alternative is either a lie or the re-entrant
+    /// query routing §42 rules is the right fix and does not have a caller
+    /// urgent enough to build it yet.
+    picker_rows: Option<(String, Vec<phosphor_core::view::SpanRow>)>,
     /// The heads it *offers* instead of writing. See [`OFFERED_HEADS`].
     offered: Vec<String>,
 }
@@ -1164,6 +1191,14 @@ impl AppHost {
         })
     }
 
+    /// Publish what the loop derived, so `picker-rows` has an answer
+    /// (`T046`).
+    fn publish_picker(&self, rows: Option<(String, Vec<phosphor_core::view::SpanRow>)>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.picker_rows = rows;
+        }
+    }
+
     /// A [`RegionFilter`] as a store [`Lens`].
     fn lens(&self, name: &'static str, filter: Option<&RegionFilter>) -> Result<Lens, QueryError> {
         let Some(filter) = filter else {
@@ -1231,6 +1266,51 @@ impl Answers for AppHost {
             // `T042`. Read-only, so both of these answer from the door side
             // with no editor involved — an anchor's span is already resolved
             // and the store is the only thing that has to be asked.
+            // `T045`'s query half, landed with `T046` because it needs the
+            // source registry to have anything to answer about.
+            //
+            // **Every miss answers an empty list**, which is `query.rs`'s own
+            // rule — *"an absent thing answers empty"* — and not a shortcut
+            // taken for want of a refusal: `QueryError` has `Unknown`,
+            // `Argument` and `NotYetImplemented` and no fourth arm, because a
+            // query that found nothing has not failed. A source nobody has
+            // opened genuinely has no rows.
+            //
+            // What it answers for is the **open** picker, and that limit is
+            // `OPEN-QUESTIONS.md` §42: running a source is running scheme, a
+            // query arrives from inside the VM, and `Host::query` takes `&self`
+            // and cannot re-enter the runtime. So the loop publishes what it
+            // derived on the frame it derived it (`HostState::picker_rows`) and
+            // this reads that.
+            Query::Ui(phosphor_core::query::UiQuery::PickerRows {
+                source,
+                query,
+                limit,
+                offset,
+            }) => {
+                let held = self
+                    .state
+                    .lock()
+                    .ok()
+                    .and_then(|state| state.picker_rows.clone());
+                let rows = held
+                    .filter(|(open, _)| open == &source.0)
+                    // A filter argument would have to be matched, and matching
+                    // is nucleo's and the loop's. `set-picker-query` is the
+                    // verb that changes what is on screen; this reads it.
+                    .filter(|_| query.as_ref().is_none_or(String::is_empty))
+                    .map(|(_, rows)| rows)
+                    .unwrap_or_default();
+                let skip = usize::try_from(offset.unwrap_or(0)).unwrap_or(0);
+                let take = limit.map_or(usize::MAX, |n| usize::try_from(n).unwrap_or(usize::MAX));
+                Ok(self.answered(Value::List(
+                    rows.iter()
+                        .skip(skip)
+                        .take(take)
+                        .map(phosphor_core::view::SpanRow::to_value)
+                        .collect(),
+                )))
+            }
             Query::Region(RegionQuery::Anchors { path }) => Ok(self.answered(Value::List(
                 self.store.answer_anchors(&store::key_for(path)),
             ))),
@@ -1305,6 +1385,29 @@ impl Host for AppHost {
                         &phosphor_steel::float::SurfaceError::BadId(surface.0.clone()).to_string(),
                     )
                 }
+            }
+            // `T046` — the picker's three door-side verbs, shaped exactly like
+            // the float surface registry above and for the same reasons: an id
+            // is validated because it is interpolated into a `define` form, a
+            // body crosses as source text, and the work is an `Intent` because
+            // this side has no editor to open a picker in.
+            Action::Picker(PickerAction::DefinePickerSource { source, body }) => {
+                if phosphor_steel::picker::valid_source_id(&source.0) {
+                    self.ask(Intent::DefineSource(source.0.clone(), body.clone()));
+                    done(Value::Null)
+                } else {
+                    declined(
+                        &phosphor_steel::picker::SourceError::BadId(source.0.clone()).to_string(),
+                    )
+                }
+            }
+            Action::Picker(PickerAction::OpenPicker { source, query }) => {
+                self.ask(Intent::OpenPicker(source.0.clone(), query.clone()));
+                done(Value::Null)
+            }
+            Action::Picker(PickerAction::InvalidatePickerSource { source }) => {
+                self.ask(Intent::InvalidateSource(source.0.clone()));
+                done(Value::Null)
             }
             Action::Float(FloatAction::OpenFloat { surface, args }) => {
                 self.ask(Intent::OpenSurface(
@@ -1899,6 +2002,23 @@ impl Layer {
         args: &Value,
     ) -> Result<phosphor_core::view::Float, phosphor_steel::float::SurfaceError> {
         phosphor_steel::float::surface(&mut self.runtime, id, args)
+    }
+
+    /// `T046` — one registered picker source, called for its rows.
+    ///
+    /// Through this type for [`Layer::surface`]'s reason: `Layer` owns the
+    /// `Runtime` and is the only way into the VM, so *"arbitrary scheme ran,
+    /// invalidate the frame"* stays structural.
+    ///
+    /// Called on **every open**, which is what `define-picker-source`'s own
+    /// doc means by *"an open picker re-derives from it"* — a float is a
+    /// snapshot of an answer and a picker is a live query.
+    fn source(
+        &mut self,
+        id: &str,
+        args: &Value,
+    ) -> Result<Vec<phosphor_core::view::SpanRow>, phosphor_steel::picker::SourceError> {
+        phosphor_steel::picker::rows(&mut self.runtime, id, args)
     }
 
     /// `T021`'s boot report, as a float. Reads a value; runs nothing.
@@ -2730,6 +2850,11 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 PickerStep::Typing => {}
                                 PickerStep::Close => {
                                     editing.picker = None;
+                                    // Or `picker-rows` answers a list nothing
+                                    // is drawing, which is the staleness a
+                                    // published snapshot trades for and the
+                                    // one place it has to be paid.
+                                    host.publish_picker(None);
                                     surface = Surface::Buffer;
                                 }
                             }
@@ -2927,12 +3052,6 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // this task owes is a picker that opens, filters, selects and closes,
         // and it does — over an empty source, which draws `0/0` and says so
         // honestly rather than pretending to a list.
-        if std::mem::take(&mut editing.open_picker) {
-            if let Some(session) = editing.picker.as_mut() {
-                session.matcher.feed(Vec::new());
-            }
-            surface = Surface::Picker;
-        }
         // `T038`'s **done when**: *"typing in insert mode in the running binary
         // raises the float"*. So a completion is not only a key — it is what
         // typing does, which is what makes the float a completion list rather
@@ -3159,6 +3278,33 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         notice = Some(said);
                     }
                 }
+                // `T046`. Same two lines as the surface above; the difference
+                // is entirely in what the body is expected to answer.
+                Intent::DefineSource(id, body) => {
+                    let form = phosphor_steel::picker::define_form(&id, &body);
+                    if let Some(said) = phosphor_steel::answer::trouble(&layer.evaluate(&form)) {
+                        notice = Some(said);
+                    }
+                }
+                Intent::OpenPicker(id, query) => {
+                    editing.picker = Some(PickerSession::open(SourceId(id), query));
+                    editing.open_picker = true;
+                }
+                // **Dropping the rows is the whole of invalidation**, because
+                // nothing caches them between opens: `Layer::source` runs the
+                // procedure on every `open-picker`, which is what
+                // `define-picker-source`'s *"an open picker re-derives from
+                // it"* asks for. So this re-derives an open picker over that
+                // source and does nothing to a closed one.
+                Intent::InvalidateSource(id) => {
+                    if editing
+                        .picker
+                        .as_ref()
+                        .is_some_and(|session| session.source.0 == id)
+                    {
+                        editing.open_picker = true;
+                    }
+                }
                 // Composed once, at open — the same shape `:help` has, and not
                 // `define-picker-source`'s *"an open picker re-derives"*. A
                 // float is a snapshot of an answer; a picker is a live query.
@@ -3176,6 +3322,42 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     open_float = None;
                     if surface == Surface::Float {
                         surface = Surface::Buffer;
+                    }
+                }
+            }
+        }
+
+        // `T046`. The source runs **here**, in the loop, because running it is
+        // running arbitrary scheme and `Layer` is the one door into the VM.
+        // Every open re-derives — `define-picker-source`'s own *"an open picker
+        // re-derives from it"* — which is what makes a redefinition at the REPL
+        // land with no restart.
+        if std::mem::take(&mut editing.open_picker)
+            && let Some(session) = editing.picker.as_mut()
+        {
+            {
+                let id = session.source.0.clone();
+                let args =
+                    Value::Record(Args::new().with("filter", Value::Text(session.filter.clone())));
+                match layer.source(&id, &args) {
+                    Ok(spans) => {
+                        session.matcher.feed(spans.iter().map(picker::row_of));
+                        // Published on the frame it was derived, so
+                        // `picker-rows` reads what is on screen rather than
+                        // re-running a source from inside the VM. See
+                        // `HostState::picker_rows`.
+                        host.publish_picker(Some((id, spans)));
+                        surface = Surface::Picker;
+                    }
+                    // A source that does not exist or raised does **not** open
+                    // an empty picker: `T045`'s `0/0` is the honest drawing of
+                    // a source with nothing in it, and this is a different
+                    // fact. Said on the notice row and nothing opens, which is
+                    // `Intent::OpenSurface`'s rule for a float that raised.
+                    Err(why) => {
+                        editing.picker = None;
+                        host.publish_picker(None);
+                        notice = Some(why.to_string());
                     }
                 }
             }
@@ -7759,12 +7941,35 @@ mod tests {
         crate::stack(root, Some(config.to_path_buf()))
     }
 
+    /// The intents a *keystroke* asked for, with boot's own registrations
+    /// dropped.
+    ///
+    /// `runtime/pickers.scm` registers the shipped sources with
+    /// `define-picker-source!`, so booting posts a `DefineSource` per source
+    /// before any key is pressed. A test about what a binding did has to say
+    /// so; a test about what *boot* did (there are several, and they assert an
+    /// empty list or a persisted layer's own ask) must not use this.
+    fn after_boot(host: &AppHost) -> Vec<Intent> {
+        host.intents()
+            .into_iter()
+            .filter(|intent| !matches!(intent, Intent::DefineSource(..)))
+            .collect()
+    }
+
     /// The shipped layer, with nowhere to persist to: the host has no config
     /// home, so a persist is refused rather than writing into the
     /// repository's own runtime tree.
     fn booted() -> (Layer, Arc<AppHost>) {
         let host = Arc::new(AppHost::new(None));
         let runtime = boot(Some(&tree()), &host);
+        // **Drained, because the loop drains.** Boot itself posts intents now
+        // — `runtime/pickers.scm` registers the shipped sources with
+        // `define-picker-source!` — and the real loop takes them on its first
+        // pass. A test that boots and then asserts what a *keystroke* asked
+        // for has to start from the same place, or every assertion about
+        // intents becomes an assertion about how many things `init.scm`
+        // happens to register.
+        host.intents();
         (Layer::new(runtime), host)
     }
 
@@ -9527,7 +9732,7 @@ mod tests {
         );
         assert_eq!(resolved(&mut layer, "g"), Resolution::Pending);
         assert_eq!(resolved(&mut layer, "gz"), Resolution::Ran);
-        assert_eq!(host.intents(), vec![Intent::OpenRepl]);
+        assert_eq!(after_boot(&host), vec![Intent::OpenRepl]);
 
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&config);
@@ -9743,7 +9948,7 @@ mod tests {
             Resolution::Ran,
             "the shipped `gg` goto was not overridden"
         );
-        assert_eq!(host.intents(), vec![Intent::OpenRepl]);
+        assert_eq!(after_boot(&host), vec![Intent::OpenRepl]);
         assert_eq!(
             resolved(&mut layer, "ZQ"),
             Resolution::Unbound,
@@ -9832,7 +10037,7 @@ mod tests {
             Resolution::Ran,
             "the hand-written binding outranked the persisted one"
         );
-        assert_eq!(host.intents(), vec![Intent::OpenRepl]);
+        assert_eq!(after_boot(&host), vec![Intent::OpenRepl]);
 
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(&config);

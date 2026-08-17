@@ -36,7 +36,7 @@ use nucleo::pattern::{CaseMatching, Normalization};
 use nucleo::{Config, Nucleo};
 
 use phosphor_core::request::SourceId;
-use phosphor_ui::picker::{PickerVm, RowVm};
+use phosphor_ui::picker::{PickerVm, RowVm, RunVm};
 
 /// How long a frame is willing to spend inside the matcher.
 ///
@@ -66,6 +66,37 @@ impl Item {
             .concat();
         Self { haystack, row }
     }
+}
+
+/// A `SpanRow` from a Steel source, as a row the widget draws (`T046`).
+///
+/// **The seam, and it is one function.** `phosphor-steel` may not name
+/// `phosphor-ui` (`scripts/lint-the-steel-barrier.sh`), so a source answers
+/// `phosphor-core`'s `SpanRow` and the conversion happens here — the same
+/// place every other core-to-widget conversion happens.
+///
+/// Two things a `SpanRow` carries are deliberately dropped.
+///
+/// `SpanRow::tint` — §3's row tints name a *region state* and a picker row is
+/// not in one. The selected row's ground is the widget's, from
+/// `RegionTints::selection`, which is §4's pairing.
+///
+/// `Run::emphasis` — **a source cannot mark what matched, because a source
+/// does not know.** The first draft mapped an emphasis onto
+/// `RunVm::matched` and there is no weight in the protocol to map (`Emphasis`
+/// is `Plain`, `Inverted`, `Underline`, `Undercurl` — every one of them a
+/// *meaning*, not a weight). The mapping would have been inventing one. What
+/// actually knows which characters matched is **nucleo**, which produces match
+/// indices, and wiring those into `RunVm::matched` belongs with `T047` — grep
+/// and symbols are where a highlighted match earns its keep. Until then the
+/// flag is drawn and written by nothing, which is visible rather than wrong.
+pub(crate) fn row_of(span: &phosphor_core::view::SpanRow) -> RowVm {
+    RowVm::new(
+        span.runs
+            .iter()
+            .map(|run| RunVm::text(run.text.clone()).toned(run.tone))
+            .collect(),
+    )
 }
 
 /// A live picker session: the rows, the matcher, and where the selection is.

@@ -1611,6 +1611,87 @@ mod driven {
         );
     }
 
+    /// **`T046`: a source defined at the REPL opens with no restart.**
+    ///
+    /// The id is one nothing shipped, so a picker that opens over it can only
+    /// be reading what was just defined. Opened through the **door** rather
+    /// than a keystroke — `open-picker` is `Allow` on MCP, so this is the path
+    /// an agent takes, and it proves the `Intent` seam as well as the registry.
+    ///
+    /// **Its own test rather than a third act of the one below**, and that is
+    /// not tidiness: as one seven-step session it went red under the full
+    /// suite's sixteen-way parallelism and green on its own. Each
+    /// `press_until` has its own deadline, so a long test is a test whose
+    /// budget is the sum of everything before it.
+    #[test]
+    fn a_source_defined_at_the_repl_opens_with_no_restart() {
+        let scratch = Scratch::new("picker-fresh-source");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(
+            b"(define-picker-source! \"scratch\" \
+              \"(lambda (args) (view/spans (list (view/span-row (list (view/run \\\"invented-just-now\\\" 'claude 'plain)) void))))\")\r",
+            "#ok",
+        );
+        let fresh = editor.press_until(b"(open-picker! \"scratch\")\r", "invented-just-now");
+        editor.quit();
+
+        assert!(
+            shows(&fresh, "invented-just-now"),
+            "a source defined this session opened without a restart; frame was: {fresh}"
+        );
+    }
+
+    /// **`T046`: `2a` and `3d` reproduce from a keystroke.**
+    ///
+    /// One session for both because they read the same store: two regions in
+    /// one file are two `unseen` rows and one `files` row, and that difference
+    /// *is* `3d`'s activity column.
+    #[test]
+    fn the_unseen_and_files_pickers_reproduce_from_a_keystroke() {
+        let scratch = Scratch::new("picker-sources");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(declare(&file, &[(1, 2), (3, 4)]).as_bytes(), "landed=2");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // `SPC u l` — the shipped `unseen` source, over the store.
+        let listed = editor.press_until(b" ul", "2/2");
+        assert!(
+            shows(&listed, "unseen"),
+            "the rows say what state they are in; frame was: {listed}"
+        );
+        editor.press_quietly(b"\x1b");
+
+        // `3d` — `SPC f`, the files source, over the same two regions.
+        //
+        // **`1/1` is the assertion**, and it is the whole of what `3d`'s
+        // activity column means: two regions in one file group into *one* row.
+        // A source that did not group would draw `2/2`.
+        //
+        // The row's text is deliberately not asserted. A `Scratch` lives under
+        // the system temp directory and the editor's cwd is the repo, so
+        // `key_for` cannot strip the prefix — the row carries an absolute path
+        // long enough to fill the float and truncate everything after it. That
+        // is correct behaviour (§11: clip, never wrap) and it makes the text a
+        // fact about the tempdir rather than about the picker.
+        let files = editor.press_until(b" f", "1/1");
+        editor.quit();
+
+        assert!(
+            shows(&files, "1/1"),
+            "two regions in one file are one files-picker row; frame was: {files}"
+        );
+    }
+
     /// **`T044`: seen-state survives `kill -9`.**
     ///
     /// The task asks for *"survives restart and `kill -9`"*, and `kill -9` is

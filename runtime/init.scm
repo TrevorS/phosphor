@@ -23,7 +23,6 @@
 ;; name that leaves the tree is refused.
 ;;
 ;; still to land, each with the task that writes it:
-;;   pickers/         picker sources and their columns                (T045)
 ;;   permissions.scm  the rules an always-allow answer writes         (T061)
 ;;   inbox.scm        what the inbox groups by                        (T067)
 ;;   watch.scm        watch placement and formatting                  (T075)
@@ -45,6 +44,7 @@
 (define phosphor/boot-files
   '("keymaps.scm"
     "statusline.scm"
+    "pickers.scm"
     "languages/typescript.scm"
     "languages/javascript.scm"
     "languages/rust.scm"

@@ -51,6 +51,7 @@ pub mod convert;
 pub mod float;
 pub mod host;
 pub mod keymap;
+pub mod picker;
 pub mod registry;
 pub mod repl;
 pub mod runtime;
