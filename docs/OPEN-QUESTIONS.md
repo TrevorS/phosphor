@@ -1508,6 +1508,57 @@ sentence a caller can act on.*
 
 ---
 
+## Raised by the pre-window scout, mid-Window E
+
+One entry, and it is the kind this register exists for: **two tasks need a mechanism the
+vocabulary does not have a verb for**, and whichever is built first will invent it while the other
+inherits whatever it invented.
+
+### 43 · `open-float` names a registry nothing creates
+
+`open-float`'s first argument is a `SurfaceId`, and `request.rs` is emphatic about why it is a key
+rather than an enum — *"a registry key, not a Rust enum, and this is a decision with a test behind
+it: `T048` requires `:arch` to be built entirely from the `spans` hatch and to add **zero lines**
+to `phosphor-ui`. A `FloatKind` enum would make every new Steel surface a Rust edit."* That
+reasoning is right and nothing here disputes it.
+
+**The registry does not exist.** Checked against the tree this session:
+
+- No verb creates an entry. The whole vocabulary has **two** `define-*` capabilities —
+  `define-picker-source` (`T046`) and `define-language` (`T037`) — and neither is this
+  (`crates/phosphor-core/src/action.rs`).
+- Nothing populates one. `runtime/*.scm` contains no float composition at all, though the
+  primitive is registered and available: `crates/phosphor-steel/src/view.rs` binds `"float"` and
+  `"float-header"`, so the editor layer *can* build the node and simply never does.
+- The three verbs are unapplied and RECORDED against `T093`
+  (`scripts/lint-action-arms.sh`), whose own *done when* is *"a Steel call opens a float"* —
+  which cannot be written without deciding what a Steel call names.
+
+So **three tasks meet at this seam**: `T093` opens a surface, `T048` is a surface, and `T046`'s
+`define-picker-source` is the closest existing shape to copy. The picker is the tell — it is a
+float *and* has its own define verb, which suggests the intended design was per-surface-kind
+registration rather than one general surface registry. That is a guess about intent, flagged as
+one.
+
+**Two shapes, and they are not equivalent:**
+
+1. **A `define-float-surface` verb**, symmetric with `define-picker-source`: the layer registers a
+   thunk under an id, `open-float` calls it and puts the result in the slot. One new capability,
+   and `:arch` becomes a `runtime/arch.scm` that adds zero Rust — which is exactly what `T048`'s
+   acceptance demands.
+2. **No registry; `open-float` takes the composed node.** Simpler, and it makes `SurfaceId`
+   pointless — the argument would become a view tree, which contradicts the declared payload and
+   means MCP could push arbitrary chrome, a door `§9`'s one-float rule exists to govern.
+
+*Recommendation: shape 1, ruled before either `T048` or `T093` starts, and the capability added to
+the vocabulary rather than invented inside whichever lands first. It is one row in `action.rs` and
+it is the difference between `:arch` proving the escape hatch is sufficient — which is the entire
+point of `T048` — and `:arch` being a special case with a Rust arm behind it. Note this also
+decides where `§9`'s one-float policy lives: with a registry the layer holds it, without one the
+binary does.*
+
+---
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

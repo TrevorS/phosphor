@@ -1757,6 +1757,39 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   under 100 cols). Rows are `Vec<Span>` so agent context renders in actor colours.
   *Done when:* it stays responsive filtering a 100k-file list. *Needs:* T041, T084
 
+  > **Both dependencies are verified and neither is in the graph yet** — checked by the
+  > pre-window scout, by resolving and building them rather than by reading `SPIKES.md` again.
+  > `SPIKES.md`'s manifest pinned both a phase ago and both still resolve to exactly those
+  > versions, which is worth knowing on its own.
+  >
+  > | crate | version | licence | MSRV | notes |
+  > |---|---|---|---|---|
+  > | `nucleo` | 0.5.0 | **MPL-2.0** | none declared | allowed at `deny.toml:54`; pulls `nucleo-matcher`, `memchr` |
+  > | `ratatui-textarea` | 0.9.2 | MIT | 1.86.0 | under our 1.88 floor, so it moves no MSRV |
+  >
+  > **The one trap: `ratatui-textarea`'s default feature set includes `crossterm`.** `phosphor-ui`
+  > may not reach a terminal, and `scripts/lint-no-app-layer-in-ui.sh` is a *source* lint precisely
+  > because *"Cargo unifies features per crate across the graph, so the manifest cannot express
+  > it"*. Add it `default-features = false`, the way both vendored forks already are. Dropping the
+  > defaults loses only backend bindings (`crossterm`/`termion`/`termwiz`) — the widget renders
+  > through `ratatui-core` and takes input from our own machine, so nothing wanted is lost.
+  >
+  > **No new versions enter the graph.** Built together on the pinned 1.97.1 in a scratch crate:
+  > one `ratatui-core`, **v0.1.2**, unified with ours — so `deny.toml`'s
+  > `deny-multiple-versions` ban on that crate holds — and `ratatui-widgets` resolves to 0.3.2,
+  > which `Cargo.lock:2211` already carries at that exact version.
+  >
+  > **`nucleo` is two years old** (published 2024-04-02) and declares no `rust-version`. It
+  > compiles clean on the pin. It is Helix's engine and the plan chose it on that basis; recorded
+  > because "stale" was the finding that killed `tui-textarea`, and the difference here is that
+  > this one still builds against a current graph.
+
+  > **The preview is a diff, and that settles a question one layer over.** `2a` draws the preview
+  > pane as `+`-prefixed diff lines over `src/retry.rs · 6–10`, not as a buffer with a state
+  > column. So this task does **not** create a creditor for `Node::Gutter` — the one node kind in
+  > `scripts/lint-node-kinds.sh`'s RECORDED table with no task that closes it. Checked because the
+  > guess was plausible and wrong; recorded so it is not re-derived.
+
 - [ ] **T046 · Steel picker sources — unseen, files**
   `(define-picker-source …)`. Files carries unseen counts and activity columns.
   *Done when:* screens `2a` and `3d` reproduce **from a keystroke** — the binding that opens the

@@ -134,7 +134,10 @@ RECORDED = {
                    "is the column *without* the editor, for a surface that wants it. No task in "
                    "the graph names such a surface, so nothing closes this entry. The "
                    "interpreter already draws the tag (`crate::gutter`), so the gap is the "
-                   "composition alone."),
+                   "composition alone. **`T045`'s picker preview was checked and is not it**: "
+                   "`2a` draws that pane as diff lines, not as a buffer with a state column, so "
+                   "the preview is `Node::Diff`'s shape (`T063`). Recorded by the pre-window "
+                   "scout because the guess is plausible and the drawing settles it."),
     "Spinner": ("T051", "Composed by nothing, and yet a spinner does turn: `Interpreter::session` "
                         "renders it inside `Node::Session`'s own arm, off that node's `since` and "
                         "the frame clock. The standalone kind is for a surface other than the "

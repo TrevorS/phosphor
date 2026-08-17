@@ -396,6 +396,15 @@ built on an unverified foundation.
 > no such guard — it is the door's voice, not an arm — which is the argument for scheduling it
 > rather than leaving it to a window that next happens to touch `door.rs`.
 
+> **`T093` is Window E's, by the rule above, and the pre-window scout is what noticed.** Each arm
+> owed *"belongs to the window that next touches its surface"*, and `T093` is floats — which
+> `T045`'s picker **is**. Building it after the picker means reopening the surface; building it
+> before means the picker's door exists the day the picker does. It is not schedulable yet, and
+> that is [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) §43: `open-float` takes a `SurfaceId` that names
+> a registry **nothing creates** — the vocabulary has exactly two `define-*` verbs and neither is
+> a surface. `T048` needs the same mechanism. One ruling unblocks both, and until it lands
+> whichever task runs first invents the mechanism the other inherits.
+
 > **Window F reopens `spine` and `surface` briefly.** `T088` (pane manager) and `T089` (`TabBar`)
 > both gate `T054`, so they run at the front of F and then those two roles go quiet again. It is
 > the one place the "windows narrow as the build goes on" shape doesn't hold, and the reason is
