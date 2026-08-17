@@ -1691,7 +1691,7 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > recorded in `scripts/lint-action-arms.sh`'s RECORDED table against `T041`. Wire it here
   > rather than leaving it to a later audit.
 
-- [ ] **T042 · Node anchoring**
+- [x] **T042 · Node anchoring**
   Anchors bind to tree-sitter nodes. Threads, seen-state, and watches survive rewrites.
   **And vim's marks, added by the repair window between `CP-3` and `S4`.** `goto-anchor` named an
   `AnchorId` that nothing produced and there was no setter at all, which is why `m`, `'` and
@@ -1706,10 +1706,72 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   so `m{a-z}` writes a mark, `'{a-z}` and `` `{a-z} `` read it back through `goto-anchor`, and
   `T098`'s third clause closes for those three keys. *Needs:* T041
 
-  > **The `jump` half is an arm this task owes**, not a new task. `Jump` is declared and
-  > unapplied, recorded in `scripts/lint-action-arms.sh`'s RECORDED table against `T042` for
-  > exactly this reason. It is here rather than in the *Arms owed* section below because it has a
-  > creditor already.
+  > **All four arms are applied** — `place-anchor`, `goto-anchor`, `reanchor` and `jump` — in
+  > both dispatchers, on `T041`'s precedent: `Editing::act` resolves the focus-relative targets
+  > because it has an editor, `AppHost::apply` refuses those by name and honours the explicit
+  > ones. The RECORDED table is unchanged and still holds eight rows, which is the right answer:
+  > a row cites a task, and these cited *this* one.
+
+  > **A `Vec<SyntaxStep>` is the fingerprint, and the child-index path is the design it
+  > replaced.** `[3, 1, 0]` is exact and worthless for the one job anchors have: inserting a
+  > function above another shifts every index after it, so the anchor follows the most ordinary
+  > edit there is to the wrong node. What survives is what a person would say out loud —
+  > *"`retry`, in `impl Backoff`"* — so a path is the chain of **named** ancestors, each as its
+  > kind plus what identifies it.
+  >
+  > **The identifying text is three grammar fields, not one, and the fork's own test found
+  > it.** `step_of` tries `name`, `trait`, `type` and joins what it finds.
+  > `function_item`, `struct_item`, `class_definition` and `function_definition` carry `name`;
+  > Rust's `impl_item` does **not**, so the first draft silently dropped `impl Backoff` out of
+  > every path — caught by `the_chain_names_the_construct_a_person_would_say_out_loud` failing
+  > on its first run. `two_trait_impls_of_one_type_do_not_collide` is the other half: `type`
+  > alone renders `impl Display for Backoff` and `impl Debug for Backoff` identical, and an
+  > anchor in one would resolve into the other. The list keeps the walk grammar-blind — field
+  > names tried on every node, never a table of node kinds — which
+  > `the_walk_is_grammar_blind_and_python_resolves_too` holds it to.
+
+  > **`goto-anchor` grew a `label`, and that was the whole vocabulary change.**
+  > `runtime/keymaps.scm` had named the gap precisely: *"`place-anchor` writes a `label` that
+  > `goto-anchor` cannot read — it takes an `AnchorId`, and no capability turns a label into
+  > one."* A binding is **data** (`input::table::Role` — *"nothing here is a closure"*), so `'a`
+  > cannot look an id up before naming one, and a literal id in a keymap would be worse than the
+  > silence it replaced. The lookup went to the door, where all three doors reach it. `exact` came
+  > with it, because backtick-versus-quote is a legitimate ask from a script too.
+  >
+  > **78 generated keymap rows rather than a fourth `Awaiting` state.** `m` cannot consume the
+  > `a` in `ma` by running code, so the alternative was new input-machine machinery beside
+  > `Register` and `ReplaceChar`. Generating the pairs in scheme is less machinery for the same
+  > 78 rows and keeps the keymap a table anything can read. `<C-o>` / `<C-i>` are bound too.
+
+  > **PHOSPHOR PATCH 12** is the one new seam: `Code::syntax_path(byte)`, read-only, over the
+  > tree the fork already keeps current. The host was the alternative and loses on three counts —
+  > a second grammar table, a second parse per reanchored file, and a tree that can *disagree*
+  > with the one the editor highlights from, because the editor's is incremental and a fresh
+  > parse is not. Nine tests in `vendor/…/tests/syntax_path.rs`, which `just test` cannot see, so
+  > `scripts/lint-vendor-tests.sh` now requires the binary by name.
+
+  > **A door places anchors at full fidelity**, by reading the file off disk and parsing it with
+  > the same `grammar_of` the loop uses. An agent asking to anchor `src/retry.rs:24` is talking
+  > about the file, not about unsaved buffer state, so disk is the honest source on that side —
+  > and *"placed over MCP"* does not mean *"resolves one tier worse"*.
+
+  > **What the bench corrected about its own prose.** `benches/anchor.rs` asserted a miss was the
+  > expensive case — both rungs scanned to the end. It is the **cheap** case, by 5×: a
+  > fingerprint whose path has a different number of steps dies on `Vec`'s length comparison
+  > before one string is read. The dear case is a node-tier *hit*, where equal lengths make every
+  > line pay a full step-by-step compare. Recorded because it inverts where an optimisation would
+  > go — hash the path, do not shorten the scan. Both growth shapes hold at ~1.06× per doubling.
+  >
+  > This paragraph claimed the opposite — that `Jump` *was* in
+  > `scripts/lint-action-arms.sh`'s RECORDED table — for a window, while the sentence directly
+  > above it stated the correct rule for `place-anchor`. The lint's own comment (`:129`) records
+  > the removal and the reason: `Jump` and `ApplyEdits` were declared against *ticked* tasks that
+  > had demonstrably not built them, so the derived refusal named the wrong task (`jump` said
+  > *T026 builds it*, which was false). Re-declaring them against unticked tasks took them out of
+  > the table's ticked filter, which is the right answer — the attribution was the bug, not the
+  > absent arm. Found by the Window E scout, by grepping the table instead of trusting the prose;
+  > no lint catches this class, because `doc_claims.py` recomputes counts, not cross-references
+  > into a lint script's internals.
 
   > **`T041` left this task a rule to replace, and named it as an approximation rather than a
   > design.** With no anchors, a declaration has only a path and a span to find the region it
@@ -1847,7 +1909,8 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   (colour spans) and nothing else.
   Three consequences from the spike, all landing here: **marks carry no id**, so region ↔ mark
   mapping needs our own side table keyed by offset range; **`set_marks` replaces wholesale**
-  (`editor.rs:660-682`), so every seen-state change re-uploads the full set — keep the upload off
+  (`editor.rs:782`, and `set_marks_colored` at `:798` — this read `660-682` for a window, which is
+  the code-folding block), so every seen-state change re-uploads the full set — keep the upload off
   the hot path and diff before uploading; and **the state column and undercurl are not marks** —
   those are `T031` and `T085`, resolved separately and composed per row.
   *Done when:* marking a region seen retints it with no full re-render stall on a file with 500+

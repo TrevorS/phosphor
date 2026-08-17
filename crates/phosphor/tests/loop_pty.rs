@@ -1525,7 +1525,7 @@ mod driven {
     /// `Editing::apply` would otherwise succeed silently. A test that drove the
     /// machine would pass with the statusline saying nothing.
     #[test]
-    fn the_macro_and_mark_keys_decline_by_naming_their_task() {
+    fn the_macro_key_declines_by_naming_its_task() {
         let scratch = Scratch::new("named-refusal");
         let runtime = copy_layer(&scratch.path);
         let file = scratch.path.join("sample.txt");
@@ -1550,17 +1550,60 @@ mod driven {
         );
         macros.quit();
 
-        // `m` — set a mark. A mark is an anchor, `place-anchor` is the setter
-        // that did not exist until this window, and `T042` is its row's task.
-        let marks = Editor::open(&file, &scratch.state(), &runtime);
-        let before = marks.mark();
-        marks.press(b"m");
-        let frame = marks.since(before);
-        assert!(
-            shows(&frame, "not built yet — T042 builds it"),
-            "m names the task that anchors the store; frame was: {frame}"
+        // The mark half of this test used to live here and asserted that `m`
+        // declined by naming `T042`. `T042` is built, so the assertion is now
+        // `a_mark_is_set_and_returned_to` below — a round trip rather than a
+        // refusal. Kept as a note because a reader looking for "where did the
+        // mark case go" should find the answer at the site.
+    }
+
+    /// **`T042`'s keystroke criterion, end to end.** `m{a-z}` writes a mark,
+    /// `` `{a-z} `` reads it back, and the proof is the *file* rather than the
+    /// statusline — a cursor that says it is on line 1 and edits line 5 is
+    /// exactly the class of defect a position assertion cannot see.
+    ///
+    /// `m` alone is a prefix now (26 rows, generated in `runtime/keymaps.scm`),
+    /// so pressing it waits rather than acting. That is why this presses `ma`.
+    #[test]
+    fn a_mark_is_set_and_returned_to() {
+        let scratch = Scratch::new("mark-round-trip");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\nbravo\ncharlie\ndelta\necho\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // Mark line 1, walk to the bottom, come back, and delete a character.
+        editor.press(b"ma");
+        editor.press(b"G");
+        editor.press(b"`a");
+        editor.press(b"x");
+        editor.press_until(b":w\r", "sample.txt");
+        editor.quit();
+
+        let after = fs::read_to_string(&file).expect("the buffer was written");
+        assert_eq!(
+            after, "lpha\nbravo\ncharlie\ndelta\necho\n",
+            "`a returned to the marked line, so x took alpha's first character",
         );
-        marks.quit();
+    }
+
+    /// The other half: a mark that was never set declines by name rather than
+    /// jumping somewhere plausible.
+    #[test]
+    fn an_unset_mark_says_so() {
+        let scratch = Scratch::new("mark-unset");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let drawn = editor.press_until(b"'z", "no mark z");
+        editor.quit();
+
+        assert!(
+            shows(&drawn, "no mark z"),
+            "an unset mark is declined by name; frame was: {drawn}"
+        );
     }
 
     /// **`B1` at the loop level: `3x` on a three-character line takes all

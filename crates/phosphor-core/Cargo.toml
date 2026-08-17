@@ -44,5 +44,14 @@ proptest = "1.11.0"
 name = "journal"
 harness = false
 
+# `benches/anchor.rs` — `T042`/`T043`. What re-resolving a file's anchors costs,
+# and whether the tier ladder is linear in the two things that grow (file size,
+# anchor count). Same `harness = false` shape as `journal` and for the same
+# reason: the interesting output is a shape, not a confidence interval, and it
+# adds no dependency — the bench uses `std` and this crate's public API.
+[[bench]]
+name = "anchor"
+harness = false
+
 [lints]
 workspace = true

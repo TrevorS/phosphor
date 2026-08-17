@@ -14,3 +14,5 @@ pub(crate) mod soft_wrap;
 pub mod virtual_text;
 // PHOSPHOR PATCH 11 — the one place a tab's column-dependent width is computed.
 pub mod tabs;
+// PHOSPHOR PATCH 12 — the named-node chain behind `T042`'s anchor fingerprints.
+pub mod syntax_path;

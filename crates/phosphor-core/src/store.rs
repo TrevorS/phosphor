@@ -27,6 +27,7 @@
 //! `phosphor-core` deciding for it would put a `Mutex` on the crate floor for
 //! every consumer including the ones that only decode.
 
+pub mod anchor;
 pub mod diagnostics;
 pub mod region;
 
@@ -36,6 +37,7 @@ use crate::query::Revision;
 use crate::request::{Actor, Diagnostic, RegionSpec};
 use crate::value::Value;
 
+pub use self::anchor::{Anchor, Anchors, Fingerprint, Reanchored, Snapshot, SyntaxStep, Tier};
 pub use self::diagnostics::Diagnostics;
 pub use self::region::{Declared, Lens, Region, Regions, Scope, SeenState};
 
@@ -62,6 +64,7 @@ pub use self::region::{Declared, Lens, Region, Regions, Scope, SeenState};
 pub struct Store {
     regions: Regions,
     diagnostics: Diagnostics,
+    anchors: Anchors,
     revision: Revision,
 }
 
@@ -89,6 +92,13 @@ impl Store {
     #[must_use]
     pub const fn diagnostics(&self) -> &Diagnostics {
         &self.diagnostics
+    }
+
+    /// The anchors, read-only. Every query in the `anchor` domain goes through
+    /// here.
+    #[must_use]
+    pub const fn anchors(&self) -> &Anchors {
+        &self.anchors
     }
 
     // -----------------------------------------------------------------------
@@ -138,9 +148,60 @@ impl Store {
         }
     }
 
+    /// **`place-anchor`.** Answers the id, which is what `m` writes down.
+    ///
+    /// Always moves the revision: a new anchor is a new row in the `anchors`
+    /// query, and unlike `mark-seen` there is no already-in-that-state case.
+    pub fn place_anchor(
+        &mut self,
+        path: std::path::PathBuf,
+        span: crate::request::Span,
+        label: Option<String>,
+        fingerprint: Fingerprint,
+    ) -> crate::request::AnchorId {
+        let id = self.anchors.place(path, span, label, fingerprint);
+        self.moved();
+        id
+    }
+
+    /// **`reanchor`.** Re-resolves one file's anchors against its rewritten
+    /// text, node tier then line tier.
+    ///
+    /// Moves the revision only when something actually moved or was lost — a
+    /// rewrite that leaves every anchor where it was is not news, and `T079`'s
+    /// cache is the reader that would otherwise redraw on every save.
+    pub fn reanchor(&mut self, path: &Path, snapshot: &Snapshot) -> Reanchored {
+        let outcome = self.anchors.reanchor(path, snapshot);
+        if outcome.changed() {
+            self.moved();
+        }
+        outcome
+    }
+
+    /// Forget one file's anchors — a deleted file, a closed buffer.
+    pub fn drop_anchors(&mut self, path: &Path) -> usize {
+        let dropped = self.anchors.drop_in(path);
+        if dropped > 0 {
+            self.moved();
+        }
+        dropped
+    }
+
     // -----------------------------------------------------------------------
     // Answers
     // -----------------------------------------------------------------------
+
+    /// The `anchors` query: one file's anchors and the tier each resolved at.
+    #[must_use]
+    pub fn answer_anchors(&self, path: &Path) -> Vec<Value> {
+        self.anchors.in_file(path).map(Anchor::to_value).collect()
+    }
+
+    /// The `anchor` query: one anchor.
+    #[must_use]
+    pub fn answer_anchor(&self, id: crate::request::AnchorId) -> Option<Value> {
+        self.anchors.get(id).map(Anchor::to_value)
+    }
 
     /// The `regions` query: every region a lens admits.
     #[must_use]

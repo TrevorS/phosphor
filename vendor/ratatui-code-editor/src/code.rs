@@ -308,6 +308,19 @@ impl Code {
         &self.lang
     }
 
+    // PHOSPHOR PATCH 12 — see VENDOR.md. The one seam for `T042`'s anchors: the
+    // named-node chain covering a byte, read from the tree this type already
+    // keeps current. Empty when the buffer has no grammar, which is the whole
+    // of what `T043`'s fallback tier keys off — so a caller never has to ask
+    // whether a language loaded, only whether the path came back empty.
+    #[must_use]
+    pub fn syntax_path(&self, byte: usize) -> Vec<crate::phosphor::syntax_path::SyntaxStep> {
+        match &self.tree {
+            Some(tree) => crate::phosphor::syntax_path::path_at(tree, &self.content, byte),
+            None => Vec::new(),
+        }
+    }
+
     pub fn slice(&self, start: usize, end: usize) -> String {
         self.content.slice(start..end).to_string()
     }

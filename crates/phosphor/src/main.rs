@@ -165,15 +165,18 @@ use phosphor_core::language::{self, Languages};
 use phosphor_core::query::{Answer, Answers, Query, QueryError, RegionQuery, Revision};
 use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
-    Actor, Binding, CharRange as SignatureRange, Completion as WireCompletion, EditMode, FoldState,
-    KeySeq, LanguageId, Position, PromptKind, RegionFilter, RegionId, RegisterName, SelectionKind,
-    Signature as WireSignature, Span, Target, TextObject,
+    Actor, AnchorId, Binding, CharRange as SignatureRange, Completion as WireCompletion, EditMode,
+    FoldState, KeySeq, LanguageId, Position, PromptKind, RegionFilter, RegionId, RegisterName,
+    Seek, SelectionKind, Signature as WireSignature, Span, Target, TextObject,
 };
 // `Scope` is already the input table's (`keymaps.scm`'s normal/insert/visual),
 // and a second one under the same name in a 9,000-line file is a trap rather
 // than an ambiguity the compiler catches — both are `Scope::File`-shaped
 // enums.
-use phosphor_core::store::{Lens, Scope as RegionScope, SeenState};
+use phosphor_core::store::{
+    Fingerprint, Lens, Scope as RegionScope, SeenState, Snapshot as AnchorSnapshot,
+    SyntaxStep as AnchorStep,
+};
 use phosphor_core::value::{Value, Wire as _};
 use phosphor_core::view::{
     Child, Density, Emphasis, Float as ViewFloat, KeyHint, Mood, Node, SessionState, Tone, Tree,
@@ -209,6 +212,9 @@ use ratatui::layout::Rect;
 // (`vendor/ratatui-code-editor/src/history.rs:19-22`), which is the behaviour
 // `T029`'s tree exists not to have. One fork import is left: the selection type
 // `SelectRange` sets.
+// `Code` is already `input::key::Code`'s in this file — the keyboard's, not
+// the buffer's — so the fork's arrives under a name that says which.
+use ratatui_code_editor::code::Code as SourceCode;
 use ratatui_code_editor::selection::Selection;
 
 mod door;
@@ -1014,6 +1020,97 @@ impl AppHost {
         }
     }
 
+    /// The file's text and grammar, parsed the way the editor would parse it.
+    ///
+    /// **Off disk, and that is the honest source for a door.** An agent asking
+    /// to anchor `src/retry.rs:24` is talking about the file; a buffer's
+    /// unsaved state is the editor's business and this side has no editor. The
+    /// grammar comes from the same [`grammar_of`] the loop uses, so a
+    /// door-placed anchor fingerprints at the same fidelity as `m` — which is
+    /// what stops "placed over MCP" from meaning "resolves one tier worse".
+    fn parse(&self, path: &Path) -> Option<SourceCode> {
+        let text = std::fs::read_to_string(path).ok()?;
+        let grammar = {
+            let languages = self.languages.lock().ok()?;
+            grammar_of(&languages, path).to_owned()
+        };
+        SourceCode::new(&text, &grammar, None).ok()
+    }
+
+    /// A fingerprint of a 1-based line in a file on disk.
+    fn fingerprint_of(&self, path: &Path, line: u32) -> Fingerprint {
+        let Some(code) = self.parse(path) else {
+            return Fingerprint::new(Vec::new(), "", line);
+        };
+        let index = usize::try_from(line.saturating_sub(1)).unwrap_or(0);
+        let text = if index < code.len_lines() {
+            code.line(index).to_string()
+        } else {
+            String::new()
+        };
+        let byte = code.char_to_byte(code.line_to_char(index.min(code.len_lines())));
+        let syntax: Vec<AnchorStep> = code
+            .syntax_path(byte)
+            .into_iter()
+            .map(|step| AnchorStep::new(step.kind, step.name))
+            .collect();
+        Fingerprint::new(syntax, &text, line)
+    }
+
+    /// **`place-anchor`, from a door.**
+    fn place_anchor(&self, name: &'static str, at: &Target, label: Option<&String>) -> Outcome {
+        let scope = match self.scope(name, Some(at)) {
+            Ok(scope) => scope,
+            Err(why) => return declined(&why.to_string()),
+        };
+        let (path, span) = match scope {
+            RegionScope::Span { path, span } => (path, span),
+            // A whole file is not a place. `declare-regions` is the verb for
+            // "this file has claude-written spans"; an anchor names one point.
+            RegionScope::File(_) | RegionScope::One(_) | RegionScope::Everywhere => {
+                return declined("anchor a place — name a path and a span");
+            }
+        };
+        let fingerprint = self.fingerprint_of(&path, span.start.line);
+        let id = self
+            .store
+            .place_anchor(path, span, label.cloned(), fingerprint);
+        Outcome::Done(Receipt {
+            capability: name,
+            value: id.to_value(),
+            note: None,
+        })
+    }
+
+    /// **`reanchor`, from a door.** Re-resolves one file's anchors against the
+    /// text now on disk.
+    fn reanchor_file(&self, name: &'static str, path: &Path) -> Outcome {
+        let key = store::key_for(path);
+        let Some(code) = self.parse(&key) else {
+            return declined("cannot read that file");
+        };
+        let text = code.get_content();
+        let mut snapshot = AnchorSnapshot::of(&text);
+        for line in 0..snapshot.len() {
+            let byte = code.char_to_byte(code.line_to_char(line));
+            let steps: Vec<AnchorStep> = code
+                .syntax_path(byte)
+                .into_iter()
+                .map(|step| AnchorStep::new(step.kind, step.name))
+                .collect();
+            if !steps.is_empty() {
+                snapshot = snapshot.with_syntax(line, steps);
+            }
+        }
+        let outcome = self.store.reanchor(&key, &snapshot);
+        Outcome::Done(Receipt {
+            capability: name,
+            value: outcome.to_value(),
+            note: (!outcome.lost.is_empty())
+                .then(|| format!("{} anchor(s) lost", outcome.lost.len())),
+        })
+    }
+
     /// A [`RegionFilter`] as a store [`Lens`].
     fn lens(&self, name: &'static str, filter: Option<&RegionFilter>) -> Result<Lens, QueryError> {
         let Some(filter) = filter else {
@@ -1078,6 +1175,22 @@ impl Answers for AppHost {
                     i64::try_from(self.store.seen_count(&scope)).unwrap_or(0),
                 )))
             }
+            // `T042`. Read-only, so both of these answer from the door side
+            // with no editor involved — an anchor's span is already resolved
+            // and the store is the only thing that has to be asked.
+            Query::Region(RegionQuery::Anchors { path }) => Ok(self.answered(Value::List(
+                self.store.answer_anchors(&store::key_for(path)),
+            ))),
+            Query::Region(RegionQuery::Anchor { anchor }) => self
+                .store
+                .answer_anchor(*anchor)
+                // `Null` for a wrong id, for the reason `region` gives above:
+                // a surface holding an id across a `reanchor` that dropped it
+                // is asking a question with a legitimate no.
+                .map_or_else(
+                    || Ok(self.answered(Value::Null)),
+                    |value| Ok(self.answered(value)),
+                ),
             // Everything else, by its own row. Derived, never listed.
             query => Err(QueryError::NotYetImplemented {
                 task: query.spec().since.task,
@@ -1171,6 +1284,21 @@ impl Host for AppHost {
             Action::Region(RegionAction::MarkUnseen { target }) => {
                 self.mark(name, target, SeenState::Unseen)
             }
+            // `T042` — the door's half of anchors. Same seam as the four
+            // above: no editor here, so an explicit target is honoured and a
+            // focus-relative one is refused by name.
+            //
+            // **The text comes off disk**, and that is the honest source for a
+            // door: an agent asking to anchor `src/retry.rs:24` is talking
+            // about the file, not about whatever unsaved state a buffer holds.
+            // The fingerprint is full-fidelity — [`AppHost::fingerprint_of`]
+            // parses with the same grammar the editor would — so an anchor
+            // placed over MCP resolves at the node tier exactly like one placed
+            // by `m`.
+            Action::Region(RegionAction::PlaceAnchor { at, label }) => {
+                self.place_anchor(name, at, label.as_ref())
+            }
+            Action::Region(RegionAction::Reanchor { path }) => self.reanchor_file(name, path),
             Action::Region(RegionAction::DropRegions { target }) => {
                 match self.scope(name, Some(target)) {
                     Ok(scope) => Outcome::Done(Receipt {
@@ -4190,6 +4318,17 @@ struct Editing {
     /// with `on: false`. See [`Editing::collapse`] for why the set lives here
     /// rather than in the fork.
     collapsed: BTreeSet<RegionId>,
+    /// Where `<C-o>` and `<C-i>` walk (`T042`).
+    ///
+    /// **Anchors and not positions**, which is why the arm lands with this task
+    /// rather than with the motions: a jumplist entry has to survive the
+    /// rewrite that moves the code it points at, and surviving a rewrite is the
+    /// whole of what an anchor is. The entries are unlabelled, so they never
+    /// collide with `m{a-z}`'s marks.
+    jumplist: Vec<AnchorId>,
+    /// Where in [`Editing::jumplist`] `<C-o>` has walked back to. Pushing a new
+    /// jump from here truncates the forward half — a history, not a ring.
+    jump_at: usize,
     /// The unnamed register is `"`; `"a` is `a` (`request::RegisterName`).
     registers: BTreeMap<String, Register>,
     /// What the last `SelectRange` said, so a yank knows whether it is linewise.
@@ -4330,6 +4469,8 @@ impl Editing {
             signature: None,
             store,
             collapsed: BTreeSet::new(),
+            jumplist: Vec::new(),
+            jump_at: 0,
             registers: BTreeMap::new(),
             selection_kind: SelectionKind::Char,
             selection_from: None,
@@ -4871,6 +5012,21 @@ impl Editing {
             Action::View(ViewAction::SetVirtualTextVisible { owner, on }) => {
                 self.collapse(owner, *on)
             }
+            // `T042` — anchors. Four arms and one task: `place-anchor` is the
+            // setter `goto-anchor` never had (which is why `m`, `'` and `` ` ``
+            // were bound to silence), `reanchor` is the ladder run after a
+            // rewrite, and `jump` is here rather than with the motions because
+            // a jumplist entry *is* an anchor.
+            Action::Region(RegionAction::PlaceAnchor { at, label }) => {
+                self.place_anchor(at, label.as_ref())
+            }
+            Action::Region(RegionAction::Reanchor { path }) => self.reanchor(path),
+            Action::Motion(MotionAction::GotoAnchor {
+                anchor,
+                label,
+                exact,
+            }) => self.goto_anchor(*anchor, label.as_deref(), *exact),
+            Action::Motion(MotionAction::Jump { seek }) => self.jump(*seek),
             // `T036` — `gd`. Recorded like the lookups, and answered by an
             // `open-file` rather than by a float: a definition is a *place*.
             Action::Lsp(LspAction::RequestDefinition {}) => {
@@ -5286,6 +5442,244 @@ impl Editing {
             value: Value::Int(i64::try_from(owners.len()).unwrap_or(0)),
             note: None,
         })
+    }
+
+    // -----------------------------------------------------------------------
+    // Anchors — `T042`, `T043`
+    // -----------------------------------------------------------------------
+
+    /// The buffer as the store is allowed to see it: lines, each with the
+    /// syntax path covering it.
+    ///
+    /// **This is the whole of the seam.** `phosphor-core` has no dependencies
+    /// and will not be growing tree-sitter as its first; the fork keeps a tree
+    /// current across every edit and `Code::syntax_path` (PHOSPHOR PATCH 12) is
+    /// the read. Everything the ladder decides is decided over this, in core,
+    /// which is what lets every tier test run without a parser.
+    ///
+    /// One `syntax_path` per line is linear in the file and deliberately not
+    /// cached: reanchoring runs after a rewrite, never on the frame path, and
+    /// `benches/anchor.rs` asserts the shape rather than a time.
+    fn snapshot(&self) -> AnchorSnapshot {
+        let code = self.editor.code_ref();
+        let text = code.get_content();
+        let mut snapshot = AnchorSnapshot::of(&text);
+        for line in 0..snapshot.len() {
+            let offset = code.line_to_char(line);
+            let byte = code.char_to_byte(offset);
+            let steps: Vec<AnchorStep> = code
+                .syntax_path(byte)
+                .into_iter()
+                .map(|step| AnchorStep::new(step.kind, step.name))
+                .collect();
+            if !steps.is_empty() {
+                snapshot = snapshot.with_syntax(line, steps);
+            }
+        }
+        snapshot
+    }
+
+    /// A fingerprint of a 1-based line in the focused buffer.
+    fn fingerprint(&self, line: u32) -> Fingerprint {
+        let code = self.editor.code_ref();
+        let index = usize::try_from(line.saturating_sub(1)).unwrap_or(0);
+        let text = if index < code.len_lines() {
+            code.line(index).to_string()
+        } else {
+            String::new()
+        };
+        let byte = code.char_to_byte(code.line_to_char(index.min(code.len_lines())));
+        let syntax: Vec<AnchorStep> = code
+            .syntax_path(byte)
+            .into_iter()
+            .map(|step| AnchorStep::new(step.kind, step.name))
+            .collect();
+        Fingerprint::new(syntax, &text, line)
+    }
+
+    /// **`place-anchor`.** Answers the id, which is what `m{a-z}` writes down.
+    ///
+    /// The label is vim's `a`–`z` and a caller's own naming through one
+    /// mechanism, which is `place-anchor`'s own doc. Placing the same label
+    /// twice in one file is one mark, not two — the rule lives in
+    /// [`phosphor_core::store::Anchors::place`] so every door gets it.
+    fn place_anchor(&mut self, target: &Target, label: Option<&String>) -> Outcome {
+        let scope = match self.scope_of(target) {
+            Ok(scope) => scope,
+            Err(why) => return declined(&why),
+        };
+        let (path, span) = match scope {
+            RegionScope::File(path) => {
+                let line = self.text().cursor().line;
+                (path, self.line_span(line))
+            }
+            RegionScope::Span { path, span } => (path, span),
+            RegionScope::One(_) | RegionScope::Everywhere => {
+                return declined("anchor a place, not a region — name a path or a span");
+            }
+        };
+        let fingerprint = self.fingerprint(span.start.line);
+        let id = self
+            .store
+            .place_anchor(path, span, label.cloned(), fingerprint);
+        Outcome::Done(Receipt {
+            capability: "place-anchor",
+            value: id.to_value(),
+            note: None,
+        })
+    }
+
+    /// The whole of a 1-based line, as a zero-width span at its start.
+    fn line_span(&self, line: u32) -> Span {
+        Span {
+            start: Position { line, column: 1 },
+            end: Position { line, column: 1 },
+        }
+    }
+
+    /// **`goto-anchor`.** `'{a-z}` and `` `{a-z} `` read a mark back.
+    ///
+    /// # The label half is `T042`'s whole reason for touching the vocabulary
+    ///
+    /// `runtime/keymaps.scm` had `'` and `` ` `` bound to silence with the gap
+    /// named in its own comment: *"`place-anchor` writes a `label` that
+    /// `goto-anchor` cannot read — it takes an `AnchorId`, and no capability
+    /// turns a label into one."* A keybinding is **data** (`input::table::Role`
+    /// — *"nothing here is a closure"*), so it cannot look an id up before
+    /// naming it, and a literal id baked into a keymap would be worse than
+    /// silence. So the door learned the label, which is the only place the
+    /// lookup can live and still be reachable from all three doors.
+    ///
+    /// `exact` is `` ` `` versus `'`, and it is in the vocabulary rather than
+    /// in the keymap because both are legitimate asks from a script too.
+    ///
+    /// A [`Tier::Lost`](phosphor_core::store::Tier::Lost) anchor is declined by
+    /// name rather than jumped to. It
+    /// still holds its old span, and sending someone to a location the store
+    /// knows is stale is the one behaviour worse than saying so.
+    fn goto_anchor(&mut self, id: Option<AnchorId>, label: Option<&str>, exact: bool) -> Outcome {
+        let focused = self.file.as_deref().map(store::key_for);
+        let found = match (id, label) {
+            (Some(id), _) => self.store.anchor(id),
+            (None, Some(label)) => {
+                let Some(path) = focused.as_deref() else {
+                    return declined("no file open — a mark is found in a file");
+                };
+                self.store.labelled(path, label)
+            }
+            (None, None) => return declined("name an anchor — an id, or a label"),
+        };
+        let Some(anchor) = found else {
+            let why = label.map_or_else(
+                || "no such anchor".to_owned(),
+                |label| format!("no mark {label}"),
+            );
+            return declined(&why);
+        };
+        let id = anchor.id;
+        if !anchor.tier.resolves() {
+            return declined("that anchor is lost — the code it named is gone");
+        }
+        if focused.as_deref() != Some(anchor.path.as_path()) {
+            return declined("that anchor is in another file — T056 opens it");
+        }
+        self.push_jump();
+        let line = usize::try_from(anchor.span.start.line.saturating_sub(1)).unwrap_or(0);
+        // `'` is the line, `` ` `` is the column it was written at.
+        let column = if exact {
+            usize::try_from(anchor.span.start.column.saturating_sub(1)).unwrap_or(0)
+        } else {
+            0
+        };
+        let offset = self.editor.code_ref().offset(line, column);
+        self.editor.set_cursor(offset);
+        Outcome::Done(Receipt {
+            capability: "goto-anchor",
+            value: id.to_value(),
+            note: None,
+        })
+    }
+
+    /// **`reanchor`.** Re-resolves one file's anchors after a rewrite.
+    ///
+    /// Answers `{moved, held, lost}` rather than a bare count, because the
+    /// three are acted on differently and a caller that only wanted a number
+    /// can read one field.
+    fn reanchor(&mut self, path: &Path) -> Outcome {
+        let key = store::key_for(path);
+        let focused = self.file.as_deref().map(store::key_for);
+        if focused.as_deref() != Some(key.as_path()) {
+            return declined("reanchor reads the focused buffer — open it first");
+        }
+        let snapshot = self.snapshot();
+        let outcome = self.store.reanchor(&key, &snapshot);
+        let note =
+            (!outcome.lost.is_empty()).then(|| format!("{} anchor(s) lost", outcome.lost.len()));
+        self.note.clone_from(&note);
+        Outcome::Done(Receipt {
+            capability: "reanchor",
+            value: outcome.to_value(),
+            note,
+        })
+    }
+
+    /// **`jump`.** Walks the jumplist, whose entries are anchors — which is
+    /// why this arm lands with `T042` rather than with the motions.
+    ///
+    /// `Seek::Prev` is `<C-o>` and `Seek::Next` is `<C-i>`. `First` and `Last`
+    /// are the ends. An empty list declines rather than answering a no-op, so
+    /// `<C-o>` in a fresh session says why nothing happened.
+    fn jump(&mut self, seek: Seek) -> Outcome {
+        if self.jumplist.is_empty() {
+            return declined("the jumplist is empty");
+        }
+        let last = self.jumplist.len() - 1;
+        let next = match seek {
+            Seek::Prev => self.jump_at.saturating_sub(1),
+            Seek::Next => (self.jump_at + 1).min(last),
+            Seek::First => 0,
+            Seek::Last => last,
+        };
+        if next == self.jump_at && matches!(seek, Seek::Prev | Seek::Next) {
+            return declined(match seek {
+                Seek::Prev => "already at the oldest jump",
+                _ => "already at the newest jump",
+            });
+        }
+        self.jump_at = next;
+        let Some(id) = self.jumplist.get(next).copied() else {
+            return declined("the jumplist moved under us");
+        };
+        match self.goto_anchor(Some(id), None, true) {
+            Outcome::Done(_) => Outcome::Done(Receipt {
+                capability: "jump",
+                value: Value::Int(i64::try_from(next).unwrap_or(0)),
+                note: None,
+            }),
+            other => other,
+        }
+    }
+
+    /// Record where the cursor is as a jumplist entry, before a jump moves it.
+    ///
+    /// Vim's rule: a jump remembers where you *came from*. Jumping after
+    /// walking backwards truncates the forward half, which is what makes the
+    /// list a history rather than a ring.
+    fn push_jump(&mut self) {
+        let Some(path) = self.file.clone() else {
+            return;
+        };
+        let line = self.text().cursor().line;
+        let span = self.line_span(line);
+        let fingerprint = self.fingerprint(line);
+        let id = self
+            .store
+            .place_anchor(store::key_for(&path), span, None, fingerprint);
+        if self.jump_at + 1 < self.jumplist.len() {
+            self.jumplist.truncate(self.jump_at + 1);
+        }
+        self.jumplist.push(id);
+        self.jump_at = self.jumplist.len() - 1;
     }
 
     fn yank(&mut self, target: &Target, register: Option<&RegisterName>) {

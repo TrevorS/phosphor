@@ -743,23 +743,56 @@
         "record a macro")
   (list "@" (key/deferred) "play a macro — not built; T099, over feed-keys")))
 
-;; marks. a mark is an anchor and anchoring is T042's. the repair window added
-;; **`place-anchor`**, the setter that did not exist — it takes a target and
-;; answers the id — so `m` is a real call at last: anchor the cursor. the label
-;; is absent rather than invented, because nothing here can consume the `a` in
-;; `ma`, and an absent optional is the honest spelling of *"unnamed"*.
+;; marks. a mark is an anchor and anchoring is T042's, which built them.
 ;;
-;; `'` and backtick are still deferred, and the reason is a gap rather than a
-;; choice: `place-anchor` writes a `label` that `goto-anchor` cannot read — it
-;; takes an `AnchorId`, and no capability turns a label into one. a literal id
-;; would be the invented-payload failure this section exists to avoid, and worse
-;; than silence once T042 starts handing ids out. so they name the task.
+;; this section used to say `'` and backtick were deferred because *"`place-anchor`
+;; writes a `label` that `goto-anchor` cannot read — it takes an `AnchorId`, and
+;; no capability turns a label into one"*. T042 closed that at the door rather
+;; than here: `goto-anchor` now takes `anchor` (an id) **or** `label`, plus
+;; `exact` for the backtick/quote difference. the door is the only place the
+;; lookup can live and still be reachable from all three doors.
+;;
+;; **78 rows, generated, and that is the design rather than a shortcut.** a
+;; binding is *data* — `input::table::Role`'s own note is "nothing here is a
+;; closure" — so `m` cannot consume the `a` in `ma` by running code. the
+;; alternative was a fourth `Awaiting` state in the input machine beside
+;; `Register` and `ReplaceChar`; it is more machinery for the same 78 pairs, and
+;; the pairs are what T042 asks for by name (`m{a-z}`, `'{a-z}`, backtick{a-z}).
+;; generating them keeps the keymap a table anything can read.
+(define mark-labels
+  '("a" "b" "c" "d" "e" "f" "g" "h" "i" "j" "k" "l" "m"
+    "n" "o" "p" "q" "r" "s" "t" "u" "v" "w" "x" "y" "z"))
+
 (keymap-set-rows!
  '("normal" "visual")
+ (append
+  (map (lambda (label)
+         (list (string-append "m" label)
+               (key/run (key/cmd "place-anchor"
+                                 "at" (key/at-cursor)
+                                 "label" label))
+               (string-append "set mark " label)))
+       mark-labels)
+  (map (lambda (label)
+         (list (string-append "'" label)
+               (key/run (key/cmd "goto-anchor" "label" label "exact" #false))
+               (string-append "go to mark " label "'s line")))
+       mark-labels)
+  (map (lambda (label)
+         (list (string-append "`" label)
+               (key/run (key/cmd "goto-anchor" "label" label "exact" #true))
+               (string-append "go to mark " label)))
+       mark-labels)))
+
+;; the jumplist. its entries are anchors, which is why `jump` shipped with T042
+;; rather than with the motions — a jumplist entry has to survive the rewrite
+;; that moves the code it points at, and surviving a rewrite is what an anchor
+;; is. `<C-o>` walks back, `<C-i>` forward.
+(keymap-set-rows!
+ '("normal")
  (list
-  (list "m" (key/run (key/cmd "place-anchor" "at" (key/at-cursor))) "set a mark")
-  (list "'" (key/deferred) "go to a mark's line — not built; T042 anchors the store")
-  (list "`" (key/deferred) "go to a mark — not built; T042 anchors the store")))
+  (list "<C-o>" (key/run (key/cmd "jump" "seek" "prev")) "back along the jumplist")
+  (list "<C-i>" (key/run (key/cmd "jump" "seek" "next")) "forward along the jumplist")))
 
 ;; leaving. `<C-c>` is the safety valve — raw mode means the terminal will not
 ;; deliver SIGINT, so an editor with no binding for it is one you cannot get

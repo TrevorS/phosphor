@@ -100,6 +100,8 @@ use phosphor_core::request::{
     InboxId, Motion, PaneId, PaneRef, Position, RegionId, RegionSpec, SelectionKind, Span, Target,
     TextObject, ThreadId, WatchId,
 };
+use phosphor_core::store::anchor::resolve;
+use phosphor_core::store::{Fingerprint, Snapshot, SyntaxStep, Tier};
 use phosphor_core::value::{Args, Value, Wire, WireError};
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
@@ -1718,5 +1720,196 @@ proptest! {
                 prop_assert_eq!(before, after);
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// `store::anchor` — the tier ladder (`T042`, `T043`)
+// ---------------------------------------------------------------------------
+
+/// A line of code-shaped text that is distinctive enough to be findable.
+///
+/// Deliberately never blank and never pure whitespace: [`Fingerprint::new`]
+/// trims, so a blank fingerprint would match every blank line, and the module
+/// says so — *"a blank fingerprint would otherwise match every blank line"*.
+/// That case is a unit test with a hand-built input; generating it here would
+/// only re-find it a thousand times.
+fn any_code_line() -> impl Strategy<Value = String> {
+    "[a-z_]{3,12}\\(\\);"
+        .prop_map(|line| line)
+        .prop_filter("non-blank once trimmed", |line| !line.trim().is_empty())
+}
+
+/// A file of distinct lines, so "find the line again" has one right answer.
+fn any_file() -> impl Strategy<Value = Vec<String>> {
+    prop::collection::vec(any_code_line(), 1..24).prop_map(|lines| {
+        // Deduplicate rather than reject: a rejection strategy on a 24-line
+        // vector of 12-character names throws away most of the space for a
+        // collision that is not what these laws are about. Duplicates have
+        // their own law below.
+        let mut seen = std::collections::BTreeSet::new();
+        lines
+            .into_iter()
+            .enumerate()
+            .map(|(index, line)| {
+                let mut candidate = line;
+                while !seen.insert(candidate.clone()) {
+                    candidate = format!("{index}_{candidate}");
+                }
+                candidate
+            })
+            .collect()
+    })
+}
+
+proptest! {
+    /// **A location fingerprinted in a file resolves back to itself.**
+    ///
+    /// The identity law, and the one everything else rests on: if placing an
+    /// anchor and immediately re-resolving it could move it, nothing built on
+    /// anchors would mean anything. `T043`'s tier, since these files carry no
+    /// syntax — which is the tier the module calls *"the floor, not a degraded
+    /// extra"*.
+    #[test]
+    fn a_fingerprint_resolves_to_the_line_it_was_taken_from(
+        lines in any_file(),
+        pick in 0_usize..24,
+    ) {
+        let index = pick % lines.len();
+        let snapshot = Snapshot::of(&lines.join("\n"));
+        let line = u32::try_from(index + 1).unwrap_or(1);
+        let fingerprint = Fingerprint::new(Vec::new(), &lines[index], line);
+
+        let (span, tier) = resolve(&fingerprint, &snapshot)
+            .expect("a line taken from the file is in the file");
+        prop_assert_eq!(tier, Tier::Line);
+        prop_assert_eq!(span.start.line, line, "resolved to a different line");
+    }
+
+    /// **Inserting text above a line does not lose it** — it moves it by
+    /// exactly as many lines as were inserted.
+    ///
+    /// This is the whole point of the feature stated as a law. `T042`'s
+    /// acceptance is *"a real refactor moves code and the anchors follow"*, and
+    /// insertion above is the most ordinary shape that takes.
+    #[test]
+    fn an_anchor_follows_the_text_that_moved_under_an_insertion(
+        lines in any_file(),
+        pick in 0_usize..24,
+        inserted in prop::collection::vec(any_code_line(), 1..6),
+    ) {
+        let index = pick % lines.len();
+        let line = u32::try_from(index + 1).unwrap_or(1);
+        let fingerprint = Fingerprint::new(Vec::new(), &lines[index], line);
+
+        // The inserted lines must not themselves collide with the anchored one,
+        // or "which line is it now" has two right answers.
+        let inserted: Vec<String> = inserted
+            .into_iter()
+            .filter(|candidate| candidate.trim() != lines[index].trim())
+            .collect();
+        prop_assume!(!inserted.is_empty());
+
+        let mut after = inserted.clone();
+        after.extend(lines.iter().cloned());
+        let snapshot = Snapshot::of(&after.join("\n"));
+
+        let (span, _) = resolve(&fingerprint, &snapshot).expect("still there");
+        let moved = u32::try_from(inserted.len()).unwrap_or(0);
+        prop_assert_eq!(
+            span.start.line,
+            line + moved,
+            "moved by {} rather than by the {} lines inserted above it",
+            span.start.line as i64 - line as i64,
+            moved,
+        );
+    }
+
+    /// **Reindenting every line changes nothing**, because a fingerprint is
+    /// trimmed.
+    ///
+    /// The module's stated reason: *"reindentation is the most common edit that
+    /// must not break an anchor — a block moving into an `if` shifts every line
+    /// in it."*
+    #[test]
+    fn indentation_is_not_part_of_the_fingerprint(
+        lines in any_file(),
+        pick in 0_usize..24,
+        indent in 1_usize..12,
+    ) {
+        let index = pick % lines.len();
+        let line = u32::try_from(index + 1).unwrap_or(1);
+        let fingerprint = Fingerprint::new(Vec::new(), &lines[index], line);
+
+        let padded: Vec<String> = lines
+            .iter()
+            .map(|text| format!("{}{text}", " ".repeat(indent)))
+            .collect();
+        let snapshot = Snapshot::of(&padded.join("\n"));
+
+        let (span, tier) = resolve(&fingerprint, &snapshot)
+            .expect("indentation is trimmed on both sides of the comparison");
+        prop_assert_eq!(tier, Tier::Line);
+        prop_assert_eq!(span.start.line, line);
+    }
+
+    /// **A line that is gone resolves at no tier, rather than at a plausible
+    /// one.**
+    ///
+    /// *"A silently-moved anchor is worse than a stale one"* — the module says
+    /// it, and this is the law underneath: `resolve` never invents a location
+    /// for a fingerprint whose text is not in the file.
+    #[test]
+    fn a_deleted_line_resolves_nowhere(
+        lines in any_file(),
+        pick in 0_usize..24,
+    ) {
+        let index = pick % lines.len();
+        let line = u32::try_from(index + 1).unwrap_or(1);
+        let fingerprint = Fingerprint::new(Vec::new(), &lines[index], line);
+
+        let remaining: Vec<String> = lines
+            .iter()
+            .enumerate()
+            .filter(|(at, _)| *at != index)
+            .map(|(_, text)| text.clone())
+            .collect();
+        prop_assume!(!remaining.is_empty());
+        let snapshot = Snapshot::of(&remaining.join("\n"));
+
+        prop_assert!(
+            resolve(&fingerprint, &snapshot).is_none(),
+            "invented a location for a line that was deleted",
+        );
+    }
+
+    /// **A syntax path that matches nothing falls to the line tier rather than
+    /// failing** — the ladder is tried in order and the floor catches.
+    ///
+    /// This is `T043`'s framing checked as a law: the node tier is an
+    /// optimisation over the line tier, so a node-tier miss must never be worse
+    /// than having had no syntax at all.
+    #[test]
+    fn a_node_tier_miss_still_lands_on_the_line_tier(
+        lines in any_file(),
+        pick in 0_usize..24,
+        kind in "[a-z_]{4,10}",
+        name in "[A-Z][a-z]{3,9}",
+    ) {
+        let index = pick % lines.len();
+        let line = u32::try_from(index + 1).unwrap_or(1);
+        // A path no line in the snapshot carries — `Snapshot::of` leaves every
+        // line's syntax empty.
+        let fingerprint = Fingerprint::new(
+            vec![SyntaxStep::new(kind, name)],
+            &lines[index],
+            line,
+        );
+        let snapshot = Snapshot::of(&lines.join("\n"));
+
+        let (span, tier) = resolve(&fingerprint, &snapshot)
+            .expect("the floor catches what the node tier missed");
+        prop_assert_eq!(tier, Tier::Line);
+        prop_assert_eq!(span.start.line, line);
     }
 }

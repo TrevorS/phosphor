@@ -412,7 +412,9 @@ actions! {
         }
         GotoAnchor = "goto-anchor" [S5 / "T042" / Allow]
             "jumps to an anchor, which survives the rewrite that moved it" {
-            anchor: crate::request::AnchorId = "which anchor",
+            anchor: Option<crate::request::AnchorId> = "which anchor, by id",
+            label: Option<String> = "or by the label place-anchor wrote — m's a-z",
+            exact: bool = "backtick lands on the column, quote lands on the line",
         }
         Jump = "jump" [S5 / "T042" / Deny]
             "walks the jumplist" {

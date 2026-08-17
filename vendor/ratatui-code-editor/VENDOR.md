@@ -619,6 +619,52 @@ measuring from the *cells* those characters left behind, and the wrap point coun
 
 ---
 
+### 12 · The named-node chain covering a byte — `T042`'s anchor fingerprint
+
+**Files:** `src/phosphor/syntax_path.rs` (new), `src/phosphor/mod.rs` (one `pub mod` line),
+`src/code.rs` (one `pub fn syntax_path`), `tests/syntax_path.rs` (new).
+
+`T042`'s anchors have to survive the rewrite that moves the code they point at. What survives
+is not a byte offset and not a child-index path — inserting one function above another shifts
+every index after it — but the chain of named constructs covering the location: *"`retry`, in
+`impl Backoff`"*. This patch is the read that produces that chain.
+
+**Why the fork and not the host.** `Code` owns the `Tree`, keeps it incrementally current
+across every edit, and the field is private with no upstream accessor. The host could run its
+own `Parser`; that was the first design and it loses on three counts — a second grammar table
+to keep in step with the fork's, a second full parse of every reanchored file, and a tree that
+can *disagree* with the one the editor highlights from, because the editor's is edited
+incrementally while a fresh parse is not. So the walk lives next to the tree and the seam is
+one `pub fn`. Nothing is mutated; the module is a pure read.
+
+**The identity is three fields, not one, and the fork's own test is why.** `step_of` tries
+`name`, `trait`, `type` in that order and joins what it finds. `function_item`,
+`struct_item`, `class_definition` and `function_definition` carry `name` — but Rust's
+`impl_item` does **not**, and the first draft, which asked for `name` alone, silently dropped
+`impl Backoff` out of every path. `two_trait_impls_of_one_type_do_not_collide` is the second
+half of the same finding: `type` alone renders `impl Display for Backoff` and
+`impl Debug for Backoff` identical, so an anchor in one resolves into the other. Taking all
+three keeps the walk grammar-blind — it is a field-name list tried on every node, never a
+table of node kinds — which `the_walk_is_grammar_blind_and_python_resolves_too` holds it to.
+
+**What it deliberately does not do.** It does not survive a rename: renaming `retry` makes a
+different construct, and an anchor that followed the rename would claim someone had seen code
+they had not (`a_rename_is_a_different_construct_and_the_path_says_so`). It does not descend
+past the named chain, so two anchors in one function share a path — that is the node tier
+being honest about its resolution, and `T043`'s line-and-content tier is what separates them.
+An empty path is the signal that the fallback tier applies, and it is what a file with no
+grammar, a byte past the end, and a byte outside every construct all answer, so a caller never
+has to ask whether a language loaded.
+
+**Upstreamable.** Yes, in principle — it is an accessor over data the crate already holds and
+adds no dependency. The `IDENTIFYING` list is the opinionated part and upstream may want it
+configurable.
+
+`tests/syntax_path.rs` is the suite, nine tests, and `scripts/lint-vendor-tests.sh` requires
+the binary by name — `just test` cannot see it, because the fork is `[workspace] exclude`d.
+
+---
+
 ## Known divergence between upstream and what we need — *not yet patched*
 
 Recorded here so the next person reading `vendor-diff` knows what is coming, from the `T008`

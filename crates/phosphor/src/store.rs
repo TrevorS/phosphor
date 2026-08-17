@@ -42,8 +42,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use phosphor_core::query::Revision;
-use phosphor_core::request::{Actor, Diagnostic, RegionId, RegionSpec, Span};
-use phosphor_core::store::{Declared, Lens, Region, Scope, SeenState, Store};
+use phosphor_core::request::{Actor, AnchorId, Diagnostic, RegionId, RegionSpec, Span};
+use phosphor_core::store::{
+    Anchor, Declared, Fingerprint, Lens, Reanchored, Region, Scope, SeenState, Snapshot, Store,
+};
 use phosphor_core::value::Value;
 
 /// The store, shared.
@@ -79,6 +81,46 @@ impl Shared {
     /// **`ingest-diagnostics`.**
     pub(crate) fn publish(&self, path: PathBuf, diagnostics: Vec<Diagnostic>) {
         self.lock().publish_diagnostics(path, diagnostics);
+    }
+
+    /// **`place-anchor`.** Answers the id (`T042`).
+    pub(crate) fn place_anchor(
+        &self,
+        path: PathBuf,
+        span: Span,
+        label: Option<String>,
+        fingerprint: Fingerprint,
+    ) -> AnchorId {
+        self.lock().place_anchor(path, span, label, fingerprint)
+    }
+
+    /// **`reanchor`.** One file's anchors, re-resolved against its new text.
+    pub(crate) fn reanchor(&self, path: &Path, snapshot: &Snapshot) -> Reanchored {
+        self.lock().reanchor(path, snapshot)
+    }
+
+    /// One anchor, cloned out from behind the lock.
+    ///
+    /// Cloned for the reason [`Shared::diagnostics_of`] gives: a caller holding
+    /// a reference would be holding the lock, and the caller here is a
+    /// keystroke arm that goes on to move the cursor.
+    pub(crate) fn anchor(&self, id: AnchorId) -> Option<Anchor> {
+        self.lock().anchors().get(id).cloned()
+    }
+
+    /// The anchor labelled `label` in `path` — `'{a-z}`'s lookup.
+    pub(crate) fn labelled(&self, path: &Path, label: &str) -> Option<Anchor> {
+        self.lock().anchors().labelled(path, label).cloned()
+    }
+
+    /// The `anchors` query: one file's, with the tier each resolved at.
+    pub(crate) fn answer_anchors(&self, path: &Path) -> Vec<Value> {
+        self.lock().answer_anchors(path)
+    }
+
+    /// The `anchor` query: one.
+    pub(crate) fn answer_anchor(&self, id: AnchorId) -> Option<Value> {
+        self.lock().answer_anchor(id)
     }
 
     /// One file's diagnostics, cloned out from behind the lock.

@@ -60,7 +60,7 @@ FORKS=(ratatui-code-editor)
 
 # The test binaries whose absence means the guard is gone rather than green —
 # every `tests/*.rs` phosphor wrote in this fork. The other four are upstream's.
-REQUIRED_BINARIES=(change_events tabs)
+REQUIRED_BINARIES=(change_events tabs syntax_path)
 
 status=0
 
