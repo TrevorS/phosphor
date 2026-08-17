@@ -68,6 +68,85 @@ impl Item {
     }
 }
 
+/// Directory names never walked, whatever they contain.
+///
+/// **A denylist and not a `.gitignore` reader**, which is a real limitation
+/// stated rather than hidden: honouring ignore files means either the `ignore`
+/// crate — ripgrep's, and a substantial dependency for one picker — or a
+/// half-implementation of a format with `!` negations and precedence rules
+/// that would be wrong in ways nobody could predict. These five are what
+/// actually makes a workspace walk unusable, and a file inside one of them is
+/// reachable by typing its path into `:e`.
+const NEVER_WALK: [&str; 5] = [".git", ".jj", "target", "node_modules", ".claude"];
+
+/// How many files a single walk will collect.
+///
+/// `T045`'s criterion is *"responsive filtering a 100k-file list"*, so the
+/// matcher is not the reason for a cap — the **walk** is, and it is on the
+/// keystroke that opens the picker. A repository large enough to exceed this
+/// gets a truncated list rather than a hung editor, and
+/// [`workspace_files`] says which happened so the caller can say so too.
+const WALK_CAP: usize = 100_000;
+
+/// Every file under `root`, workspace-relative, sorted — and whether the cap
+/// cut it short (`T047`).
+///
+/// **This is what makes `SPC f` a file picker.** The first version of the
+/// `files` source listed only files the store had regions for, which meant an
+/// ordinary build with nothing declared opened an empty picker under a key
+/// labelled *"files"*. `3d` settles it: its caption is *"the file picker
+/// carries agent state: unseen counts + activity, **not just names**"*, and
+/// its own rows include `src/main.rs` and `Cargo.toml` carrying no activity at
+/// all. The list is the workspace; the store **annotates** it.
+///
+/// Walked here rather than in Steel because a source runs inside the VM and no
+/// capability walks a directory — the same seam that hands `grep` the buffer's
+/// lines, and for the same reason (`OPEN-QUESTIONS.md` §42).
+///
+/// Sorted, so two runs of the same picker agree: `read_dir` order is the
+/// filesystem's and `CP-5` asks for *"identical output on two machines"*.
+pub(crate) fn workspace_files(root: &std::path::Path) -> (Vec<String>, bool) {
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    let mut truncated = false;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            // Symlinks are not followed: a link into a parent directory is how
+            // a walk becomes infinite, and `read_dir` gives no cycle check.
+            if kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() {
+                if !NEVER_WALK.contains(&name.as_ref()) {
+                    stack.push(path);
+                }
+                continue;
+            }
+            if found.len() >= WALK_CAP {
+                truncated = true;
+                break;
+            }
+            if let Ok(relative) = path.strip_prefix(root) {
+                found.push(relative.display().to_string());
+            }
+        }
+        if truncated {
+            break;
+        }
+    }
+    found.sort_unstable();
+    (found, truncated)
+}
+
 /// A `SpanRow` from a Steel source, as a row the widget draws (`T046`).
 ///
 /// **The seam, and it is one function.** `phosphor-steel` may not name
@@ -329,6 +408,99 @@ mod tests {
             }
             assert!(frames < 10_000, "the matcher never settled");
         }
+    }
+
+    /// A scratch tree that removes itself.
+    struct Tree(std::path::PathBuf);
+
+    impl Tree {
+        fn new(name: &str) -> Self {
+            let at =
+                std::env::temp_dir().join(format!("phosphor-walk-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&at);
+            std::fs::create_dir_all(&at).expect("a scratch tree");
+            Self(at)
+        }
+
+        fn file(&self, relative: &str) -> &Self {
+            let at = self.0.join(relative);
+            if let Some(parent) = at.parent() {
+                std::fs::create_dir_all(parent).expect("a parent");
+            }
+            std::fs::write(&at, "x\n").expect("a file");
+            self
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// The defect Teej reported, at the layer that caused it: the walk is what
+    /// makes `SPC f` a file picker, and it must answer without a store.
+    #[test]
+    fn the_walk_lists_every_file_workspace_relative() {
+        let tree = Tree::new("flat");
+        tree.file("Cargo.toml")
+            .file("src/main.rs")
+            .file("src/a/b.rs");
+
+        let (found, truncated) = workspace_files(&tree.0);
+
+        assert!(!truncated);
+        assert_eq!(
+            found,
+            vec!["Cargo.toml", "src/a/b.rs", "src/main.rs"],
+            "relative to the root, and sorted so two runs agree",
+        );
+    }
+
+    #[test]
+    fn the_walk_skips_the_directories_that_make_it_unusable() {
+        let tree = Tree::new("skips");
+        tree.file("keep.rs")
+            .file("target/debug/junk.rs")
+            .file("node_modules/pkg/index.js")
+            .file(".git/objects/ab/cd")
+            .file(".jj/repo/store")
+            .file(".claude/settings.json");
+
+        let (found, _) = workspace_files(&tree.0);
+
+        assert_eq!(found, vec!["keep.rs"], "every denied directory is unwalked");
+    }
+
+    /// Sorted, because `read_dir` order is the filesystem's and `CP-5` asks for
+    /// *"identical output on two machines"*.
+    #[test]
+    fn the_walk_is_ordered_rather_than_whatever_the_filesystem_says() {
+        let tree = Tree::new("sorted");
+        tree.file("z.rs").file("a.rs").file("m/n.rs").file("b.rs");
+
+        let (found, _) = workspace_files(&tree.0);
+        let mut expected = found.clone();
+        expected.sort_unstable();
+
+        assert_eq!(found, expected);
+    }
+
+    #[test]
+    fn an_empty_workspace_answers_an_empty_list_rather_than_failing() {
+        let tree = Tree::new("empty");
+        let (found, truncated) = workspace_files(&tree.0);
+
+        assert!(found.is_empty());
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn a_root_that_does_not_exist_answers_nothing_rather_than_panicking() {
+        let (found, truncated) = workspace_files(std::path::Path::new("/no/such/place/at/all"));
+
+        assert!(found.is_empty());
+        assert!(!truncated);
     }
 
     /// **`T045`'s criterion: it stays responsive filtering a 100k-file list.**

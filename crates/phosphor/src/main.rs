@@ -3471,6 +3471,31 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                     .collect(),
                             ),
                         )
+                        // `T047` — the workspace's files, for `3d`. Walked
+                        // here because no capability walks a directory and a
+                        // source runs inside the VM (§42), which is the same
+                        // reason the buffer's lines are handed down above.
+                        //
+                        // **Only for the source that asks**, because a walk is
+                        // not free: `grep` and `unseen` would pay for a list
+                        // they never read.
+                        .with(
+                            "files",
+                            if id == "files" {
+                                let root = std::env::current_dir().unwrap_or_default();
+                                let (found, truncated) = picker::workspace_files(&root);
+                                if truncated {
+                                    notice = Some(
+                                        "more files than the picker walks — showing the first \
+                                         100,000"
+                                            .to_owned(),
+                                    );
+                                }
+                                Value::List(found.into_iter().map(Value::Text).collect())
+                            } else {
+                                Value::List(Vec::new())
+                            },
+                        )
                         // `T047` — whatever the last `request-references`
                         // answered, for the `references` source to draw. Empty
                         // for every other source, which is what makes this one

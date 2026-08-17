@@ -2067,11 +2067,23 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > the same reasons. An id is validated because it is interpolated into a `define` form and the
   > capability is `Allow` on MCP.
 
-  > **`files` lists the files claude has touched, not every file in the workspace**, and that
-  > limit is stated in `runtime/pickers.scm` rather than hidden: **no capability walks a
-  > directory**. What the store knows is exactly the activity column `3d` draws, so the rows are
-  > right and the corpus is smaller than a files picker eventually wants. When a directory-walking
-  > capability lands, the source grows a second half and its rows keep their shape.
+  > **`files` listed only what claude had touched, and that was wrong.** The limit was stated
+  > rather than hidden — *"no capability walks a directory"* — but stating a limit does not make
+  > it the right design, and this one made `SPC f` open an **empty picker** in any session with
+  > nothing declared. Found by Teej testing a normal build: *"file picker has no files in it — is
+  > it really a buffer list not a file list"*. It was neither.
+  >
+  > `3d` settles it and always did: its caption is *"the file picker carries agent state: unseen
+  > counts + activity, **not just names**"*, and its own rows include `src/main.rs` and
+  > `Cargo.toml` carrying no activity at all. **The list is the workspace and the store annotates
+  > it** — never the other way round.
+  >
+  > The walk is `crate::picker::workspace_files`, in the binary, handed down in the source's args
+  > exactly as `grep` gets the buffer's lines and for the same reason (§42). It skips five
+  > directories by name rather than reading `.gitignore`: that would mean either ripgrep's
+  > `ignore` crate for one picker, or a half-implementation of a format with negations and
+  > precedence that would be wrong unpredictably. Capped at 100,000 with the caller told, because
+  > the *walk* is on the keystroke where the matcher is not.
 
   > **A door-opened picker took a keystroke to appear**, because the `open_picker` drain sat
   > *before* the `Intent` drain: a keystroke sets the flag during event handling and is drained

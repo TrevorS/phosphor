@@ -33,10 +33,6 @@
 ;; a picker row is not in one — the selected row's ground is the widget's.
 (define (picker/row . runs) (view/span-row runs void))
 
-;; a count as a word, so "1 region" and "3 regions" both read.
-(define (picker/regions n)
-  (string-append (number->string n) (if (= n 1) " region" " regions")))
-
 ;; ---------------------------------------------------------------------------
 ;; unseen — screen 2a
 ;; ---------------------------------------------------------------------------
@@ -66,31 +62,50 @@
 ;; files — screen 3d
 ;; ---------------------------------------------------------------------------
 ;;
-;; the files claude has touched, with what he left in each. **not every file in
-;; the workspace**, and that is a limit worth stating rather than hiding: no
-;; capability walks a directory, so what this can enumerate is what the store
-;; knows — and what the store knows is exactly the activity column 3d draws.
-;; a whole-workspace files picker needs a directory-walking capability that the
-;; vocabulary does not have; when one lands, this source grows a second half
-;; and its rows keep their shape.
-(define (picker/files-rows)
-  (let ([by-path (hash)])
+;; 3d's caption is the whole specification: "the file picker carries agent
+;; state: unseen counts + activity, **not just names**". so the list is the
+;; *workspace*, and the store annotates it — the mockup's own rows include
+;; `src/main.rs` and `Cargo.toml` carrying no activity at all.
+;;
+;; **this listed only files with regions once, and that was wrong.** an
+;; ordinary build with nothing declared opened an empty picker under a key
+;; labelled "files". reported by Teej testing it; the store is the annotation,
+;; never the filter.
+;;
+;; the file list arrives in `args` because no capability walks a directory and
+;; a source runs inside the VM (OPEN-QUESTIONS §42) — the same seam that hands
+;; `grep` the buffer's lines. rust walks, steel decides what a row says.
+
+;; how many unseen regions each path has, as a hash.
+(define (picker/unseen-by-path)
+  (let ([counts (hash)])
     (for-each
      (lambda (region)
        (let* ([path (hash-ref region "path")]
-              [so-far (if (hash-contains? by-path path) (hash-ref by-path path) 0)])
-         (set! by-path (hash-insert by-path path (+ so-far 1)))))
+              [so-far (if (hash-contains? counts path) (hash-ref counts path) 0)])
+         (set! counts (hash-insert counts path (+ so-far 1)))))
      (unseen-regions))
+    counts))
+
+(define (picker/files-rows args)
+  (let ([counts (picker/unseen-by-path)])
     (map (lambda (path)
-           (picker/row
-            (picker/run path 'text)
-            (picker/run "  " 'meta)
-            (picker/run (picker/regions (hash-ref by-path path)) 'claude)))
-         (hash-keys->list by-path))))
+           (if (hash-contains? counts path)
+               ;; a file claude has been in. §2's `●` is the unseen marker
+               ;; the gutter draws, and §1 makes it green because it is his.
+               (picker/row
+                (picker/run path 'text)
+                (picker/run "  " 'meta)
+                (picker/run (string-append "●" (number->string (hash-ref counts path))
+                                           " unseen")
+                            'claude))
+               ;; and one he has not — a name, and nothing claimed about it.
+               (picker/row (picker/run path 'text))))
+         (hash-ref args "files"))))
 
 (define-picker-source!
   "files"
-  "(lambda (args) (view/spans (picker/files-rows)))")
+  "(lambda (args) (view/spans (picker/files-rows args)))")
 
 ;; ---------------------------------------------------------------------------
 ;; grep — screen 8a

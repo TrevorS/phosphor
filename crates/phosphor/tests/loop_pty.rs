@@ -1679,24 +1679,65 @@ mod driven {
         );
         editor.press_quietly(b"\x1b");
 
-        // `3d` — `SPC f`, the files source, over the same two regions.
+        // `3d` — `SPC f`. **The list is the workspace, and the store
+        // annotates it**: the caption is *"the file picker carries agent
+        // state: unseen counts + activity, not just names"*, and the mockup's
+        // own rows include files carrying no activity at all.
         //
-        // **`1/1` is the assertion**, and it is the whole of what `3d`'s
-        // activity column means: two regions in one file group into *one* row.
-        // A source that did not group would draw `2/2`.
-        //
-        // The row's text is deliberately not asserted. A `Scratch` lives under
-        // the system temp directory and the editor's cwd is the repo, so
-        // `key_for` cannot strip the prefix — the row carries an absolute path
-        // long enough to fill the float and truncate everything after it. That
-        // is correct behaviour (§11: clip, never wrap) and it makes the text a
-        // fact about the tempdir rather than about the picker.
-        let files = editor.press_until(b" f", "1/1");
+        // A picker that *filtered* by the store would show one row here. This
+        // asserts the annotation instead — the count on the file that has
+        // regions — and the test below asserts the other half, that a
+        // workspace with no regions at all still lists.
+        let files = editor.press_until(b" f", "unseen");
         editor.quit();
 
         assert!(
-            shows(&files, "1/1"),
-            "two regions in one file are one files-picker row; frame was: {files}"
+            shows(&files, "unseen"),
+            "the file with regions carries its count; frame was: {files}"
+        );
+    }
+
+    /// **The files picker lists a workspace with no regions in it at all.**
+    ///
+    /// Reported by Teej testing a normal build: *"file picker has no files in
+    /// it — is it really a buffer list not a file list"*. It was neither: the
+    /// source listed only paths the **store** had regions for, so an ordinary
+    /// session with nothing declared opened an empty picker under a key
+    /// labelled *"files"*.
+    ///
+    /// `3d` is explicit — *"not just names"* — and its own rows carry
+    /// `src/main.rs` and `Cargo.toml` with no activity. The store is the
+    /// annotation, never the filter.
+    ///
+    /// Nothing is declared here on purpose. A list that is empty without the
+    /// store is the whole of the defect.
+    ///
+    /// **The workspace is the editor's cwd, not the scratch.** The pty child
+    /// inherits this test process's directory, which is the `phosphor` crate —
+    /// so what the picker lists is *this crate's* files, and asserting on the
+    /// scratch's would be asserting the walk had a bug. `Cargo.toml` is the
+    /// needle because every crate directory has one; the walk's own rules
+    /// (skipping `target/`, descending, sorting, capping) are unit-tested in
+    /// `crate::picker`, where they can be given a directory to walk.
+    #[test]
+    fn the_files_picker_lists_a_workspace_with_no_regions() {
+        let scratch = Scratch::new("files-no-regions");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("alpha.txt");
+        fs::write(&file, "one\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let listed = editor.press_until(b" f", "Cargo.toml");
+        editor.quit();
+
+        assert!(
+            shows(&listed, "Cargo.toml"),
+            "the picker lists the workspace with an empty store; frame was: {listed}"
+        );
+        assert!(
+            !shows(&listed, "0/0"),
+            "and it is not empty, which is the defect this test exists for; \
+             frame was: {listed}"
         );
     }
 
@@ -1732,13 +1773,15 @@ mod driven {
             "and the store's unseen marker for the line a region covers; frame was: {grepped}"
         );
 
-        // **Tab cycles.** `grep` → `files`, which over one region in one file
-        // is a single row where grep had three.
-        let cycled = editor.press_until(b"\t", "1/1");
+        // **Tab cycles.** `grep` → `files`, and the two draw different things:
+        // grep's rows are this buffer's three lines, files' are the workspace.
+        // `Cargo.toml` is the needle because it is in the editor's cwd (the
+        // crate directory) and cannot be a grep row.
+        let cycled = editor.press_until(b"\t", "Cargo.toml");
         editor.quit();
 
         assert!(
-            shows(&cycled, "1/1"),
+            shows(&cycled, "Cargo.toml"),
             "tab moved to the next source in the layer's order; frame was: {cycled}"
         );
     }
