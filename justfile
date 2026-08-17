@@ -385,6 +385,32 @@ tape id:
 install:
     cargo install --path crates/phosphor --locked
 
+# CP-4's three language servers, in a container that has all of them.
+#
+# `crates/phosphor-buffer/tests/lsp_servers.rs` attaches to rust-analyzer,
+# typescript-language-server and pyright-langserver for real. On a developer's
+# machine it skips whichever is missing — deliberately, because a test that
+# reddens for an absent tool trains everyone to ignore a red build. This is
+# where nothing is absent, so nothing skips.
+#
+# **Not in `gate` and not in CI.** It needs a Docker daemon and pulls an image;
+# both are the kind of dependency that makes a build fail for reasons unrelated
+# to the code. Run it when touching the LSP client, and at CP-4.
+#
+# The named volume is what makes the second run fast: the host's `target/` holds
+# macOS objects and the container's must not meet them, so it gets its own.
+lsp-docker *ARGS:
+    docker build -f docker/lsp.Dockerfile -t phosphor-lsp:latest .
+    docker run --rm \
+        -v "$(pwd)":/phosphor \
+        -v phosphor-lsp-target:/phosphor-target \
+        phosphor-lsp:latest {{ ARGS }}
+
+# A shell in the same image, for when a server misbehaves and the question is
+# what it actually said.
+lsp-docker-shell:
+    just lsp-docker bash
+
 # V007 — the pixel-diff runner. Captures fresh, compares against the
 # committed reference at git HEAD, and on a mismatch writes a legible
 # side-by-side diff image under tapes/artifacts/_diffs/ instead of failing

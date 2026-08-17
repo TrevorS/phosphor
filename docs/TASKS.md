@@ -1552,6 +1552,44 @@ Tier 3.
 >   in this session"* is exactly the standard it missed, and a checkpoint's own mechanical half is
 >   the worst place to miss it — it is the paragraph a later reader trusts instead of looking.
 >
+> **The two servers nothing had ever attached to now attach, in a container (2026-08-17).**
+> `docker/lsp.Dockerfile` holds rust-analyzer, `typescript-language-server` and
+> `pyright-langserver` at pinned versions; `just lsp-docker` builds it and runs
+> `crates/phosphor-buffer/tests/lsp_servers.rs`, which was `lsp_rust_analyzer.rs` and covered one.
+> **3 passed, 0 skipped.** Deliberately outside `gate` and CI: it needs a Docker daemon, which is
+> the kind of dependency that reddens a build for reasons unrelated to the code.
+>
+> It found four things on its first run, which is the argument for it:
+>
+> * **`typescript-language-server` cannot be driven by typescript 7.** The host this was written on
+>   has 7.0.2 globally — the native-port rewrite, which ships `tsgo` and no `lib/tsserver.js` — so
+>   the server initializes, answers *"Could not find a valid TypeScript installation"*, and lands
+>   in `Crashed`. The test skips on such a host **naming the reason**; the container pins a pair
+>   that works.
+> * **A `.ts` file in a directory with no `node_modules` gets a crashed server**, for the same
+>   reason: resolution walks up from the workspace and never consults the global install. That is
+>   the server's behaviour rather than ours, and the statusline chip is the only thing that says so.
+> * **`pyright-langserver --version` exits 1** — *"Connection input stream is not set"* — which is
+>   the server parsing its arguments, not a failure to run. The probe read that as a broken server
+>   and skipped. The test and the image's own build-time probe now tell the two apart and agree by
+>   construction: an image that builds is one where the test will not skip.
+> * **Only rust-analyzer sends `serverInfo`.** The other two send none, so `ServerIdentity` falls
+>   back to `spec.command` — meaning `7c`'s chip draws the *command* for two of three, where its
+>   own line is *"the name a server gives itself"*. Nothing on screen is wrong; the prose is
+>   looser than it reads.
+>
+> **A defect it found and did not fix: `typescript-language-server` reaches `Ready` and is gone
+> within the second**, with `Exited("the underlying channel reached EOF")`. Proved in the container
+> by hand: the *identical* handshake driven from a node script — same `processId: null`, same
+> `rootUri`, same `initialized`, same `didOpen` — leaves the server alive indefinitely, and adding
+> one thing kills it instantly with exit code 1: **closing its stdin**. rust-analyzer and pyright
+> survive the same close for at least a second, which is why only this server shows it.
+>
+> Where *our* client closes it is **not** proved. `serve`'s `tokio::select!` drops both halves the
+> moment either branch finishes and the child is `kill_on_drop(true)`, so a `drive` that returned
+> early would produce exactly this — but nothing demonstrates that it does. Recorded with its
+> reproduction rather than guessed at, and the test prints `KNOWN` rather than passing quietly.
+
 > **The recurring sweep, run 2026-08-16.** Five items across three tiers; three are Tier 1/2 and
 > were run, two are Tier 3 and are Teej's by definition. **The 80-column item found a defect and
 > it was this window's own.**

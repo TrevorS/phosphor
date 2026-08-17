@@ -1,0 +1,23 @@
+# The build context for `docker/lsp.Dockerfile`, which needs the *source* and
+# nothing built.
+#
+# `just lsp-docker` bind-mounts the repository at run time, so this context is
+# only what `docker build` sends — but an unfiltered context here would ship a
+# multi-gigabyte `target/` to the daemon on every build, and the tracked capture
+# library on top of it. Both are pure cost: neither is read by the image.
+
+# Build output, host-shaped. `CARGO_TARGET_DIR` in the image points elsewhere
+# precisely so the two never meet.
+target/
+**/target/
+
+# The Tier-2 capture library — PNGs and GIFs, tracked, and irrelevant to a
+# language server.
+tapes/artifacts/
+
+# Worktrees. `.claude/worktrees/` holds whole checkouts, so leaving this out is
+# the difference between a small context and a recursive one.
+.claude/
+
+# Git's own object store. The image needs no history.
+.git/
