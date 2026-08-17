@@ -3002,6 +3002,109 @@ mod driven {
         editor.quit();
     }
 
+    /// **§41 — `s` on a line with no region says so.**
+    ///
+    /// The count stays the value a door reads; what changed is that a *person*
+    /// gets a sentence. A `Done` never reaches the notice row
+    /// (`answer::trouble` answers `None`), so before this ruling `SPC u s` on a
+    /// line no region covers was indistinguishable from the key being unbound —
+    /// correct behaviour that reads as a bug, which is the one failure mode a
+    /// test can catch and a person cannot argue with.
+    #[test]
+    fn marking_seen_where_there_is_no_region_says_so() {
+        let scratch = Scratch::new("no-region");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // No region has been declared at all, so every line is a miss.
+        editor.press_until(b" us", "no region here");
+
+        // And it is *not* a refusal — the store did what was asked and found
+        // nothing. A refusal would make `S` over an already-seen block an
+        // error, which is the reason §41 ruled against one.
+        let mark = editor.mark();
+        editor.press_quietly(b" us");
+        let frame = editor.since(mark);
+        assert!(
+            !shows(&frame, "refused"),
+            "a miss is a receipt, not a refusal; frame was: {frame}"
+        );
+        editor.quit();
+    }
+
+    /// **§43 — a float surface the editor layer registered, opened by a door.**
+    ///
+    /// `T093`. `open-float` has always taken a `SurfaceId` documented as *"a
+    /// registry key, not a Rust enum"*, and until this ruling **nothing created
+    /// an entry and no verb could** — the whole vocabulary had two `define-*`
+    /// capabilities and neither was a surface.
+    ///
+    /// Every hop is the real one: `define-float-surface!` binds a procedure in
+    /// the running VM, `open-float!` calls it and puts what it answered on
+    /// screen, and the body is scheme this test wrote — no Rust knows the word
+    /// `scouted`. That is `T048`'s acceptance rehearsed one task early: a
+    /// surface that adds zero lines to `phosphor-ui`.
+    /// `6b`-style source, as one line, defining a surface whose body is a
+    /// `spans` row. Kept beside the test because the escaping is the fiddly
+    /// part: this is scheme inside a Rust string inside a scheme string.
+    const SCOUT_SURFACE: &[u8] = br#"(define-float-surface! "scout" "(lambda (a) (view/float (quote informational) void (view/spans (list (view/span-row (list (view/run \"scouted here\" (quote text) (quote plain))) void))) void))")"#;
+
+    #[test]
+    fn a_float_surface_defined_in_scheme_opens_from_a_door() {
+        let scratch = Scratch::new("float-surface");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        // A procedure of one argument, as the capability's own doc says.
+        // The body is `Node::Spans` — `T048`'s escape hatch, and the same one
+        // the boot float uses. Signatures were read off the door rather than
+        // guessed: `phosphor --eval` names the arity of anything spelled wrong.
+        // A raw string cannot hold a `\r`, and a terminal submits on one — a
+        // trailing newline types into the REPL and waits for a form that never
+        // closes, which is what a truncated frame looks like from the outside.
+        editor.press_until(&[SCOUT_SURFACE, b"\r"].concat(), "#ok");
+        // **Waited on the float, not on `#ok`.** Opening replaces the REPL with
+        // the surface, so the receipt is drawn over before it can be read —
+        // which is the verb working, and is exactly what §9's *"opening a
+        // second replaces the first"* looks like from the outside.
+        editor.press_until(b"(open-float! \"scout\" (hash))\r", "scouted here");
+
+        // §9: `esc` closes top-down.
+        let mark = editor.mark();
+        editor.press_quietly(b"\x1b");
+        let frame = editor.since(mark);
+        assert!(
+            !shows(&frame, "scouted here"),
+            "esc left the float open; frame was: {frame}"
+        );
+        editor.quit();
+    }
+
+    /// **An id that is not a name is refused rather than interpolated.**
+    ///
+    /// `define-float-surface` is `Allow` on MCP and its id is built into a
+    /// `define` form, so an unchecked one is scheme injection from an agent.
+    #[test]
+    fn a_surface_id_that_is_not_a_name_is_refused() {
+        let scratch = Scratch::new("bad-surface-id");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(
+            b"(define-float-surface! \"x) (displayln 1) (define y\" \"(lambda (a) a)\")\r",
+            "is not a surface name",
+        );
+        editor.quit();
+    }
+
     /// **§7's other rule, through the door: your own edits never create
     /// regions.**
     ///

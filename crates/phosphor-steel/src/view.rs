@@ -246,6 +246,26 @@ pub fn node(value: &SteelVal) -> Result<Node, ViewError> {
     Node::from_value(&wire).map_err(ViewError::NotANode)
 }
 
+/// The same, for a whole [`Float`] — `T093`'s surfaces.
+///
+/// A float is a *record* rather than a node ([`RECORDS`] binds `view/float`),
+/// so [`node`] cannot decode one and a surface has to answer the chrome as well
+/// as the body: §9 gives a float a mood, a header and a footer, and a surface
+/// that could only answer its body would leave those three to the host — which
+/// is precisely the Rust edit per surface that `SurfaceId` exists to avoid.
+///
+/// # Errors
+///
+/// [`ViewError::Uncrossable`] when the value holds something the wire model has
+/// no case for, and [`ViewError::NotANode`] when it crossed and is not a float.
+/// The second name is a little wide — it reads *"not a view tree"*, and a float
+/// is part of one — and is shared rather than duplicated because both callers
+/// render it the same way and a second variant would say nothing new.
+pub fn float(value: &SteelVal) -> Result<Float, ViewError> {
+    let wire = from_steel(value).map_err(|error| ViewError::Uncrossable(error.to_string()))?;
+    Float::from_value(&wire).map_err(ViewError::NotANode)
+}
+
 /// Why a value a composition answered is not a view tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ViewError {

@@ -562,6 +562,24 @@ actions! {
     /// Floats — the one chrome primitive. Design Language §9: at most one has
     /// focus, opening a second replaces the first, esc closes top-down, and
     /// needs-you never steals focus (Q9).
+    ///
+    /// # The registry `open-float` names
+    ///
+    /// [`OpenFloat`](FloatAction::OpenFloat) takes a
+    /// [`SurfaceId`](crate::request::SurfaceId) — *"a registry key, not a Rust
+    /// enum"* — and until `T093` nothing created an entry in that registry and
+    /// no verb could. `OPEN-QUESTIONS.md` §43 is where that was found and
+    /// ruled: [`DefineFloatSurface`](FloatAction::DefineFloatSurface) is the
+    /// missing half, and it is deliberately the same shape as
+    /// `define-picker-source` — **an id and a `String` of scheme**, because no
+    /// `SteelVal` may ride in a payload and source text is how a body crosses
+    /// the barrier.
+    ///
+    /// That symmetry is the point rather than a convenience. `T048` requires
+    /// `:arch` to be *"built entirely from the `spans` hatch"* and to add zero
+    /// lines to `phosphor-ui`; a surface the editor layer registers and the
+    /// host merely calls is what makes that possible, and a `FloatKind` enum
+    /// would have made every new surface a Rust edit.
     Float(FloatAction) = "float" {
         OpenFloat = "open-float" [S2 / "T021" / Allow]
             "opens a float by surface id, with that surface's own arguments" {
@@ -573,6 +591,11 @@ actions! {
         }
         CloseAllFloats = "close-all-floats" [S2 / "T021" / Allow]
             "closes every open float" {
+        }
+        DefineFloatSurface = "define-float-surface" [S2 / "T093" / Allow]
+            "defines or redefines a float surface; open-float names one by id" {
+            surface: crate::request::SurfaceId = "the surface id open-float will name",
+            body: String = "scheme source producing the float — a procedure of one argument",
         }
         FloatSelect = "float-select" [S5 / "T045" / Deny]
             "moves the highlighted row of the focused float" {

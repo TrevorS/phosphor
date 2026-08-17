@@ -19,12 +19,14 @@ never executed and says so at the task.
 rulings came out of the manual half; three amend design docs and are tabled in
 [§5](IMPLEMENTATION-PLAN.md#5-decisions).
 
-**Window C is built and its mechanical half is green.** The `Action` vocabulary is 216
+**Window C is built and its mechanical half is green.** The `Action` vocabulary is 217
 capabilities generated from one table, the three doors are total functions over it, and the
-parity test walks all 648 door checks end to end. (`208`/`624` until `S3` added
+parity test walks all 651 door checks end to end. (`208`/`624` until `S3` added
 `Buffer::SetCase`, `209`/`627` until the repair window added `set-macro-recording`, `register`
 and `place-anchor`, `212`/`636` until `S4` added the three `ingest-` verbs the asynchronous
-LSP transport needs, and `215`/`645` until `T104` added `insert-indent`; the count is
+LSP transport needs, `215`/`645` until `T104` added `insert-indent`, and `216`/`648` until
+`T093` added `define-float-surface` — the registry `open-float` had always named and nothing
+had ever created (§43); the count is
 `scripts/lint-one-registry.sh`'s, which reads the tables in
 `crates/phosphor-core/src/{action,query}.rs` — do not compute it by hand. All six prose citations
 of `208` are fixed, and `scripts/doc_claims.py` section 5 now recomputes both numbers and fails on
@@ -1796,6 +1798,19 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   picker opens it in the running binary — and a source added from the REPL appears with no
   restart. *Needs:* T045, T022
 
+  > **`OPEN-QUESTIONS.md` §42 is owed here**, ruled 2026-08-17 as a deferral to this task. A door
+  > cannot ask about the cursor: `AppHost::scope` refuses `cursor`, `selection`, `picker-row` and
+  > `float-row` for the `region` queries, naming the three tags it does take, because the host has
+  > no editor — `Editing::scope_of` is the half that does and it is on the other side of the Steel
+  > barrier. The *Actions* are fine (`SPC u s` passes `(key/at-cursor)` and resolves); it is only
+  > the **queries** that are one-sided.
+  >
+  > It lands here because a picker source is the first thing that will want to ask *what is unseen
+  > **here***. The fix is structural and the shape is ruled: **queries from the VM route through
+  > the loop the way Actions do**, rather than the host keeping a copy of the cursor — a second
+  > copy of editor state is exactly the staleness `Target`'s own doc says late binding exists to
+  > avoid.
+
 - [ ] **T047 · Grep / symbols source**
   Tab cycles source. Results carry who-touched-them. **And `request-references`**, which was
   re-homed here by the `S4` wiring pass: `LanguageServers::ask` answers a `Vec<FileSpan>` and
@@ -2275,7 +2290,7 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   *Done when:* `:theme <slug>` in the running binary draws the next frame in the new theme with
   no restart, and a pty test proves it. *Needs:* T012, T026
 
-- [ ] **T093 · Floats from the doors** 📌
+- [x] **T093 · Floats from the doors** 📌
   `open-float`, `close-float` and `close-all-floats` are declared and unapplied, so **Steel and
   MCP cannot open or close a float.** The slot exists — `FloatSlot::empty()` at
   `crates/phosphor/src/main.rs:924`, and the boot report opens one — and `esc` closes a float
@@ -2286,6 +2301,46 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   *Done when:* a Steel call opens a float, a second replaces rather than stacks it,
   `close-all-floats` clears the slot, and `phosphor --eval` and the REPL agree on all three.
   *Needs:* T084, T026
+
+  > **The blocker was never the slot.** `open-float` takes a `SurfaceId` documented as *"a
+  > registry key, not a Rust enum"*, and **nothing created an entry and no verb could** — the
+  > whole vocabulary had two `define-*` capabilities and neither was a surface. Found by the
+  > pre-window scout, ruled as [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) §43, built here.
+  >
+  > `define-float-surface` is the missing half and is deliberately `define-picker-source`'s shape:
+  > **an id and a `String` of scheme**, because no `SteelVal` may ride in a payload. The layer
+  > binds a procedure under `phosphor/float-surface/<id>`; the host calls it and decodes a
+  > `view::Float`. So a surface is exactly as live as a `define-language` — redefine it at the
+  > REPL and the next `open-float` gets the new one — and it adds **zero lines to `phosphor-ui`**,
+  > which is `T048`'s acceptance criterion rehearsed one task early.
+  >
+  > **The id is validated at the door**, not in the layer: it is interpolated into a `define`
+  > form and the capability is `Allow` on MCP, so an unchecked one is scheme injection from an
+  > agent. `a_surface_id_that_is_not_a_name_is_refused` plants exactly that.
+  >
+  > All four arms post an `Intent` rather than acting, because composing a surface runs scheme and
+  > a binding is already inside the VM when it calls. A door-opened float gets its own
+  > `Surface::Float` rather than borrowing `:help`'s — the drawing is identical, but one is
+  > composed by the host from the live keymap and the other by `runtime/*.scm` from whatever it
+  > likes, and collapsing them would make the first Steel surface indistinguishable from the one
+  > Rust surface that is not a fixture.
+  >
+  > **Composed once, at open** — `:help`'s shape, not `define-picker-source`'s *"an open picker
+  > re-derives"*. A float is a snapshot of an answer; a picker is a live query. Flagged rather
+  > than assumed: if a surface ever needs to re-derive, that is a change to this arm and not a
+  > property anyone should expect today.
+  >
+  > **Scope**
+  > - Files: `crates/phosphor-core/src/action.rs`, `crates/phosphor-steel/src/{float,view}.rs`,
+  >   `crates/phosphor/src/main.rs`, `crates/phosphor/tests/loop_pty.rs`,
+  >   `crates/phosphor-core/tests/surfaces.txt`, `scripts/lint-action-arms.sh`
+  > - Named units: 1 new capability (216 → **217**, 648 → **651** door checks), 4 door arms,
+  >   4 `Intent` variants, `Surface::Float`, `view::float`, `float::{surface, define_form,
+  >   valid_surface_id, SurfaceError}`, 2 pty tests
+  > - Verification: `just gate` green; the float composes from scheme with no Rust knowing its
+  >   words, and `esc` closes it (§9)
+  > - Risk: public API change yes (one capability) · data migration no · cross-module yes ·
+  >   reversible yes · external blocker no
 
 - [ ] **T094 · Reloading the editor layer** 📌
   `load-runtime-file` and `reload-runtime` are declared and unapplied: **the layer cannot be
@@ -2967,7 +3022,7 @@ name. Neither task may decide it alone; it is [OPEN-QUESTIONS.md](OPEN-QUESTIONS
   > still names no width, and `tab_in_insert_mode_advances_to_the_tabstop` and its CJK and
   > replace-mode neighbours pass untouched, because a buffer with no server has no list and takes
   > the fall-through on every press. What the reversal cost was one optional argument on one
-  > capability, no new verb, and **no movement in the 216/648 counts** — which is what makes an
+  > capability, no new verb, and **no movement in the capability/door-check counts** — which is what makes an
   > argument the right shape for this and a second verb the wrong one.
   >
   > **Two things the review of this entry found, and neither was a gate failure.**

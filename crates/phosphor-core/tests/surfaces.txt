@@ -31,6 +31,7 @@ S2 T022 repl-to-buffer
 S2 T023 eval
 S2 T024 capabilities
 S2 T024 describe-capability
+S2 T093 define-float-surface
 S3 T016 fold-all
 S3 T016 set-fold
 S3 T016 unfold-all

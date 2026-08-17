@@ -173,6 +173,108 @@ fn hint(key: &str, verb: &str) -> KeyHint {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Surfaces — the registry `open-float` names (`T093`, §43)
+// ---------------------------------------------------------------------------
+
+/// The prefix a registered surface's procedure is bound under.
+///
+/// One namespace, and it is the same shape as [`crate::status::COMPOSER`]'s:
+/// the editor layer owns a global and the host only calls it. A surface is
+/// `phosphor/float-surface/<id>`, so `(open-float "arch")` reaches
+/// `phosphor/float-surface/arch`.
+pub const SURFACE_PREFIX: &str = "phosphor/float-surface/";
+
+/// The global a surface's procedure lives at.
+#[must_use]
+pub fn surface_global(id: &str) -> String {
+    format!("{SURFACE_PREFIX}{id}")
+}
+
+/// Whether an id may be built into a global name.
+///
+/// **A door supplies this string**, and it is interpolated into a `define`
+/// form, so it is validated rather than trusted: without this, an id of
+/// `x) (displayln "owned"` is scheme injection through a capability rated
+/// `Allow` for MCP. Letters, digits, `-` and `_`, and non-empty — which is
+/// every id any mockup writes (`arch`, `unseen`, `files`).
+#[must_use]
+pub fn valid_surface_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The form `define-float-surface` evaluates.
+///
+/// The body is *"a procedure of one argument"* — the args hash `open-float`
+/// carries — and binding it to a global is what makes a redefinition at the
+/// REPL take effect without a restart, the same property `define-language`
+/// has and for the same reason.
+#[must_use]
+pub fn define_form(id: &str, body: &str) -> String {
+    format!("(define {} {body})", surface_global(id))
+}
+
+/// Calls a registered surface and decodes what it answered.
+///
+/// The whole of `open-float`'s Steel half, and deliberately the same three
+/// steps as [`crate::status::compose`]: check the global, call it, decode. A
+/// surface that raises leaves the caller to decide what stays on screen —
+/// which for a float is *nothing opens*, unlike the statusline where the last
+/// good line is kept.
+///
+/// # Errors
+///
+/// [`SurfaceError`], one variant per way it can fail to produce a float.
+pub fn surface(
+    runtime: &mut crate::runtime::Runtime,
+    id: &str,
+    args: &phosphor_core::value::Value,
+) -> Result<Float, SurfaceError> {
+    let global = surface_global(id);
+    if runtime.global(&global).is_err() {
+        return Err(SurfaceError::Unknown(id.to_owned()));
+    }
+    let answered = runtime
+        .call(&global, vec![crate::convert::to_steel(args)])
+        .map_err(|error| SurfaceError::Raised(error.to_string()))?;
+    crate::view::float(&answered).map_err(SurfaceError::NotAFloat)
+}
+
+/// Why a surface did not produce a float.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SurfaceError {
+    /// The id is not one an editor layer has defined.
+    Unknown(String),
+    /// It is defined and raised. Carries Steel's own text.
+    Raised(String),
+    /// It answered something that is not a float.
+    NotAFloat(crate::view::ViewError),
+    /// The id could not be a global name — see [`valid_surface_id`].
+    BadId(String),
+}
+
+impl core::fmt::Display for SurfaceError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            // §6's voice: say what to do, not what went wrong.
+            Self::Unknown(id) => {
+                write!(
+                    f,
+                    "no float surface `{id}` — (define-float-surface! …) makes one"
+                )
+            }
+            Self::Raised(why) => write!(f, "{why}"),
+            Self::NotAFloat(error) => write!(f, "{error}"),
+            Self::BadId(id) => write!(f, "`{id}` is not a surface name — letters, digits, - and _"),
+        }
+    }
+}
+
+impl std::error::Error for SurfaceError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

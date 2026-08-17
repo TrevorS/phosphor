@@ -55,7 +55,7 @@
 //! # `T023` — the CLI door, alongside the host
 //!
 //! [`door`] is the other half of this file's job and does not touch the loop at
-//! all. `phosphor --eval '(…)'` and the 216 generated capability verbs return
+//! all. `phosphor --eval '(…)'` and the 217 generated capability verbs return
 //! **before** [`Term`] is constructed: no alternate screen, no raw mode, no
 //! frame. That is a requirement, not an accident — `V006` seeds tape fixtures
 //! through `--eval` with no test-only backdoor, which needs the door to work
@@ -151,9 +151,9 @@ use phosphor_buffer::lsp::{
 };
 use phosphor_buffer::undo::{Caret, CharRange, Edit as TreeEdit, NodeId, Step, UndoTree};
 use phosphor_core::action::{
-    Action, AppAction, BufferAction, FileAction, HistoryAction, InputAction, LspAction,
-    MotionAction, Outcome, PromptAction, Receipt, Refusal, RegionAction, Request, RuntimeAction,
-    ViewAction,
+    Action, AppAction, BufferAction, FileAction, FloatAction, HistoryAction, InputAction,
+    LspAction, MotionAction, Outcome, PromptAction, Receipt, Refusal, RegionAction, Request,
+    RuntimeAction, ViewAction,
 };
 use phosphor_core::config;
 use phosphor_core::input::key::{Code, Key, Mods, Named};
@@ -552,6 +552,22 @@ enum Intent {
     /// other two doors reach it by writing scheme rather than by holding a
     /// second table (`T033`).
     Keymap(String),
+    /// `define-float-surface` — `T093`, and `OPEN-QUESTIONS.md` §43.
+    ///
+    /// The id and the scheme source, carried as text for the reason
+    /// [`Intent::Keymap`] is: no `SteelVal` crosses the barrier, so a body
+    /// arrives as source and the [`Layer`] is what evaluates it.
+    DefineSurface(String, String),
+    /// `open-float` — the surface id and its own arguments.
+    OpenSurface(String, Value),
+    /// `close-float` — §9's *"esc closes top-down"*, reached by a door instead
+    /// of by the key.
+    CloseFloat,
+    /// `close-all-floats`. One slot today, so it is [`Intent::CloseFloat`] with
+    /// a different name — and it stays a separate verb because §9's rule is
+    /// *"at most one has focus"*, not *"at most one exists"*, and `T088`'s
+    /// panes are where that stops being the same sentence.
+    CloseAllFloats,
 }
 
 /// The editor as Steel is allowed to see it.
@@ -983,11 +999,17 @@ impl AppHost {
     /// regions were in scope.
     fn mark(&self, name: &'static str, target: &Target, state: SeenState) -> Outcome {
         match self.scope(name, Some(target)) {
-            Ok(scope) => Outcome::Done(Receipt {
-                capability: name,
-                value: Value::Int(i64::try_from(self.store.set_seen(&scope, state)).unwrap_or(0)),
-                note: None,
-            }),
+            Ok(scope) => {
+                let marked = self.store.set_seen(&scope, state);
+                Outcome::Done(Receipt {
+                    capability: name,
+                    value: Value::Int(i64::try_from(marked).unwrap_or(0)),
+                    // §41, the door's half. There is no notice row on this side
+                    // — the receipt *is* what the caller reads — so the same
+                    // sentence rides it and nothing else is needed.
+                    note: (marked == 0).then(|| "no region here".to_owned()),
+                })
+            }
             Err(why) => declined(&why.to_string()),
         }
     }
@@ -1099,6 +1121,40 @@ impl Host for AppHost {
                 done(Value::Null)
             }
             Action::Runtime(RuntimeAction::PersistForm { form }) => self.persist(form),
+            // `T093` — the four float verbs, and the registry `OPEN-QUESTIONS.md`
+            // §43 found missing. All four post an [`Intent`] rather than acting:
+            // composing a surface runs scheme, and a binding is already inside
+            // the VM when it calls this.
+            //
+            // **The id is validated here, not in the layer**, because this is
+            // the door: `define-float-surface` is `Allow` on MCP and its id is
+            // interpolated into a `define` form, so an unchecked one is scheme
+            // injection from an agent.
+            Action::Float(FloatAction::DefineFloatSurface { surface, body }) => {
+                if phosphor_steel::float::valid_surface_id(&surface.0) {
+                    self.ask(Intent::DefineSurface(surface.0.clone(), body.clone()));
+                    done(Value::Null)
+                } else {
+                    declined(
+                        &phosphor_steel::float::SurfaceError::BadId(surface.0.clone()).to_string(),
+                    )
+                }
+            }
+            Action::Float(FloatAction::OpenFloat { surface, args }) => {
+                self.ask(Intent::OpenSurface(
+                    surface.0.clone(),
+                    Value::Record(args.clone()),
+                ));
+                done(Value::Null)
+            }
+            Action::Float(FloatAction::CloseFloat {}) => {
+                self.ask(Intent::CloseFloat);
+                done(Value::Null)
+            }
+            Action::Float(FloatAction::CloseAllFloats {}) => {
+                self.ask(Intent::CloseAllFloats);
+                done(Value::Null)
+            }
             // `T041` — §7's state machine, reached from a door rather than from
             // a keystroke. `Editing::act` has the same four; the difference is
             // that this side has no editor, so a focus-relative target is
@@ -1644,6 +1700,20 @@ impl Layer {
         status::compose(&mut self.runtime, vm)
     }
 
+    /// `T093` — one registered float surface, called with its own arguments.
+    ///
+    /// The door's half of §43. Goes through this type for the same reason
+    /// [`Layer::compose`] does: `Layer` owns the `Runtime` and is the only way
+    /// into the VM, so *"arbitrary scheme ran, invalidate the frame"* stays
+    /// structural rather than remembered.
+    fn surface(
+        &mut self,
+        id: &str,
+        args: &Value,
+    ) -> Result<phosphor_core::view::Float, phosphor_steel::float::SurfaceError> {
+        phosphor_steel::float::surface(&mut self.runtime, id, args)
+    }
+
     /// `T021`'s boot report, as a float. Reads a value; runs nothing.
     ///
     /// Composed from [`Layer::report`] rather than from `Runtime::boot_float`,
@@ -1999,6 +2069,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // it). Read at open is what makes the liveness claim true — a REPL rebind
     // is in the next `:help`, with no wiring of its own.
     let mut help_page: Option<phosphor_core::view::Float> = None;
+    // `T093`'s slot — one, because §9 allows one focused float.
+    let mut open_float: Option<phosphor_core::view::Float> = None;
 
     let mut term = Term::new()?;
     // `R10` — `T027`'s degradation, reachable at last. `phosphor-core`'s
@@ -2225,6 +2297,13 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // widgets painted, so the buffer and the statusline stay behind it
             // and §9 dims them.
             (Surface::Help, _) => help_page
+                .as_ref()
+                .map(|float| Tree::new(Node::Empty {}).with_float(float.clone())),
+            // `T093`. Same shape as the three above and deliberately so: a
+            // surface the editor layer composed is drawn by the interpreter
+            // like any other tree, which is what lets `T048`'s `:arch` add
+            // zero lines to `phosphor-ui`.
+            (Surface::Float, _) => open_float
                 .as_ref()
                 .map(|float| Tree::new(Node::Empty {}).with_float(float.clone())),
             // `T038`, `T039` — the completion list and signature help, as
@@ -2820,6 +2899,36 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 Intent::Keymap(form) => {
                     if let Some(said) = phosphor_steel::answer::trouble(&layer.evaluate(&form)) {
                         notice = Some(said);
+                    }
+                }
+                // `T093` — the registry §43 found missing. The body is bound to
+                // a global here rather than kept in a map on this side, so a
+                // surface is exactly as live as a `define-language` or a
+                // keybinding: redefine it at the REPL and the next `open-float`
+                // gets the new one, with no restart and no cache to invalidate.
+                Intent::DefineSurface(id, body) => {
+                    let form = phosphor_steel::float::define_form(&id, &body);
+                    if let Some(said) = phosphor_steel::answer::trouble(&layer.evaluate(&form)) {
+                        notice = Some(said);
+                    }
+                }
+                // Composed once, at open — the same shape `:help` has, and not
+                // `define-picker-source`'s *"an open picker re-derives"*. A
+                // float is a snapshot of an answer; a picker is a live query.
+                Intent::OpenSurface(id, args) => match layer.surface(&id, &args) {
+                    Ok(float) => {
+                        // §9: opening a second replaces the first. One slot is
+                        // what makes that true by construction rather than by
+                        // a rule somebody remembers.
+                        open_float = Some(float);
+                        surface = Surface::Float;
+                    }
+                    Err(why) => notice = Some(why.to_string()),
+                },
+                Intent::CloseFloat | Intent::CloseAllFloats => {
+                    open_float = None;
+                    if surface == Surface::Float {
+                        surface = Surface::Buffer;
                     }
                 }
             }
@@ -5100,17 +5209,44 @@ impl Editing {
 
     /// **`mark-seen` and `mark-unseen`.** Answers how many regions were in
     /// scope, so `s` on a line with no region says `0` rather than nothing.
+    ///
+    /// # Zero is a receipt, not a refusal — `OPEN-QUESTIONS.md` §41
+    ///
+    /// The count stays the value: `(mark-seen! …)` answering a number is what
+    /// makes it composable from a script, and a refusal would turn the ordinary
+    /// case — `S` over a block that happens to be fully seen — into an error.
+    ///
+    /// **But zero on a keystroke had no sound at all.** A `Done` is not trouble
+    /// (`phosphor_steel::answer::trouble`), so the ex line stayed empty and
+    /// pressing `SPC u s` on a line with no region was indistinguishable from
+    /// the key being unbound — which is the exact class of defect `CP-4`'s
+    /// manual half kept finding, except that this one would have been *correct
+    /// behaviour reading as a bug*. So the note carries a sentence when it
+    /// marked none. The value a door sees is unchanged.
     fn mark(&mut self, target: &Target, state: SeenState) -> Outcome {
         let capability = match state {
             SeenState::Seen => "mark-seen",
             SeenState::Unseen => "mark-unseen",
         };
         match self.scope_of(target) {
-            Ok(scope) => Outcome::Done(Receipt {
-                capability,
-                value: Value::Int(i64::try_from(self.store.set_seen(&scope, state)).unwrap_or(0)),
-                note: None,
-            }),
+            Ok(scope) => {
+                let marked = self.store.set_seen(&scope, state);
+                // §6's voice: say what is true, in the fewest words that are.
+                // Not *"failed"* — nothing failed.
+                let said = (marked == 0).then(|| "no region here".to_owned());
+                // **On the receipt and on the notice row, and they are not the
+                // same reader.** The receipt is what a door sees; the notice
+                // row is what a *person* sees, and a `Done` never reaches it
+                // (`answer::trouble` answers `None`), which is the whole reason
+                // this key was silent. `Editing::note` is the row's own
+                // channel and already carries the caveat-on-a-success case.
+                self.note.clone_from(&said);
+                Outcome::Done(Receipt {
+                    capability,
+                    value: Value::Int(i64::try_from(marked).unwrap_or(0)),
+                    note: said,
+                })
+            }
             Err(why) => declined(&why),
         }
     }
@@ -6252,6 +6388,16 @@ enum Surface {
     /// `6d` — `:help`, and `:help <topic>`. The float is [`Editing::help`]'s
     /// ask, resolved against the live keymap by [`help_float`].
     Help,
+    /// A float a **door** opened: `open-float`, naming a surface the editor
+    /// layer registered with `define-float-surface` (`T093`, §43).
+    ///
+    /// Separate from [`Surface::Help`] though the drawing is identical, because
+    /// what is on screen is not the only thing a surface means: `esc` closes
+    /// both, but `:help` is composed by the host from the live keymap and this
+    /// one is composed by `runtime/*.scm` from whatever it likes. Collapsing
+    /// them would make the first Steel surface indistinguishable from the one
+    /// Rust surface that is not a fixture.
+    Float,
 }
 
 /// What `:help` asked for (`T097`).

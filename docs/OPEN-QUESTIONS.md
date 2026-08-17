@@ -1451,114 +1451,6 @@ what a Tier-2 reference *is*; whether the build should draw them is §`D`'s open
 
 ---
 
-## Raised by `T041`, the store
-
-Two entries. Both are decisions the task had to make to ship at all, both are recorded where they
-are implemented, and both are **product-visible in a way a unit test cannot argue about** — so
-they are here for a ruling rather than filed as settled.
-
-### 41 · `s` on a line with no region says nothing at all
-
-`Regions::set_state` answers *how many regions were in scope*, and the arms turn that into the
-capability's return value (`Editing::mark`, `AppHost::mark`). On a line no region covers the
-answer is `0`, and `0` is not trouble — `phosphor_steel::answer::trouble` reduces a `Done` to
-`None`, so the ex line stays empty and **the screen does not change in any way**.
-
-That is right for a script: `(mark-seen! …)` answering a count is composable, and a refusal would
-make the ordinary case an error. Whether it is right for a **person** is the question. Pressing
-`SPC u s` and getting no acknowledgement at all is indistinguishable from the key not being bound,
-which is precisely the class of defect `CP-4`'s manual half kept finding — `gr` "not working" was
-one of them, and it was a real gap; this one would be correct behaviour that reads the same way.
-
-Design Language §6 has no rule for *"you asked and there was nothing to do"*. The nearest
-precedent in the build is `:restart-server` with no argument, which **declines by name**
-(`main.rs`, that Action's arm) rather than silently doing nothing — but that is a malformed
-request, and this is a well-formed one whose answer is zero.
-
-*Recommendation: leave the value a count, and let the surface decide. The cheapest honest version
-is that the operator says `no unseen region here` on the ex line when it marked none — one line at
-the call site in `Editing::mark`, nothing in the vocabulary, and nothing a script sees. Do not make
-it a refusal: `S` over a block that happens to be fully seen would then read as an error.*
-
-### 42 · A door cannot ask about the cursor, and `runtime/` is a door
-
-`AppHost::scope` refuses `cursor`, `selection`, `picker-row` and `float-row` for the `region`
-queries, naming the three tags it does take (`RESOLVABLE` in `main.rs`). The reason is not policy
-— **the host genuinely has no editor**; `Editing::scope_of` is the half that does, and it lives on
-the other side of the Steel barrier.
-
-`request.rs` already draws this line for *agents* — `Target::focus_relative`, and the MCP door
-refuses them because *"an agent has no cursor"*. But `runtime/*.scm` is not an agent. A keymap
-thunk runs **while the user's cursor is somewhere specific**, and `(unseen-count 'cursor)` from one
-is a reasonable thing to write and currently refuses. The *Actions* do not have this problem —
-`SPC u s` passes `(key/at-cursor)` and resolves fine — because an Action from a keystroke reaches
-`Editing::act`. It is only the **queries** that are one-sided.
-
-So the vocabulary says a focus-relative target is refused *over MCP*, and the build refuses it over
-Steel and CLI as well, for an implementation reason rather than the documented one. That gap is
-what needs the ruling.
-
-*Recommendation: it is a real seam and not worth closing at `T041`, because the fix is structural —
-either the host learns the cursor (a snapshot the loop pushes each frame, which is a second copy of
-editor state and invites exactly the staleness `Target`'s doc says late binding exists to avoid), or
-queries from the VM route through the loop the way Actions do. The second is right and it is
-`T046`'s neighbourhood, because a picker source is the first thing that will want to ask "what is
-unseen **here**". Until then the refusal names the three tags that work, which is at least a
-sentence a caller can act on.*
-
----
-
-## Raised by the pre-window scout, mid-Window E
-
-One entry, and it is the kind this register exists for: **two tasks need a mechanism the
-vocabulary does not have a verb for**, and whichever is built first will invent it while the other
-inherits whatever it invented.
-
-### 43 · `open-float` names a registry nothing creates
-
-`open-float`'s first argument is a `SurfaceId`, and `request.rs` is emphatic about why it is a key
-rather than an enum — *"a registry key, not a Rust enum, and this is a decision with a test behind
-it: `T048` requires `:arch` to be built entirely from the `spans` hatch and to add **zero lines**
-to `phosphor-ui`. A `FloatKind` enum would make every new Steel surface a Rust edit."* That
-reasoning is right and nothing here disputes it.
-
-**The registry does not exist.** Checked against the tree this session:
-
-- No verb creates an entry. The whole vocabulary has **two** `define-*` capabilities —
-  `define-picker-source` (`T046`) and `define-language` (`T037`) — and neither is this
-  (`crates/phosphor-core/src/action.rs`).
-- Nothing populates one. `runtime/*.scm` contains no float composition at all, though the
-  primitive is registered and available: `crates/phosphor-steel/src/view.rs` binds `"float"` and
-  `"float-header"`, so the editor layer *can* build the node and simply never does.
-- The three verbs are unapplied and RECORDED against `T093`
-  (`scripts/lint-action-arms.sh`), whose own *done when* is *"a Steel call opens a float"* —
-  which cannot be written without deciding what a Steel call names.
-
-So **three tasks meet at this seam**: `T093` opens a surface, `T048` is a surface, and `T046`'s
-`define-picker-source` is the closest existing shape to copy. The picker is the tell — it is a
-float *and* has its own define verb, which suggests the intended design was per-surface-kind
-registration rather than one general surface registry. That is a guess about intent, flagged as
-one.
-
-**Two shapes, and they are not equivalent:**
-
-1. **A `define-float-surface` verb**, symmetric with `define-picker-source`: the layer registers a
-   thunk under an id, `open-float` calls it and puts the result in the slot. One new capability,
-   and `:arch` becomes a `runtime/arch.scm` that adds zero Rust — which is exactly what `T048`'s
-   acceptance demands.
-2. **No registry; `open-float` takes the composed node.** Simpler, and it makes `SurfaceId`
-   pointless — the argument would become a view tree, which contradicts the declared payload and
-   means MCP could push arbitrary chrome, a door `§9`'s one-float rule exists to govern.
-
-*Recommendation: shape 1, ruled before either `T048` or `T093` starts, and the capability added to
-the vocabulary rather than invented inside whichever lands first. It is one row in `action.rs` and
-it is the difference between `:arch` proving the escape hatch is sufficient — which is the entire
-point of `T048` — and `:arch` being a special case with a Rust arm behind it. Note this also
-decides where `§9`'s one-float policy lives: with a registry the layer holds it, without one the
-binary does.*
-
----
-
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no
@@ -1892,6 +1784,33 @@ marks above for the state.
 
 Rulings of **2026-08-13** first, then what came before. Each says where the ruling now lives, so
 this section is a set of pointers and not a second copy of the answer.
+
+**Three moved here on 2026-08-17, ruled together by Teej** — §41 and §42 from `T041`, §43 from the
+pre-window scout. Two were built in the same pass; the third's ruling *is* a deferral, and it is
+here rather than left open because "wait for `T046`" is an answer.
+
+- **§41 · `s` on a line with no region said nothing at all. RULED: a sentence on the notice row,
+  and the value stays a count.** A count is what makes `(mark-seen! …)` composable from a script,
+  and a refusal would turn `S` over an already-seen block into an error — so neither changed. What
+  changed is that a `Done` never reaches the notice row (`answer::trouble` answers `None`), which
+  is why the key was silent and indistinguishable from being unbound. `Editing::mark` sets
+  `Editing::note` as well as the receipt. Pressed by
+  `marking_seen_where_there_is_no_region_says_so`, which also asserts it is *not* a refusal.
+- **§42 · A door cannot ask about the cursor, and `runtime/` is a door. RULED: deferred to
+  `T046`, deliberately.** The gap is real — the vocabulary refuses a focus-relative target *over
+  MCP*, and the build refuses it over Steel and CLI too, for an implementation reason rather than
+  the documented one. Closing it means either the host learns the cursor (a second copy of editor
+  state, and exactly the staleness late binding exists to avoid) or queries from the VM route
+  through the loop the way Actions do. The second is right, and it belongs with the first caller
+  that wants it: `T046`'s picker sources asking *what is unseen **here***. Recorded as owed work
+  on `T046` in [TASKS.md](TASKS.md).
+- **§43 · `open-float` named a registry nothing created. RULED: shape 1, and built.**
+  `define-float-surface` is a capability now, shaped like `define-picker-source` — an id and a
+  `String` of scheme, because source text is how a body crosses the barrier. The layer registers a
+  procedure under `phosphor/float-surface/<id>` and the host only calls it, so a surface adds zero
+  lines to `phosphor-ui` — `T048`'s acceptance, rehearsed one task early. Built as `T093` with the
+  three float arms it unblocked. The id is validated at the door because it is interpolated into a
+  `define` form and the capability is `Allow` on MCP.
 
 Six moved here in the repair window between `CP-3` and `S4` — §19, §6, §13, §17, and §7 with §9
 as one. Three of them were closed by *reading the tree*, not by anyone deciding anything: the

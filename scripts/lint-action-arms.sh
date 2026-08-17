@@ -89,12 +89,15 @@ RECORDED = {
                          "theme tapes use."),
     "ReloadTheme": ("T092", "Same rebuild path as `SetTheme`; re-reading a theme file also needs "
                             "a user-theme path, and `main` only ever calls `builtin()`."),
-    "OpenFloat": ("T093", "The float slot exists (`FloatSlot::empty` in `main`) and the boot "
-                          "report opens one, but no verb reaches it, so Steel and MCP cannot "
-                          "open a float."),
-    "CloseFloat": ("T093", "The paired half of `OpenFloat`; `esc` closes a float through the "
-                           "input machine, not through this verb."),
-    "CloseAllFloats": ("T093", "Same seam as `CloseFloat`."),
+    # `OpenFloat`, `CloseFloat` and `CloseAllFloats` were recorded here against
+    # `T093` and are gone. What blocked them was never the slot — it was that
+    # `open-float` takes a `SurfaceId` naming a registry **nothing created and
+    # no verb could**, found and ruled as OPEN-QUESTIONS.md §43.
+    # `define-float-surface` is that missing half, shaped like
+    # `define-picker-source` because source text is how a body crosses the
+    # barrier. All four arms are in `AppHost::apply`, posting `Intent`s the loop
+    # drains — composing a surface runs scheme, and a binding is already inside
+    # the VM when it calls.
     "LoadRuntimeFile": ("T094", "Evaluating a further `.scm` after boot. The REPL evaluates forms "
                                 "and `init.scm` reads the load order once at startup; neither is "
                                 "this."),
