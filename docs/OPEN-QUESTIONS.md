@@ -1387,6 +1387,44 @@ downstream depends on the answer, which is why this is a question rather than a 
 
 ---
 
+### 40 · Twenty-one tape references photograph the live source tree, so they can never match
+
+**Raised by `CP-4`'s first full `tapes-diff` run, 2026-08-16** — the first one this repository has
+ever completed, because the version gate had been refusing it (fixed in the same change; see
+`tapes/check-versions.sh`'s header). Result: **9 frames matched, 30 mismatched, 2 captures
+failed.**
+
+The 30 are three different things and only one of them is a defect:
+
+- **9 frames changed for a real, explained reason.** `folds-*` (3) and `insert-whitespace-marks-*`
+  (2) differ by exactly `152.962` px each — read off the diff images, that is the statusline
+  gaining `rust-analyzer ✓`, which is `S4` landing against references captured before it.
+  `7c-*` (3) differ by `T106`'s kind and source columns. `diagnostics` (1) differs by the cursor
+  moving to the line the publish is about and the statusline gaining `■1`. Each of these is a
+  reviewed reference update waiting for an eye — **`7c`'s three are Teej's `T106` ruling and must
+  not be blessed before it**, since blessing them folds in a design change.
+- **21 frames cannot match and never could.** `1a`, `1a-degraded-*`, `3c-*`, `8c`, `8d`, `8e-*`,
+  `9c`, `broken-init`, `sweep-40/60/100/120/200` and all six `theme-*` open a file under
+  `../crates/` — **the live source tree** — and screenshot it. `tapes/artifacts/1a.png` was
+  captured at `e702d8a` on 2026-08-12; `crates/phosphor-core/src/lib.rs`, the file it
+  photographs, has changed in three commits since (`S2`, `S3`, `S4`). The reference is a
+  photograph of a moving target, so `tapes-diff` reports a mismatch for a reason that has nothing
+  to do with drawing, forever.
+
+**The convention to fix it already exists and these tapes predate it.** `tapes/fixtures/` holds
+five frozen files (`call.rs`, `fetch.py`, `fetch.rs`, `fetch.ts`, `policy.rs`) and the `S4` tapes
+use them — which is exactly why `signature-help-*` and `diagnostics-undercurl` match today.
+**25 tapes reference `../crates/`**, grepped this session.
+
+*Recommendation: one task, and it is `harness`'s. Repoint the 25 at frozen fixtures under
+`tapes/fixtures/`, then regenerate their references once — after which a mismatch means what the
+tool says it means. Doing it needs the ffmpeg pin resolved (the regeneration path still checks
+it, and homebrew no longer carries an `ffmpeg@8`), so **rule the pin first**: either bump it to
+9.0.1 and regenerate everything, or record 8.1.2 as unobtainable and drop the pin to a presence
+check. The pixel path no longer depends on the answer.*
+
+---
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

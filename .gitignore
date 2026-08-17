@@ -9,6 +9,15 @@
 /tapes/*.gif
 /tapes/*.png
 
+# `diff-tapes.sh`'s side-by-side output — committed reference | fresh capture |
+# diff, one PNG per mismatching frame. Scratch by construction: it is written
+# to be looked at once and is regenerated wholesale by the next run, and a full
+# `just tapes-diff` leaves 30-odd of them inside a directory whose every other
+# file is a tracked reference. Untracked *and* unignored is the worst of both —
+# `git status` fills with them and a `git add tapes/` sweeps them in beside the
+# references they are about.
+/tapes/artifacts/_diffs/
+
 # Agent worktrees. `EnterWorktree` puts them here, and a git worktree carries
 # its own `.git` file — so `git status` showed `?? .claude/worktrees/` as one
 # opaque untracked directory rather than recursing into it. Two consequences,

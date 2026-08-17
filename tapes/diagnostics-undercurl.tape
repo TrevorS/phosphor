@@ -41,6 +41,10 @@ Hide
 Type "bash lsp-fixture.sh diagnostics-undercurl rust diagnostics policy.rs && cd /tmp/phosphor-tape-diagnostics-undercurl && PHOSPHOR_UNDERCURL=1 PHOSPHOR_RUNTIME=runtime phosphor --theme phosphor-dark policy.rs"
 Enter
 Show
+# Onto the line the publish is about: an inline row is bounded to the cursor's
+# line since `CP-4` (`RowPolicy`), and the publish is on file line 2. Same one
+# key as `diagnostics.tape`, whose header carries the reasoning.
+Type "j"
 Wait+Screen@10s /expected Duration, found u128/
 # Settle guard for the screenshot pipeline, not a sync primitive — see
 # 1a.tape's header for the full finding and why this isn't V004's Sleep.

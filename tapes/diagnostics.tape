@@ -36,6 +36,21 @@
 #
 # Sentinel: the message itself, which cannot appear until the publish has
 # crossed the queue and been composed — the buffer behind it never contains it.
+#
+# **This tape presses one key now, and it used to press none.** `CP-4` reported
+# eleven cascade parse errors drawn as eleven rows, so an inline diagnostic row
+# is bounded to the cursor's line (`RowPolicy`, `runtime/init.scm`'s
+# `diagnostic-rows`). The publish is on file line 2 — the server's constant, as
+# the paragraph above says — and a buffer opens on line 1, so the sentinel this
+# tape waits for is on a line the cursor is not on and the capture timed out
+# rather than failing loudly. `j` is that one key.
+#
+# **The screen this captures is still the one it always captured**, which is
+# why the reference is a reviewed update rather than a new screen: the row, the
+# undercurl and the state bar are unchanged; what moved is which line has to be
+# under the cursor for the row to speak. The statusline now also carries `■1`,
+# which is §3's third surface and is the whole reason bounding the rows is
+# quieting rather than hiding.
 
 Output "artifacts/diagnostics.gif"
 
@@ -51,6 +66,8 @@ Hide
 Type "bash lsp-fixture.sh diagnostics rust diagnostics policy.rs && cd /tmp/phosphor-tape-diagnostics && PHOSPHOR_RUNTIME=runtime phosphor --theme phosphor-dark policy.rs"
 Enter
 Show
+# Onto the line the publish is about, so the row draws at all. See the header.
+Type "j"
 Wait+Screen@10s /expected Duration, found u128/
 # Settle guard for the screenshot pipeline, not a sync primitive — see
 # 1a.tape's header for the full finding and why this isn't V004's Sleep.

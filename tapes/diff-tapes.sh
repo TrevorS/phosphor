@@ -104,8 +104,11 @@ for tool in compare magick; do
     fi
 done
 
+# `pixels`, not the full gate: this script compares PNGs and nothing else, and
+# a PNG's pixels do not pass through ffmpeg. See check-versions.sh's header for
+# the measurement behind that — and for what blocking on it cost.
 if [[ "$no_capture" -eq 0 ]]; then
-    bash check-versions.sh || exit 1
+    bash check-versions.sh pixels || exit 1
 fi
 
 if [[ ${#ids[@]} -eq 0 ]]; then
