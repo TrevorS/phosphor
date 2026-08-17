@@ -39,13 +39,29 @@ anything else.
 |---|---|---|
 | `vhs` | `0.11.0` | `tapes/check-versions.sh` |
 | `ttyd` | `1.7.7` | `tapes/check-versions.sh` |
-| `ffmpeg` | `8.1.2` | `tapes/check-versions.sh` |
+| `ffmpeg` | `9.0.1` | `tapes/check-versions.sh` |
 
 `ttyd`/`ffmpeg` are pinned to what was actually installed and verified working
 on the reference machine below, per SPIKES.md's instruction to pin what we
 have rather than an arbitrary version. Bumping any of the three is a
 deliberate, one-line edit to `tapes/check-versions.sh`, done alongside
 re-regenerating every reference image — never a silent drift.
+
+**`ffmpeg` moved `8.1.2` → `9.0.1` on 2026-08-16, and that rule was followed:**
+every reference was regenerated in the same commit. Two things forced it.
+`8.1.2` had stopped being installable — homebrew carries `2.8`, `4`, `5`, `6`,
+`7` and `9`, so the pin as written could not be satisfied on the machine below
+by any ordinary route — and the 25 tapes repointed off the live source tree in
+the same change had to be re-recorded regardless.
+
+**It is a smaller bump than it looks, and the measurement is worth keeping.**
+No PNG this repository compares passes through `ffmpeg`: `diff-tapes.sh` reads
+`*.png` and only `*.png`, PNG is lossless, and `compare -metric AE` is a pixel
+metric. Measured before the bump: with `9.0.1` installed against a pin of
+`8.1.2`, `1a.tape` was captured twice and the two PNGs differed by `0 (0)`
+pixels. That is why `check-versions.sh` has a `pixels` mode which skips the
+`ffmpeg` check entirely — the pin now guards GIF encoding, which is the only
+thing it was ever able to affect.
 
 ## Reference-regeneration machine
 
@@ -1072,6 +1088,29 @@ five-character word — and with a line about which `expected Duration, found
 u128` is a true sentence. Written with a seven-line header first, which put
 the diagnostic on a comment.
 
+### `fixtures/core-lib.rs`, and why 25 tapes stopped reading the source tree
+
+**Every non-`S4` tape used to screenshot `../crates/phosphor-core/src/lib.rs`
+— the live source — and that made their references unmatchable by
+construction.** `1a.png` was captured at `e702d8a` on 2026-08-12; the file it
+photographs changed in three commits after that (`S2`, `S3`, `S4`). So a
+`tapes-diff` run reported those screens as changed forever, for a reason that
+had nothing to do with drawing. The first full run this repository ever
+completed, on 2026-08-16, put **21 of its 30 mismatches** in that one bucket —
+recorded at [OPEN-QUESTIONS.md](../docs/OPEN-QUESTIONS.md) §40.
+
+`fixtures/core-lib.rs` is that file, frozen: a **verbatim** copy taken at
+`1e2e631`, with no header added. Verbatim on purpose — a fixture is a screen,
+so editing it would change 25 references at once and make the repoint a visual
+change instead of the no-op it is. All 25 tapes now open
+`fixtures/core-lib.rs`, and none of them ever depended on the file's contents:
+their sentinels are the statusline's mode chip, the leader float's `+claude`,
+and `8e`'s `shown once`, none of which is text in the buffer.
+
+**It does not track the real `lib.rs` and must not be made to.** If the two
+drift apart that is the fixture working. Update it only to change what these
+screens show, and expect to regenerate all 25 when you do.
+
 ## Convention: every tape gets a `Require`
 
 Every `.tape` file must open with a `Require <program>` line for each external
@@ -1102,7 +1141,11 @@ tapes/
                              deterministic fixture server
   fixtures/                 CP-4 — the buffers those tapes open. Real code in
                              three languages, parsed by the shipped grammars;
-                             each file's tail is counted by its tape
+                             each file's tail is counted by its tape.
+                             `core-lib.rs` is the odd one out: a frozen copy of
+                             phosphor-core's lib.rs that the other 25 tapes
+                             open, so their references stop tracking the source
+                             tree (see above)
   _dimensions.tape         V002 — the column-width calibration table (+ V005's 40/60 rows)
   _config.tape              V003 — Source'd by every real tape
   _config-check.tape         V003 — its reproducibility proof

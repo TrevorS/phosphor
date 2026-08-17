@@ -48,7 +48,13 @@ esac
 
 REQUIRED_VHS="0.11.0"
 REQUIRED_TTYD="1.7.7"
-REQUIRED_FFMPEG="8.1.2"
+# **Bumped 8.1.2 → 9.0.1 on 2026-08-16, deliberately, alongside a full
+# regeneration** — which is the only way tapes/README.md permits a pin to move.
+# Two things forced it and neither was a preference: 8.1.2 stopped being
+# installable (homebrew carries 2.8, 4, 5, 6, 7 and 9, checked that day), and
+# the 25 tapes being regenerated in the same change had to be re-recorded
+# anyway because they were repointed off the live source tree.
+REQUIRED_FFMPEG="9.0.1"
 
 fail() {
   local problem="$1" expected="$2" found="$3"

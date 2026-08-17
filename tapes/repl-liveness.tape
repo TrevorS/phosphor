@@ -72,7 +72,7 @@ Set Width 1228
 Set Height 700
 
 Hide
-Type "rm -rf /tmp/phosphor-repl-liveness && cp -R ../runtime /tmp/phosphor-repl-liveness && PHOSPHOR_RUNTIME=/tmp/phosphor-repl-liveness phosphor --theme phosphor-dark ../crates/phosphor-core/src/lib.rs"
+Type "rm -rf /tmp/phosphor-repl-liveness && cp -R ../runtime /tmp/phosphor-repl-liveness && PHOSPHOR_RUNTIME=/tmp/phosphor-repl-liveness phosphor --theme phosphor-dark fixtures/core-lib.rs"
 Enter
 Show
 Wait+Screen@10s /(?m)^ (NORMAL|N)\b/

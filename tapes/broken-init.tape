@@ -33,7 +33,7 @@ Set Width 1228
 Set Height 700
 
 Hide
-Type "rm -rf /tmp/phosphor-broken-init && cp -R ../runtime /tmp/phosphor-broken-init && printf '\n(define broken (+ 1 nonesuch))\n' >> /tmp/phosphor-broken-init/init.scm && PHOSPHOR_RUNTIME=/tmp/phosphor-broken-init phosphor --theme phosphor-dark ../crates/phosphor-core/src/lib.rs"
+Type "rm -rf /tmp/phosphor-broken-init && cp -R ../runtime /tmp/phosphor-broken-init && printf '\n(define broken (+ 1 nonesuch))\n' >> /tmp/phosphor-broken-init/init.scm && PHOSPHOR_RUNTIME=/tmp/phosphor-broken-init phosphor --theme phosphor-dark fixtures/core-lib.rs"
 Enter
 Show
 Wait+Screen@10s /init.scm/

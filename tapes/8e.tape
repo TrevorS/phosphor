@@ -56,7 +56,7 @@ Set Width 1228
 Set Height 700
 
 Hide
-Type "PHOSPHOR_RUNTIME=../runtime phosphor ../crates/phosphor-core/src/lib.rs"
+Type "PHOSPHOR_RUNTIME=../runtime phosphor fixtures/core-lib.rs"
 Enter
 Show
 Wait+Screen@10s /(?m)^ (NORMAL|N)\b/
