@@ -1423,6 +1423,32 @@ it, and homebrew no longer carries an `ffmpeg@8`), so **rule the pin first**: ei
 9.0.1 and regenerate everything, or record 8.1.2 as unobtainable and drop the pin to a presence
 check. The pixel path no longer depends on the answer.*
 
+**RULED and DONE, both halves, 2026-08-16.** Teej: bump the pin and repoint. The pin is `9.0.1`
+and every reference was regenerated in the same commit, which is the only way `tapes/README.md`
+permits a pin to move. All 25 tapes open `tapes/fixtures/core-lib.rs` — a verbatim copy of the
+file they used to photograph, frozen at `1e2e631`.
+
+**It was one fixture rather than twenty-five**, because all 25 opened the same path, and it was
+safe to do mechanically because none of them ever read the file's contents: their sentinels are
+the mode chip, the leader float's `+claude` and `8e`'s `shown once`.
+
+**Proven rather than asserted: `just tapes-diff` now reports `41 frames matched, 0 mismatched`.**
+That is the number this entry exists for — the library reproduces itself, so a future mismatch
+means a drawing changed. The run before this work reported 9 matched, 30 mismatched and 2
+captures that failed outright.
+
+**One frame needed a second pass and it is worth keeping.** `sweep-60` kept its pre-repoint
+reference through the bulk `just tapes` — the tape was repointed, the reference was not — and the
+`tapes-diff` immediately afterwards caught it as the single remaining mismatch. `just tape
+sweep-60` produced it correctly on its own, so nothing is wrong with the tape or the recorder;
+the bulk run dropped one. **The lesson is the sequence:** a regeneration is not finished until a
+`tapes-diff` against it comes back all-matched, because that is what proves the recorder wrote
+what it said it wrote.
+
+**What this does not settle** is `7c-{rust,python,typescript}`, which regenerated with everything
+else and now carry `T106`'s kind and source columns. The reference agreeing with the build is
+what a Tier-2 reference *is*; whether the build should draw them is §`D`'s open ruling.
+
 ---
 
 ## Repair pass — queued work, not questions
