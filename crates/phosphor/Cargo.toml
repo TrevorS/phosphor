@@ -11,6 +11,19 @@ version.workspace = true
 [dependencies]
 clap.workspace = true
 crossterm.workspace = true
+# `T045`'s matcher. Helix's engine, MPL-2.0, allowed at `deny.toml:54`.
+#
+# **In the binary and not in `phosphor-ui`**, and that is the architecture
+# rather than a preference: `nucleo` owns a thread pool, and a widget crate that
+# spawned threads would be a widget that outlives a frame. `phosphor-ui` draws a
+# `PickerVm`; this crate is what fills one.
+#
+# `default-features = false` drops `parking_lot`'s dependency on `std`-adjacent
+# extras we do not use. Pinned at `SPIKES.md`'s manifest version, verified by
+# resolving and building it in the pre-window scout: no new `ratatui-core`
+# enters the graph, which is what `deny.toml`'s `deny-multiple-versions` on that
+# crate would otherwise catch.
+nucleo = "0.5.0"
 phosphor-agent.workspace = true
 phosphor-buffer.workspace = true
 phosphor-core.workspace = true

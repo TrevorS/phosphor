@@ -114,6 +114,14 @@ harness = false
 name = "diagnostics"
 harness = false
 
+# `T045`. Same pair, same silent failure without it. What it measures is the one
+# defect on this side of the picker's seam that the matcher's own bound cannot
+# see: the widget is handed only the rows that fit, so its cost must track the
+# *window* and not the corpus behind it.
+[[bench]]
+name = "picker"
+harness = false
+
 [features]
 default = []
 # Rich markdown in the transcript. Per-language highlight features stay off:

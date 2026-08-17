@@ -1557,6 +1557,60 @@ mod driven {
         // mark case go" should find the answer at the site.
     }
 
+    /// **`T045`: the picker opens from a keystroke, filters, and closes.**
+    ///
+    /// `SPC u l` was bound to `open-picker` over the `unseen` source before
+    /// this task and answered *"not built yet"*; the binding did not change,
+    /// which is the keymap's own rule — *"unimplemented is a value, not an
+    /// absence … the binding does not change when the phase lands."*
+    ///
+    /// **The row count is `0/0` and that is the task boundary, not a failure.**
+    /// `T046` is *"Steel picker sources — unseen, files"*, so what supplies
+    /// rows does not exist yet. What `T045` owes is a picker that opens,
+    /// filters, selects and closes — and the `0/0` is the honest way to draw a
+    /// source with nothing behind it, as against pretending to a list.
+    #[test]
+    fn the_picker_opens_filters_and_closes() {
+        let scratch = Scratch::new("picker-open");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `SPC u l` — 3c's `+unseen · list`. Waited on the **count** rather
+        // than on the source name: `SPC u` draws the which-key popup, whose
+        // `+unseen` row matches the source id and would satisfy a looser
+        // needle one keystroke early.
+        let opened = editor.press_until(b" ul", "0/0");
+        assert!(
+            shows(&opened, "0/0"),
+            "an empty source draws its count rather than pretending; frame was: {opened}"
+        );
+
+        // **The filter line owns every printable key while it is open**, and
+        // the proof is the *file* rather than the frame. In normal mode `re`
+        // is replace-char — it would turn `one` into `ene`. Reading the buffer
+        // is unambiguous where reading the screen is not: ratatui emits only
+        // changed cells, so a frame after typing carries `r`, `e`, `t` at three
+        // columns and never a whole `> ret` to match on.
+        editor.press_quietly(b"ret");
+
+        // `esc` closes top-down (§9) and the buffer is back. Pressed quietly:
+        // closing redraws the code that was behind the float, and the
+        // statusline does not change, so there is no new text to wait on.
+        editor.press_quietly(b"\x1b");
+        editor.press_until(b":w\r", "sample.txt");
+        editor.quit();
+
+        let after = fs::read_to_string(&file).expect("written");
+        assert_eq!(
+            after, "one\ntwo\nthree\n",
+            "the picker swallowed `ret`; had the machine seen it, `re` would have \
+             replaced a character",
+        );
+    }
+
     /// **`T044`: seen-state survives `kill -9`.**
     ///
     /// The task asks for *"survives restart and `kill -9`"*, and `kill -9` is

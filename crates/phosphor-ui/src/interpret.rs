@@ -90,6 +90,7 @@ use core::cell::RefCell;
 use core::time::Duration;
 
 use phosphor_core::request::BufferId;
+use phosphor_core::request::SourceId;
 use phosphor_core::view::{
     Axis, Child, Constraint, Density, Emphasis, Float as ViewFloat, Glyph, Millis,
     Mood as ViewMood, Node, SessionState as ViewSessionState, SpanRow, Tint, Tone, Tree,
@@ -105,6 +106,7 @@ use crate::float::{
     Anchor, CompletionList, CompletionVm, Float as UiFloat, FloatBody, FloatFooter, FloatHeader,
     FloatSlot, FooterHint, Mood as UiMood, SignatureBody, SignatureVm,
 };
+use crate::picker::{Picker, PickerVm};
 use crate::status_line::{SessionState as UiSessionState, Spinner, format_elapsed};
 use crate::theme::Theme;
 
@@ -157,6 +159,24 @@ pub trait Resources: core::fmt::Debug {
     /// which is `query.rs`'s *"an absent thing answers empty"* — a stale
     /// composition must never be able to break a frame.
     fn completion(&self) -> Option<&CompletionVm> {
+        None
+    }
+
+    /// The rows a picker source is currently offering, or `None` when this host
+    /// has no session for that source (`T045`).
+    ///
+    /// **A door for the same reason [`Resources::completion`] is**, and the
+    /// division is the one `Node::Picker`'s props already draw: the tree says
+    /// *which* source, *what* the filter reads and *whether* a preview was
+    /// asked for — all of it composition's — and this says what matched. The
+    /// rows are a store query behind a matcher with its own threads, and a
+    /// widget crate can reach neither.
+    ///
+    /// A tree that names a source this answers `None` for draws nothing, which
+    /// is `query.rs`'s *"an absent thing answers empty"*. That is the ordinary
+    /// case for one frame after `open-picker`, not an error.
+    fn picker(&self, source: &SourceId) -> Option<&PickerVm> {
+        let _ = source;
         None
     }
 
@@ -566,10 +586,27 @@ impl Ctx<'_> {
                 SignatureBody::new(vm).render(area, buf, theme, UiMood::Passive);
             }
 
+            // `T045`. The props are composition's — which source, what the
+            // filter reads, whether a preview was asked for — and the rows come
+            // through the door beside them. `columns` is deliberately unread
+            // here: a source supplies styled *runs*, so column widths are the
+            // source's own layout decision and `T046`/`T047` are where they are
+            // spent. Recorded rather than silently ignored.
+            Node::Picker {
+                source,
+                filter,
+                columns: _,
+                preview,
+            } => {
+                let Some(vm) = self.interp.resources.picker(source) else {
+                    return;
+                };
+                Picker::new(vm, theme, filter, *preview).render(area, buf);
+            }
+
             // Deferred past Window D. Grouped, and split one kind at a time the
             // way the five above were, as each phase arrives.
             Node::TabBar { .. }
-            | Node::Picker { .. }
             | Node::Diff { .. }
             | Node::Question { .. }
             | Node::Transcript { .. }
@@ -941,6 +978,26 @@ impl Ctx<'_> {
                 .resources
                 .signature()
                 .map_or(0, |vm| SignatureBody::new(vm).desired_height(0)),
+            // `T045`. The filter line plus whatever matched — **not**
+            // `u16::MAX` the way `Node::Buffer` takes it, even though a picker
+            // is also a scrolling list. §8 is *"no surface is ever taller than
+            // its content"*, and a picker over an empty source has one row of
+            // content: its own filter line. Taking the screen for a list with
+            // nothing in it is the failure that rule exists to stop.
+            //
+            // The host asks the matcher for a window the size of the body, so
+            // this converges rather than circling: a source with more rows than
+            // fit gives a full-height float, and one with three gives a float
+            // four rows tall.
+            //
+            // Reaching `0` when there is no session is deliberate and is what
+            // `T086` fixed one kind up — a float over an unbuilt body collapses
+            // to chrome rather than reserving a blank rectangle. **This arm was
+            // missing for a build**, and the symptom is exactly that: the pty
+            // test drew the float's header and rules around two empty rows.
+            Node::Picker { source, .. } => self.interp.resources.picker(source).map_or(0, |vm| {
+                u16::try_from(vm.rows.len().saturating_add(1)).unwrap_or(u16::MAX)
+            }),
             _ => 0,
         }
     }
@@ -975,22 +1032,7 @@ impl Ctx<'_> {
     /// a colour** — there are no RGB values in the tree and there can never be
     /// one (`view/props.rs`, `scripts/lint-no-literal-colours.sh`).
     fn colour(&self, tone: Tone) -> Color {
-        let theme = self.theme();
-        match tone {
-            Tone::Claude => theme.actors.claude,
-            Tone::You => theme.actors.you,
-            Tone::Attention => theme.actors.attention,
-            Tone::Trouble => theme.actors.trouble,
-            Tone::Transient => theme.actors.transient,
-            Tone::Steel => theme.actors.steel,
-            Tone::Text => theme.neutrals.text,
-            Tone::Prose => theme.neutrals.prose,
-            Tone::Meta => theme.neutrals.meta,
-            Tone::LineNumber => theme.neutrals.line_numbers,
-            Tone::Ground => theme.neutrals.ground,
-            Tone::BrightText => theme.neutrals.bright_text,
-            Tone::Dimmed => theme.neutrals.dimmed_under_float,
-        }
+        self.theme().tone(tone)
     }
 
     /// §3's three row tints.
@@ -1263,7 +1305,7 @@ mod tests {
     use crate::theme::Theme;
     use phosphor_core::query::Revision;
     use phosphor_core::request::{
-        AskId, BufferId, DiffMode, Grouping, PaneId, PaneKind, PromptKind, SourceId, WatchId,
+        AskId, BufferId, DiffMode, Grouping, PaneId, PaneKind, PromptKind, WatchId,
     };
     use phosphor_core::view::{
         Axis, Child, Constraint, Density, DiffSource, Emphasis, Float, FloatHeader, Glyph, Millis,
@@ -1930,12 +1972,6 @@ mod tests {
         // runs, and every one of these arms ignores its props entirely.
         let deferred = [
             Node::TabBar { tabs: Vec::new() },
-            Node::Picker {
-                source: SourceId("files".to_owned()),
-                filter: String::new(),
-                columns: Vec::new(),
-                preview: false,
-            },
             Node::Diff {
                 source: DiffSource::Disk {
                     buffer: BufferId(1),
@@ -2011,19 +2047,18 @@ mod tests {
                         }),
                     },
                 ),
+                // `Node::Picker` stood here until `T045` built it. Replaced
+                // with `question` rather than dropped: the test needs *two*
+                // deferred kinds to prove the report is a list and not a
+                // flag, which is the failure a single-entry fixture hides.
                 Slot::new(
                     Constraint::Cells { cells: 1 },
-                    Node::Picker {
-                        source: SourceId("files".to_owned()),
-                        filter: String::new(),
-                        columns: Vec::new(),
-                        preview: false,
-                    },
+                    Node::Question { ask: AskId(3) },
                 ),
             ],
         ));
         let (_, report) = draw(&tree);
-        assert_eq!(report.deferred, vec!["transcript", "picker"]);
+        assert_eq!(report.deferred, vec!["transcript", "question"]);
     }
 
     #[test]

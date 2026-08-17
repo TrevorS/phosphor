@@ -1910,7 +1910,7 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > `XDG_STATE_HOME`, three regions with one marked seen, `SIGKILL` rather than a clean quit, and
   > the second process reads `unseen=2` / `seen=1`.
 
-- [ ] **T045 · Picker widget**
+- [x] **T045 · Picker widget**
   `ratatui-textarea` filter line + nucleo matcher **off-thread** + list + preview split (dropped
   under 100 cols). Rows are `Vec<Span>` so agent context renders in actor colours.
   *Done when:* it stays responsive filtering a 100k-file list. *Needs:* T041, T084
@@ -1947,6 +1947,62 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > column. So this task does **not** create a creditor for `Node::Gutter` — the one node kind in
   > `scripts/lint-node-kinds.sh`'s RECORDED table with no task that closes it. Checked because the
   > guess was plausible and wrong; recorded so it is not re-derived.
+
+  > **`ratatui-textarea` was not taken, and this task asked for it.** Reading the vocabulary the
+  > widget has to render says otherwise: `Node::Picker` carries **`filter: String` as a prop**, so
+  > the filter's text is composition's and arrives fresh every frame. A textarea inside the widget
+  > would hold a second copy and have to be reconciled with the prop on every composition — two
+  > maps with one name, which is exactly what `T041` found in `store::diagnostics` and folded
+  > away. What the crate would buy is editing *inside* the filter line, and none of that is
+  > reachable: keystrokes go to the input machine and `Node::Picker` has no cursor prop to carry a
+  > position back. So it would add a dependency, a feature-unification hazard (its defaults
+  > include `crossterm`, which `phosphor-ui` may not link) and a duplicate source of truth, for
+  > nothing currently expressible. **Flagged rather than folded in** — if a cursor inside the
+  > filter is wanted, the change is a prop on `Node::Picker` first and the crate second. `nucleo`
+  > *was* taken, in the binary.
+
+  > **The task splits across two crates, and the seam is where the threads are.** `phosphor-ui`
+  > draws a `PickerVm`; the binary fills one. A widget crate that owned nucleo's thread pool would
+  > be a widget that outlives a frame, and `Resources` has no `&mut` in it and must never grow
+  > one — so the loop ticks the matcher once per frame, before the draw, and lends the answer.
+  > The tick takes a **1ms deadline** and never blocks: a filter over 100k rows draws a partial
+  > result and says so through `PickerVm::matching`, which is what the `…` in `12/100000…` is.
+
+  > **Three assertions about responsiveness were written, run, and found wrong** — kept in the
+  > test's own doc because each looked obviously right:
+  > *"no tick costs more than a frame"* (a wall clock: `nextest` runs sixteen processes and this
+  > worktree has *"seen absolute times swing 25× under concurrent load"*);
+  > *"the first tick reports `matching: true`"* (`Status::running` says whether workers are
+  > running **now**, not whether work is outstanding);
+  > *"the first tick has not matched all 100k"* (with an **empty** pattern there is nothing to
+  > match, so the full count is correct and immediate). Even `item_count` is zero on the first
+  > tick under load — injection is asynchronous. What survives asserts the settled state, the
+  > narrowing property, and a hang detector at 500 frame budgets. *"Never blocks"* is a property
+  > of the **API shape** — a deadline-based tick, polled — visible in twelve lines rather than
+  > derivable from a measurement.
+
+  > **The bench measures the half a bound cannot see**: the widget is handed only the rows that
+  > fit, so its cost must track the **window** and not the corpus. A widget that iterated the
+  > whole list to lay out would be a quadratic on the far side of the seam from the matcher.
+  > Measured flat at **1.00×** across a 10,000× corpus growth, linear at 1.13× per window
+  > doubling, and §11's ladder is a cliff exactly at 100 columns rather than a taper.
+
+  > **`open-picker`'s row cites `T046` and it is applied here anyway.** A widget nothing can put
+  > on screen is the reachability gap `T016` was ticked with; what `T046` actually owes is the
+  > *rows*. `SPC u l` was already bound to it and answered *"not built yet"* — the binding did not
+  > change, which is `runtime/keymaps.scm`'s own rule. An open picker over a source nobody has
+  > defined draws `0/0`, which is honest where pretending to a list would not be.
+  >
+  > All five capabilities the task's own rows name are applied: `set-picker-query` (answering the
+  > match count, so a script does not need a second round trip), `toggle-picker-preview`,
+  > `float-select`, `float-select-row`, and `float-accept` — which declines by naming `T047`,
+  > because accepting a row needs a row that names a *place* and that is a source's to supply.
+
+  > **`Node::Picker` had no arm in the interpreter's `height`**, so the float collapsed to its
+  > chrome and drew a header and two rules around nothing. Found by the pty test, which is the
+  > only thing that could have: every widget test passed. It answers the filter line plus what
+  > matched, **not** `u16::MAX` the way `Node::Buffer` does — §8 is *"no surface is ever taller
+  > than its content"*, and a picker over an empty source has one row of content.
 
 - [ ] **T046 · Steel picker sources — unseen, files**
   `(define-picker-source …)`. Files carries unseen counts and activity columns.

@@ -147,8 +147,6 @@ RECORDED = {
     "Elapsed": ("T051", "The other half of `Interpreter::session`: the elapsed counter is "
                         "rendered from `Node::Session`'s `since`, not from a node of its own. "
                         "Same blocker and the same reason."),
-    "Picker": ("T045", "The picker widget. Deferred in the interpreter too, so a composition "
-                       "would draw nothing today. `T046` supplies the sources on top of it."),
     "Diff": ("T063", "`DiffBody`. Deferred in the interpreter."),
     "Question": ("T059", "`QuestionBody`. Deferred in the interpreter. Q9's queued asks are a "
                          "store query, and an ask that nothing has room for renders as the "

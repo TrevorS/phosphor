@@ -21,6 +21,7 @@ pub mod frame;
 pub mod gutter;
 pub mod interpret;
 pub mod key_hints;
+pub mod picker;
 pub mod soft_wrap;
 pub mod status_line;
 pub mod theme;

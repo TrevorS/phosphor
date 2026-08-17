@@ -152,8 +152,8 @@ use phosphor_buffer::lsp::{
 use phosphor_buffer::undo::{Caret, CharRange, Edit as TreeEdit, NodeId, Step, UndoTree};
 use phosphor_core::action::{
     Action, AppAction, BufferAction, FileAction, FloatAction, HistoryAction, InputAction,
-    LspAction, MotionAction, Outcome, PromptAction, Receipt, Refusal, RegionAction, Request,
-    RuntimeAction, ViewAction,
+    LspAction, MotionAction, Outcome, PickerAction, PromptAction, Receipt, Refusal, RegionAction,
+    Request, RuntimeAction, ViewAction,
 };
 use phosphor_core::config;
 use phosphor_core::input::key::{Code, Key, Mods, Named};
@@ -167,12 +167,13 @@ use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
     Actor, AnchorId, Binding, CharRange as SignatureRange, Completion as WireCompletion, EditMode,
     FoldState, KeySeq, LanguageId, Position, PromptKind, RegionFilter, RegionId, RegisterName,
-    Seek, SelectionKind, Signature as WireSignature, Span, Target, TextObject,
+    Seek, SelectionKind, Signature as WireSignature, SourceId, Span, Target, TextObject,
 };
 // `Scope` is already the input table's (`keymaps.scm`'s normal/insert/visual),
 // and a second one under the same name in a 9,000-line file is a trap rather
 // than an ambiguity the compiler catches — both are `Scope::File`-shaped
 // enums.
+use crate::picker::PickerSession;
 use phosphor_core::store::{
     Fingerprint, Lens, Scope as RegionScope, SeenState, Snapshot as AnchorSnapshot,
     SyntaxStep as AnchorStep,
@@ -200,6 +201,7 @@ use phosphor_ui::frame::FrameCache;
 use phosphor_ui::gutter;
 use phosphor_ui::interpret::{Interpreter, NoResources, Resources};
 use phosphor_ui::key_hints::KeyHints;
+use phosphor_ui::picker::PickerVm;
 use phosphor_ui::soft_wrap;
 use phosphor_ui::theme::{BUILTIN_SLUGS, Theme, builtin};
 use phosphor_ui::unknown_key::{self, UnknownKeyHint};
@@ -220,6 +222,7 @@ use ratatui_code_editor::selection::Selection;
 mod door;
 mod events;
 mod lsp;
+mod picker;
 mod store;
 
 // ---------------------------------------------------------------------------
@@ -2503,6 +2506,13 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // the two above and for the same reason: `Mood::Passive` *"is not
             // in front of anything"* (§9), so an empty root is what leaves the
             // code at full strength behind it.
+            // `T045`, and the same empty-root shape as the four above: the
+            // picker is a float over the buffer, so §9 dims the code behind it
+            // and `2a`'s screen is what you get.
+            (Surface::Picker, _) => editing
+                .picker
+                .as_ref()
+                .map(|session| Tree::new(Node::Empty {}).with_float(picker_float(session))),
             (Surface::Buffer, _) => passive_float(&editing),
             _ => None,
         };
@@ -2597,6 +2607,20 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             .then(|| under(&mut layer, &machine))
             .unwrap_or_default();
 
+        // `T045`. **Ticked here, once, before the draw** — the matcher needs
+        // `&mut` and `Resources` has no `&mut` in it and must never grow one.
+        // The deadline is a millisecond, so a 100k-file filter costs the frame
+        // that much and finishes on its own threads; what the frame gets is
+        // whatever had matched by then, marked `matching` if there is more.
+        // The list gets the body minus the filter line, which is the height
+        // the widget will actually draw into — asking for more would make the
+        // matcher materialise rows nothing can show.
+        let list_rows = usize::from(editing.area.height.saturating_sub(1));
+        let picker_vm = editing
+            .picker
+            .as_mut()
+            .map(|session| session.matcher.tick(list_rows));
+
         let overlay = Overlay {
             chrome,
             leader: &leader,
@@ -2604,6 +2628,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             marks: &marks,
             completion: editing.completion.as_ref(),
             signature: editing.signature.as_ref(),
+            picker: picker_vm.as_ref(),
         };
         term.draw(|frame| {
             draw(
@@ -2693,6 +2718,23 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 track_dirty(&mut editing.editor, &dirty, &edits);
                                 surface = Surface::Buffer;
                             }
+                        }
+                    }
+                    // `T045`. The picker owns every key while it is open, the
+                    // same way the ex line does and for the same reason: it is
+                    // a line editor with a list under it, not a mode of the
+                    // machine. `esc` is handled by `closes_surface` below.
+                    Event::Key(key) if matches!(surface, Surface::Picker) => {
+                        if let Some(session) = editing.picker.as_mut() {
+                            match picker_key(key, session) {
+                                PickerStep::Typing => {}
+                                PickerStep::Close => {
+                                    editing.picker = None;
+                                    surface = Surface::Buffer;
+                                }
+                            }
+                        } else {
+                            surface = Surface::Buffer;
                         }
                     }
                     // §9: esc closes top-down, and a float that is not a surface of its
@@ -2877,6 +2919,19 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 }
                 None => notice = Some(no_help(&ask)),
             }
+        }
+
+        // `T045`. **The rows come from nowhere yet, and that is the task
+        // boundary rather than an oversight**: `T046` is *"Steel picker sources
+        // — unseen, files"*, and `define-picker-source` is its capability. What
+        // this task owes is a picker that opens, filters, selects and closes,
+        // and it does — over an empty source, which draws `0/0` and says so
+        // honestly rather than pretending to a list.
+        if std::mem::take(&mut editing.open_picker) {
+            if let Some(session) = editing.picker.as_mut() {
+                session.matcher.feed(Vec::new());
+            }
+            surface = Surface::Picker;
         }
         // `T038`'s **done when**: *"typing in insert mode in the running binary
         // raises the float"*. So a completion is not only a key — it is what
@@ -3507,6 +3562,10 @@ struct Painted<'a> {
     marks: &'a [StateMark],
     completion: Option<&'a CompletionVm>,
     signature: Option<&'a SignatureVm>,
+    /// `T045`. Computed before the draw rather than during it: the matcher
+    /// needs `&mut` to tick and `Resources` has no `&mut` in it and must never
+    /// grow one, so the loop ticks once per frame and lends the answer.
+    picker: Option<&'a PickerVm>,
 }
 
 impl std::fmt::Debug for Painted<'_> {
@@ -3517,6 +3576,7 @@ impl std::fmt::Debug for Painted<'_> {
             .field("marks", &self.marks.len())
             .field("completion", &self.completion.is_some())
             .field("signature", &self.signature.is_some())
+            .field("picker", &self.picker.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -3540,6 +3600,14 @@ impl Resources for Painted<'_> {
 
     fn signature(&self) -> Option<&SignatureVm> {
         self.signature
+    }
+
+    /// **One picker, and it is implicit** — the same shape [`Resources::editor`]
+    /// has for buffers until `T088`. `view.rs` puts the source on the node so a
+    /// composition can name one, and there is one session to name; a host with
+    /// two open pickers is not a thing this editor can be in.
+    fn picker(&self, _source: &SourceId) -> Option<&PickerVm> {
+        self.picker
     }
 }
 
@@ -3569,6 +3637,10 @@ struct Overlay<'a> {
     /// does not hold.
     completion: Option<&'a CompletionVm>,
     signature: Option<&'a SignatureVm>,
+    /// `T045`. Computed before the draw rather than during it: the matcher
+    /// needs `&mut` to tick and `Resources` has no `&mut` in it and must never
+    /// grow one, so the loop ticks once per frame and lends the answer.
+    picker: Option<&'a PickerVm>,
 }
 
 /// One frame: buffer, the strips over it, then the statusline.
@@ -3598,6 +3670,7 @@ fn draw(
         marks: overlay.marks,
         completion: overlay.completion,
         signature: overlay.signature,
+        picker: overlay.picker,
     };
 
     // A surface composed as a view tree owns the whole frame — `6b` draws its
@@ -4382,6 +4455,17 @@ struct Editing {
     /// with `on: false`. See [`Editing::collapse`] for why the set lives here
     /// rather than in the fork.
     collapsed: BTreeSet<RegionId>,
+    /// The open picker, or [`None`] (`T045`).
+    ///
+    /// On `Editing` rather than beside the other surfaces because the matcher
+    /// is per-session state that outlives a frame and a `Node` does not — the
+    /// same reason `CompletionVm` lives here. `open-picker` fills it,
+    /// `set-picker-query` and `toggle-picker-preview` act on it, and `esc`
+    /// drops it.
+    picker: Option<PickerSession>,
+    /// An `open-picker` the loop has not put on screen yet, drained the way
+    /// [`Editing::open`] and [`Editing::help`] are.
+    open_picker: bool,
     /// Where `<C-o>` and `<C-i>` walk (`T042`).
     ///
     /// **Anchors and not positions**, which is why the arm lands with this task
@@ -4533,6 +4617,8 @@ impl Editing {
             signature: None,
             store,
             collapsed: BTreeSet::new(),
+            picker: None,
+            open_picker: false,
             jumplist: Vec::new(),
             jump_at: 0,
             registers: BTreeMap::new(),
@@ -5099,6 +5185,78 @@ impl Editing {
                 exact,
             }) => self.goto_anchor(*anchor, label.as_deref(), *exact),
             Action::Motion(MotionAction::Jump { seek }) => self.jump(*seek),
+            // `T045` — the picker's own three. `open-picker`'s row cites
+            // `T046` and is applied here anyway: a widget nothing can put on
+            // screen is the reachability gap `T016` was ticked with, and the
+            // *rows* are what `T046` actually owes. An open picker over a
+            // source nobody has defined draws `0/0`, which is honest.
+            Action::Picker(PickerAction::OpenPicker { source, query }) => {
+                self.picker = Some(PickerSession::open(source.clone(), query.clone()));
+                self.open_picker = true;
+                done()
+            }
+            Action::Picker(PickerAction::SetPickerQuery { text }) => {
+                let Some(session) = self.picker.as_mut() else {
+                    return declined("no picker open");
+                };
+                session.filter.clone_from(text);
+                session.matcher.filter(text);
+                // The count, not `#ok`: a script that filters wants to know
+                // whether it found anything, and the alternative is a second
+                // round trip through the `picker` query for a number this call
+                // already has. Partial while the matcher is still running —
+                // `PickerVm::matching` is what says so on screen.
+                Outcome::Done(Receipt {
+                    capability: "set-picker-query",
+                    value: Value::Int(i64::try_from(session.matcher.matched()).unwrap_or(0)),
+                    note: None,
+                })
+            }
+            // `T045`'s other two, and they are the *float's* verbs rather than
+            // the picker's: `float-select-row` and `float-accept` name a row of
+            // whatever float has focus. The picker is the only float with rows
+            // to select today, so this is where they land — a completion list
+            // is `T038`'s own session and a `6d` help grid has no selection at
+            // all. A float without rows declines by name.
+            Action::Float(FloatAction::FloatSelect { delta }) => {
+                let Some(session) = self.picker.as_mut() else {
+                    return declined("no float with rows is focused");
+                };
+                session.matcher.select(*delta);
+                done()
+            }
+            Action::Float(FloatAction::FloatSelectRow { row }) => {
+                let Some(session) = self.picker.as_mut() else {
+                    return declined("no float with rows is focused");
+                };
+                // 1-based on the wire, and the delta is against wherever the
+                // selection is — `Picker::select` is the one clamp, so a row
+                // past the end lands on the last rather than nowhere.
+                let target = i64::from(row.saturating_sub(1));
+                session.matcher.select_to(target);
+                done()
+            }
+            Action::Float(FloatAction::FloatAccept {}) => {
+                if self.picker.is_none() {
+                    return declined("no float with a primary verb is focused");
+                }
+                // `picker-accept` is `T047`'s — *"↵ open, or every row into the
+                // quickfix list"* — and it needs a row that names a *place*,
+                // which is what a source supplies. Declined by the task that
+                // builds it rather than silently closing the picker.
+                Outcome::Refused(Refusal::NotYetImplemented { task: "T047" })
+            }
+            Action::Picker(PickerAction::TogglePickerPreview {}) => {
+                let Some(session) = self.picker.as_mut() else {
+                    return declined("no picker open");
+                };
+                session.preview = !session.preview;
+                Outcome::Done(Receipt {
+                    capability: "toggle-picker-preview",
+                    value: Value::Bool(session.preview),
+                    note: None,
+                })
+            }
             // `T036` — `gd`. Recorded like the lookups, and answered by an
             // `open-file` rather than by a float: a definition is a *place*.
             Action::Lsp(LspAction::RequestDefinition {}) => {
@@ -6870,6 +7028,8 @@ enum Surface {
     /// `6d` — `:help`, and `:help <topic>`. The float is [`Editing::help`]'s
     /// ask, resolved against the live keymap by [`help_float`].
     Help,
+    /// `2a`, `3d`, `8a` — the picker (`T045`). One widget over one source.
+    Picker,
     /// A float a **door** opened: `open-float`, naming a surface the editor
     /// layer registered with `define-float-surface` (`T093`, §43).
     ///
@@ -6978,6 +7138,56 @@ fn ex_key(key: KeyEvent, line: &mut String) -> ExStep {
         _ => {}
     }
     ExStep::Typing
+}
+
+/// What one key did to an open picker (`T045`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickerStep {
+    /// Still filtering.
+    Typing,
+    /// Close it.
+    Close,
+}
+
+/// One key, while the picker has the frame.
+///
+/// **The filter is edited here and nowhere else**, which is the half of
+/// `phosphor_ui::picker`'s *"`ratatui-textarea` is deliberately absent"*
+/// argument that is not prose: the string lives on the session, this is the
+/// only writer, and `Node::Picker`'s prop is composed from it. A textarea would
+/// be a second writer of the same string.
+///
+/// Backspacing off an empty filter closes, which is `ex_key`'s rule and for the
+/// same reason — a surface you cannot back out of is a trap.
+fn picker_key(key: KeyEvent, session: &mut PickerSession) -> PickerStep {
+    let control = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Esc => return PickerStep::Close,
+        KeyCode::Backspace => {
+            if session.filter.pop().is_none() {
+                return PickerStep::Close;
+            }
+            session.matcher.filter(&session.filter);
+        }
+        KeyCode::Char('u') if control => {
+            session.filter.clear();
+            session.matcher.filter("");
+        }
+        KeyCode::Char('c') if control => return PickerStep::Close,
+        // `<C-n>` / `<C-p>` rather than `j` / `k`: the filter line owns every
+        // printable key while it is open, so a letter is filter text and cannot
+        // also be a motion.
+        KeyCode::Char('n') if control => session.matcher.select(1),
+        KeyCode::Char('p') if control => session.matcher.select(-1),
+        KeyCode::Down => session.matcher.select(1),
+        KeyCode::Up => session.matcher.select(-1),
+        KeyCode::Char(character) if !control => {
+            session.filter.push(character);
+            session.matcher.filter(&session.filter);
+        }
+        _ => {}
+    }
+    PickerStep::Typing
 }
 
 /// Runs an ex line and answers what to say about it.
@@ -7130,6 +7340,39 @@ fn help_float(layer: &mut Layer, ask: &Help) -> Option<phosphor_core::view::Floa
         }),
         footer: Some(help_footer()),
     })
+}
+
+/// The picker as a float — `2a`'s screen (`T045`).
+///
+/// **Composed in Rust here and not in Steel**, which is the difference from
+/// `T093`'s `open-float`: a picker is a *primitive* (`Node::Picker`), not a
+/// custom surface built from the `spans` hatch, so composing it is naming one
+/// node with the session's props. `T046`'s `define-picker-source` supplies the
+/// rows that go through it, not the composition.
+///
+/// The header carries the source id because a picker with no rows and no header
+/// is indistinguishable from a broken one — the same argument
+/// [`help_float`] makes for refusing to open an empty grid, resolved the other
+/// way because an empty *picker* is a legitimate state (nothing matched) and an
+/// empty help grid is not.
+fn picker_float(session: &PickerSession) -> phosphor_core::view::Float {
+    phosphor_core::view::Float {
+        header: Some(phosphor_core::view::FloatHeader {
+            left: session.source.0.clone(),
+            right: None,
+        }),
+        mood: Mood::Informational,
+        body: Child::new(Node::Picker {
+            source: session.source.clone(),
+            filter: session.filter.clone(),
+            // Empty, and deliberately: a source supplies styled *runs*, so
+            // column widths are the source's own layout decision. `T046` and
+            // `T047` are where they are spent.
+            columns: Vec::new(),
+            preview: session.preview,
+        }),
+        footer: None,
+    }
 }
 
 /// The index: one row per topic that holds anything, with its own count.

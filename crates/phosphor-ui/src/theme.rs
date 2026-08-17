@@ -40,6 +40,7 @@ pub use load::{FAMILIES, HueFamily, MIN_CHROMA, ThemeError, ThemeErrorKind};
 
 use std::borrow::Cow;
 
+use phosphor_core::view::Tone;
 use ratatui_core::style::Color;
 
 /// A hex triple as the design docs write it, e.g. `rgb(0x3ddc97)`.
@@ -305,6 +306,36 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// A [`Tone`] resolved against this theme.
+    ///
+    /// **The only route from the protocol to a colour.** There are no RGB
+    /// values in the view tree and there can never be one
+    /// (`view/props.rs`, `scripts/lint-no-literal-colours.sh`), so every widget
+    /// that draws a toned run comes through here.
+    ///
+    /// It lives on the theme rather than on the interpreter because a *second*
+    /// widget needed it — `T045`'s picker draws rows of toned runs — and a
+    /// private copy in each would be the shape of drift this file exists to
+    /// prevent. `crate::interpret` delegates to it.
+    #[must_use]
+    pub const fn tone(&self, tone: Tone) -> Color {
+        match tone {
+            Tone::Claude => self.actors.claude,
+            Tone::You => self.actors.you,
+            Tone::Attention => self.actors.attention,
+            Tone::Trouble => self.actors.trouble,
+            Tone::Transient => self.actors.transient,
+            Tone::Steel => self.actors.steel,
+            Tone::Text => self.neutrals.text,
+            Tone::Prose => self.neutrals.prose,
+            Tone::Meta => self.neutrals.meta,
+            Tone::LineNumber => self.neutrals.line_numbers,
+            Tone::Ground => self.neutrals.ground,
+            Tone::BrightText => self.neutrals.bright_text,
+            Tone::Dimmed => self.neutrals.dimmed_under_float,
+        }
+    }
+
     /// Phosphor dark — Design Language §1 encoded verbatim.
     ///
     /// §10 makes this the v1 default: "green-tinted near-black with phosphor
