@@ -45,6 +45,7 @@
   '("keymaps.scm"
     "statusline.scm"
     "pickers.scm"
+    "arch.scm"
     "languages/typescript.scm"
     "languages/javascript.scm"
     "languages/rust.scm"

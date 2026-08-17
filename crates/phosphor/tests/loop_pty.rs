@@ -1735,6 +1735,53 @@ mod driven {
         );
     }
 
+    /// **`T048`: `:arch` reproduces `6a`, over the live store, adding zero
+    /// lines to `phosphor-ui`.**
+    ///
+    /// The third clause is the interesting one and it is checked by
+    /// construction rather than by this test: every row of `runtime/arch.scm`
+    /// is `view/spans`, and `scripts/lint-one-escape-hatch.sh` proves that is
+    /// the only custom-draw path there is. A Rust primitive for this screen
+    /// would have to appear in `phosphor-ui` to be drawn at all.
+    ///
+    /// What a test *can* hold is the second clause — that it reflects the
+    /// **actual** store. So the same command runs twice with a declaration in
+    /// between, and the number in the box moves.
+    #[test]
+    fn arch_draws_the_live_store_from_the_spans_hatch() {
+        let scratch = Scratch::new("arch");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // Empty store: the box says so rather than saying nothing.
+        let empty = editor.press_until(b":arch\r", "0 unseen");
+        assert!(
+            shows(&empty, "semantic store"),
+            "6a's centre box; frame was: {empty}"
+        );
+        assert!(
+            shows(&empty, "one API, two callers"),
+            "and its caption; frame was: {empty}"
+        );
+        editor.press_quietly(b"q");
+
+        // Two regions, and the same command drawn again.
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(declare(&file, &[(1, 1), (3, 3)]).as_bytes(), "landed=2");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        let filled = editor.press_until(b":arch\r", "2 unseen");
+        editor.quit();
+
+        assert!(
+            shows(&filled, "2 unseen"),
+            "the diagram is a query, not a drawing; frame was: {filled}"
+        );
+    }
+
     /// **`T044`: seen-state survives `kill -9`.**
     ///
     /// The task asks for *"survives restart and `kill -9`"*, and `kill -9` is

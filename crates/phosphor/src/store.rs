@@ -353,6 +353,20 @@ impl Shared {
         self.lock().regions().seen_count(scope)
     }
 
+    /// How many anchors it holds — `:arch`'s count (`T048`).
+    pub(crate) fn anchor_count(&self) -> usize {
+        self.lock().anchors().len()
+    }
+
+    /// How many diagnostics it holds, across every file.
+    pub(crate) fn diagnostic_count(&self) -> usize {
+        self.lock()
+            .diagnostics()
+            .files()
+            .map(|(_, published)| published.len())
+            .sum()
+    }
+
     /// What every answer off this store is true at.
     pub(crate) fn revision(&self) -> Revision {
         self.lock().revision()

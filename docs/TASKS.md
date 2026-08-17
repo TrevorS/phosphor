@@ -836,7 +836,7 @@ care here rather than at S5.
   *Done when:* a benchmark shows VM invocations per second **flat** while frames per second
   climbs under streaming load. *Needs:* T078, T021
 
-- [ ] **T080 · The `spans` escape hatch**
+- [x] **T080 · The `spans` escape hatch**
   One primitive taking styled rows from Steel, for surfaces the primitive set doesn't cover.
   Deliberately the *only* way to draw something custom without a Rust change — one grep-able
   name to check when a frame-budget regression shows up.
@@ -847,6 +847,13 @@ care here rather than at S5.
   > and `scripts/lint-one-escape-hatch.sh` proves it is the *only* custom-draw path — verified
   > on two planted violations. What cannot be met until S5 is the criterion as written: `:arch`
   > is `T048`, and there is no store to query. `T048` ticks this.
+
+  > **`T048` landed and ticked it.** `runtime/arch.scm` draws `6a` — four producers, the store
+  > box, two callers, a live count in the middle — and every row of it is `view/spans`. The
+  > acceptance was never *"the hatch works"*, which S2 already knew; it was *"a real custom
+  > surface needs no primitive of its own"*, and the way that is now checkable is that a Rust
+  > primitive for `6a` would have to appear in `phosphor-ui` to be drawn at all, where the lint
+  > would find it.
 
 ### ✋ CP-2 — Is the editor live? · **PASSED**
 
@@ -2135,7 +2142,7 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > `gr_is_bound_and_does_not_spend_the_session_hint` — the half of `CP-4`'s finding that outlives
   > the fix, which is that a *bound* key must not spend `8e`'s one teaching row.
 
-- [ ] **T048 · `:arch` / ArchDiagram**
+- [x] **T048 · `:arch` / ArchDiagram**
   A float body over a store query (Q11), **built entirely from the `spans` hatch** (T080) — no
   Rust primitive of its own. It is the proof that the escape hatch is sufficient for a real
   custom surface. Turns invariant 4 from a claim into something you can look at.

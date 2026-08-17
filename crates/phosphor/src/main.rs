@@ -1267,6 +1267,31 @@ impl Answers for AppHost {
             // `T042`. Read-only, so both of these answer from the door side
             // with no editor involved — an anchor's span is already resolved
             // and the store is the only thing that has to be asked.
+            // `T048` — Q11's *"the workspace's shape, for `:arch` — a store
+            // query with no Rust primitive"*.
+            //
+            // **Counts, not a drawing.** `6a`'s boxes are `runtime/arch.scm`'s
+            // and are built from the `spans` hatch; what this answers is the
+            // handful of numbers that make the picture *"reflect the actual
+            // store rather than a static drawing"*. Anything shaped like a
+            // layout here would be the Rust primitive the task exists to prove
+            // unnecessary.
+            Query::Ui(phosphor_core::query::UiQuery::Arch {}) => {
+                let scope = phosphor_core::store::Scope::Everywhere;
+                let languages = self
+                    .languages
+                    .lock()
+                    .map(|held| held.len())
+                    .unwrap_or_default();
+                Ok(self.answered(Value::Record(
+                    Args::new()
+                        .with("unseen", count(self.store.unseen_count(&scope)))
+                        .with("seen", count(self.store.seen_count(&scope)))
+                        .with("anchors", count(self.store.anchor_count()))
+                        .with("diagnostics", count(self.store.diagnostic_count()))
+                        .with("languages", count(languages)),
+                )))
+            }
             // `T045`'s query half, landed with `T046` because it needs the
             // source registry to have anything to answer about.
             //
@@ -3373,6 +3398,19 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             }
         }
 
+        // `T048`. A keystroke's `open-float`, performed where the door's
+        // `Intent::OpenSurface` is performed and by the same two lines — one
+        // surface registry, one composition path, whichever side asked.
+        if let Some((id, args)) = editing.float.take() {
+            match layer.surface(&id, &args) {
+                Ok(float) => {
+                    open_float = Some(float);
+                    surface = Surface::Float;
+                }
+                Err(why) => notice = Some(why.to_string()),
+            }
+        }
+
         // `T046`. The source runs **here**, in the loop, because running it is
         // running arbitrary scheme and `Layer` is the one door into the VM.
         // Every open re-derives — `define-picker-source`'s own *"an open picker
@@ -3803,6 +3841,18 @@ fn referencing(post: &Post, slot: &References) -> phosphor_buffer::lsp::Location
             query: None,
         }));
     })
+}
+
+/// The surface id `:arch` and `open-arch` both name.
+///
+/// One constant rather than two string literals, for the reason
+/// [`PERSIST_FILE`] gives: two spellings of one name drift, and the one that
+/// drifts silently is the Rust one. `runtime/arch.scm` registers it.
+const ARCH_SURFACE: &str = "arch";
+
+/// A count as the wire's integer, saturating rather than wrapping.
+fn count(n: usize) -> Value {
+    Value::Int(i64::try_from(n).unwrap_or(i64::MAX))
 }
 
 /// One completion, from the client's shape into the vocabulary's.
@@ -4783,6 +4833,16 @@ struct Editing {
     /// `set-picker-query` and `toggle-picker-preview` act on it, and `esc`
     /// drops it.
     picker: Option<PickerSession>,
+    /// An `open-float` a **keystroke** asked for (`T048`), drained the way
+    /// [`Editing::help`] is.
+    ///
+    /// `T093` applied the float verbs on the door side only, which was right
+    /// for what asked for them then — every caller was an agent. `:arch` is the
+    /// first *key* that opens a registered surface, and an ex command's Actions
+    /// go through this dispatcher. Same seam `T041` established for the region
+    /// verbs: two dispatchers, one store, and the difference is only what each
+    /// side can resolve.
+    float: Option<(String, Value)>,
     /// The order `cycle-picker-source` walks, refreshed by the loop from the
     /// layer's `phosphor/picker-sources` (`T047`).
     ///
@@ -4945,6 +5005,7 @@ impl Editing {
             store,
             collapsed: BTreeSet::new(),
             picker: None,
+            float: None,
             source_order: Vec::new(),
             open_picker: false,
             jumplist: Vec::new(),
@@ -5513,6 +5574,26 @@ impl Editing {
                 exact,
             }) => self.goto_anchor(*anchor, label.as_deref(), *exact),
             Action::Motion(MotionAction::Jump { seek }) => self.jump(*seek),
+            // `T048` — the float verbs, from a *key*. `T093` applied these on
+            // the door side; `:arch` is the first keystroke that opens a
+            // registered surface, and an ex command's Actions come through
+            // here. Composing a surface runs scheme, so this records the ask
+            // and the loop performs it — exactly what `Editing::open` and
+            // `Editing::help` already do.
+            Action::Float(FloatAction::OpenFloat { surface, args }) => {
+                self.float = Some((surface.0.clone(), Value::Record(args.clone())));
+                done()
+            }
+            // `T048`. **A named verb for one registered surface**, which is
+            // what makes `:arch` reachable from a door without the caller
+            // having to know the registry exists — `open-arch` is `Allow` for
+            // MCP where `open-float` names an id an agent would have to have
+            // been told. It lowers to the same call, so there is one
+            // composition path and not two.
+            Action::App(AppAction::OpenArch {}) => {
+                self.float = Some((ARCH_SURFACE.to_owned(), Value::Record(Args::new())));
+                done()
+            }
             // `T045` — the picker's own three. `open-picker`'s row cites
             // `T046` and is applied here anyway: a widget nothing can put on
             // screen is the reachability gap `T016` was ticked with, and the
@@ -8195,15 +8276,17 @@ mod tests {
     /// The intents a *keystroke* asked for, with boot's own registrations
     /// dropped.
     ///
-    /// `runtime/pickers.scm` registers the shipped sources with
-    /// `define-picker-source!`, so booting posts a `DefineSource` per source
-    /// before any key is pressed. A test about what a binding did has to say
+    /// `runtime/pickers.scm` registers the shipped sources and
+    /// `runtime/arch.scm` its float surface, so booting posts a registration
+    /// per definition before any key is pressed. A test about what a binding did has to say
     /// so; a test about what *boot* did (there are several, and they assert an
     /// empty list or a persisted layer's own ask) must not use this.
     fn after_boot(host: &AppHost) -> Vec<Intent> {
         host.intents()
             .into_iter()
-            .filter(|intent| !matches!(intent, Intent::DefineSource(..)))
+            .filter(|intent| {
+                !matches!(intent, Intent::DefineSource(..) | Intent::DefineSurface(..))
+            })
             .collect()
     }
 
