@@ -1354,7 +1354,7 @@ pub struct Raised {
     /// [`None`] when naming the kind would add nothing a reader can act on —
     /// the evaluator's generic envelope around a message that is already a
     /// finished sentence, which is how a refused query's *"not built yet —
-    /// `T041` builds it"* reaches a caller unwrapped.
+    /// `T074` builds it"* reaches a caller unwrapped.
     pub kind: Option<&'static str>,
     /// What the evaluator said, with its own envelope stripped.
     pub message: String,
@@ -1403,7 +1403,11 @@ impl Receipt {
 pub enum Refusal {
     /// Named in the vocabulary, not built yet. Carries the task that builds it,
     /// which is the whole reason the vocabulary names S3–S8 surfaces at `T019`:
-    /// a caller gets *"`T041` builds this"*, not *"unknown action"*.
+    /// a caller gets *"`T074` builds this"*, not *"unknown action"*.
+    ///
+    /// The example here used to be `T041`, and it stopped being one the day the
+    /// store landed. An id quoted in prose is a claim about the tree like any
+    /// other.
     NotYetImplemented {
         /// The `docs/TASKS.md` id.
         task: &'static str,

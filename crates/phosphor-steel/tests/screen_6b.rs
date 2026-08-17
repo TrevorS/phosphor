@@ -15,16 +15,23 @@
 //!
 //! | line | what happens today |
 //! |---|---|
-//! | `(unseen-regions "src/retry.rs")` | reaches the registered query; **raises**, naming `T041`. A query with nothing to say raises rather than answering a sentinel (`crate::registry`), and since `T100` the line says `#raised` instead of calling it a refusal and wearing Steel's `Error: Generic:` envelope |
+//! | `(unseen-regions "src/retry.rs")` | reaches the registered query; **raises**, naming `T041` — *against the `Detached` host these tests run on, which has no store*. The **shipping binary answers it** since `T041`: `phosphor --eval` returns a list. A query with nothing to say raises rather than answering a sentinel (`crate::registry`), and since `T100` the line says `#raised` instead of calling it a refusal and wearing Steel's `Error: Generic:` envelope |
 //! | `(map region-author (block-regions …))` | `block-regions` is registered; **`region-author` is unbound** |
 //! | `(keymap-set! "]r" (lambda () (goto (next-region-by claude))))` | `next-region-by` is registered; **`goto` and `claude` are unbound** (Steel names `claude`), and a lambda's free identifiers are resolved when it is *defined*, so the drawn body cannot be compiled |
 //! | `(watch-place "src/retry.rs:24" 'delay)` | the alias resolves to `place-watch` and the string decodes — refused, naming `T077`. Until `§8` this was the one line that failed on *shape*: `anchor` is a `Target` and the drawing passed a string, so the answer was a `TypeMismatch`. The mockup was right and the vocabulary was wrong |
 //!
 //! `query.rs` already says `region-author` is *"an ordinary accessor over one of
 //! those records, free and unregistered"* — so it and `goto` belong in
-//! `runtime/`, over records the store returns. **Writing them now would mean
-//! inventing the record shape `T041` owns**, so they are reported rather than
-//! guessed, and this file is the record.
+//! `runtime/`, over records the store returns. This read **"writing them now
+//! would mean inventing the record shape `T041` owns"**, and that blocker is
+//! gone: `store::region::Region::to_value` defines the record, with `id`,
+//! `path`, `span`, `author`, `declared-by`, `state` and `revisions` on it.
+//!
+//! They are still unwritten, and deliberately, because writing `region-author`
+//! alone buys this line nothing — `block-regions` needs `T053` and
+//! `next-region-by` needs `T049`, so `6b`'s two forms stay uncompilable either
+//! way. The accessors belong with the task that first has a caller for them,
+//! and that is `T046`'s picker sources. Recorded here rather than folded in.
 //!
 //! # The colours
 //!
@@ -113,12 +120,19 @@ fn the_session_is_typable_but_the_store_is_s5() {
     // A registered query with no store: it raises, naming the task that builds
     // it. `T100` — the whole line, because a `contains` is what let Steel's
     // `Error: Generic:` envelope sit inside this very answer unread.
+    //
+    // **`Detached`, not the binary.** `T041` built the store and the shipping
+    // `AppHost` answers this query with a list now; this host has none, which
+    // is what makes it the right place to test the *raise* rather than the
+    // store. The task id below is this crate's `Detached` host being honest
+    // about a query it cannot answer, not a claim that nothing built it.
     assert_eq!(
         answers[0], "#raised · not built yet — T041 builds it",
         "{answers:#?}"
     );
-    // The accessor `query.rs` says is free and unregistered — and is not yet
-    // written, because the record it accesses is `T041`'s.
+    // The accessor `query.rs` says is free and unregistered. The record it
+    // reads exists since `T041` (`Region::to_value`); what it has no caller for
+    // yet is `block-regions`, which is `T053`. See the module header.
     assert!(answers[1].contains("region-author"), "{answers:#?}");
     // Neither `goto` nor `claude` is bound — `goto-anchor`, `goto-sequence`
     // and `goto-location` are the registered names, and the actor identifiers

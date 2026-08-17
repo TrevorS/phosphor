@@ -1640,6 +1640,22 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > *"identical output on two machines"* rests on it. The script says so in its own summary rather
   > than reporting three landed capabilities and letting a reader infer a seeded fixture.
   >
+  > **A flaky test, found by this task and not caused by it.**
+  > `a_burst_of_typing_never_says_the_editor_denied_something` asserted
+  > `!shows(&drawn, "lsp:")`. `shows` is a **fuzzy** matcher — a space in the frame matches any
+  > wanted character, and only two thirds need to match exactly — so over four characters it needs
+  > two, and the statusline's own `toy-lsp ` chip matches `lsp:` whenever a redraw puts the chip
+  > inside the captured window. Whether it lands there is timing: the test passed alone, failed
+  > five times running under load, then passed again with **only its panic message changed**.
+  > Checked against `0d53dbb` before blaming it on the store, where it also passed — the sentinel
+  > has been ambiguous since it was written and the odds simply moved.
+  >
+  > A needle too short for a fuzzy matcher is worse than none: it fails on a correct build and,
+  > being fuzzy, could equally pass over a real notice. It is now the three notices `deliver` can
+  > actually paint — the two policy refusals and the vocabulary's own — each long enough that two
+  > thirds of it cannot come from a chip. Re-proved with the plant its own doc names (`*owed = 0`
+  > in `Outstanding::answers`), which puts the notice back and turns it red.
+  >
   > **Two door tests and two parity tests were pinned to `T041` being unbuilt** and went red the
   > moment it was: `door.rs`'s `EXPR` was `(unseen-regions "src/retry.rs")` and `parity.rs` used
   > `mark-seen`. Repointed at `watches`/`place-watch` (`S8`, `T074`/`T077`) with the hazard written
@@ -1693,6 +1709,17 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > exactly this reason. It is here rather than in the *Arms owed* section below because it has a
   > creditor already.
 
+  > **`T041` left this task a rule to replace, and named it as an approximation rather than a
+  > design.** With no anchors, a declaration has only a path and a span to find the region it
+  > revises by, so the store's identity rule is *overlap on the same path with the same claimed
+  > author*, absorbing every region it reaches into one whose span is the union
+  > (`store/region.rs`'s header argues why union rather than replace: it keeps *"claude wrote here
+  > and you have not looked"* true of every row that was ever covered). That is exactly the rule
+  > an anchor makes unnecessary. **When this task lands, `Regions::declare` should find its
+  > creditor by anchor and the overlap rule becomes the fallback** — which is `T043`'s tier, not a
+  > third mechanism. `store::Shared::covering`, which gives a diagnostic's virtual-text rail its
+  > owner, is positional for the same reason and moves with it.
+
 - [ ] **T043 · Line + content fallback anchoring**
   **The floor, not a degraded extra** — this is what makes unseen markers a store feature rather
   than a language feature (invariant 4).
@@ -1701,8 +1728,29 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
 - [ ] **T044 · Seen-state persistence**
   `$XDG_STATE_HOME/phosphor/<hash-of-canonical-root>/`, keyed on path never VCS identity (Q1).
   Append-only log + compaction, **same format as undo** (T030).
+  **And the regions themselves, which `T041` found this task also owes.**
   *Done when:* seen-state survives restart and `kill -9`, in both a jj repo and a bare
-  directory. *Needs:* T030, T041
+  directory, **and `bash scripts/seed-fixtures.sh` leaves a store `phosphor` can open** —
+  `V006`'s criterion, which lands here rather than at `T041`. *Needs:* T030, T041
+
+  > **The scope grew by one noun at `T041`, and it is the noun that makes `V006` possible.**
+  > Seen-state alone persists nothing worth reading: a seen flag refers to a region, and if the
+  > regions are gone the flag has no subject. `T041` proved it by running the seeding plan —
+  > **`scripts/seed-fixtures.sh` is one `phosphor --eval` process per line**, so line 9 declares
+  > six regions and answers `6`, and lines 16 and 17 `mark-seen!` two of them in a fresh process
+  > with an empty store and answer `0`. Every call is real and reaches the store; there is no
+  > store left to reach.
+  >
+  > So `V006`'s *"seeded store state is reachable through `phosphor --eval`"* — moved onto `T041`
+  > at the `CP-3` audit, and answered there rather than met — is **this task's**, and `CP-5`'s
+  > *"identical output on two machines"* rests on it. The store is one `Revision` over regions and
+  > diagnostics (`phosphor_core::store::Store`), so what persists is a decision this task makes
+  > once for the whole thing rather than per sub-store.
+  >
+  > **The workspace-root question comes with it**, unresolved since `V006`: `fixtures/` is its own
+  > root, and `phosphor/src/store.rs`'s `key_for` currently reconciles a declared path against the
+  > *working directory* — enough for one session, and not the canonical-root hashing Q1 specifies.
+  > `fixtures/README.md`'s residue item 7 is the same question.
 
 - [ ] **T045 · Picker widget**
   `ratatui-textarea` filter line + nucleo matcher **off-thread** + list + preview split (dropped

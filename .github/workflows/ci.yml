@@ -117,7 +117,7 @@ jobs:
           tool: just
       # The whole seam: every lint is one scripts/lint-*.sh script, and
       # `just lint` runs all of them. Nobody edits this workflow to add a lint —
-      # eighteen exist now and not one of them changed a *step* here. (It said
+      # nineteen exist now and not one of them changed a *step* here. (It said
       # "six" until the count was ten behind, which is the seam working and the
       # prose not: nothing recomputed a number written in a comment. Something
       # does now, and that is why the word above is the one thing a new lint

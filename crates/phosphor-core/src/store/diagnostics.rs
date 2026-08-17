@@ -1,17 +1,27 @@
 //! Where `ingest-diagnostics` lands (`T040`).
 //!
 //! **This is not the store, and it is deliberately too small to become one.**
-//! `T041` builds regions, anchors, seen-state and lifetimes, and a diagnostic
-//! *is* a region the moment that exists — anchored to a tree-sitter node,
-//! surviving the rewrite that moved it (`6c`). Until then a server's
-//! `publishDiagnostics` has nowhere at all to go: `phosphor-buffer`'s LSP client
-//! already turns one into `Action::Lsp(IngestDiagnostics)` and posts it, and the
-//! loop answers *"lsp: not built yet — T040 builds it"*. An Action that is
-//! dropped cannot reach a gutter.
+//! It holds one set per file and nothing else — no ids, no anchors, no
+//! lifetime, no seen-state.
 //!
-//! So this holds one set per file and nothing else — no ids, no anchors, no
-//! lifetime, no seen-state. When `T041` lands, this map is what folds into it,
-//! and [`Diagnostics::of`] is the shape the region query answers in.
+//! # `T041` folded it in, and the fold was the point
+//!
+//! This header used to end *"when `T041` lands, this map is what folds into
+//! it"*. It has: [`crate::store::Store`] owns this beside
+//! [`crate::store::region::Regions`], behind one
+//! [`Revision`](crate::query::Revision) that both move, so a publish and a
+//! `mark-seen` are the same kind of news to a cache.
+//!
+//! What the fold actually fixed was worse than untidiness. Nothing outside this
+//! module imported it: `crates/phosphor/src/lsp.rs` had its own
+//! `BTreeMap<PathBuf, Vec<Diagnostic>>` with its own `replace`/`of`/`answer`,
+//! written at `T040` because it needed a `Mutex` and this crate holds no locks.
+//! Two maps with one name, and the documented one dead.
+//!
+//! A diagnostic is still not a *region*. `6c` wants it anchored to a
+//! tree-sitter node and surviving the rewrite that moved it, and that is
+//! `T042`; what it has today is an owner — the region covering its line — which
+//! is what makes its virtual-text rail collapsible.
 //!
 //! # Why the order is fixed here rather than at the drawing
 //!

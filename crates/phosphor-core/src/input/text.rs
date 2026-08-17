@@ -20,10 +20,14 @@
 //!
 //! [`object_span`] returns [`None`] for the four agent nouns — `u` unseen, `h`
 //! hunk, `t` thread, `b` block (`6d`). They are **store queries, not syntax**
-//! (`request::TextObject`'s own header), and there is no store until `T041`.
-//! `T028` binds them, they no-op cleanly here, and `T049` is where they resolve
-//! — by giving [`Text`] a neighbour that can answer a region query, not by
-//! teaching this file about regions.
+//! (`request::TextObject`'s own header). `T028` binds them, they no-op cleanly
+//! here, and `T049` is where they resolve — by giving [`Text`] a neighbour that
+//! can answer a region query, not by teaching this file about regions.
+//!
+//! This read *"there is no store until `T041`"*. There is one now, and the
+//! sentence above is why that changed nothing here: the reason these four
+//! answer [`None`] was never that the store was missing, it is that this file
+//! is syntax and they are not.
 //!
 //! # Cost
 //!
@@ -723,7 +727,9 @@ pub fn object_span(
         TextObject::Paragraph => paragraph_object(text, at_position, inner),
         TextObject::Delimited => delimited_object(text, at_position, inner, delimiter?),
         // `T028` binds these; `T049` resolves them. A markup tag needs the
-        // grammar (`T037`), and the other four need the store (`T041`).
+        // grammar (`T037`); the other four need a *neighbour* that can answer a
+        // region query — the store itself landed at `T041` and this file still
+        // has no way to reach one, which is the module header's point.
         TextObject::Tag
         | TextObject::UnseenRegion
         | TextObject::Hunk

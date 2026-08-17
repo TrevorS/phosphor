@@ -3,37 +3,43 @@
 # reports exactly what each line does today.
 #
 # NOT a lint. Deliberately outside the scripts/lint-*.sh glob `just lint`
-# walks: every line in the plan refuses today (the store is S5, review blocks
-# are S6, threads are S7, watches are S8 — none built yet, per
-# docs/TASKS.md), so wiring this into the gate would redden CI on a build
-# that is behaving exactly as designed. harness's own standing instruction
-# (docs/TEAM.md) is not to let unbuilt product surfaces gate anything; this
-# script is that instruction applied to a seeding mechanism instead of a
-# tape. Run it by hand: `bash scripts/seed-fixtures.sh`.
+# walks: most of the plan refuses today (review blocks are S6, threads are S7,
+# watches are S8 — none built yet, per docs/TASKS.md), so wiring this into the
+# gate would redden CI on a build that is behaving exactly as designed.
+# harness's own standing instruction (docs/TEAM.md) is not to let unbuilt
+# product surfaces gate anything; this script is that instruction applied to a
+# seeding mechanism instead of a tape. Run it by hand:
+# `bash scripts/seed-fixtures.sh`.
 #
-# What it actually checks, per line of the plan, by running it and reading
-# what came back — not by assuming the shape is right:
+# **That exemption is also why it was broken for a whole phase and nobody
+# knew.** Nothing ran it between T100 and T041, and it had two faults by then:
+# it aborted on its own first line under `set -e`, and its classifier matched
+# an answer shape T100 had replaced. Both are marked at their sites below, and
+# `scripts/lint-door-callers.sh` is what makes the pair structural — the one
+# check a script outside the gate can still be held to is whether it is
+# *capable* of reporting.
 #
-#   1. The call reaches the registry and decodes into the right Action shape
-#      (`(#refused "not built yet — T0xx builds it")`, the scheme-voice
-#      refusal `--eval` prints when a well-formed call has no store/session/
-#      review/watch subsystem behind it yet). This is EXPECTED today, for
-#      every line — see fixtures/README.md's table for which task builds
-#      which line.
+# What it checks, per line of the plan, by running it and reading what came
+# back — not by assuming the shape is right:
+#
+#   1. The call reaches the registry and decodes into the right Action shape.
+#      `#refused · not built yet — T0xx builds it` (or `#raised · …` for a
+#      query) is the door's voice for a well-formed call with no
+#      store/session/review/watch subsystem behind it yet. This is EXPECTED
+#      for every line whose task has not landed — see fixtures/README.md's
+#      table for which task builds which line.
 #   2. A line that does NOT come back this way is flagged loudly, in one of
 #      two directions:
-#        - `#refused · Error: ...` (the CLI-voice error render, exit 1) means
-#          this file's own scheme has drifted from the registry — a real bug
-#          in fixtures/seed/plan.scm, script exits nonzero.
+#        - any other `#refused · …` / `#raised · …` means this file's own
+#          scheme has drifted from the registry — a real bug in
+#          fixtures/seed/plan.scm, script exits nonzero.
 #        - anything else (an `#ok`, a real value) means the capability is
-#          now IMPLEMENTED — a task landed, and this fixture is finally
-#          ready to actually seed store state. Reported, not a failure.
+#          now IMPLEMENTED — a task landed. Reported, not a failure.
 #
-# Both classifications were checked empirically before this script was
-# written — `mark-seen! "not-a-target"` prints `#refused · Error:
-# TypeMismatch: ...` (exit 1); every line in the committed plan prints
-# `(#refused "not built yet — T0xx builds it")` (exit 0) — see
-# fixtures/README.md for the full transcript.
+# **A landed line is not a seeded fixture**, and the summary says so at the
+# bottom rather than letting a reader infer it: every line is its own
+# `phosphor --eval` process, so nothing one line writes survives to the next.
+# T044 is the task that changes that.
 
 set -euo pipefail
 

@@ -3134,14 +3134,30 @@ mod driven {
         editor.press_quietly(b"f\x18a\x18u\x18lts_for");
         editor.settle();
         let drawn = editor.since(mark);
-        assert!(
-            !shows(&drawn, "denied to a producer"),
-            "typing raised a producer refusal; frames were: {drawn}"
-        );
-        assert!(
-            !shows(&drawn, "lsp:"),
-            "typing said something about the lsp subsystem at all; frames were: {drawn}"
-        );
+        // **The other two notices `deliver` can paint**, spelled out rather
+        // than caught with a short `"lsp:"` prefix. That prefix was here and
+        // was a flake: `shows` is a fuzzy matcher — a space in the frame
+        // matches any wanted character, and only two thirds need to match
+        // exactly — so over four characters it needs just two, and the
+        // statusline's own `toy-lsp ` chip matched `lsp:` every time a redraw
+        // put the chip inside the captured window. Whether it lands there is
+        // timing, which is why this passed alone and failed under load.
+        //
+        // A needle short enough to be ambiguous is worse than no needle: it
+        // fails on a correct build and, being fuzzy, could equally pass over a
+        // real notice. These three are the whole set `deliver` can produce —
+        // the two policy refusals and the vocabulary's own — and each is long
+        // enough that two thirds of it cannot come from a chip.
+        for notice in [
+            "denied to a producer",
+            "needs an ask first",
+            "not built yet",
+        ] {
+            assert!(
+                !shows(&drawn, notice),
+                "typing painted {notice:?}; frames were: {drawn}"
+            );
+        }
         editor.quit();
     }
 

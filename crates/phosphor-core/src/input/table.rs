@@ -111,9 +111,10 @@ pub enum Operator {
     /// **The one operator that is not an edit.** It changes no text, so it
     /// opens no undo group and fills no register; what it moves is seen-state,
     /// which Design Language §7 calls the only mutable flag the user owns. The
-    /// Action it lowers to is `Region::MarkSeen`, built by `T041` — until then
-    /// a door answers *"`T041` builds this"*, which is the vocabulary's own
-    /// design for a capability that is named before it is built.
+    /// Action it lowers to is `Region::MarkSeen`, and `T041` built it: the
+    /// operator moves real seen-state now, resolved against the cursor or the
+    /// selection by the loop, which is the only side of the dispatch that has
+    /// an editor to resolve them with.
     MarkSeen,
 }
 

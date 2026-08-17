@@ -588,6 +588,9 @@ mod tests {
     #[test]
     fn a_generic_raise_carries_its_message_and_nothing_else() {
         let mut runtime = detached(None);
+        // `Detached` has no store — the shipping `AppHost` answers this with a
+        // list since `T041`. What is under test is the raise, so a host that
+        // cannot answer is the fixture, not a gap.
         let Outcome::Raised(raised) = runtime.evaluate(r#"(unseen-regions "src/main.rs")"#) else {
             panic!("the `Detached` host has no store, so the query raises");
         };

@@ -1451,6 +1451,63 @@ what a Tier-2 reference *is*; whether the build should draw them is §`D`'s open
 
 ---
 
+## Raised by `T041`, the store
+
+Two entries. Both are decisions the task had to make to ship at all, both are recorded where they
+are implemented, and both are **product-visible in a way a unit test cannot argue about** — so
+they are here for a ruling rather than filed as settled.
+
+### 41 · `s` on a line with no region says nothing at all
+
+`Regions::set_state` answers *how many regions were in scope*, and the arms turn that into the
+capability's return value (`Editing::mark`, `AppHost::mark`). On a line no region covers the
+answer is `0`, and `0` is not trouble — `phosphor_steel::answer::trouble` reduces a `Done` to
+`None`, so the ex line stays empty and **the screen does not change in any way**.
+
+That is right for a script: `(mark-seen! …)` answering a count is composable, and a refusal would
+make the ordinary case an error. Whether it is right for a **person** is the question. Pressing
+`SPC u s` and getting no acknowledgement at all is indistinguishable from the key not being bound,
+which is precisely the class of defect `CP-4`'s manual half kept finding — `gr` "not working" was
+one of them, and it was a real gap; this one would be correct behaviour that reads the same way.
+
+Design Language §6 has no rule for *"you asked and there was nothing to do"*. The nearest
+precedent in the build is `:restart-server` with no argument, which **declines by name**
+(`main.rs`, that Action's arm) rather than silently doing nothing — but that is a malformed
+request, and this is a well-formed one whose answer is zero.
+
+*Recommendation: leave the value a count, and let the surface decide. The cheapest honest version
+is that the operator says `no unseen region here` on the ex line when it marked none — one line at
+the call site in `Editing::mark`, nothing in the vocabulary, and nothing a script sees. Do not make
+it a refusal: `S` over a block that happens to be fully seen would then read as an error.*
+
+### 42 · A door cannot ask about the cursor, and `runtime/` is a door
+
+`AppHost::scope` refuses `cursor`, `selection`, `picker-row` and `float-row` for the `region`
+queries, naming the three tags it does take (`RESOLVABLE` in `main.rs`). The reason is not policy
+— **the host genuinely has no editor**; `Editing::scope_of` is the half that does, and it lives on
+the other side of the Steel barrier.
+
+`request.rs` already draws this line for *agents* — `Target::focus_relative`, and the MCP door
+refuses them because *"an agent has no cursor"*. But `runtime/*.scm` is not an agent. A keymap
+thunk runs **while the user's cursor is somewhere specific**, and `(unseen-count 'cursor)` from one
+is a reasonable thing to write and currently refuses. The *Actions* do not have this problem —
+`SPC u s` passes `(key/at-cursor)` and resolves fine — because an Action from a keystroke reaches
+`Editing::act`. It is only the **queries** that are one-sided.
+
+So the vocabulary says a focus-relative target is refused *over MCP*, and the build refuses it over
+Steel and CLI as well, for an implementation reason rather than the documented one. That gap is
+what needs the ruling.
+
+*Recommendation: it is a real seam and not worth closing at `T041`, because the fix is structural —
+either the host learns the cursor (a snapshot the loop pushes each frame, which is a second copy of
+editor state and invites exactly the staleness `Target`'s doc says late binding exists to avoid), or
+queries from the VM route through the loop the way Actions do. The second is right and it is
+`T046`'s neighbourhood, because a picker source is the first thing that will want to ask "what is
+unseen **here**". Until then the refusal names the three tags that work, which is at least a
+sentence a caller can act on.*
+
+---
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

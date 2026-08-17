@@ -120,10 +120,16 @@ Hygiene and truthfulness — each of these exists because the thing it catches a
 - **Fuzz targets** — the `fuzz/` crate's targets are checked against the parsers they claim.
 - **Counts nothing else recomputes** — the capability and parity counts (`209`/`627` went stale in
   six places at once), and the lint count in CI's own prose, which said "six" while sixteen
-  existed. **Eighteen lints now** — and this paragraph itself said seventeen for a window after the
+  existed. **Nineteen lints now** — and this paragraph itself said seventeen for a window after the
   eighteenth landed, because `doc_claims.py` section 6 globbed `.github/workflows/*.yml` and could
   not see the file every agent reads on entry. It reads this one too now, so the sentence you are
   reading is recomputed rather than remembered.
+- **Door callers** — a shell script that runs `phosphor` must survive it refusing, and must not
+  match an answer shape the door stopped printing. `scripts/seed-fixtures.sh` did both: under
+  `set -e` an `out="$(…)"; code=$?` aborts on the first refusal, so it died on line one of its own
+  plan and printed nothing, and its classifier still matched `T100`'s predecessor. It sits outside
+  the `scripts/lint-*.sh` glob on purpose, so **nothing ran it for a whole phase** — the one thing
+  a script outside the gate can still be held to is whether it is capable of reporting.
 
 ## Do not assert what you have not read
 

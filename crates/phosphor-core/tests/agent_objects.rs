@@ -10,12 +10,14 @@
 //!   dih        delete inner hunk — revert claude's edit, plain vim delete
 //! ```
 //!
-//! They **parse here and resolve at `S5`** ([Q8](../../../docs/IMPLEMENTATION-PLAN.md)):
+//! They **parse here and resolve at `T049`** ([Q8](../../../docs/IMPLEMENTATION-PLAN.md)):
 //! `text::object_span` answers [`None`] for all four because a region is a
-//! store query and there is no store until `T041`. So every test below is
-//! about the shape of *nothing happening* — that the keystrokes are accepted,
-//! that the machine comes back to a clean state, and that not one of them
-//! reaches the buffer.
+//! store query and this crate's input machine has no way to reach one. `T041`
+//! built the store and changed nothing here, which is the distinction worth
+//! keeping: what these four are waiting for is a *neighbour that can answer a
+//! region query*, not a store. So every test below is still about the shape of
+//! *nothing happening* — that the keystrokes are accepted, that the machine
+//! comes back to a clean state, and that not one of them reaches the buffer.
 //!
 //! # The fourth form
 //!
@@ -258,9 +260,10 @@ fn every_agent_noun_is_bound_in_both_moods() {
 #[test]
 fn gs_composes_like_an_operator_over_an_object_that_does_resolve() {
     // The composition itself, proven against a noun that exists today: `gsiw`
-    // selects the word and marks it. `T041` builds `mark-seen`, so what a door
-    // answers today is "`T041` builds this" — a refusal, which the vocabulary
-    // is explicit is a normal state and not an error.
+    // selects the word and marks it. `T041` built `mark-seen`, so the Action
+    // this lowers to now moves real seen-state — but that is the *binary's*
+    // half and this test is the machine's: what it asserts is that the two
+    // keystrokes compose into one `MarkSeen` over one `SelectObject`.
     let mut machine = Machine::new();
     let mut keymap = table();
 
