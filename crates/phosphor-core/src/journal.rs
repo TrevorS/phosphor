@@ -1405,6 +1405,21 @@ pub fn undo_path(workspace_dir: &Path, canonical_file: &Path) -> PathBuf {
     ))
 }
 
+/// Where the seen-state journal lives — `T044`, and [`Stream::SEEN`]'s file.
+///
+/// **One per workspace, not one per file**, which is the difference from
+/// [`undo_path`] and it follows from what each stream is about. An undo history
+/// belongs to a buffer: open one file and only its history is wanted, and
+/// keying per file is what keeps a large session from reading every history to
+/// draw one. Seen-state belongs to the *workspace* — `1a`'s
+/// *"retry logic — 2 files · 6 regions"* is a claim across files, and
+/// `unseen-count` with no `within` has to answer without knowing which files
+/// might have regions. A per-file split would make that query a directory scan.
+#[must_use]
+pub fn seen_path(workspace_dir: &Path) -> PathBuf {
+    workspace_dir.join("seen.journal")
+}
+
 // ---------------------------------------------------------------------------
 // The undo schema
 // ---------------------------------------------------------------------------

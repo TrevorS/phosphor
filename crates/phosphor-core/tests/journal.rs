@@ -661,6 +661,45 @@ fn a_workspace_directory_is_keyed_on_the_canonical_root() {
     );
 }
 
+/// **`T044`: a jj repo and a bare directory are the same workspace.**
+///
+/// The task asks for seen-state to survive *"in both a jj repo and a bare
+/// directory"*, and Q1 says why they cannot differ: state is *"keyed on path
+/// never VCS identity"*. So this is not two behaviours that happen to agree —
+/// it is one behaviour, and the test is that planting a VCS directory changes
+/// nothing about where state goes.
+///
+/// Worth an assertion rather than an argument, because the tempting
+/// optimisation is exactly the bug: keying on a repository root would make a
+/// worktree, a submodule and a fresh clone three different stores for one
+/// checkout, and would leave a directory that is not a repo at all with
+/// nowhere to put anything.
+#[test]
+fn a_vcs_directory_does_not_change_where_state_lives() {
+    let tmp = TempDir::new("xdg-vcs");
+    let home = tmp.made("state");
+    let root = tmp.made("workspace");
+
+    let bare = journal::workspace_dir_in(&home, &root).expect("bare directory");
+
+    // The same directory, now a jj repo. And a git one, and both at once.
+    for marker in [".jj", ".git"] {
+        fs::create_dir_all(root.join(marker)).expect("a vcs directory");
+        assert_eq!(
+            journal::workspace_dir_in(&home, &root).expect("still resolves"),
+            bare,
+            "{marker} changed the workspace key — Q1 says the key is the path",
+        );
+    }
+
+    // And the seen journal inside it is one file per workspace, not per repo.
+    assert_eq!(
+        journal::seen_path(&bare),
+        bare.join("seen.journal"),
+        "one seen journal per workspace",
+    );
+}
+
 #[test]
 fn the_key_is_ours_and_stable() {
     // Not `DefaultHasher`, which is explicitly unstable across releases: a

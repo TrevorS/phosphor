@@ -420,6 +420,12 @@ pub struct Reanchored {
     pub held: Vec<AnchorId>,
     /// Anchors that resolved at no tier.
     pub lost: Vec<AnchorId>,
+    /// Regions whose span moved on the same pass (`T043`).
+    ///
+    /// Here rather than in a second return value because a reanchor is **one**
+    /// operation over two row types — see [`super::Store::reanchor`] — and a
+    /// caller that has to persist what changed needs both lists or neither.
+    pub regions: Vec<crate::request::RegionId>,
 }
 
 impl Reanchored {
@@ -432,7 +438,7 @@ impl Reanchored {
     /// Whether anything changed — the frame-invalidation question.
     #[must_use]
     pub fn changed(&self) -> bool {
-        !self.moved.is_empty() || !self.lost.is_empty()
+        !self.moved.is_empty() || !self.lost.is_empty() || !self.regions.is_empty()
     }
 
     /// The record the `reanchor` capability answers.
@@ -442,7 +448,8 @@ impl Reanchored {
             Args::new()
                 .with("moved", Value::Int(as_int(self.moved.len())))
                 .with("held", Value::Int(as_int(self.held.len())))
-                .with("lost", Value::Int(as_int(self.lost.len()))),
+                .with("lost", Value::Int(as_int(self.lost.len())))
+                .with("regions", Value::Int(as_int(self.regions.len()))),
         )
     }
 }
@@ -507,6 +514,27 @@ impl Anchors {
             },
         );
         id
+    }
+
+    /// Rebuild from rows read off disk (`T044`).
+    ///
+    /// Same monotonic-id rule [`super::region::Regions::restore`] spells out:
+    /// the next id after a restore is one past the largest that has *ever*
+    /// existed here, so a dropped anchor's id stays retired across restarts.
+    pub fn restore(rows: impl IntoIterator<Item = Anchor>, minted: u64) -> Self {
+        let by_id: BTreeMap<AnchorId, Anchor> =
+            rows.into_iter().map(|anchor| (anchor.id, anchor)).collect();
+        let highest = by_id.keys().map(|id| id.0).max().unwrap_or(0);
+        Self {
+            next: minted.max(highest),
+            by_id,
+        }
+    }
+
+    /// How many ids have been minted — what a restore has to be told.
+    #[must_use]
+    pub const fn minted(&self) -> u64 {
+        self.next
     }
 
     /// One anchor.

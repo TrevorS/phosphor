@@ -41,10 +41,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use phosphor_core::journal;
 use phosphor_core::query::Revision;
 use phosphor_core::request::{Actor, AnchorId, Diagnostic, RegionId, RegionSpec, Span};
 use phosphor_core::store::{
-    Anchor, Declared, Fingerprint, Lens, Reanchored, Region, Scope, SeenState, Snapshot, Store,
+    Anchor, Declared, Fingerprint, Lens, Reanchored, Region, Scope, SeenLog, SeenState, Snapshot,
+    Store, persist,
 };
 use phosphor_core::value::Value;
 
@@ -52,9 +54,104 @@ use phosphor_core::value::Value;
 #[derive(Debug, Default)]
 pub(crate) struct Shared {
     store: Mutex<Store>,
+    /// The seen-state journal (`T044`), or [`None`] when there is nowhere to
+    /// put one.
+    ///
+    /// **Absent is a working editor, not a broken one.** No `XDG_STATE_HOME`
+    /// and no `HOME`, a read-only state directory, a corrupt header — each
+    /// means seen-state does not survive this session, and none of them is a
+    /// reason to refuse to edit. The same call the undo journal makes
+    /// (`Timeline::opened`), for the same reason it gives: *"a history is not
+    /// the file."*
+    log: Mutex<Option<SeenLog>>,
 }
 
 impl Shared {
+    /// A store restored from this workspace's journal, and what went wrong if
+    /// anything did (`T044`).
+    ///
+    /// The workspace is the directory the editor was started in — Q1's *"keyed
+    /// on the path and never on VCS identity"*, with the honest root `S3` has,
+    /// which is the same key `Timeline::open_at` uses.
+    pub(crate) fn opened() -> (Self, Option<String>) {
+        match Self::open_at() {
+            Ok(shared) => (shared, None),
+            Err(reason) => (Self::default(), Some(reason)),
+        }
+    }
+
+    fn open_at() -> Result<Self, String> {
+        let root = std::env::current_dir().map_err(|error| error.to_string())?;
+        let dir = journal::workspace_dir(&root).map_err(|error| error.to_string())?;
+        let path = journal::seen_path(&dir);
+        // `Recovery` is discarded for the reason `Timeline::open_at` gives:
+        // `Log::open` has already truncated the torn tail, and what a crash
+        // cost is the last thing marked — which the next `s` fixes.
+        let (log, _recovery) = SeenLog::open(&path).map_err(|error| error.to_string())?;
+        Ok(Self {
+            store: Mutex::new(Store::restore(log.state().clone())),
+            log: Mutex::new(Some(log)),
+        })
+    }
+
+    /// Append records, and drop the journal if it stops working.
+    ///
+    /// **A failed append disables the journal rather than failing the edit.**
+    /// The alternative is an editor that refuses `s` because a disk filled up,
+    /// which trades a lost flag for a lost session. The journal going quiet is
+    /// the same degradation as never having had one, which is a state this
+    /// type already supports.
+    fn write(&self, records: Vec<persist::Record>) {
+        if records.is_empty() {
+            return;
+        }
+        let Ok(mut held) = self.log.lock() else {
+            return;
+        };
+        let Some(log) = held.as_mut() else {
+            return;
+        };
+        for record in records {
+            if log.append(record).is_err() {
+                *held = None;
+                return;
+            }
+        }
+        // Compaction is the journal's own doubling policy, so this is a check
+        // rather than a rewrite on all but a few calls.
+        if log.compact_if_needed().is_err() {
+            *held = None;
+        }
+    }
+
+    /// Upserts for live rows and tombstones for the rest, read off the store
+    /// under one lock.
+    ///
+    /// Reading the rows back rather than being handed them is deliberate: what
+    /// belongs on disk is *what the store now says*, and a caller that built
+    /// records from its own idea of the mutation could write a row the store
+    /// never agreed to.
+    fn rows_of(store: &Store, regions: &[RegionId], anchors: &[AnchorId]) -> Vec<persist::Record> {
+        let mut out = Vec::with_capacity(regions.len() + anchors.len() + 1);
+        out.push(persist::Record::Minted {
+            regions: store.regions().minted(),
+            anchors: store.anchors().minted(),
+        });
+        for id in regions {
+            out.push(match store.regions().get(*id) {
+                Some(region) => persist::Record::Region(Box::new(region.clone())),
+                None => persist::Record::RegionGone(*id),
+            });
+        }
+        for id in anchors {
+            out.push(match store.anchors().get(*id) {
+                Some(anchor) => persist::Record::Anchor(Box::new(anchor.clone())),
+                None => persist::Record::AnchorGone(*id),
+            });
+        }
+        out
+    }
+
     /// **`declare-regions`.**
     pub(crate) fn declare(&self, specs: &[RegionSpec], asked_by: Actor) -> Declared {
         let specs: Vec<RegionSpec> = specs
@@ -64,18 +161,57 @@ impl Shared {
                 ..spec.clone()
             })
             .collect();
-        self.lock().declare_regions(&specs, asked_by)
+        let (declared, records) = {
+            let mut store = self.lock();
+            let declared = store.declare_regions(&specs, asked_by);
+            let touched: Vec<RegionId> = declared
+                .created
+                .iter()
+                .chain(&declared.revised)
+                .copied()
+                .collect();
+            let records = Self::rows_of(&store, &touched, &[]);
+            (declared, records)
+        };
+        self.write(records);
+        declared
     }
 
     /// **`mark-seen` and `mark-unseen`.** Answers how many regions were in
     /// scope.
     pub(crate) fn set_seen(&self, scope: &Scope, state: SeenState) -> usize {
-        self.lock().set_seen(scope, state)
+        let (marked, records) = {
+            let mut store = self.lock();
+            let touched: Vec<RegionId> = store
+                .regions()
+                .in_scope(scope)
+                .map(|region| region.id)
+                .collect();
+            let marked = store.set_seen(scope, state);
+            let records = Self::rows_of(&store, &touched, &[]);
+            (marked, records)
+        };
+        self.write(records);
+        marked
     }
 
     /// **`drop-regions`.** Answers how many went.
     pub(crate) fn drop_regions(&self, scope: &Scope) -> usize {
-        self.lock().drop_regions(scope)
+        let (dropped, records) = {
+            let mut store = self.lock();
+            // The ids have to be read *before* the drop — afterwards there is
+            // nothing left to name, and a tombstone needs a name.
+            let doomed: Vec<RegionId> = store
+                .regions()
+                .in_scope(scope)
+                .map(|region| region.id)
+                .collect();
+            let dropped = store.drop_regions(scope);
+            let records = Self::rows_of(&store, &doomed, &[]);
+            (dropped, records)
+        };
+        self.write(records);
+        dropped
     }
 
     /// **`ingest-diagnostics`.**
@@ -91,18 +227,65 @@ impl Shared {
         label: Option<String>,
         fingerprint: Fingerprint,
     ) -> AnchorId {
-        self.lock().place_anchor(path, span, label, fingerprint)
+        let (id, records) = {
+            let mut store = self.lock();
+            let id = store.place_anchor(path, span, label, fingerprint);
+            // A labelled placement *displaces* whichever anchor held that label
+            // — vim's rule, `ma` twice is one mark — so the displaced id needs
+            // a tombstone or it comes back on the next restart. Reading the
+            // whole file's anchors covers it without the store having to
+            // report what it removed.
+            let touched: Vec<AnchorId> = store.anchors().all().map(|anchor| anchor.id).collect();
+            let records = Self::rows_of(&store, &[], &touched);
+            (id, records)
+        };
+        self.write(records);
+        id
     }
 
     /// **`reanchor`.** One file's anchors *and* regions, against its new text.
     pub(crate) fn reanchor(&self, path: &Path, snapshot: &Snapshot) -> Reanchored {
-        self.lock().reanchor(path, snapshot)
+        let (outcome, records) = {
+            let mut store = self.lock();
+            let outcome = store.reanchor(path, snapshot);
+            let anchors: Vec<AnchorId> =
+                outcome.moved.iter().chain(&outcome.lost).copied().collect();
+            // Every region in the file, not only the moved ones: a reanchor
+            // also *fingerprints*, and a region that gained one without moving
+            // has changed on disk even though its span has not.
+            let regions: Vec<RegionId> = store
+                .regions()
+                .all()
+                .filter(|region| region.path == path)
+                .map(|region| region.id)
+                .collect();
+            let records = Self::rows_of(&store, &regions, &anchors);
+            (outcome, records)
+        };
+        self.write(records);
+        outcome
     }
 
     /// Describe a file to the store so its regions can find themselves again
     /// (`T043`). Answers how many gained a fingerprint.
     pub(crate) fn fingerprint_regions(&self, path: &Path, snapshot: &Snapshot) -> usize {
-        self.lock().fingerprint_regions(path, snapshot)
+        let (filled, records) = {
+            let mut store = self.lock();
+            let filled = store.fingerprint_regions(path, snapshot);
+            if filled == 0 {
+                return 0;
+            }
+            let regions: Vec<RegionId> = store
+                .regions()
+                .all()
+                .filter(|region| region.path == path)
+                .map(|region| region.id)
+                .collect();
+            let records = Self::rows_of(&store, &regions, &[]);
+            (filled, records)
+        };
+        self.write(records);
+        filled
     }
 
     /// One anchor, cloned out from behind the lock.

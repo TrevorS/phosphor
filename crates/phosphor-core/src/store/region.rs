@@ -352,6 +352,32 @@ impl Regions {
         declared
     }
 
+    /// Rebuild from rows read off disk (`T044`).
+    ///
+    /// **The id counter is restored past the highest row**, which is the whole
+    /// subtlety here: [`Self::mint`] is monotonic *"so a surface holding a
+    /// dropped region's id must get nothing back"*, and a restored store that
+    /// began minting from 1 again would hand a fresh region the id a persisted
+    /// one already has. The next id after a restore is one past the largest
+    /// that has ever existed in this workspace, not one past the largest that
+    /// is still alive — a dropped row's id stays retired across restarts.
+    pub fn restore(rows: impl IntoIterator<Item = Region>, minted: u64) -> Self {
+        let by_id: BTreeMap<RegionId, Region> =
+            rows.into_iter().map(|region| (region.id, region)).collect();
+        let highest = by_id.keys().map(|id| id.0).max().unwrap_or(0);
+        Self {
+            next: minted.max(highest),
+            by_id,
+        }
+    }
+
+    /// How many ids have been minted — what a restore has to be told so it does
+    /// not reissue one.
+    #[must_use]
+    pub const fn minted(&self) -> u64 {
+        self.next
+    }
+
     /// Give every region in a file a fingerprint, from the text it currently
     /// covers (`T043`).
     ///
@@ -416,17 +442,22 @@ impl Regions {
     /// the text. A region whose start is lost is left exactly where it was, for
     /// the reason [`super::anchor::Anchors::reanchor`] gives.
     ///
-    /// Answers how many moved.
+    /// Answers the ids that moved — ids rather than a count, because the
+    /// caller that persists them needs to know *which* rows to write.
     ///
     /// [`resolve`]: super::anchor::resolve
-    pub fn reanchor_in(&mut self, path: &Path, snapshot: &super::anchor::Snapshot) -> usize {
+    pub fn reanchor_in(
+        &mut self,
+        path: &Path,
+        snapshot: &super::anchor::Snapshot,
+    ) -> Vec<RegionId> {
         let ids: Vec<RegionId> = self
             .by_id
             .values()
             .filter(|region| region.path == path && region.fingerprint.is_some())
             .map(|region| region.id)
             .collect();
-        let mut moved = 0;
+        let mut moved = Vec::new();
         for id in ids {
             let Some(region) = self.by_id.get_mut(&id) else {
                 continue;
@@ -448,7 +479,7 @@ impl Regions {
             if let Some(fingerprint) = region.fingerprint.as_mut() {
                 fingerprint.line = now;
             }
-            moved += 1;
+            moved.push(id);
         }
         moved
     }
@@ -1142,7 +1173,7 @@ mod tests {
 
         // Two lines inserted above it.
         let after = Snapshot::of("#!/bin/sh\nset -e\nset -u\nrun_the_thing --now\nexit 0\n");
-        assert_eq!(regions.reanchor_in(Path::new("deploy"), &after), 1);
+        assert_eq!(regions.reanchor_in(Path::new("deploy"), &after).len(), 1);
 
         let region = regions.all().next().expect("one region");
         assert_eq!(
@@ -1180,7 +1211,7 @@ mod tests {
         regions.fingerprint_in(Path::new("a.txt"), &before);
 
         let after = Snapshot::of("one\nthree\n");
-        assert_eq!(regions.reanchor_in(Path::new("a.txt"), &after), 0);
+        assert!(regions.reanchor_in(Path::new("a.txt"), &after).is_empty());
 
         let region = regions.all().next().expect("one region");
         assert_eq!(region.span.start.line, 2, "stale, and not silently moved");
@@ -1205,7 +1236,7 @@ mod tests {
 
         // And the original description is what still resolves.
         let moved = Snapshot::of("a new first line\noriginal\n");
-        assert_eq!(regions.reanchor_in(Path::new("a.txt"), &moved), 1);
+        assert_eq!(regions.reanchor_in(Path::new("a.txt"), &moved).len(), 1);
         assert_eq!(
             regions.all().next().expect("one").span.start.line,
             2,
@@ -1238,9 +1269,10 @@ mod tests {
         let mut regions = Regions::new();
         regions.declare(&[claude("never-opened.rs", (7, 1), (7, 1))], Actor::Claude);
 
-        assert_eq!(
-            regions.reanchor_in(Path::new("never-opened.rs"), &Snapshot::of("x\n")),
-            0
+        assert!(
+            regions
+                .reanchor_in(Path::new("never-opened.rs"), &Snapshot::of("x\n"))
+                .is_empty()
         );
         let region = regions.all().next().expect("one region");
         assert!(region.fingerprint.is_none());

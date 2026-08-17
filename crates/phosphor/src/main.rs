@@ -598,6 +598,14 @@ struct AppHost {
     /// into it — shared with the loop. See [`crate::store`] for why one store
     /// has two handles.
     store: Arc<store::Shared>,
+    /// Why the seen-state journal could not be opened, if it could not
+    /// (`T044`).
+    ///
+    /// Held here rather than returned from [`stack`] because the loop is what
+    /// has a notice row, and threading it through two call sites and every test
+    /// that builds a stack would make the signature carry a fact only one
+    /// caller reads.
+    store_note: Option<String>,
 }
 
 /// Everything the host owns that Steel can reach.
@@ -690,6 +698,20 @@ const PERSIST_VERB: &str = "phosphor/persist-verb";
 const OFFERED_HEADS: &str = "phosphor/offered-heads";
 
 impl AppHost {
+    /// A host whose store is restored from this workspace's journal (`T044`),
+    /// and what went wrong if anything did.
+    ///
+    /// The reason it answers a notice rather than swallowing one is
+    /// `Timeline::opened`'s: seen-state not surviving is worth saying out loud,
+    /// and is never worth refusing to start over.
+    fn opened(config: Option<PathBuf>) -> Self {
+        let (store, complaint) = store::Shared::opened();
+        let mut host = Self::new(config);
+        host.store = Arc::new(store);
+        host.store_note = complaint;
+        host
+    }
+
     fn new(config: Option<PathBuf>) -> Self {
         Self {
             state: Mutex::new(HostState {
@@ -704,6 +726,7 @@ impl AppHost {
             // `phosphor_buffer::grammar`.
             languages: Mutex::new(Languages::new(grammar::BUNDLED)),
             store: Arc::new(store::Shared::default()),
+            store_note: None,
         }
     }
 
@@ -1978,7 +2001,7 @@ fn vm() -> (Layer, Arc<AppHost>) {
 /// duplicate is gone rather than tested twice — the order is one function now,
 /// and a test that calls it is looking at the editor the program builds.
 fn stack(root: Option<&Path>, config: Option<PathBuf>) -> (Layer, Arc<AppHost>) {
-    let host = Arc::new(AppHost::new(config));
+    let host = Arc::new(AppHost::opened(config));
     let runtime = boot(root, &host);
     let mut layer = Layer::new(runtime);
     // **The stack, and these three lines are the whole of the order** (§34).
@@ -2212,7 +2235,15 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // turns it into a file. `Surface::Buffer` is the guard rather than
     // `cli.repl`, because a boot fault and the `--float` fixture are also
     // surfaces that answer the question themselves.
-    let mut notice: Option<String> = restore_note
+    // **The seen journal outranks the undo one**, and the order is the same
+    // argument the rungs below it settle: *"one row, two true things, and the
+    // surprising one has to be the one said out loud."* Losing a buffer's undo
+    // history costs this file's `u`; losing the seen journal costs every
+    // marker in the workspace, which is the larger surprise.
+    let mut notice: Option<String> = host
+        .store_note
+        .clone()
+        .or(restore_note)
         .or_else(|| fresh.as_deref().map(new_file))
         .or_else(|| (editing.file.is_none() && matches!(surface, Surface::Buffer)).then(no_file));
 

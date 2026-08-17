@@ -101,7 +101,7 @@ use phosphor_core::request::{
     TextObject, ThreadId, WatchId,
 };
 use phosphor_core::store::anchor::resolve;
-use phosphor_core::store::{Fingerprint, Snapshot, SyntaxStep, Tier};
+use phosphor_core::store::{self, Fingerprint, Snapshot, SyntaxStep, Tier, persist};
 use phosphor_core::value::{Args, Value, Wire, WireError};
 use proptest::prelude::*;
 use proptest::test_runner::TestCaseError;
@@ -1881,6 +1881,104 @@ proptest! {
             resolve(&fingerprint, &snapshot).is_none(),
             "invented a location for a line that was deleted",
         );
+    }
+
+    /// **Every seen-state record round-trips through its codec** (`T044`).
+    ///
+    /// `journal.rs`'s `Folded` doc is explicit that a `snapshot` which loses
+    /// something loses it *"permanently and silently"*, and the codec is the
+    /// half of that a hand-written example checks least well: an optional
+    /// field, an empty vector and a multi-step syntax path are three shapes
+    /// nobody writes by hand three times.
+    #[test]
+    fn every_seen_record_round_trips(
+        id in 1_u64..10_000,
+        line in 1_u32..100_000,
+        text in "[a-z_ ();=]{0,40}",
+        steps in prop::collection::vec(("[a-z_]{1,12}", "[A-Za-z ]{1,20}"), 0..4),
+        seen in any::<bool>(),
+        labelled in any::<bool>(),
+        revisions in 0_u32..64,
+    ) {
+        let syntax: Vec<SyntaxStep> = steps
+            .into_iter()
+            .map(|(kind, name)| SyntaxStep::new(kind, name))
+            .collect();
+        let span = Span {
+            start: Position { line, column: 1 },
+            end: Position { line, column: 9 },
+        };
+        let region = store::Region {
+            id: RegionId(id),
+            path: PathBuf::from("src/retry.rs"),
+            span,
+            author: Actor::Claude,
+            declared_by: Actor::Cli,
+            state: if seen { store::SeenState::Seen } else { store::SeenState::Unseen },
+            revisions,
+            fingerprint: labelled
+                .then(|| Fingerprint::new(syntax.clone(), &text, line)),
+        };
+        let anchor = store::Anchor {
+            id: AnchorId(id),
+            path: PathBuf::from("src/retry.rs"),
+            label: labelled.then(|| "a".to_owned()),
+            span,
+            fingerprint: Fingerprint::new(syntax, &text, line),
+            tier: if seen { Tier::Line } else { Tier::Node },
+        };
+
+        for record in [
+            persist::Record::Region(Box::new(region)),
+            persist::Record::Anchor(Box::new(anchor)),
+            persist::Record::RegionGone(RegionId(id)),
+            persist::Record::AnchorGone(AnchorId(id)),
+            persist::Record::Minted { regions: id, anchors: id / 2 },
+        ] {
+            let mut out = Encoder::new();
+            store::Seen::encode(&record, &mut out);
+            let back = store::Seen::decode(&out.finish())
+                .expect("what this schema wrote, it reads");
+            prop_assert_eq!(back, record);
+        }
+    }
+
+    /// **`fold(snapshot(state)) == state`, over generated histories.**
+    ///
+    /// The law `Folded`'s own doc says to test, and the one that makes
+    /// compaction safe: `Log::compact` rewrites the file as `snapshot(state)`.
+    #[test]
+    fn folding_a_seen_snapshot_gives_the_same_state(
+        ids in prop::collection::vec(1_u64..40, 1..24),
+        drops in prop::collection::vec(1_u64..40, 0..12),
+    ) {
+        let mut state = store::Seen::default();
+        for id in &ids {
+            let span = Span {
+                start: Position { line: 1, column: 1 },
+                end: Position { line: 2, column: 1 },
+            };
+            state.apply(persist::Record::Region(Box::new(store::Region {
+                id: RegionId(*id),
+                path: PathBuf::from("a.rs"),
+                span,
+                author: Actor::Claude,
+                declared_by: Actor::Claude,
+                state: store::SeenState::Unseen,
+                revisions: 0,
+                fingerprint: None,
+            }))).expect("a region fits");
+        }
+        for id in &drops {
+            state.apply(persist::Record::RegionGone(RegionId(*id)))
+                .expect("a tombstone for nothing is not an error");
+        }
+
+        let mut rebuilt = store::Seen::default();
+        for record in state.snapshot() {
+            rebuilt.apply(record).expect("a snapshot folds");
+        }
+        prop_assert_eq!(rebuilt, state);
     }
 
     /// **A syntax path that matches nothing falls to the line tier rather than

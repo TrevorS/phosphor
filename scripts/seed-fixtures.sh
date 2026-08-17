@@ -155,17 +155,22 @@ if [ "$broken" -gt 0 ]; then
 fi
 
 if [ "$landed" -gt 0 ]; then
-    echo "seed-fixtures: $landed line(s) are no longer refusals — a task landed. This script only reports;"
-    echo "  it does not yet persist anything or assert CP-5's fixed-point. See fixtures/README.md's residue table."
+    echo "seed-fixtures: $landed line(s) are no longer refusals — a task landed."
     echo
-    echo "  ONE PROCESS PER LINE, AND NOTHING SURVIVES BETWEEN THEM. Every line above is its own"
-    echo "  'phosphor --eval', so the store a line writes to is gone before the next line starts."
-    echo "  T041 made 'declare-regions!' answer 6 and the two 'mark-seen!' lines below it answer 0"
-    echo "  against the empty store of a fresh process — three landed capabilities and nothing seeded."
-    echo "  Seen-state persistence is T044 and regions need the same; until one of them lands, this"
-    echo "  file reports what each call DOES, not what the fixture HOLDS. Recorded at T041 in"
-    echo "  docs/TASKS.md rather than worked around here, because a seeding mechanism that quietly"
-    echo "  seeds nothing is exactly what CP-5's tapes would be built on."
+    echo "  ONE PROCESS PER LINE, AND STATE NOW SURVIVES BETWEEN THEM (T044). Every line above is"
+    echo "  still its own 'phosphor --eval', but the store is journalled to"
+    echo "  \$XDG_STATE_HOME/phosphor/<hash-of-canonical-root>/seen.journal, so a line reads what the"
+    echo "  lines before it wrote."
+    echo
+    echo "  This paragraph said the opposite for a phase, and the two 'mark-seen!' lines are the"
+    echo "  proof either way: against the empty store of a fresh process they answered 0, and they"
+    echo "  answer 1 now — they find the regions 'declare-regions!' wrote in an earlier process."
+    echo "  That is V006's criterion ('seeded store state is reachable through phosphor --eval'),"
+    echo "  and it was moved onto T041, answered there rather than met, and met here."
+    echo
+    echo "  WHAT IS STILL NOT ASSERTED: CP-5's fixed-point. This script reports what each line"
+    echo "  answers; it does not check that running it twice leaves the same store, or that two"
+    echo "  machines get identical output. See fixtures/README.md's residue table."
 fi
 
 exit 0

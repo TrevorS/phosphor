@@ -1557,6 +1557,63 @@ mod driven {
         // mark case go" should find the answer at the site.
     }
 
+    /// **`T044`: seen-state survives `kill -9`.**
+    ///
+    /// The task asks for *"survives restart and `kill -9`"*, and `kill -9` is
+    /// the harder half by a long way — no exit code runs, no destructor, no
+    /// `fsync`. `journal.rs` is designed against exactly this: an append is a
+    /// `write_all` and nothing more, so the bytes belong to the kernel's page
+    /// cache the moment the call returns and outlive the process. What a crash
+    /// can cost is a torn record at the tail, which the next open truncates.
+    ///
+    /// Both sessions share one [`Scratch`], so they share one `XDG_STATE_HOME`
+    /// and therefore one workspace journal. That is the whole mechanism under
+    /// test: **two processes, one store.**
+    #[test]
+    fn seen_state_survives_a_kill_nine() {
+        let scratch = Scratch::new("seen-persist");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\n").expect("a fixture");
+
+        // Session one: three regions, one of them marked seen, then killed.
+        let first = Editor::open(&file, &scratch.state(), &runtime);
+        first.press_until(b":repl\r", "steel");
+        first.press_until(
+            declare(&file, &[(1, 2), (3, 4), (5, 5)]).as_bytes(),
+            "landed=3",
+        );
+        first.press_until(COUNT, "unseen=3");
+        first.press_until(
+            format!(
+                "(string-append \"marked=\" (number->string (mark-seen! (hash \"kind\" \
+                 \"explicit\" \"path\" \"{}\" \"span\" (hash \"start\" (hash \"line\" 3 \
+                 \"column\" 1) \"end\" (hash \"line\" 4 \"column\" 1))))))\r",
+                file.display()
+            )
+            .as_bytes(),
+            "marked=1",
+        );
+        first.press_until(COUNT, "unseen=2");
+        // **No clean quit.** `SIGKILL`, which is the criterion.
+        first.kill();
+
+        // Session two: a fresh process, the same workspace.
+        let second = Editor::open(&file, &scratch.state(), &runtime);
+        second.press_until(b":repl\r", "steel");
+        second.press_until(COUNT, "unseen=2");
+        let drawn = second.press_until(
+            b"(string-append \"seen=\" (number->string (seen-count)))\r",
+            "seen=1",
+        );
+        second.quit();
+
+        assert!(
+            shows(&drawn, "seen=1"),
+            "the region marked before the kill is still marked; frame was: {drawn}"
+        );
+    }
+
     /// **`T042`'s keystroke criterion, end to end.** `m{a-z}` writes a mark,
     /// `` `{a-z} `` reads it back, and the proof is the *file* rather than the
     /// statusline — a cursor that says it is on line 1 and edits line 5 is

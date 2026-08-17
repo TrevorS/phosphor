@@ -29,6 +29,7 @@
 
 pub mod anchor;
 pub mod diagnostics;
+pub mod persist;
 pub mod region;
 
 use std::path::Path;
@@ -39,6 +40,7 @@ use crate::value::Value;
 
 pub use self::anchor::{Anchor, Anchors, Fingerprint, Reanchored, Snapshot, SyntaxStep, Tier};
 pub use self::diagnostics::Diagnostics;
+pub use self::persist::{Seen, SeenLog};
 pub use self::region::{Declared, Lens, Region, Regions, Scope, SeenState};
 
 /// The store handle. Mutation goes through `&mut Store`, and that is precisely
@@ -183,10 +185,10 @@ impl Store {
     /// rewrite that leaves everything where it was is not news, and `T079`'s
     /// cache is the reader that would otherwise redraw on every save.
     pub fn reanchor(&mut self, path: &Path, snapshot: &Snapshot) -> Reanchored {
-        let outcome = self.anchors.reanchor(path, snapshot);
-        let regions_moved = self.regions.reanchor_in(path, snapshot);
+        let mut outcome = self.anchors.reanchor(path, snapshot);
+        outcome.regions = self.regions.reanchor_in(path, snapshot);
         self.regions.fingerprint_in(path, snapshot);
-        if outcome.changed() || regions_moved > 0 {
+        if outcome.changed() {
             self.moved();
         }
         outcome
@@ -214,6 +216,50 @@ impl Store {
             self.moved();
         }
         dropped
+    }
+
+    // -----------------------------------------------------------------------
+    // Persistence — `T044`
+    // -----------------------------------------------------------------------
+
+    /// The store's persistable half: regions, anchors, and the id counters.
+    ///
+    /// Diagnostics are deliberately absent. They are a language server's
+    /// assertion about the *current* text, and a restored one would be a claim
+    /// nobody is standing behind — the server republishes on attach anyway.
+    #[must_use]
+    pub fn to_seen(&self) -> Seen {
+        Seen {
+            regions: self
+                .regions
+                .all()
+                .map(|region| (region.id, region.clone()))
+                .collect(),
+            anchors: self
+                .anchors
+                .all()
+                .map(|anchor| (anchor.id, anchor.clone()))
+                .collect(),
+            minted_regions: self.regions.minted(),
+            minted_anchors: self.anchors.minted(),
+        }
+    }
+
+    /// A store rebuilt from what was on disk.
+    ///
+    /// **The revision starts at its initial value**, not at whatever it was
+    /// when the process died. A revision is *"what every answer off this store
+    /// is true at"* within one process — it is a cache key, not an identity —
+    /// and restoring a high one would let a `T079` cache from a previous run
+    /// believe its entries were current.
+    #[must_use]
+    pub fn restore(seen: Seen) -> Self {
+        Self {
+            regions: Regions::restore(seen.regions.into_values(), seen.minted_regions),
+            anchors: Anchors::restore(seen.anchors.into_values(), seen.minted_anchors),
+            diagnostics: Diagnostics::default(),
+            revision: Revision::default(),
+        }
     }
 
     // -----------------------------------------------------------------------

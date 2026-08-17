@@ -1826,7 +1826,7 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   >
   > [`Fingerprint`]: ../crates/phosphor-core/src/store/anchor.rs
 
-- [ ] **T044 · Seen-state persistence**
+- [x] **T044 · Seen-state persistence**
   `$XDG_STATE_HOME/phosphor/<hash-of-canonical-root>/`, keyed on path never VCS identity (Q1).
   Append-only log + compaction, **same format as undo** (T030).
   **And the regions themselves, which `T041` found this task also owes.**
@@ -1852,6 +1852,63 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > root, and `phosphor/src/store.rs`'s `key_for` currently reconciles a declared path against the
   > *working directory* — enough for one session, and not the canonical-root hashing Q1 specifies.
   > `fixtures/README.md`'s residue item 7 is the same question.
+
+  > **Built, and it was the small half of what this entry describes.** `journal.rs` had already
+  > shipped everything but the fold, two phases early and on purpose — its own header lists what
+  > `T044` *"gets"*: the codec, the framing and CRC, `Recovery` and the torn-tail truncation,
+  > `Log` with append/compact/`compact_if_needed`, the atomic rewrite, `state_home` /
+  > `workspace_dir` / `workspace_key` with Q1's canonical-root keying **and its collision
+  > marker**, and `Stream::SEEN` reserved so the two streams cannot collide on disk. What it
+  > *"supplies"* is one `impl Folded`, and that is `store/persist.rs`.
+  >
+  > **The two halves of the workspace-root question above turned out to be separable**, where
+  > this entry read them as one problem: the canonical-root hashing Q1 asks for already existed
+  > in `journal.rs` and is what the seen journal is keyed on; `key_for`'s working-directory
+  > reconciliation is a *path-spelling* rule for region records and is untouched. The first was
+  > never missing. The second is not what Q1 was about.
+  >
+  > **Every record is a whole row, not a delta.** `Folded`'s law is `fold(snapshot(state)) ==
+  > state`, and `Log::compact` rewrites the file as `snapshot(state)` — so a `snapshot` that
+  > loses something loses it permanently and silently. Whole-row upserts make `snapshot` *"one
+  > record per live row"* and the law true by construction. A delta schema makes it a
+  > reconstruction problem, which is the shape of bug that surfaces only after a compaction, in a
+  > file nobody can read, a week later. The cost is bytes, and bytes are what compaction is for.
+  >
+  > **A fifth record nobody would guess at: `Minted`.** Both collections mint ids monotonically so
+  > a surface holding a dropped id gets nothing back — and the largest id *still alive* is not the
+  > largest that ever existed. Drop the highest region and that fact leaves with it, so restoring
+  > from live rows alone reissues a retired id after a restart. One record, coalesced to exactly
+  > one by every compaction, folded with `max` so a replay cannot walk it backwards.
+  >
+  > **Anchors ride along**, because a mark is user state in exactly the way seen-state is.
+  > **Diagnostics deliberately do not**: they are a language server's assertion about the current
+  > text, and a restored one is a claim nobody is standing behind. The revision restarts at its
+  > initial value — a revision is a cache key within one process, and restoring a high one would
+  > let a `T079` cache from a previous run believe its entries were current.
+  >
+  > **A failed append disables the journal rather than failing the edit.** The alternative is an
+  > editor that refuses `s` because a disk filled up, trading a lost flag for a lost session. Not
+  > having a journal is a state this already supports — no `XDG_STATE_HOME`, a read-only state
+  > directory — so degrading into it is a path that already works.
+  >
+  > **`V006` is met, and the proof is the two lines that used to answer `0`.**
+  > `scripts/seed-fixtures.sh` is one `phosphor --eval` process per line; its own summary said
+  > *"ONE PROCESS PER LINE, AND NOTHING SURVIVES BETWEEN THEM"*, and that `declare-regions!`
+  > answered 6 while the two `mark-seen!` lines below it answered 0 against the empty store of a
+  > fresh process. They answer **1** now — they find the regions an earlier *process* wrote. That
+  > paragraph is rewritten to say what is true, and to name what is still not asserted (`CP-5`'s
+  > fixed point: running it twice, and two machines agreeing).
+  >
+  > *"In both a jj repo and a bare directory"* is **one** behaviour rather than two that agree,
+  > and `a_vcs_directory_does_not_change_where_state_lives` is the assertion: planting `.jj` and
+  > `.git` changes nothing about where state goes, which is Q1's *"keyed on path never VCS
+  > identity"*. The tempting optimisation is the bug — keying on a repository root would make a
+  > worktree, a submodule and a fresh clone three stores for one checkout, and would leave a
+  > directory that is not a repo at all with nowhere to put anything.
+  >
+  > `kill -9` is pressed at a real pty by `seen_state_survives_a_kill_nine`: two sessions, one
+  > `XDG_STATE_HOME`, three regions with one marked seen, `SIGKILL` rather than a clean quit, and
+  > the second process reads `unseen=2` / `seen=1`.
 
 - [ ] **T045 · Picker widget**
   `ratatui-textarea` filter line + nucleo matcher **off-thread** + list + preview split (dropped
