@@ -1806,6 +1806,22 @@ here rather than left open because "wait for `T046`" is an answer.
   through the loop the way Actions do. The second is right, and it belongs with the first caller
   that wants it: `T046`'s picker sources asking *what is unseen **here***. Recorded as owed work
   on `T046` in [TASKS.md](TASKS.md).
+
+  **`T046` shipped and was not the caller — the ruling named one by prediction.** Neither shipped
+  source asks about the cursor: `2a` lists every unseen region in the workspace and `3d` groups
+  them by path, both whole-store reads `unseen-regions` already answers. Recorded rather than
+  quietly satisfied, because building the routing with no caller is the *"built, tested and
+  uncomposed"* shape this build has already found twice.
+
+  **It has three real callers now, all from Window E, and they hit the wall from the other
+  side.** `picker-rows` (a query tagged `T045`, landed with `T046`) cannot run a source, because
+  running a source is running scheme and `Host::query` takes `&self` — so it answers from a
+  snapshot the loop publishes and only for the *open* picker, with every other ask answering an
+  empty list, which is `query.rs`'s *"an absent thing answers empty"* rather than a refusal
+  invented for the occasion. `T047`'s `grep` source cannot call `buffer-lines` and cannot ask
+  which file is focused, so the host hands both **down** as source arguments. Three callers, one
+  shape — and that shape is what the routing would replace, which is a better argument for
+  building it than the prediction was.
 - **§43 · `open-float` named a registry nothing created. RULED: shape 1, and built.**
   `define-float-surface` is a capability now, shaped like `define-picker-source` — an id and a
   `String` of scheme, because source text is how a body crosses the barrier. The layer registers a

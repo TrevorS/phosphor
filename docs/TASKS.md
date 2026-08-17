@@ -1476,6 +1476,15 @@ is exact.
   > **None of this ticks `T040`.** The criterion is still *"against other states"* and there is
   > still one source of regions until `T041`.
 
+  > **The blocker named above is gone, and this is still not ticked.** `T041` landed the store and
+  > `T042`/`T087` gave the column two more sources: the loop concatenates diagnostic regions with
+  > the store's unseen and seen ones and calls `gutter::state_column` once, so *"other states"*
+  > now exist to be correct against. What is missing is the **proof** — a file where a diagnostic
+  > and an unseen region cover the same line, showing the trouble tier winning at a real terminal.
+  > That is a test, not a design question, and it is small; it is recorded here rather than taken
+  > during Window E's merge because ticking a criterion on the grounds that it *could* be met is
+  > the failure this entry was written to avoid in the first place.
+
 ### ✋ CP-4 — Boring on purpose
 
 **Run:** `cargo run -- <a .rs, a .ts, and a .py file>`

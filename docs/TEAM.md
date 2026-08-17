@@ -460,6 +460,28 @@ built on an unverified foundation.
 > `scripts/seed-fixtures.sh`'s own summary, which is three places rather than one because a
 > criterion nobody can close is exactly the kind that goes quiet.
 >
+> **Window E is built.** All ten of its tasks are ticked — `T042`–`T049`, plus `T080`, which
+> ticked with `T048` because its acceptance was always *"`:arch` is built entirely from the hatch,
+> with no primitive of its own"*, and `T087`. The mechanical half is green at **1,277 tests and
+> 19 lints**, run as one `just gate`. `V006`'s store half is met: `T044` persists seen-state and
+> the regions it refers to, so `scripts/seed-fixtures.sh`'s two `mark-seen!` lines answer `1`
+> where they answered `0` against the empty store of a fresh process. The session half of `V006`
+> is still open and `fixtures/README.md`'s residue list says which subsystems owe it.
+>
+> **Three things this window found that are worth more than the tasks.** A ruling can name the
+> wrong caller: `OPEN-QUESTIONS.md` §42 was parked on `T046` on the prediction that a picker
+> source would be the first thing to ask *what is unseen here*, and neither shipped source asks —
+> it is re-recorded against `picker-rows`, which is a caller rather than a guess. A test can
+> assert a machine instead of a program: four claims about picker responsiveness and tint cost
+> were written, run, and found wrong, three of them wall-clocks in disguise, and each is kept in
+> the test that was wrong. And **the pty is still the only thing that finds a whole class of
+> defect** — `Node::Picker` had no arm in the interpreter's height function, so its float
+> collapsed to chrome around two blank rows while every widget test passed.
+>
+> `CP-5` is the checkpoint this window feeds, and `CP-4`'s manual half is *still* outstanding.
+> Two unrun checkpoints is one more than the rule above allows, and it is recorded rather than
+> amended for the reason the last paragraph gives.
+>
 > That bookkeeping gap is closed. `TASKS.md` now carries `CP-2 · **PASSED**` and dates the verdict
 > to 2026-08-12, where it belonged all along: the manual half was run and answered in conversation,
 > and never written down, so this file and `TASKS.md` disagreed with the build for a whole window.

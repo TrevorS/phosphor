@@ -1,13 +1,14 @@
 # `fixtures/` — V006's deterministic fixture repo
 
-**`V006` is not done.** This tree and `scripts/seed-fixtures.sh` are what is
-buildable of it today; the acceptance criterion in `docs/TASKS.md`
-(*"`CP-5`'s tapes produce identical output on two machines"*) cannot be met
-until the semantic store exists (`T041`, `S5`, two windows away as of this
-build) and the session/review/watch subsystems behind it (`T050`, `T053`,
-`T054`, `T057`, `T067`, `T068`, `T077` — `S6`–`S8`). See "Residue" at the
-bottom for exactly what each of those has to do before this tree is fully
-seeded. Nothing in this file claims otherwise.
+**`V006` is not done, and one of its two halves now is.** `T044` landed
+seen-state persistence, so *"seeded store state is reachable through
+`phosphor --eval`"* is **met**: the two `mark-seen!` lines in the plan answer
+`1` where they answered `0` against the empty store of a fresh process. What
+is still open is the other half — `CP-5`'s *"tapes produce identical output on
+two machines"* — which needs the session/review/watch subsystems the plan's
+remaining lines call (`T050`, `T053`, `T054`, `T057`, `T067`, `T068`, `T077` —
+`S6`–`S8`), and a determinism answer for whatever stamps time. See "Residue"
+at the bottom. Nothing in this file claims otherwise.
 
 ## Why `fixtures/`, not `tests/fixtures/`
 
@@ -32,10 +33,17 @@ draw (`src/retry.rs:24`, `src/retry.rs:19-21`) instead of needing a
 `fixtures/` prefix nobody drew. `scripts/seed-fixtures.sh` `cd`s into
 `fixtures/` before calling `phosphor --eval` for exactly this reason.
 
-**Flagged, not assumed:** nothing has verified this is how a real workspace
-root will actually be chosen once `T041`/`T044` exist — `Runtime::root()`
-and any future "what is my workspace" resolution are `spine`'s and
-`store`'s calls, not `harness`'s. If a future window picks a different rule
+**Answered by `T044`, and the answer is the one this section hoped for.**
+State is keyed on `journal::workspace_key(canonical_root)` — Q1's
+*"keyed on path never VCS identity"* — and the root is the directory the
+editor was started in. `scripts/seed-fixtures.sh` `cd`s into `fixtures/`
+before calling `phosphor --eval`, so `fixtures/` **is** its own workspace
+root and every path here stays byte-identical to the mockups.
+`a_vcs_directory_does_not_change_where_state_lives` is the assertion:
+planting `.jj` and `.git` changes nothing, so the *"nearest VCS root"* rule
+this paragraph feared was not merely avoided — it is the rule Q1 rules out.
+
+The original flag, kept because it is why the answer was checked: If a future window picks a different rule
 (e.g. "the nearest VCS root," which would make `fixtures/` *not* its own
 root since this repo's own root is one level up), this file's paths need
 revisiting. Recorded here so that decision has one place to land.
@@ -292,16 +300,23 @@ The three things `V006`'s brief names, and how each is met:
 
 Read against the tree this session, not assumed:
 
-1. ~~**`T041` (store core + region state machine, `S5`).**~~ **Landed, and it
-   was not the blocker this entry thought it was.** `declare-regions!` answers
-   `6` now and both `mark-seen!` lines answer — but the fixture still holds
-   nothing, because **`scripts/seed-fixtures.sh` runs one `phosphor --eval`
-   process per line**. The store the declaration writes to is gone before the
-   next line starts, so line 16 marks two spans in an empty store and answers
-   `0`. This entry read *"cannot persist anything"* and the operative word
-   turned out to be **persist**, not *declare*: what a seeded fixture needs is
-   `T044` (seen-state persistence), and regions need the same treatment on the
-   same terms. Recorded in full at `T041` in `docs/TASKS.md`.
+1. ~~**`T041` (store core), then `T044` (persistence).**~~ **Both landed, and
+   the store half of `V006` is met.** The history is worth keeping because
+   each step corrected the one before it:
+
+   `T041` made `declare-regions!` answer `6` and the fixture still held
+   nothing — **`scripts/seed-fixtures.sh` runs one `phosphor --eval` process
+   per line**, so the store a declaration wrote to was gone before the next
+   line started and line 16 marked two spans in an empty store, answering `0`.
+   This entry had read *"cannot persist anything"*, and the operative word
+   turned out to be **persist**, not *declare*.
+
+   `T044` is that persistence, and it took regions with it for the reason
+   `T041` found: a seen flag refers to a region, and if the regions are gone
+   the flag has no subject. The two `mark-seen!` lines answer `1` now — they
+   find, in a *different process*, the regions an earlier line wrote. The
+   script's own closing paragraph said the opposite for a phase and is
+   rewritten to say what is true.
 
    Running the script for the first time since `T100` also found two bugs in
    it — it aborted on its own first line under `set -e`, and its classifier
@@ -315,13 +330,19 @@ Read against the tree this session, not assumed:
 4. **`T068` (threads, `S7`)** for `start-thread!`.
 5. **`T067` (inbox, `S7`)** for `notify!`.
 6. **`T077` (watches, `S8`)** for `place-watch!`.
-7. **The workspace-root question above** — whether `fixtures/` being its
-   own root (rather than `fixtures/` being a subdirectory of the repo's own
-   root) is how `T041`/`T044` will actually resolve "workspace root" once
-   they exist. Flagged, not decided here.
-8. **Whichever of `T041`/`T044`/`T050` ends up stamping time** needs to do
-   so in a way two machines agree on — see "Determinism" above.
+7. ~~**The workspace-root question above.**~~ **Answered by `T044`**, and in
+   this tree's favour: state is keyed on the canonical path of the directory
+   the editor started in, never on VCS identity, so `fixtures/` is its own
+   workspace root exactly as this file assumed. See the section above.
+8. **Whichever of `T044`/`T050` ends up stamping time** needs to do so in a
+   way two machines agree on — see "Determinism" above. **Still open, and
+   `T044` did not close it**: the seen journal persists *what* and not
+   *when*, so nothing it writes can differ between machines — which removes
+   the store from the list of suspects without answering the question for the
+   session subsystems that will carry a clock.
 
 None of this is `V006` marking itself done. `docs/TASKS.md`'s checkbox for
-`V006` stays unchecked; this file is the residue list the next window reads
-instead of rediscovering the gap from scratch.
+`V006` stays unchecked — the store half is met and the session half is not,
+and a half-met checkbox is the kind of half-truth this file exists to avoid.
+This is the residue list the next window reads instead of rediscovering the
+gap from scratch.
