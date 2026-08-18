@@ -1936,6 +1936,44 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > (`T067`), `diff-disk` (`T070`), `reattach` (`T057`), `comment` (`T068`), and `close-buffer`,
   > which is not deferred but declines while there is one pane and can only honestly name `T088`.
   >
+  > **The rest of the surface, audited (2026-08-17).** What was left after the two passes above,
+  > and what the audit *cleared* as well as what it filled.
+  >
+  > * **Filled — six live keys, every one the second half of a pair whose first half was tested.**
+  >   `zc`/`zo`/`zM` (only `za` and `zR` were pressed; a toggle passing says nothing about whether
+  >   the explicit close/open pair are wired to the right states), `[u` and `SPC u n` (one
+  >   capability, three bindings, one pressed — the shape the `<C-i>` defect had), and `<C-p>` (one
+  >   signed delta with only the positive sign exercised).
+  > * **Filled — `esc` on every surface you can open.** Eight `Surface` variants ship; `Boot`,
+  >   `Fixture` and `Buffer` are not things a key opens over your file. For the other three, `esc`
+  >   was *pressed* in three tests and **asserted in none** — always cleanup before the next
+  >   assertion — and help's dismissal is tested through `q`, which its footer documents, not
+  >   through `esc`. A surface shipped without a way out would have been caught by nothing.
+  > * **Filled — `]b`/`[b` joined the deferred table**, which had nine rows while the deferred
+  >   surface had eleven. `goto_sequence` names `T053` for `BlockFile`.
+  > * **Cleared — the MCP and CLI doors.** `parity.rs` walks `registrations` and exercises all
+  >   three doors at every row, building each call from that capability's own canonical example.
+  >   That is enumeration rather than a list, so it cannot rot the way a hand-written one does —
+  >   the same principle these surveys are applying, already in place one layer over.
+  > * **Cleared — counts, registers, macros, operators, text objects.** Covered in
+  >   `phosphor-core/tests`; pressing each through a terminal would be re-testing `Machine::feed`.
+  > * **Not testable here, and documented.** Resize: `coalesce`'s own doc records that a pty
+  >   harness cannot exercise it, because the slave fd is moved into the child and Apple's master
+  >   rejects `TIOCSWINSZ`. Unit tests on `coalesce` and the width walks carry it instead.
+  >
+  > **Still open**, and named rather than left implied: `<C-d>`/`<C-u>`/`<C-f>`/`<C-b>` press
+  > nothing in any pty test. The `ScrollRequest`s they build *are* tested in
+  > `phosphor-core/tests/input.rs` and across the screen tests, so what is missing is only the
+  > keystroke→request hop — the same hop the `<C-i>` defect lived in, which is why it is written
+  > down rather than dismissed.
+  >
+  > **A test that passed a planted violation, and the fixture was the bug.** The `[u` test was
+  > written with two regions and a plant of `Seek::Prev => Next` **passed** it: `Next` wraps
+  > (`find(|line| *line > here).unwrap_or(lines[0])`), so from the last of two regions forwards
+  > and backwards land on the same line. Three regions with the walk stopping on the middle one is
+  > what makes the two answers differ, and the same plant then fails. Planting is not a formality —
+  > it is the only thing that catches an assertion which is true for the wrong reason.
+  >
   > **A methodological finding worth more than any of them.** The first pass of this survey used
   > a quiet press and a read of the final grid, and reported four working keys as silently broken —
   > including `SPC j`, written up as *"produces nothing at all"* before being checked. The grid is

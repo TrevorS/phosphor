@@ -1943,6 +1943,11 @@ mod driven {
         let deferred: &[(&[u8], &str, &str)] = &[
             (b"?", "search backward", "T058"),
             (b"N", "previous search match", "T058"),
+            // The review-block walk. Added when the audit noticed the table had
+            // nine rows and the deferred surface had eleven: `goto_sequence`
+            // names `T053` for `BlockFile`, and both directions are bound.
+            (b"]b", "next file in the review block", "T053"),
+            (b"[b", "previous file in the review block", "T053"),
             (b" cp", "prompt claude", "T058"),
             (b" cs", "steer the turn", "T058"),
             (b" ci", "interrupt the session", "T062"),
@@ -2150,6 +2155,194 @@ mod driven {
                 shows(&said, task),
                 ":{command} is not built and must say which task builds it; \
                  frame was: {said}"
+            );
+        }
+        editor.quit();
+    }
+
+    /// **`zc`, `zo` and `zM` — the fold keys that are not `za` or `zR`.**
+    ///
+    /// `za` toggles and `zR` opens everything, and those two were the whole of
+    /// what any test pressed. The other three are the *explicit* forms — close
+    /// this one, open this one, close everything — and each is a distinct arm
+    /// (`set-fold` with `folded`/`unfolded`, and `fold-all`). A toggle passing
+    /// says nothing about whether the explicit pair are wired to the right
+    /// states, which is exactly the mixup a toggle cannot expose.
+    ///
+    /// The layer redeclares `rust` with no server, for the reason
+    /// `za_closes_the_fold_the_cursor_is_in` gives at length: a `.rs` file
+    /// otherwise starts whatever is installed, which draws frames no key asked
+    /// for.
+    #[test]
+    fn zc_zo_and_zm_are_the_explicit_folds() {
+        let scratch = Scratch::new("folds-explicit");
+        let runtime = copy_layer(&scratch.path);
+        fs::write(
+            scratch.persisted().join("persisted.scm"),
+            "(define-language! \"rust\"\n  (hash \"extensions\" '(\"rs\")\n        \
+             \"grammar\" \"rust\"\n        \"lsp_command\" (list)\n        \
+             \"comment_prefix\" \"//\"))\n",
+        )
+        .expect("the config home takes a declaration");
+        let file = scratch.path.join("folded.rs");
+        fs::write(
+            &file,
+            "fn outer() {\n    let marker_inside_the_fold = 1;\n}\n\
+             fn second() {\n    let other_marker = 2;\n}\n",
+        )
+        .expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let grid = |screen: &Screen| {
+            (0..SCREEN.ws_row)
+                .map(|row| screen.line(row))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        // `zc` closes, and unlike `za` it is not a toggle: pressing it on an
+        // already-closed fold leaves it closed.
+        editor.press(b"zc");
+        assert!(
+            !shows(&grid(&editor.screen()), "marker_inside_the_fold"),
+            "zc closed the fold the cursor is in"
+        );
+        editor.press(b"zc");
+        assert!(
+            !shows(&grid(&editor.screen()), "marker_inside_the_fold"),
+            "and pressing it again did not re-open it, which is what makes it \
+             not a toggle"
+        );
+
+        // `zo` opens the same one.
+        let opened = editor.shown_on_grid(b"zo", "marker_inside_the_fold");
+        assert!(
+            grid(&opened).contains("marker_inside_the_fold"),
+            "zo opened the fold zc closed"
+        );
+
+        // `zM` closes every fold — the half `zR` mirrors, and the one no test
+        // pressed while `zR` had one.
+        editor.press(b"zM");
+        let all = grid(&editor.screen());
+        editor.quit();
+        assert!(
+            !shows(&all, "marker_inside_the_fold") && !shows(&all, "other_marker"),
+            "zM closed both folds, not just the one under the cursor; \
+             screen was:\n{all}"
+        );
+    }
+
+    /// **`[u` and `SPC u n` — the two ways into the unseen walk that `]u` is
+    /// not.**
+    ///
+    /// One capability, three bindings, one of them pressed. That is the shape
+    /// the `<C-i>` defect had: a second spelling nobody exercised, unreachable
+    /// for a reason the first spelling could not show.
+    ///
+    /// **Three regions, and the walk stops on the middle one.** Two is not
+    /// enough and the first draft of this test used two: `Next` wraps —
+    /// `find(|line| *line > here).unwrap_or(lines[0])` — so from the *last*
+    /// region a forwards seek lands on the first, which is exactly where
+    /// backwards lands too. A planted `Seek::Prev => Next` passed it. From the
+    /// middle of three the two answers differ, and the same plant fails.
+    #[test]
+    fn the_other_two_ways_into_the_unseen_walk() {
+        let scratch = Scratch::new("unseen-walk");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("walk.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\nsix\nseven\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(
+            declare(&file, &[(2, 3), (4, 5), (6, 7)]).as_bytes(),
+            "landed=3",
+        );
+        editor.press_until(b"(close-repl!)\r", "1    one");
+        let at = |screen: &Screen| screen.line(SCREEN.ws_row - 1);
+
+        // `SPC u n` — `3c`'s `+unseen · next`, the same capability `]u` names.
+        let next = editor.shown_on_grid(b" un", "2:1");
+        assert!(
+            at(&next).contains("2:1"),
+            "SPC u n walked to the first region; statusline was: {}",
+            at(&next)
+        );
+
+        // Forward again with the bracket spelling, onto the middle one — the
+        // only place from which backwards and forwards disagree.
+        let further = editor.shown_on_grid(b"]u", "4:1");
+        assert!(
+            at(&further).contains("4:1"),
+            "]u walked to the second; statusline was: {}",
+            at(&further)
+        );
+
+        // `[u` — backwards, the arm with no coverage at all. A `Prev` wired to
+        // `Next` would answer `6:1` here.
+        let back = editor.shown_on_grid(b"[u", "2:1");
+        editor.quit();
+        assert!(
+            at(&back).contains("2:1"),
+            "[u walked back to the first — the seek is a direction, not a \
+             synonym; statusline was: {}",
+            at(&back)
+        );
+    }
+
+    /// **Every surface you can open, you can escape.**
+    ///
+    /// Eight `Surface` variants ship; `Boot` and `Fixture` are startup and
+    /// scaffolding, and `Buffer` is what the others sit on. The rest are things
+    /// a key opens over your file, and the one property all of them owe you is
+    /// a way back out — an editor that can trap you on a float is a modal
+    /// editor with a hole in it.
+    ///
+    /// **Nothing asserted this.** `esc` is pressed after a picker in three
+    /// tests, always as *cleanup* before the next assertion and never as the
+    /// thing under test; help's dismissal is tested through `q`, which its own
+    /// footer documents, and not through `esc`. A surface shipped without an
+    /// escape would have been caught by nothing, and a table is what stops the
+    /// next one being added without one.
+    #[test]
+    fn every_surface_you_can_open_you_can_escape() {
+        let scratch = Scratch::new("escapable");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("s.txt");
+        fs::write(&file, "alpha\nbravo\ncharlie\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `(what opens it, a string only that surface draws)`.
+        let surfaces: &[(&str, &[u8], &str)] = &[
+            ("the REPL", b":repl\r", "steel"),
+            ("the help float", b":help\r", "agent-objects"),
+            ("the files picker", b" f", "Cargo.toml"),
+        ];
+        for (what, open, marker) in surfaces {
+            editor.shown_on_grid(open, marker);
+            editor.press_quietly(b"\x1b");
+            // Polled, because a dismissal is the *absence* of something and
+            // `shown_on_grid` can only wait for a presence.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut dismissed = false;
+            let mut last = String::new();
+            while Instant::now() < deadline {
+                let screen = editor.screen();
+                last = (0..SCREEN.ws_row)
+                    .map(|row| screen.line(row))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !shows(&last, marker) {
+                    dismissed = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(dismissed, "esc did not close {what}; screen was:\n{last}");
+            assert!(
+                shows(&last, "charlie"),
+                "and the buffer is underneath again; screen was:\n{last}"
             );
         }
         editor.quit();
@@ -3501,6 +3694,32 @@ mod driven {
             "the accepted row replaced the prefix under the cursor, and nothing else"
         );
         editor.quit();
+    }
+
+    /// **`<C-p>` walks the list back**, and only `<C-n>` had ever been pressed.
+    ///
+    /// `move-completion` takes a signed delta and these two keys are the two
+    /// signs — one arm, and half of it unexercised. The prose under the rule is
+    /// per item for the reason the test above gives, so it is also what says a
+    /// selection came *back*: `<C-n>` then `<C-p>` has to leave the first row's
+    /// sentence on screen, and a `<C-p>` wired to the wrong sign would leave
+    /// the third.
+    #[test]
+    fn ctrl_p_walks_the_completion_list_back() {
+        let (scratch, runtime, file) = toy("completion-prev", "completion", "let base = def\n");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+        editor.press(b"A");
+        editor.press_until(b"\x18", "3 attempts");
+        editor.press_until(b"\x0e", "The base delay");
+        let back = editor.press_until(b"\x10", "3 attempts");
+        editor.press_quietly(b"\x1b");
+        editor.quit();
+        assert!(
+            shows(&back, "3 attempts"),
+            "<C-p> put the first row's prose back, so the delta's sign is \
+             wired both ways; frame was: {back}"
+        );
     }
 
     /// **`CP-4`, verbatim:** *"i like being able to hit space to select and put
