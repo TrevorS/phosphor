@@ -112,7 +112,7 @@
 //! that proves it is now `initialize_params`' own test rather than an
 //! assertion nothing makes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::io;
 use std::ops::ControlFlow;
@@ -138,7 +138,7 @@ use phosphor_core::request::{
     CompletionKind, Diagnostic, Edit, FileEdits, FileSpan, LanguageId, LanguageSpec, Position,
     Severity, Span,
 };
-use tokio::io::{AsyncRead, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt as _, ReadBuf};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_util::compat::{TokioAsyncReadCompatExt as _, TokioAsyncWriteCompatExt as _};
 
@@ -407,7 +407,13 @@ pub enum Failure {
     /// response to `initialize`.
     Protocol(String),
     /// `initialize` did not answer inside [`ServerSpec::ready_timeout`].
-    Timeout,
+    ///
+    /// Carries what the server said on stderr while not answering, which is
+    /// usually the whole explanation — a server still indexing says so there,
+    /// and nowhere else, because it has not answered the request that would let
+    /// it say so in the protocol. Empty when it said nothing, which is its own
+    /// kind of answer.
+    Timeout(String),
 }
 
 impl fmt::Display for Failure {
@@ -416,7 +422,12 @@ impl fmt::Display for Failure {
             Self::Spawn(why) => write!(formatter, "could not start: {why}"),
             Self::Exited(why) => write!(formatter, "exited: {why}"),
             Self::Protocol(why) => write!(formatter, "protocol error: {why}"),
-            Self::Timeout => formatter.write_str("timed out during initialize"),
+            Self::Timeout(said) if said.is_empty() => {
+                formatter.write_str("timed out during initialize")
+            }
+            Self::Timeout(said) => {
+                write!(formatter, "timed out during initialize; it said: {said}")
+            }
         }
     }
 }
@@ -2471,6 +2482,169 @@ impl FrameScan {
     }
 }
 
+// ---------------------------------------------------------------------------
+// What a dying server said
+// ---------------------------------------------------------------------------
+
+/// How many stderr lines a failure may quote.
+///
+/// A server's dying words are the last few: node prints the exception and then
+/// its own version banner, and `tsserver` prefixes a stack. Ten is enough for
+/// both and small enough that the statusline's shed ladder still has something
+/// to drop.
+const LAST_WORDS_LINES: usize = 10;
+
+/// The longest stderr line kept, in bytes.
+///
+/// The same bound [`MAX_HEADER_BYTES`] exists for, one pipe over: a server that
+/// writes forever without a newline would otherwise grow a `String` until the
+/// process cannot survive it, and a client that guards its stdout and not its
+/// stderr has guarded one of the two pipes a child can flood.
+const LAST_WORDS_LINE_BYTES: usize = 400;
+
+/// How long a dying server is given to finish saying why.
+///
+/// Only on the failure path, and normally zero: the child is already gone by
+/// the time this is awaited, so its stderr is at EOF and the drain ends on the
+/// first poll. The bound is for the case that is not zero — a **grandchild**
+/// holding the pipe open, which is exactly what `typescript-language-server`
+/// does with `tsserver` — where waiting for EOF would mean never recording the
+/// crash at all.
+const LAST_WORDS_GRACE: Duration = Duration::from_millis(200);
+
+/// The tail of a server's stderr, kept so a failure can quote it.
+///
+/// # Why this exists at all
+///
+/// Because the client threw away the only thing that could explain a crash, and
+/// it cost a container to find that out. A server's stderr was `Stdio::null()`
+/// — for a good reason, Design Language §8's *"torn frame = P0"*, since
+/// inheriting it writes over the editor's own screen — but "do not draw it" and
+/// "do not read it" are different decisions and only the first one was
+/// intended. Two of `T036`'s four findings were sentences the server had
+/// already written down:
+///
+/// ```text
+/// Could not find a valid TypeScript installation. …  Exiting.
+/// ResponseError: phosphor's LSP client answers no requests yet
+/// ```
+///
+/// while the client reported `exited: the underlying channel reached EOF`,
+/// which is true and says nothing. Piped and quoted, the failure carries the
+/// answer to the question the user is about to ask.
+///
+/// Draining is not optional either: an unread pipe fills at 64 KiB and then
+/// **blocks the server** on its next log line, so the choice was never "null or
+/// nothing", it was "null or read it".
+#[derive(Debug, Default)]
+struct LastWords {
+    lines: Mutex<Tail>,
+}
+
+impl LastWords {
+    /// Everything kept, oldest first, on one line. Empty when the server wrote
+    /// nothing to stderr, which most do most of the time.
+    fn said(&self) -> String {
+        self.lines
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .joined()
+    }
+
+    /// Adds what the server said to `why`, or leaves `why` alone when it said
+    /// nothing.
+    fn quote(&self, why: &str) -> String {
+        let said = self.said();
+        if said.is_empty() {
+            why.to_owned()
+        } else {
+            format!("{why}; it said: {said}")
+        }
+    }
+}
+
+/// A bounded ring of the most recent complete lines, plus the partial one.
+#[derive(Debug, Default)]
+struct Tail {
+    lines: VecDeque<String>,
+    partial: String,
+}
+
+impl Tail {
+    /// Reads a chunk of stderr. Chunk boundaries are arbitrary — this is a
+    /// stream, so a line may arrive one byte at a time, and a line may never
+    /// arrive at all, which is why [`joined`](Self::joined) includes the
+    /// partial one: a server killed mid-sentence still said something.
+    fn feed(&mut self, bytes: &[u8]) {
+        for piece in String::from_utf8_lossy(bytes).split_inclusive('\n') {
+            if let Some(line) = piece.strip_suffix('\n') {
+                self.push(line);
+                let done = std::mem::take(&mut self.partial);
+                let done = done.trim_end_matches('\r').to_owned();
+                if !done.is_empty() {
+                    self.lines.push_back(done);
+                }
+                while self.lines.len() > LAST_WORDS_LINES {
+                    self.lines.pop_front();
+                }
+            } else {
+                self.push(piece);
+            }
+        }
+    }
+
+    /// Appends to the line being accumulated, up to [`LAST_WORDS_LINE_BYTES`].
+    /// Past that the rest of the line is dropped rather than the process.
+    fn push(&mut self, text: &str) {
+        let room = LAST_WORDS_LINE_BYTES.saturating_sub(self.partial.len());
+        if room == 0 {
+            return;
+        }
+        let take = text
+            .char_indices()
+            .map(|(at, _)| at)
+            .chain(std::iter::once(text.len()))
+            .take_while(|at| *at <= room)
+            .last()
+            .unwrap_or(0);
+        self.partial.push_str(&text[..take]);
+    }
+
+    /// Everything kept, oldest first, on one line — the statusline and the
+    /// failure string are both single-line, and a stack trace with its newlines
+    /// intact would tear the frame that `Stdio::null()` was protecting.
+    ///
+    /// Each piece is trimmed, which is a decision rather than tidiness: a stack
+    /// frame's leading indentation is meaningful down a column and is noise
+    /// after a ` / `, and the lines are kept raw so that this is the only place
+    /// that judgement is made.
+    fn joined(&self) -> String {
+        self.lines
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(self.partial.as_str()))
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
+}
+
+/// Reads a child's stderr until EOF, keeping only the tail.
+async fn drain(mut stderr: tokio::process::ChildStderr, words: Arc<LastWords>) {
+    let mut buffer = [0_u8; 4096];
+    loop {
+        match stderr.read(&mut buffer).await {
+            Ok(0) | Err(_) => return,
+            Ok(read) => words
+                .lines
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .feed(&buffer[..read]),
+        }
+    }
+}
+
 /// One server, from spawn to exit.
 ///
 /// The `select!` is the shape that matters: `served` is async-lsp's main loop
@@ -2491,10 +2665,13 @@ async fn serve(
         .current_dir(&root)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        // A server's stderr is its own log. Inheriting it would write over the
-        // frame — the terminal belongs to the editor, and Design Language §8's
-        // "torn frame = P0" is not negotiable for a diagnostic message.
-        .stderr(Stdio::null())
+        // **Piped, and never inherited.** A server's stderr is its own log, and
+        // inheriting it would write over the frame — the terminal belongs to
+        // the editor, and Design Language §8's "torn frame = P0" is not
+        // negotiable for a diagnostic message. It used to be `Stdio::null()`
+        // for that reason, which threw away the only thing a dying server says;
+        // `LastWords` is where it goes instead.
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
     {
@@ -2507,7 +2684,9 @@ async fn serve(
             return;
         }
     };
-    let (Some(stdout), Some(stdin)) = (child.stdout.take(), child.stdin.take()) else {
+    let (Some(stdout), Some(stdin), Some(stderr)) =
+        (child.stdout.take(), child.stdin.take(), child.stderr.take())
+    else {
         shared.record(
             &spec.language,
             &ServerEvent::Failed(Failure::Spawn("no pipes on the child".to_owned())),
@@ -2515,11 +2694,17 @@ async fn serve(
         return;
     };
 
+    let words = Arc::new(LastWords::default());
+    // Spawned rather than selected on: this must keep reading for the whole
+    // life of the server, because an unread pipe fills and then blocks the
+    // server on its next log line.
+    let draining = tokio::spawn(drain(stderr, Arc::clone(&words)));
+
     let (mainloop, socket) = MainLoop::new_client(|_server| router(&shared, &root));
     // `Bounded` is between the pipe and the framing, and nowhere else can be:
     // see `MAX_FRAME_BYTES`.
     let served = mainloop.run_buffered(Bounded::new(stdout).compat(), stdin.compat_write());
-    let driven = drive(socket, &spec, &root, &shared, commands);
+    let driven = drive(socket, &spec, &root, &shared, &words, commands);
     tokio::pin!(served, driven);
 
     tokio::select! {
@@ -2530,7 +2715,16 @@ async fn serve(
                 Ok(()) => "the server closed its side".to_owned(),
                 Err(error) => error.to_string(),
             };
-            shared.record(&spec.language, &ServerEvent::Failed(Failure::Exited(why)));
+            // **Awaited before the record, and that ordering is the feature.**
+            // The child is gone, so its stderr is at EOF and this returns on
+            // the first poll; what the await buys is that the bytes it wrote on
+            // the way out have been *read* before the failure quotes them.
+            // Without it the message is a race with the drain task.
+            drop(tokio::time::timeout(LAST_WORDS_GRACE, draining).await);
+            shared.record(
+                &spec.language,
+                &ServerEvent::Failed(Failure::Exited(words.quote(&why))),
+            );
         }
         () = &mut driven => {}
     }
@@ -2542,6 +2736,7 @@ async fn drive(
     spec: &ServerSpec,
     root: &Path,
     shared: &Arc<Shared>,
+    words: &LastWords,
     mut commands: UnboundedReceiver<ServerCommand>,
 ) {
     // How this server wants `didChange`, read out of its `initialize` reply and
@@ -2553,13 +2748,19 @@ async fn drive(
     let initialize = socket.initialize(initialize_params(spec, root));
     match tokio::time::timeout(spec.ready_timeout, initialize).await {
         Err(_elapsed) => {
-            shared.record(&spec.language, &ServerEvent::Failed(Failure::Timeout));
+            shared.record(
+                &spec.language,
+                &ServerEvent::Failed(Failure::Timeout(words.said())),
+            );
             return;
         }
         Ok(Err(error)) => {
+            // Quoted, because this is the arm `typescript-language-server`
+            // lands in on a workspace with no `typescript` it can resolve, and
+            // the sentence naming that is on stderr rather than in the error.
             shared.record(
                 &spec.language,
-                &ServerEvent::Failed(Failure::Protocol(error.to_string())),
+                &ServerEvent::Failed(Failure::Protocol(words.quote(&error.to_string()))),
             );
             return;
         }
@@ -2606,7 +2807,7 @@ async fn drive(
             if socket.initialized(lsp_types::InitializedParams {}).is_err() {
                 shared.record(
                     &spec.language,
-                    &ServerEvent::Failed(Failure::Exited("gone before initialized".to_owned())),
+                    &ServerEvent::Failed(Failure::Exited(words.quote("gone before initialized"))),
                 );
                 return;
             }
@@ -3048,6 +3249,40 @@ fn initialize_params(spec: &ServerSpec, root: &Path) -> lsp_types::InitializePar
 /// know, `$/`-prefixed ones excepted — and rust-analyzer's very first message
 /// after `initialize` is often `window/logMessage`. The default would take a
 /// working server down as a protocol error.
+///
+/// # A capability announced is a request promised
+///
+/// `initialize_params` sets `window.workDoneProgress: true`, and that flag is
+/// the *only* thing that entitles a server to send
+/// `window/workDoneProgress/create`. Announcing it and then refusing the
+/// request is a contradiction the client makes about itself, and it is the
+/// whole of the `T036` defect that `docker/lsp.Dockerfile` was built to find:
+/// `typescript-language-server` sends the request the moment it opens a
+/// project, our catch-all answered `METHOD_NOT_FOUND`, and its `handleResponse`
+/// turns a rejected response into an **uncaught exception**, so node exits and
+/// the client sees the pipe close. Verbatim, from the container:
+///
+/// ```text
+/// ResponseError: phosphor's LSP client answers no requests yet
+///     at handleResponse (typescript-language-server/lib/cli.mjs:4305:40)
+///   code: -32601
+/// ```
+///
+/// The finding was recorded as *"reaches `Ready` and is gone within the
+/// second"* with closing stdin as the suspected mechanism. Stdin was a red
+/// herring: the same handshake driven from a node script survives because that
+/// script never *answers* the request, and a request left hanging is survivable
+/// where an error answer is not.
+///
+/// So the token is accepted. Accepting is not a promise to draw a progress bar
+/// — `$/progress` still lands in the notification catch-all and is dropped,
+/// which is a rendering decision — it is a promise to *answer*, which is what
+/// the capability actually says. The alternative fix, dropping the
+/// announcement, would leave the general rule unstated and break again the
+/// first time a capability is added.
+///
+/// **`METHOD_NOT_FOUND` stays for everything else**, because for a method the
+/// client never invited it is the protocol-correct answer and the honest one.
 fn router(shared: &Arc<Shared>, root: &Path) -> Router<()> {
     let mut router = Router::new(());
     let for_diagnostics = Arc::clone(shared);
@@ -3059,6 +3294,9 @@ fn router(shared: &Arc<Shared>, root: &Path) -> Router<()> {
             }
             ControlFlow::Continue(())
         })
+        .request::<lsp_types::request::WorkDoneProgressCreate, _>(
+            |(), _params| async move { Ok(()) },
+        )
         .unhandled_notification(|(), _| ControlFlow::Continue(()))
         .unhandled_request(|(), _| async move {
             Err(async_lsp::ResponseError::new(
@@ -3511,5 +3749,131 @@ mod tests {
                 .try_fold((), |(), piece| scan.inspect(piece));
             prop_assert!(refused.is_err());
         }
+
+        /// **The law the [`Tail`] exists to keep: it is bounded whatever a
+        /// server writes.** The point of piping stderr rather than nulling it
+        /// is to quote a dying server; the point of quoting only the tail is
+        /// that a server which logs a gigabyte must not cost a gigabyte of
+        /// memory. `feed` is the only way in, so the bound belongs here as a
+        /// law over arbitrary bytes rather than as three examples.
+        #[test]
+        fn a_tail_is_bounded_whatever_a_server_writes(
+            chunks in prop::collection::vec(prop::collection::vec(any::<u8>(), 0..300), 0..24),
+        ) {
+            let mut tail = Tail::default();
+            for chunk in &chunks {
+                tail.feed(chunk);
+                prop_assert!(
+                    tail.lines.len() <= LAST_WORDS_LINES,
+                    "kept {} lines", tail.lines.len()
+                );
+                prop_assert!(
+                    tail.partial.len() <= LAST_WORDS_LINE_BYTES,
+                    "a partial line of {} bytes", tail.partial.len()
+                );
+            }
+            // The joined form is what a `Failure` carries, so its bound is the
+            // one a statusline actually meets. ` / ` between at most
+            // `LAST_WORDS_LINES + 1` pieces, each at most the line bound.
+            let joined = tail.joined();
+            prop_assert!(
+                joined.len() <= (LAST_WORDS_LINES + 1) * (LAST_WORDS_LINE_BYTES + 3),
+                "joined to {} bytes", joined.len()
+            );
+        }
+
+        /// And it never tears a character in half. `feed` takes arbitrary
+        /// bytes — a chunk boundary lands mid-UTF-8 routinely, since the pipe
+        /// does not know or care where characters end — and the truncation at
+        /// [`LAST_WORDS_LINE_BYTES`] is a second place the same thing can
+        /// happen. A `String` is the type that makes this a law rather than a
+        /// hope, so what this really checks is that the lossy decode and the
+        /// char-boundary walk agree.
+        #[test]
+        fn a_tail_holds_whole_characters(
+            text in "[\\p{L}\\p{N} \n]{0,600}",
+            chunk in 1_usize..13,
+        ) {
+            let mut tail = Tail::default();
+            for piece in text.as_bytes().chunks(chunk) {
+                tail.feed(piece);
+            }
+            prop_assert!(tail.joined().is_char_boundary(tail.joined().len()));
+        }
+    }
+
+    /// The examples the law above cannot state: *which* lines survive, and what
+    /// the reader sees.
+    #[test]
+    fn a_tail_keeps_the_last_lines_and_the_unfinished_one() {
+        let mut tail = Tail::default();
+        for line in 0..LAST_WORDS_LINES + 4 {
+            tail.feed(format!("line {line}\n").as_bytes());
+        }
+        tail.feed(b"and this one has no newline yet");
+        let joined = tail.joined();
+        assert!(
+            !joined.contains("line 0"),
+            "the oldest lines were dropped: {joined}"
+        );
+        assert!(
+            joined.contains(&format!("line {}", LAST_WORDS_LINES + 3)),
+            "the newest survived: {joined}"
+        );
+        assert!(
+            joined.ends_with("and this one has no newline yet"),
+            "a server killed mid-sentence still said something: {joined}"
+        );
+    }
+
+    /// Newlines never reach the failure string. `Stdio::null()` was protecting
+    /// the frame from a server's stack trace (Design Language §8, *"torn frame
+    /// = P0"*), and reading stderr instead of ignoring it must not give that
+    /// protection back — a `Failure` is drawn on one line.
+    #[test]
+    fn a_quoted_server_cannot_tear_the_frame() {
+        let words = LastWords::default();
+        words
+            .lines
+            .lock()
+            .expect("fresh")
+            .feed(b"ResponseError: nope\r\n    at handleResponse\n\nNode.js v22\n");
+        let said = words.said();
+        assert!(
+            !said.contains('\n') && !said.contains('\r'),
+            "one line, whatever the server wrote: {said:?}"
+        );
+        assert_eq!(
+            said,
+            "ResponseError: nope / at handleResponse / Node.js v22"
+        );
+    }
+
+    /// A server that said nothing is not quoted saying nothing.
+    #[test]
+    fn silence_is_left_alone() {
+        let words = LastWords::default();
+        assert_eq!(words.said(), "");
+        assert_eq!(words.quote("exited"), "exited");
+        words.lines.lock().expect("fresh").feed(b"   \n\n");
+        assert_eq!(
+            words.quote("exited"),
+            "exited",
+            "blank lines are not something a server said"
+        );
+    }
+
+    /// The bound the module's own header calls the same shape one pipe over: a
+    /// server that writes forever without a newline is the slow version of the
+    /// allocation `MAX_HEADER_BYTES` refuses, and stderr is the second pipe a
+    /// child can flood.
+    #[test]
+    fn an_endless_line_is_truncated_not_accumulated() {
+        let mut tail = Tail::default();
+        for _ in 0..1_000 {
+            tail.feed(&[b'x'; 1_000]);
+        }
+        assert_eq!(tail.partial.len(), LAST_WORDS_LINE_BYTES);
+        assert!(tail.lines.is_empty(), "no line ever ended");
     }
 }

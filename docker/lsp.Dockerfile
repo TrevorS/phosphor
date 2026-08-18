@@ -36,11 +36,21 @@
 # Build and run it with `just lsp-docker`; the recipe is the interface and this
 # file is an implementation detail of it.
 #
-# ## What it found on its first run
+# ## What it found
 #
-# Four things, all recorded at `T036` in `docs/TASKS.md` — which is the argument
-# for the image better than anything above it: two servers that had never been
-# attached had four true things to say the moment anything asked them.
+# On its first run, four things, all recorded at `CP-4` in `docs/TASKS.md` —
+# which is the argument for the image better than anything above it: two servers
+# that had never been attached had four true things to say the moment anything
+# asked them.
+#
+# On the second, it **refuted one of the four** and fixed another. The refuted
+# one had been recorded as *"resolution walks up from the workspace and never
+# consults the global install"*, and a test asserting it reached `Ready` in here
+# with no `node_modules` at all. The fixed one was a client defect the container
+# is what made legible: the client announced `window.workDoneProgress` and then
+# refused the request that capability invites, which kills node.
+#
+# Both took reading a server's stderr, which the client used to discard.
 
 # Matches `rust-toolchain.toml`. `slim` rather than the default: the full image
 # carries a second toolchain's worth of documentation and sources that nothing

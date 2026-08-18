@@ -3401,6 +3401,88 @@ mod driven {
         editor.quit();
     }
 
+    /// **`T040`'s *done when*, and the two words it waited three windows for:
+    /// *"against other states"*.**
+    ///
+    /// The criterion is *"a file with real errors shows correct gutter priority
+    /// against other states"*, and until `T041` landed the store there was
+    /// exactly **one** source of regions — so the claim had nothing to be
+    /// correct against and the task entry says so at length. `T042` and `T087`
+    /// gave the column two more, and the loop concatenates diagnostic regions
+    /// with the store's before calling `gutter::state_column` **once**. This is
+    /// the proof that was missing.
+    ///
+    /// **One row carries both.** The toy server publishes its error on buffer
+    /// line 2; the declaration covers lines 2 **and** 3, so line 2 is trouble
+    /// *and* claude-unseen while line 3 is claude-unseen alone. §3's ladder is
+    /// *trouble > attention > claude*, so line 2's bar must be the one it
+    /// already was.
+    ///
+    /// **Read as a colour, because that is what a state bar is.** The mark is a
+    /// one-cell background in column 0 — `buffer_view`'s
+    /// `the_state_bar_is_column_zero_and_carries_the_actor_hue` is the unit
+    /// half — so a glyph assertion would be asserting nothing. No literal
+    /// appears here: the assertions are *equal to what it was* and *different
+    /// from its neighbour*, which is the whole of what a ladder claims and
+    /// leaves §1 owning the hues.
+    ///
+    /// The second assertion is what keeps the first from being vacuous. If the
+    /// two states drew the same colour, "unchanged" would pass while proving
+    /// nothing.
+    #[test]
+    fn a_diagnostic_outranks_an_unseen_region_on_the_same_row() {
+        let (scratch, runtime, file) = toy(
+            "gutter-priority",
+            "diagnostics",
+            "let retry = RetryPolicy\nbase = 3\nlet tail = 9\nlet end = 0\n",
+        );
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // The statusline's count is the signal the diagnostic landed — the
+        // inline row needs the cursor on its line and the cursor stays on line
+        // 1 throughout, which is also what keeps a cursor-row tint off the two
+        // rows being read.
+        editor.press_until(b"", "\u{25a0}");
+        let trouble = editor.screen().background(1, 0);
+        let plain = editor.screen().background(2, 0);
+        assert_ne!(
+            trouble, plain,
+            "the diagnostic painted line 2's state bar in the first place"
+        );
+
+        // Lines 2 and 3 — spans are half-open, so `[2:1, 4:1)` is those two.
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(declare(&file, &[(2, 4)]).as_bytes(), "landed=1");
+        // **Not `"NORMAL"`, which every other `close-repl!` here waits for.**
+        // This session's statusline carries a server chip and an unseen count,
+        // so §11's ladder contracts the mode to `N` and the word is never
+        // drawn. The buffer's own first line is the honest settle: closing the
+        // float repaints the rows underneath it, which is exactly the repaint
+        // being read.
+        editor.press_until(b"(close-repl!)\r", "let retry = RetryPolicy");
+
+        let after = editor.screen();
+        let both = after.background(1, 0);
+        let unseen = after.background(2, 0);
+        editor.quit();
+
+        assert_eq!(
+            both, trouble,
+            "an unseen region arriving on a row that already had a diagnostic \
+             does not lower it: §3 is trouble > attention > claude"
+        );
+        assert_ne!(
+            unseen, plain,
+            "line 3 took the declaration, so the two rows differ by their sets \
+             and not by whether anything arrived"
+        );
+        assert_ne!(
+            both, unseen,
+            "and the two states are distinguishable on screen, which is what \
+             makes the assertion above mean something"
+        );
+    }
+
     /// `T036` — `gd`, and the arm it needed that nothing had noticed was
     /// missing.
     ///
@@ -4604,6 +4686,21 @@ mod driven {
         /// the honest reference rather than a colour literal: no test here
         /// writes a line anywhere near 120 characters, so the far right of a
         /// row is never selected and never anything but background.
+        /// The background of one cell, as the escape sequence that set it.
+        ///
+        /// Opaque on purpose: no test here should know what colour `trouble`
+        /// *is* — Design Language §1 owns that and `scripts/lint-no-colours.sh`
+        /// keeps the literals in `theme.rs`. What a test can honestly say is
+        /// that two cells match, or do not, which is all a priority ladder
+        /// claims.
+        fn background(&self, y: u16, x: u16) -> String {
+            let at = usize::from(y) * usize::from(self.width) + usize::from(x);
+            self.cells
+                .get(at)
+                .map(|cell| cell.background.clone())
+                .unwrap_or_default()
+        }
+
         fn tinted(&self, y: u16) -> Vec<u16> {
             let start = usize::from(y) * usize::from(self.width);
             let row = &self.cells[start..start + usize::from(self.width)];

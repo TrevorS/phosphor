@@ -12,8 +12,9 @@
 //!   not exist. Each is four lines of shell and a file of pre-framed bytes, and
 //!   between them they cover every edge in [`ServerState`] that does not need a
 //!   real language server.
-//! * **rust-analyzer itself** is `tests/lsp_rust_analyzer.rs`, separately,
-//!   because it is the one test here that can be skipped.
+//! * **The real servers** are `tests/lsp_servers.rs`, separately, because those
+//!   are the tests here that can skip. That file was `lsp_rust_analyzer.rs` and
+//!   covered one; `docker/lsp.Dockerfile` is where all three exist at once.
 //!
 //! **Why a shell script is a legitimate language server.** The protocol over a
 //! pipe is `Content-Length: N\r\n\r\n` and then N bytes of JSON. A server that
@@ -317,7 +318,7 @@ fn the_ordinary_life_of_a_server() {
 /// something that is not running.
 #[test]
 fn a_late_initialize_cannot_promote_the_server_it_replaced() {
-    let crashed = ServerState::Crashed(Failure::Timeout);
+    let crashed = ServerState::Crashed(Failure::Timeout(String::new()));
     assert_eq!(
         crashed.after(&ServerEvent::Initialized(identity("ghost"))),
         crashed,
@@ -353,7 +354,16 @@ fn a_failure_reads_back_as_words_a_user_could_act_on() {
         Failure::Spawn("No such file or directory (os error 2)".to_owned()).to_string(),
         "could not start: No such file or directory (os error 2)"
     );
-    assert_eq!(Failure::Timeout.to_string(), "timed out during initialize");
+    assert_eq!(
+        Failure::Timeout(String::new()).to_string(),
+        "timed out during initialize",
+        "a server that said nothing is not quoted saying nothing"
+    );
+    assert_eq!(
+        Failure::Timeout("still indexing".to_owned()).to_string(),
+        "timed out during initialize; it said: still indexing",
+        "and one that did say something is quoted, because that is the answer"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -764,7 +774,7 @@ fn a_hung_server_never_blocks_the_editor_and_ends_up_a_reason() {
     });
     assert_eq!(
         state,
-        ServerState::Crashed(Failure::Timeout),
+        ServerState::Crashed(Failure::Timeout(String::new())),
         "a server that never answers is wedged, and says so"
     );
     assert!(sink.actions().is_empty(), "a hung server posts nothing");
@@ -931,6 +941,217 @@ fn a_servers_chatter_does_not_take_the_client_down() {
     assert!(
         servers.state(&language("rust")).is_ready(),
         "a log message is not a protocol error"
+    );
+}
+
+/// A server that talks *and listens*: it writes `frames`, then keeps everything
+/// the client says afterwards in a file the test can read.
+///
+/// [`fake_server`] ends in `exec sleep 30`, which holds the pipe open and reads
+/// nothing. That is right for every test that only cares what the client
+/// *displays*, and useless for the two below, where the whole question is what
+/// the client **answered**. `cat > file` is the smallest thing that records it.
+///
+/// The client's own `initialize` request is partly in there too — `read -r _`
+/// eats one header line and no more — so these assertions look for a shape
+/// rather than a whole file.
+///
+/// **`cat > file` is neither `exec`'d nor last**, and both halves of that are
+/// load-bearing. `exec cat > file` replaces the shell with a `cat` whose stdout
+/// *is the file*, which closes the pipe the client is reading and lands it in
+/// `Crashed(Exited("the underlying channel reached EOF"))` — the first draft of
+/// this helper did exactly that, and the progress test below passed anyway
+/// because it reached `Ready` before the EOF arrived. A trailing `sleep` keeps
+/// the shell from `exec`-ing the last command as an optimisation, which is the
+/// same thing by a different route.
+fn listening_server(dir: &TempDir, tag: &str, frames: &str) -> (ServerSpec, PathBuf) {
+    let script = dir.write(&format!("{tag}.frames"), frames);
+    let heard = dir.join(&format!("{tag}.heard"));
+    let spec = ServerSpec::new(tag, "sh")
+        .with_args([
+            "-c".to_owned(),
+            format!(
+                "read -r _ ; sleep 0.3 ; cat {} ; cat > {} ; sleep 30",
+                script.display(),
+                heard.display()
+            ),
+        ])
+        .with_ready_timeout(Duration::from_secs(10));
+    (spec, heard)
+}
+
+/// Polls until `file` holds `want`, and hands back what it last read.
+fn heard(file: &Path, want: &str) -> String {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let said = fs::read_to_string(file).unwrap_or_default();
+        if said.contains(want) || Instant::now() > deadline {
+            return said;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// **The `T036` defect, as a test.** The client announces
+/// `window.workDoneProgress: true`, which is the only thing that entitles a
+/// server to send `window/workDoneProgress/create` — so the client must answer
+/// it, and for three windows it answered `METHOD_NOT_FOUND`.
+///
+/// `typescript-language-server` sends that request the moment it opens a
+/// project, and its `handleResponse` turns a rejected response into an
+/// **uncaught exception**: node exits, the pipe closes, and the client reports
+/// `exited: the underlying channel reached EOF` — true, and no help at all. The
+/// finding was recorded with closing stdin as the suspected mechanism, which
+/// was a red herring; a request left *unanswered* is survivable, an error
+/// answer is not.
+///
+/// This asserts the client's side of it, which is the part we own: the answer
+/// carries a result. No node required.
+#[test]
+fn a_capability_we_announced_is_a_request_we_answer() {
+    let dir = TempDir::new("progress");
+    let frames = format!(
+        "{}{}",
+        initialize_response("progressive"),
+        // A server-to-client *request*. Its id is the server's to choose and is
+        // a different space from the client's — `initialize` was also 0.
+        frame(
+            r#"{"jsonrpc":"2.0","id":0,"method":"window/workDoneProgress/create","params":{"token":"indexing"}}"#
+        )
+    );
+    let (spec, file) = listening_server(&dir, "rust", &frames);
+    let sink = Sink::default();
+    let servers = LanguageServers::start(sink.post(), unwatched());
+    servers.attach(spec, dir.path.clone());
+    assert!(settle(&servers, &language("rust"), ServerState::is_ready).is_ready());
+
+    let said = heard(&file, r#""id":0"#);
+    assert!(
+        said.contains(r#""result":null"#),
+        "the client answered the request its own capability invited: {said}"
+    );
+    assert!(
+        !said.contains("answers no requests yet"),
+        "and did not refuse it, which is what killed typescript-language-server: {said}"
+    );
+    assert!(
+        servers.state(&language("rust")).is_ready(),
+        "answering keeps the server up"
+    );
+}
+
+/// The other half, and the reason the fix is a handler rather than a blanket
+/// `Ok`: a method the client never invited still gets `METHOD_NOT_FOUND`,
+/// because for that one it is the protocol-correct answer and the honest one.
+///
+/// `workspace/applyEdit` is the example on purpose — it is a real request a real
+/// server sends, gated on a capability this client does not announce, so a
+/// server sending it is asking for something we cannot do. Saying so is better
+/// than accepting and silently dropping the edit.
+#[test]
+fn a_request_we_never_invited_is_still_refused() {
+    let dir = TempDir::new("uninvited");
+    let frames = format!(
+        "{}{}",
+        initialize_response("presumptuous"),
+        frame(
+            r#"{"jsonrpc":"2.0","id":0,"method":"workspace/applyEdit","params":{"edit":{"changes":{}}}}"#
+        )
+    );
+    let (spec, file) = listening_server(&dir, "rust", &frames);
+    let sink = Sink::default();
+    let servers = LanguageServers::start(sink.post(), unwatched());
+    servers.attach(spec, dir.path.clone());
+    let state = settle(&servers, &language("rust"), ServerState::is_ready);
+    assert!(state.is_ready(), "state was {state:?}");
+
+    let said = heard(&file, r#""id":0"#);
+    assert!(
+        said.contains("answers no requests yet"),
+        "an uninvited method is refused, not accepted: {said}"
+    );
+}
+
+/// **A crashed server's own words reach the failure.** The other half of the
+/// same `T036` finding: stderr was `Stdio::null()`, so two of the four things
+/// that container found were sentences the server had already written down
+/// while the client reported only `the underlying channel reached EOF`.
+///
+/// Piped and quoted, the failure carries the answer to the question the user is
+/// about to ask.
+#[test]
+fn a_crash_carries_what_the_server_said_on_the_way_out() {
+    let dir = TempDir::new("last-words");
+    let spec = ServerSpec::new("rust", "sh")
+        .with_args([
+            "-c".to_owned(),
+            "echo 'Could not find a valid TypeScript installation.' >&2 ; exit 1".to_owned(),
+        ])
+        .with_ready_timeout(Duration::from_secs(10));
+    let sink = Sink::default();
+    let servers = LanguageServers::start(sink.post(), unwatched());
+    servers.attach(spec, dir.path.clone());
+
+    let state = settle(&servers, &language("rust"), |state| {
+        state.failure().is_some()
+    });
+    let why = state
+        .failure()
+        .expect("a server that exited is a failure")
+        .to_string();
+    assert!(
+        why.contains("Could not find a valid TypeScript installation."),
+        "the failure quotes the server: {why}"
+    );
+}
+
+/// And a server that says nothing is not quoted saying nothing — the message
+/// stays the plain one rather than growing an empty `it said:`.
+#[test]
+fn a_silent_crash_is_not_dressed_up() {
+    let dir = TempDir::new("silent");
+    let spec = ServerSpec::new("rust", "sh")
+        .with_args(["-c".to_owned(), "exit 1".to_owned()])
+        .with_ready_timeout(Duration::from_secs(10));
+    let sink = Sink::default();
+    let servers = LanguageServers::start(sink.post(), unwatched());
+    servers.attach(spec, dir.path.clone());
+
+    let state = settle(&servers, &language("rust"), |state| {
+        state.failure().is_some()
+    });
+    let why = state.failure().expect("a failure").to_string();
+    assert!(!why.contains("it said:"), "nothing was said: {why}");
+}
+
+/// **Draining is not optional.** An unread pipe fills at 64 KiB and then blocks
+/// the server on its next write — so a client that piped stderr and did not
+/// read it would have replaced a lost message with a wedged server, which is
+/// worse.
+///
+/// This server writes a megabyte to stderr, twelve times the pipe, and only
+/// then answers `initialize`. It reaches `Ready` only if something is reading.
+#[test]
+fn a_chatty_stderr_does_not_wedge_the_server() {
+    let dir = TempDir::new("flood");
+    let script = dir.write("flood.frames", &initialize_response("noisy"));
+    let spec = ServerSpec::new("rust", "sh")
+        .with_args([
+            "-c".to_owned(),
+            format!(
+                "read -r _ ; awk 'BEGIN {{ while (i++ < 16384) print \"log line \" i }}' >&2 ; \
+                 cat {} ; exec sleep 30",
+                script.display()
+            ),
+        ])
+        .with_ready_timeout(Duration::from_secs(10));
+    let sink = Sink::default();
+    let servers = LanguageServers::start(sink.post(), unwatched());
+    servers.attach(spec, dir.path.clone());
+
+    assert!(
+        settle(&servers, &language("rust"), ServerState::is_ready).is_ready(),
+        "a server past the pipe's capacity still got its initialize response out"
     );
 }
 

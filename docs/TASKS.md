@@ -1424,7 +1424,7 @@ is exact.
   > presses both halves, and reads the dismissal as an **erasure** — the row under the float
   > coming back — because a frame is a diff and a float that is still up is not redrawn.
 
-- [ ] **T040 · Diagnostics → gutter + virtual text**
+- [x] **T040 · Diagnostics → gutter + virtual text**
   Trouble priority in `GutterBar`; `■` rows via `VirtualText`; undercurl with underline
   fallback.
   *Done when:* a file with real errors shows correct gutter priority against other states.
@@ -1476,14 +1476,32 @@ is exact.
   > **None of this ticks `T040`.** The criterion is still *"against other states"* and there is
   > still one source of regions until `T041`.
 
-  > **The blocker named above is gone, and this is still not ticked.** `T041` landed the store and
-  > `T042`/`T087` gave the column two more sources: the loop concatenates diagnostic regions with
-  > the store's unseen and seen ones and calls `gutter::state_column` once, so *"other states"*
-  > now exist to be correct against. What is missing is the **proof** — a file where a diagnostic
-  > and an unseen region cover the same line, showing the trouble tier winning at a real terminal.
-  > That is a test, not a design question, and it is small; it is recorded here rather than taken
-  > during Window E's merge because ticking a criterion on the grounds that it *could* be met is
-  > the failure this entry was written to avoid in the first place.
+  > **~~The blocker named above is gone, and this is still not ticked.~~ Ticked 2026-08-17, and
+  > the proof is the thing that was missing.** `T041` landed the store and `T042`/`T087` gave the
+  > column two more sources: the loop concatenates diagnostic regions with the store's unseen and
+  > seen ones and calls `gutter::state_column` once, so *"other states"* finally exist to be
+  > correct against. The entry above refused to tick on the grounds that a criterion which *could*
+  > be met is not one that *is*, and that was right — the test is what closes it.
+  >
+  > `loop_pty.rs::a_diagnostic_outranks_an_unseen_region_on_the_same_row`. The toy server publishes
+  > its error on buffer line 2; a declaration covers lines 2 **and** 3, so one row carries trouble
+  > *and* claude-unseen while its neighbour carries claude-unseen alone. Three assertions: line 2's
+  > bar is **unchanged** by the arrival of the lower state, line 3's bar **did** change (so the
+  > declaration landed and the first assertion is not vacuous), and the two **differ** (so the two
+  > states are distinguishable on screen at all).
+  >
+  > **Read as a colour, because a state bar is a one-cell background** — a glyph assertion would be
+  > asserting nothing. No colour literal appears in the test: every assertion is *equal to what it
+  > was* or *different from its neighbour*, which leaves §1 owning the hues and
+  > `scripts/lint-no-colours.sh` unbothered. Pressed against a planted violation (`rank`'s
+  > `ClaudeUnseen` raised above `Trouble`) and it fails with the two real hues off a real terminal,
+  > `48;2;217;123;108` demoted to `48;2;61;220;151`.
+  >
+  > One incidental finding worth keeping: this session's statusline never draws the word `NORMAL`.
+  > A server chip and an unseen count are enough for §11's ladder to contract the mode to `N`, so
+  > the `press_until(…, "NORMAL")` that every other `close-repl!` in that file waits on hangs here.
+  > The settle is the buffer's own first line instead — closing the float repaints the rows being
+  > read, which is a better thing to wait for anyway.
 
 ### ✋ CP-4 — Boring on purpose
 
@@ -1528,9 +1546,13 @@ Tier 3.
 >   (`runtime/languages/*.scm`), and **nothing automated has ever attached to either**. The
 >   `rootUri` defect recorded at `T036` is what that gap costs — two of the twelve shipped with a
 >   server that could not initialize, and a human running the binary is what found it.
-> * **Diagnostic gutter priority against other region states: no, and not in this window.** There
->   is one source of regions until `T041`. That is exactly why `T040` is unticked, and it is the
->   item most worth reading the task entry for before judging the screen.
+> * **~~Diagnostic gutter priority against other region states: no, and not in this window.~~ Yes,
+>   as of 2026-08-17.** It was `no` for the right reason — there was one source of regions until
+>   `T041`, so the criterion had nothing to be correct *against*. `T041`, `T042` and `T087` put
+>   the store's regions in the same `Vec`, and
+>   `loop_pty.rs::a_diagnostic_outranks_an_unseen_region_on_the_same_row` presses the ladder on a
+>   row carrying both, reading the state bar as the colour it is. `T040` is ticked and its entry
+>   carries the detail.
 > * **~~The VHS half has not been produced.~~ It was produced, in the same commit that wrote this
 >   line, and the line was false the moment it was committed.** Corrected 2026-08-16 against
 >   `git ls-files tapes/`: `tapes/7c-rust.tape`, `tapes/7c-python.tape`,
@@ -1566,9 +1588,18 @@ Tier 3.
 >   the server initializes, answers *"Could not find a valid TypeScript installation"*, and lands
 >   in `Crashed`. The test skips on such a host **naming the reason**; the container pins a pair
 >   that works.
-> * **A `.ts` file in a directory with no `node_modules` gets a crashed server**, for the same
->   reason: resolution walks up from the workspace and never consults the global install. That is
->   the server's behaviour rather than ours, and the statusline chip is the only thing that says so.
+> * **~~A `.ts` file in a directory with no `node_modules` gets a crashed server**, for the same
+>   reason: resolution walks up from the workspace and never consults the global install.~~
+>   **Half of this was wrong and the container refuted it (2026-08-17).** The crash is real on the
+>   host it was found on; the cause given for it is not. A test asserting it reached `Ready` in the
+>   container with no `node_modules` at all, and
+>   `require.resolve("typescript", { paths: ["…/typescript-language-server/lib"] })` answers
+>   `/usr/lib/node_modules/typescript/lib/typescript.js` — a globally installed server finds a
+>   globally installed `typescript` as its **sibling**, which is what node's resolution is for. So
+>   there is one cause here, not two: typescript 7.0.2 ships no `lib/tsserver.js`, which is the
+>   item above. `usable_typescript` was already asking the right question — it looks for the file
+>   rather than comparing versions — and the test that asserted the wrong one is deleted, with the
+>   refutation kept where it was written.
 > * **`pyright-langserver --version` exits 1** — *"Connection input stream is not set"* — which is
 >   the server parsing its arguments, not a failure to run. The probe read that as a broken server
 >   and skipped. The test and the image's own build-time probe now tell the two apart and agree by
@@ -1578,17 +1609,51 @@ Tier 3.
 >   own line is *"the name a server gives itself"*. Nothing on screen is wrong; the prose is
 >   looser than it reads.
 >
-> **A defect it found and did not fix: `typescript-language-server` reaches `Ready` and is gone
-> within the second**, with `Exited("the underlying channel reached EOF")`. Proved in the container
-> by hand: the *identical* handshake driven from a node script — same `processId: null`, same
-> `rootUri`, same `initialized`, same `didOpen` — leaves the server alive indefinitely, and adding
-> one thing kills it instantly with exit code 1: **closing its stdin**. rust-analyzer and pyright
-> survive the same close for at least a second, which is why only this server shows it.
+> **~~A defect it found and did not fix~~ — found, then fixed (2026-08-17).**
+> `typescript-language-server` reached `Ready` and was gone within the second with
+> `Exited("the underlying channel reached EOF")`. It was **ours**, it was one line, and the
+> suspected mechanism recorded here — closing its stdin — was a red herring.
 >
-> Where *our* client closes it is **not** proved. `serve`'s `tokio::select!` drops both halves the
-> moment either branch finishes and the child is `kill_on_drop(true)`, so a `drive` that returned
-> early would produce exactly this — but nothing demonstrates that it does. Recorded with its
-> reproduction rather than guessed at, and the test prints `KNOWN` rather than passing quietly.
+> **What it actually was.** `initialize_params` announces `window.workDoneProgress: true`, and that
+> flag is the only thing entitling a server to send `window/workDoneProgress/create`.
+> `typescript-language-server` sends it the moment it opens a project; `router`'s catch-all
+> answered `METHOD_NOT_FOUND`; and its `handleResponse` turns a rejected response into an
+> **uncaught exception**, so node exits and the client sees the pipe close. A capability announced
+> is a request promised, and the client was announcing one it refused. Fixed by answering it —
+> accepting a progress token is not a promise to draw a progress bar, it is a promise to *answer* —
+> and `METHOD_NOT_FOUND` stays for methods the client never invited, which is the protocol-correct
+> answer for those. Both halves are pinned by fakes in `crates/phosphor-buffer/tests/lsp.rs`
+> (`a_capability_we_announced_is_a_request_we_answer`,
+> `a_request_we_never_invited_is_still_refused`), so no node is required to hold the line, and
+> both were run against a planted violation — the refusal bytes the planted version emits are
+> character-for-character the ones that killed the server.
+>
+> **Why the stdin theory looked right, which is the more useful half.** The node script that
+> "proved" the server survives an identical handshake never *answered* the request, and a request
+> left hanging is survivable where an error answer is not. Closing that script's stdin does kill
+> the server instantly — a true fact about the server with nothing to do with this crash. Two true
+> observations, one wrong conclusion, and what separated them was reading the server's stderr.
+>
+> **Which the client was throwing away, and that is the second fix.** A server's stderr was
+> `Stdio::null()` for a good reason — Design Language §8, a stack trace over the frame is a P0 —
+> but *"do not draw it"* and *"do not read it"* are different decisions and only the first was
+> intended. Two of the four findings above were sentences the server had already written down
+> while the client reported `the underlying channel reached EOF`, which is true and says nothing.
+> `LastWords` in `crates/phosphor-buffer/src/lsp.rs` pipes it, keeps a bounded tail, and quotes it
+> into `Failure::Exited`, `Failure::Protocol` and `Failure::Timeout` — which gained a payload for
+> that, so the rule is uniform: **every failure a live server can cause carries what that server
+> said.** `Failure::Spawn` is the honest exception, there being no process to have said anything.
+>
+> Draining is not optional either — an unread pipe fills at 64 KiB and blocks the server on its
+> next log line, so the choice was never "null or nothing", it was "null or read it".
+> `a_chatty_stderr_does_not_wedge_the_server` writes twelve pipes' worth before answering
+> `initialize`, and wedges for the full 20 seconds against a planted violation that holds the pipe
+> without reading it. The tail's bounds are a property test over arbitrary bytes, because a client
+> that quoted a server without bounding it would have traded a lost message for an allocation the
+> process cannot survive — the same shape `MAX_HEADER_BYTES` exists for, one pipe over.
+>
+> `just lsp-docker` now reports **3 passed, 0 skipped** with no `KNOWN` line, and the `stays`
+> parameter that existed only to tolerate this is gone.
 
 > **The recurring sweep, run 2026-08-16.** Five items across three tiers; three are Tier 1/2 and
 > were run, two are Tier 3 and are Teej's by definition. **The 80-column item found a defect and

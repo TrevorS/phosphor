@@ -112,18 +112,20 @@ fn fixture(language: &str) -> PathBuf {
             // that a valid `tsserver.path` is specified. Exiting.
             // ```
             //
-            // It does **not** consult the global install — resolution walks up
-            // from the workspace, and `npm -g` is not on that path. So the
-            // fixture links one in, which is what a real project's
-            // `node_modules` would hold.
+            // This comment used to say the server *"does not consult the global
+            // install"*. It does — a globally installed server resolves
+            // `typescript` as its **sibling** in the npm global root, which the
+            // container proved by reaching `Ready` with no `node_modules` at
+            // all. The reason the machine this was written on still fails is
+            // one version number, not one search path: its global `typescript`
+            // is 7.0.2, the native port, which ships no `lib/tsserver.js`.
             //
-            // This is also a product finding and is recorded as one at `T036`
-            // in `docs/TASKS.md`: a `.ts` file opened in a directory with no
-            // `node_modules` gets a *crashed* server, and today the statusline
-            // is the only thing that would say so.
-            // The link is `usable_typescript`'s, called by the harness — which
-            // is what turns "no typescript this server can drive" into a skip
-            // naming the reason rather than a `Crashed(Protocol(…))` panic.
+            // So the fixture links a *known-good* `typescript` in, which is
+            // what a real project's `node_modules` would hold and what makes
+            // this test say the same thing on every machine. The link is
+            // `usable_typescript`'s, called by the harness — which is what
+            // turns "no typescript this server can drive" into a skip naming
+            // the reason rather than a `Crashed(Protocol(…))` panic.
         }
         "python" => {
             std::fs::write(
@@ -258,7 +260,7 @@ fn usable(spec: &ServerSpec, root: &Path) -> Result<String, String> {
 /// today is a fact about three servers, not a rule, and a fourth that
 /// disagreed would otherwise be found by a confusing statusline rather than
 /// here.
-fn attaches_and_reports_ready(language: &str, named: &str, versioned: bool, stays: bool) {
+fn attaches_and_reports_ready(language: &str, named: &str, versioned: bool) {
     let root = fixture(language);
     let language = LanguageId(language.to_owned());
     let spec = blessed(&language).expect("a first-class language has a blessed server");
@@ -359,34 +361,37 @@ fn attaches_and_reports_ready(language: &str, named: &str, versioned: bool, stay
     // `async-lsp`'s default tolerates. The test that actually holds that line
     // is `a_servers_chatter_does_not_take_the_client_down` in `tests/lsp.rs`,
     // where the fake sends exactly the notification that would break it.
+    // **This parameter used to have a `stays: false` case, and closing it is
+    // what the container was built for.** `typescript-language-server` reached
+    // `Ready` and was gone inside the second with `Exited("the underlying
+    // channel reached EOF")`, recorded at `T036` as a finding with closing
+    // stdin as the suspected mechanism.
+    //
+    // Stdin was a red herring, and the reason it looked right is worth keeping:
+    // an identical handshake driven from a node script survives, and adding a
+    // stdin close to that script kills the server instantly — a true fact about
+    // the server that had nothing to do with the crash. What the script also
+    // did was never *answer* the `window/workDoneProgress/create` request, and
+    // a request left hanging is survivable where an error answer is not. The
+    // client announced `window.workDoneProgress: true` and then refused the one
+    // request that capability invites; `router` is the fix and
+    // `tests/lsp.rs::a_capability_we_announced_is_a_request_we_answer` is the
+    // version of this that needs no node.
+    //
+    // The finding was found by piping the server's stderr, which the client
+    // used to discard — see `LastWords`. It said, in full:
+    //
+    // ```text
+    // ResponseError: phosphor's LSP client answers no requests yet
+    //     at handleResponse (typescript-language-server/lib/cli.mjs:4305:40)
+    // ```
     std::thread::sleep(Duration::from_secs(1));
     let after = servers.state(&language);
     drop(std::fs::remove_dir_all(&root));
-    // **`stays` is `false` for one server, and that is a recorded defect rather
-    // than a tolerance.** See `T036` in `docs/TASKS.md`:
-    // `typescript-language-server` reaches `Ready` and is gone within the
-    // second, with `Exited("the underlying channel reached EOF")`.
-    //
-    // Proved in the container, by hand: the identical handshake driven from a
-    // node script — same `processId: null`, same `rootUri`, same `initialized`,
-    // same `didOpen` — leaves the server alive indefinitely. Adding **one**
-    // thing kills it instantly with exit code 1: closing its **stdin**.
-    // rust-analyzer and pyright survive the same close for at least a second,
-    // which is why only this server shows it.
-    //
-    // *Not* proved: where our client closes it. `serve`'s `tokio::select!`
-    // drops both halves the moment either branch finishes and the child is
-    // `kill_on_drop(true)`, so a `drive` returning early would produce exactly
-    // this — but nothing here demonstrates that it does. Left as a finding
-    // with a reproduction rather than a guessed fix.
-    if stays {
-        assert!(
-            after.is_ready(),
-            "{named} was ready and then was not: {after:?}"
-        );
-    } else {
-        println!("KNOWN  {named} does not stay attached — see T036: {after:?}");
-    }
+    assert!(
+        after.is_ready(),
+        "{named} was ready and then was not: {after:?}"
+    );
     assert!(
         posted.lock().expect("sink").iter().all(|action| matches!(
             action,
@@ -400,7 +405,7 @@ fn attaches_and_reports_ready(language: &str, named: &str, versioned: bool, stay
 /// prove.
 #[test]
 fn rust_analyzer_attaches_and_reports_ready() {
-    attaches_and_reports_ready("rust", "rust-analyzer", true, true);
+    attaches_and_reports_ready("rust", "rust-analyzer", true);
 }
 
 /// **`CP-4`, first of the two it was missing.** `typescript.scm` records that
@@ -409,7 +414,7 @@ fn rust_analyzer_attaches_and_reports_ready() {
 /// declaration actually names.
 #[test]
 fn typescript_language_server_attaches_and_reports_ready() {
-    attaches_and_reports_ready("typescript", "typescript-language-server", false, false);
+    attaches_and_reports_ready("typescript", "typescript-language-server", false);
 }
 
 /// **`CP-4`, second of the two.** It names itself `pyright-langserver` — the
@@ -417,5 +422,35 @@ fn typescript_language_server_attaches_and_reports_ready() {
 /// above was written expecting. Recorded there.
 #[test]
 fn pyright_attaches_and_reports_ready() {
-    attaches_and_reports_ready("python", "pyright-langserver", false, true);
+    attaches_and_reports_ready("python", "pyright-langserver", false);
 }
+
+// **A test that was written here and deleted, because the container refuted the
+// finding it was asserting.**
+//
+// `T036` recorded that *"a `.ts` file in a directory with no `node_modules`
+// gets a crashed server"* because *"resolution walks up from the workspace and
+// never consults the global install"*. The first half is true on the machine it
+// was found on. The second half is false, and this file is where that was
+// proved: the assertion reached `Ready` in the container, and
+//
+// ```text
+// require.resolve("typescript", { paths: ["…/typescript-language-server/lib"] })
+//   → /usr/lib/node_modules/typescript/lib/typescript.js
+// ```
+//
+// says why — a globally installed server finds a globally installed
+// `typescript` as its **sibling**, which is exactly what node's resolution is
+// supposed to do.
+//
+// So the crash on the original host has one cause, not two: its global
+// `typescript` is 7.0.2, the native port, which ships no `lib/tsserver.js` for
+// the server to drive. `usable_typescript` already asks that question the right
+// way, by looking for the file rather than comparing versions. The finding is
+// corrected at `T036`.
+//
+// What the fix in `LastWords` buys here is real and is tested where it can be:
+// the failure now carries the server's own sentence rather than `the underlying
+// channel reached EOF`. `tests/lsp.rs::a_crash_carries_what_the_server_said_on_
+// the_way_out` states that with a fake, so it holds on every machine instead of
+// only on one.

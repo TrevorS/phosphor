@@ -68,7 +68,7 @@ fn event() -> impl Strategy<Value = ServerEvent> {
             version: None,
         })),
         Just(ServerEvent::Failed(Failure::Exited("generated".to_owned()))),
-        Just(ServerEvent::Failed(Failure::Timeout)),
+        Just(ServerEvent::Failed(Failure::Timeout(String::new()))),
         Just(ServerEvent::Restarted),
         Just(ServerEvent::Stopped),
     ]
@@ -166,7 +166,7 @@ proptest! {
             ServerState::NotStarted,
             ServerState::Starting,
             ServerState::Ready(ServerIdentity { name: "x".to_owned(), version: None }),
-            ServerState::Crashed(Failure::Timeout),
+            ServerState::Crashed(Failure::Timeout(String::new())),
             ServerState::Stopped,
         ] {
             prop_assert_eq!(state.after(&ServerEvent::Restarted), ServerState::Starting);
