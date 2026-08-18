@@ -66,9 +66,26 @@ clippy:
 # needs this). Safe to keep permanently: it only changes behavior in that
 # zero-tests-anywhere case, never once any test exists.
 
-# Run the test suite via cargo-nextest.
+# **nextest does not run doctests, and nothing else did either.** That is a
+# documented upstream limitation, not a flag we can set: nextest's runner has no
+# doctest support at all, so `cargo nextest run` skips them silently. CI runs
+# `just test` and nothing in the repository ran `cargo test --doc`, so every
+# example in a doc comment was compiled by `cargo doc` (the doc-links lint) and
+# executed by nobody.
+#
+# One exists today and passes, so this closes a hole rather than a defect — but
+# a hole in a harness is worth more attention than a passing test: the next
+# runnable example somebody writes would have been dead on arrival, and it would
+# have looked like coverage.
+#
+# Second command rather than folded in, because the two runners are genuinely
+# different programs and a reader should see that. It costs about a second on a
+# warm build.
+
+# Run the test suite via cargo-nextest, then the doctests nextest cannot see.
 test:
     cargo nextest run --workspace --no-tests=pass
+    cargo test --doc --workspace
 
 # cargo-deny: bans a second major of ratatui/ratatui-core (the rule SPIKES.md
 # says matters most), plus licenses and the RustSec advisory DB. See

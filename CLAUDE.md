@@ -12,8 +12,11 @@ Use the `just` recipes, not raw cargo — several of them differ from the obviou
 - **`just gate`** — everything CI runs, in CI's order: `fmt`, `lint`, `clippy`, `test`, `deny`,
   `vendor-diff`. It runs all six even when one fails, so one invocation tells you everything that
   is wrong. **This is the command to run before saying something is green.**
-- `just test` — `cargo nextest`, not `cargo test` (per-test process isolation; tests touch the XDG
-  state dir and terminal state)
+- `just test` — `cargo nextest` (per-test process isolation; tests touch the XDG state dir and
+  terminal state) **and then `cargo test --doc`, because nextest cannot run doctests.** That is an
+  upstream limitation rather than a flag, so it skips them silently; this line read *"not `cargo
+  test`"* while nothing in the repository ran the doc harness at all, and a genre-by-genre audit
+  is what found it. One doctest exists and passes — the hole was in the harness, not the tests.
 - `just lint` — the structural lints below; runs every `scripts/lint-*.sh`. Add a lint by dropping
   a script in, never by editing the justfile or CI.
 - `just fmt` (check) · `just fmt-fix` (in place) · `just build` · `just clippy` (warnings denied) ·
