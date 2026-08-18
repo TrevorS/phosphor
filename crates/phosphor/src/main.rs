@@ -6348,16 +6348,45 @@ impl Editing {
     /// # The row's *text* is the address, and that is the design
     ///
     /// A row is styled runs and nothing else — no hidden payload, no id
-    /// alongside. So what a row means is what it *says*, and every source
-    /// writes its first run as `path:line`, which is a spelling
-    /// [`Target`] already decodes (`request.rs`'s `target_from_text`, the
-    /// `text =` clause on its `wire_union!`). `8a` draws exactly that —
-    /// `src/retry.rs:9` — so what you read is what gets opened.
+    /// alongside. So what a row means is what it *says*: the first run is an
+    /// address, and the rest is annotation.
     ///
     /// The alternative is a parallel array of targets beside the rows, and it
     /// fails the moment a source is redefined at the REPL: the rows change and
     /// the shadow list does not. This cannot go out of step because there is
     /// only one thing.
+    ///
+    /// # Two spellings, because the mockups draw two
+    ///
+    /// **This used to say *"every source writes its first run as
+    /// `path:line`"*, and that was false about the shipped layer.** `8a` draws
+    /// `src/retry.rs:9` and `grep`, `unseen` and `references` all write it, but
+    /// `3d`'s file rows are bare names — `src/main.rs`, `Cargo.toml` — and
+    /// bare names are what `files` writes. So pressing `↵` on any row of the
+    /// file picker declined with *"that row does not name a place — sources
+    /// write `path:line` first"*, which is the invariant this comment asserted
+    /// rather than one anything checked. Reported by Teej at a real terminal.
+    ///
+    /// Both are addresses and a file is a place, so both open:
+    ///
+    /// * `path:line` — [`Target`]'s own text spelling (`request.rs`'s
+    ///   `target_from_text`, the `text =` clause on its `wire_union!`), which
+    ///   carries a position, and the cursor lands on it.
+    /// * `path` — a whole file, which carries **no** position, so `open_at`
+    ///   stays [`None`]. That is the difference doing real work rather than a
+    ///   default standing in for one: a fresh buffer starts at the top anyway,
+    ///   and accepting the file you already have open leaves the cursor where
+    ///   you left it instead of yanking it to line 1.
+    ///
+    /// The order matters where a path could be read either way. `path:line`
+    /// wins, so a file genuinely named `notes.txt:12` is unreachable here — an
+    /// exchange nobody will make, against `8a` being the picker that exists to
+    /// name lines.
+    ///
+    /// Nothing else is refused. A head that does not exist on disk is not this
+    /// function's to judge: `open-file` already answers a missing path with
+    /// *"new file"*, and having two places decide what a path means is how the
+    /// two disagree.
     ///
     /// `AcceptHow::Split` and `AcceptHow::Quickfix` decline by naming their
     /// tasks. A split needs `T088` and there is one pane; the quickfix list is
@@ -6378,18 +6407,24 @@ impl Editing {
             return declined("no row selected");
         };
         // The first whitespace-separated token: `8a`'s rows are
-        // `src/retry.rs:9  ● pub max_delay: Duration,` and the address is the
-        // head of that, not the whole line.
+        // `src/retry.rs:9  ● pub max_delay: Duration,` and `3d`'s are
+        // `src/main.rs  ●2 unseen` — the address is the head of either, not the
+        // whole line.
         let head = text.split_whitespace().next().unwrap_or_default();
-        let Ok(target) = Target::from_value(&Value::Text(head.to_owned())) else {
-            return declined("that row does not name a place — sources write `path:line` first");
-        };
-        let Target::Explicit { path, span } = target else {
-            return declined("that row does not name a place");
+        if head.is_empty() {
+            return declined("that row names nothing");
+        }
+        // `path:line` if it reads as one, the whole file if it does not. The
+        // non-`Explicit` arms of `Target` are focus-relative words like
+        // `cursor` that no source writes, so a row's head matching one is a
+        // *file* with that name and is opened as one.
+        let (path, at) = match Target::from_value(&Value::Text(head.to_owned())) {
+            Ok(Target::Explicit { path, span }) => (path, Some(span.start)),
+            Ok(_) | Err(_) => (PathBuf::from(head), None),
         };
         self.picker = None;
         self.open = Some(path);
-        self.open_at = Some(span.start);
+        self.open_at = at;
         Outcome::Done(Receipt {
             capability: "picker-accept",
             value: Value::Text(head.to_owned()),

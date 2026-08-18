@@ -2236,12 +2236,33 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > row.
 
   > **A row's text is its address**, and that is the design rather than a shortcut. A row is
-  > styled runs and nothing else — no hidden payload, no id alongside — so every source writes
-  > `path:line` first and `picker-accept` parses the row's own head through `Target`'s `text =`
-  > clause, the same spelling `mark-seen!` takes. `8a` draws exactly that. The alternative is a
-  > parallel array of targets beside the rows, and it goes out of step the moment a source is
-  > redefined at the REPL: the rows change and the shadow list does not. This cannot, because
-  > there is only one thing.
+  > styled runs and nothing else — no hidden payload, no id alongside — so `picker-accept` parses
+  > the row's own head. The alternative is a parallel array of targets beside the rows, and it
+  > goes out of step the moment a source is redefined at the REPL: the rows change and the shadow
+  > list does not. This cannot, because there is only one thing.
+  >
+  > **~~every source writes `path:line` first~~ — false, and it shipped a broken key (fixed
+  > 2026-08-17).** `grep`, `unseen` and `references` write it and `8a` draws it, but `3d`'s file
+  > rows are bare names — `src/main.rs`, `Cargo.toml` — and that is what `files` writes. So `↵` on
+  > *every* row of the file picker declined with *"that row does not name a place — sources write
+  > `path:line` first"*: a sentence quoting an invariant that was only ever asserted in a doc
+  > comment. The one source that followed the mockup was the one that could not be accepted.
+  > Reported by Teej at a real terminal.
+  >
+  > There are two spellings because the mockups draw two, and both are addresses: `path:line`
+  > carries a position and the cursor lands on it; a bare path is a whole file and carries none,
+  > so `open_at` stays `None` — which is the difference doing work rather than a default standing
+  > in for one, since accepting the file you already have open then leaves the cursor where you
+  > left it instead of yanking it to line 1.
+  >
+  > **Nothing had ever pressed `↵` on a picker row.**
+  > `grep_rows_carry_the_store_and_tab_cycles_the_source`'s summary line says *"tab, and `↵`
+  > opens"* and its body stops after the tab; every other picker test asserts on the list and
+  > presses escape. A whole keystroke on a shipped surface, described in a doc comment and covered
+  > by nothing. `loop_pty.rs::enter_on_a_picker_row_opens_it_whichever_way_the_row_is_spelled`
+  > presses both spellings in one session and fails two ways against planted violations — the old
+  > refusal draws Teej's sentence into the frame verbatim, and dropping the span leaves the
+  > statusline reading `1:1` where it should read `3:1`.
   >
   > `AcceptHow::Split` and `AcceptHow::Quickfix` decline by naming what they need — one pane
   > until `T088`, and a quickfix list that `request.rs` records as *"drawn once and named in no

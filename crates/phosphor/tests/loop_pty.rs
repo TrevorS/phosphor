@@ -1741,13 +1741,88 @@ mod driven {
         );
     }
 
-    /// **`T047`: `8a` from a keystroke — grep rows, tab, and `↵` opens.**
+    /// **`↵` on a file row opens the file** — the half that was never pressed.
+    ///
+    /// Reported by Teej at a real terminal: every row of the file picker
+    /// declined with
+    ///
+    /// ```text
+    /// that row does not name a place — sources write `path:line` first
+    /// ```
+    ///
+    /// which was `accept_picker`'s own doc comment asserting an invariant
+    /// nothing checked. `8a`'s rows *are* `path:line` and three of the four
+    /// sources write it — but `3d`'s file rows are bare names by design, so
+    /// the one source that follows the mockup was the one that could not be
+    /// accepted.
+    ///
+    /// **Nothing in this repository had ever pressed `↵` on a picker row.**
+    /// `grep_rows_carry_the_store_and_tab_cycles_the_source`'s own summary line
+    /// says *"tab, and `↵` opens"* and its body stops after the tab; every
+    /// other picker test asserts on the list and presses escape. A whole
+    /// keystroke on a shipped surface, described in a doc comment and covered
+    /// by nothing — which is exactly the shape of defect a human at a terminal
+    /// finds first.
+    ///
+    /// Both spellings are pressed here, in one session, because the fix is
+    /// that there are two: the file row carries no line and the grep row does.
+    #[test]
+    fn enter_on_a_picker_row_opens_it_whichever_way_the_row_is_spelled() {
+        let scratch = Scratch::new("picker-accept");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("alpha.txt");
+        fs::write(&file, "one\ntwo\nthree\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // **`3d`, a bare name.** The workspace is the editor's cwd — the
+        // `phosphor` crate, since the pty child inherits this process's
+        // directory — so `Cargo.toml` is a row, and it is the needle for the
+        // reason the test above gives: every crate directory has one.
+        editor.press_until(b" f", "Cargo.toml");
+        let opened = editor.press_until(b"Cargo.toml\r", "[package]");
+        assert!(
+            !shows(&opened, "does not name a place"),
+            "a file row is a place; frame was: {opened}"
+        );
+        assert!(
+            shows(&opened, "[package]"),
+            "and pressing it opened the file, not a refusal; frame was: {opened}"
+        );
+
+        // **`8a`, a `path:line`.** Back to the fixture, then grep it — one row
+        // per buffer line — and accept the row naming line 3. The cursor
+        // landing there is the half a bare name cannot carry, so this is what
+        // says the position is still honoured.
+        editor.press_until(format!(":e {}\r", file.display()).as_bytes(), "three");
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(b"(open-picker! \"grep\")\r", "3/3");
+        editor.press_until(b"three\r", "1    one");
+        let landed = editor.screen();
+        editor.quit();
+
+        // The statusline's cursor readout: `alpha.txt:3` is the row that was
+        // accepted, and line 3 is where a target carrying a position puts you.
+        let status = landed.line(SCREEN.ws_row - 1);
+        assert!(
+            status.contains("3:1"),
+            "a `path:line` row still lands on its line; statusline was: {status}"
+        );
+    }
+
+    /// **`T047`: `8a` from a keystroke — grep rows and tab.**
     ///
     /// `8a` draws `src/retry.rs:9  ●  pub max_delay: Duration,` and its caption
     /// is *"results know who touched them"*, so the row carries the store's
-    /// unseen dot beside the line. All three of the task's keystroke claims are
-    /// one session because they are one picker: open it, tab off it and back,
-    /// and accept a row.
+    /// unseen dot beside the line.
+    ///
+    /// **This summary read *"tab, and `↵` opens"* and the body never pressed
+    /// `↵`.** Nothing else did either, in any test, which is how the file
+    /// picker shipped unable to accept a single row — see
+    /// `enter_on_a_picker_row_opens_it_whichever_way_the_row_is_spelled`, which
+    /// is where that keystroke lives now. A summary line describing a keystroke
+    /// the body does not press is worth exactly as much as the coverage behind
+    /// it.
     #[test]
     fn grep_rows_carry_the_store_and_tab_cycles_the_source() {
         let scratch = Scratch::new("picker-grep");
