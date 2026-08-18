@@ -1862,6 +1862,63 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > `Register` and `ReplaceChar`. Generating the pairs in scheme is less machinery for the same
   > 78 rows and keeps the keymap a table anything can read. `<C-o>` / `<C-i>` are bound too.
 
+  > **The jumplist was bound, applied, and unusable — three defects, found by pressing it
+  > (2026-08-17).** `<C-o>` and `<C-i>` had no test anywhere; the key survey below is what pressed
+  > them, and all three of these were behind that one keystroke.
+  >
+  > 1. **`<C-o>` refused after a single jump.** `push_jump` set `jump_at = len - 1`, pointing *at*
+  >    the entry it had just recorded, so `Seek::Prev` computed `0 - 1 = 0`, hit `jump`'s
+  >    no-move guard and answered *"already at the oldest jump"*. The list held exactly where you
+  >    came from and there was no way to reach it — the opposite of `push_jump`'s own stated rule.
+  >    `jump_at` now means *"the index you are at, or `len` for the present"*, which is the one
+  >    extra state the walk needs.
+  > 2. **Walking the jumplist deleted the jumplist.** `jump` reached its target through
+  >    `goto_anchor`, and `goto_anchor` calls `push_jump` — correct for `` ` `` and `'`, where
+  >    arriving *is* a jump, and wrong here, because `push_jump` truncates the forward half. So the
+  >    first `<C-o>` wiped every entry, pushed one, and left `<C-i>` with nowhere to go. It now
+  >    takes a `record` flag; vim's rule is the same one, that moving along the jumplist does not
+  >    add to it.
+  > 3. **`<C-i>` was a binding no terminal could reach.** ctrl-i and tab are one byte, `0x09`;
+  >    crossterm reports `KeyCode::Tab` and `decode` canonicalises it to `<tab>`, which was bound
+  >    only in **insert** scope. A keymap that said only `<C-i>` was asking for a spelling the wire
+  >    never produces. `runtime/keymaps.scm` binds `<tab>` beside it in normal scope — a second
+  >    spelling of one binding, not a replacement, since a terminal speaking the kitty protocol can
+  >    tell them apart and `<C-i>` is the name `:help` should print.
+  >
+  > `loop_pty.rs::a_region_motion_pushes_a_jump_and_the_jumplist_walks_back` presses `]u`, `<C-o>`
+  > and `<C-i>` in one session, because a region motion is the only thing a user can press that
+  > pushes a jump — `push_jump` has two callers — so the list cannot be exercised without one.
+
+  > **The key survey (2026-08-17), and why there was one.** The file picker shipped a `↵` that
+  > refused every row (`T047`), and the reason nothing caught it was that no test pressed the key.
+  > So the same question was asked of every other binding: the live keymap answers
+  > `(keymap-entries)` with **428** bindings, **42** of those are leaves naming a capability, and
+  > grepping `crates/phosphor/tests/` for the bytes that press them found **19**. Twenty-three
+  > command keys were driven by nothing.
+  >
+  > The grammar keys are deliberately not in that 42 and do not want pty tests — `h`, `w`, `dw`,
+  > `ciw` are the input machine's and are covered exhaustively in `phosphor-core`; pressing each
+  > through a terminal would be re-testing `Machine::feed`.
+  >
+  > Three tests came out of it: `J` (one buffer mutation, one arm, one binding, no coverage), the
+  > jumplist above, and **`a_deferred_binding_names_the_task_that_builds_it`** — a table over the
+  > nine keys whose capability has not landed, asserting each says *which task builds it*.
+  > `runtime/keymaps.scm` promises exactly that and nine keys relied on it unpressed. It is a table
+  > so it cannot go stale quietly: when a task lands its key stops refusing and the row that named
+  > it goes red, the same shape as `scripts/lint-action-arms.sh`'s RECORDED list one layer out.
+  > Its expected tasks were wrong three ways when first written from the keymap rather than from
+  > `action.rs` — `SPC c p`/`SPC c s` open a *prompt* (`T058`, not their group's session task),
+  > `SPC t` is `set-pane-content` (`T054`), and `SPC r d` is `open-disk-diff` (`T070`).
+  >
+  > **A methodological finding worth more than any of them.** The first pass of this survey used
+  > a quiet press and a read of the final grid, and reported four working keys as silently broken —
+  > including `SPC j`, written up as *"produces nothing at all"* before being checked. The grid is
+  > a race with whatever redraws next; a notice is drawn and then overdrawn. `press_until` scans
+  > what was **drawn since** the keys and finds it. The converse bit too: that reader is a *delta*,
+  > so `J` joining `alpha` and `bravo` writes only ` bravo` and `"alpha bravo"` is on the screen
+  > and never in the delta. Two readers, two questions — `Editor::shown_on_grid` is the second one,
+  > and its doc says which is for which.
+
   > **PHOSPHOR PATCH 12** is the one new seam: `Code::syntax_path(byte)`, read-only, over the
   > tree the fork already keeps current. The host was the alternative and loses on three counts —
   > a second grammar table, a second parse per reanchored file, and a tree that can *disagree*

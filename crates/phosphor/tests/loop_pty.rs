@@ -328,6 +328,47 @@ mod driven {
             }
         }
 
+        /// Presses `keys`, then polls the **composed grid** until `wanted` is
+        /// on it, and hands back the grid.
+        ///
+        /// # Why this exists beside [`Editor::press_until`]
+        ///
+        /// They read two different things and the difference bit three tests
+        /// the day this was written. `press_until` scans the *bytes drawn
+        /// since* the keys — a delta — so it can only wait for text that is
+        /// **newly** written. `J` joining `alpha` and `bravo` writes only
+        /// ` bravo` onto a row that already said `alpha`, so `"alpha bravo"` is
+        /// on the screen and never in the delta; waiting for it times out at
+        /// thirty seconds while the editor sits there having done exactly the
+        /// right thing.
+        ///
+        /// The delta is the right reader for a *notice*, which is written fresh
+        /// every time. This is the right reader for **state**: a joined line, a
+        /// cursor readout, a marker that was already partly there.
+        fn shown_on_grid(&self, keys: &[u8], wanted: &str) -> Screen {
+            (&*self.master)
+                .write_all(keys)
+                .expect("the child takes the keys");
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                let screen = self.screen();
+                let grid = (0..SCREEN.ws_row)
+                    .map(|row| screen.line(row))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if shows(&grid, wanted) {
+                    self.settle();
+                    return self.screen();
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "{wanted:?} never reached the screen after typing {:?}. Screen was:\n{grid}",
+                    printable(keys)
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+
         /// Writes `keys` and waits for the editor to go quiet, asserting
         /// nothing about frames.
         ///
@@ -1739,6 +1780,171 @@ mod driven {
             "and it is not empty, which is the defect this test exists for; \
              frame was: {listed}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Keys nothing pressed
+    // -----------------------------------------------------------------------
+    //
+    // **A survey, after the file picker shipped a key that refused every row.**
+    // That defect was not subtle — a whole keystroke on a shipped surface that
+    // no test drove — so the honest follow-up is to ask the same question of
+    // every other one. The live keymap answers `(keymap-entries)` with 428
+    // bindings; 42 of those are leaves naming a capability, and grepping this
+    // file for the bytes that press them found **19**. The tests below are the
+    // ones worth having from the other 23.
+    //
+    // The grammar keys — `h`, `w`, `dw`, `ciw` and the rest — are not in that
+    // count and do not want a pty test: they are the input machine's, they are
+    // covered exhaustively in `phosphor-core`, and pressing each one here would
+    // be re-testing `Machine::feed` through a terminal.
+
+    /// **`J` joins lines, and nothing had pressed it.**
+    ///
+    /// The one buffer mutation bound to a bare capital that no other test
+    /// reaches: `Editing::join` has exactly one Action arm and that arm has
+    /// exactly one binding, so this key is the whole of its reachability.
+    #[test]
+    fn j_joins_the_next_line_onto_this_one() {
+        let scratch = Scratch::new("join");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("join.txt");
+        fs::write(&file, "alpha\nbravo\ncharlie\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // On the grid rather than the wire: joining writes ` bravo` onto a row
+        // that already said `alpha`, so the sentence this asserts is on the
+        // screen and was never in the delta. See `Editor::shown_on_grid`.
+        let screen = editor.shown_on_grid(b"J", "alpha bravo");
+        let first = screen.line(0);
+        let status = screen.line(SCREEN.ws_row - 1);
+        editor.quit();
+
+        assert!(
+            first.contains("alpha bravo"),
+            "the two lines became one, with a space at the seam; row was: {first}"
+        );
+        assert!(
+            status.contains("[+]"),
+            "and the buffer says it differs from disk; statusline was: {status}"
+        );
+    }
+
+    /// **`]u` walks to an unseen region and `<C-o>` walks back** — three keys
+    /// no test pressed, and they are one story.
+    ///
+    /// A region motion is the only thing a user can press that pushes a jump:
+    /// `Editing::push_jump` has two callers, `goto_sequence` and `goto_anchor`.
+    /// So the jumplist cannot be exercised without one, and testing them apart
+    /// would mean inventing a second way onto the list.
+    ///
+    /// **The jumplist holds anchors, not line numbers**, which is why this is
+    /// worth pressing rather than unit-testing: `push_jump` mints an anchor
+    /// through the store and `jump` resolves it back, so a `<C-o>` that lands
+    /// on the right line has driven `T042`'s ladder end to end from a key.
+    #[test]
+    fn a_region_motion_pushes_a_jump_and_the_jumplist_walks_back() {
+        let scratch = Scratch::new("jumplist");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("walk.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\nsix\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(declare(&file, &[(4, 5)]).as_bytes(), "landed=1");
+        editor.press_until(b"(close-repl!)\r", "1    one");
+
+        // The cursor readout is the observable, and it is *state* — so all
+        // three of these read the grid rather than the wire.
+        let at = |screen: &Screen| screen.line(SCREEN.ws_row - 1);
+
+        // `]u` — the next unseen region, from line 1.
+        let moved = editor.shown_on_grid(b"]u", "4:1");
+        assert!(
+            at(&moved).contains("4:1"),
+            "]u landed on the region's first line; statusline was: {}",
+            at(&moved)
+        );
+
+        // `<C-o>` — back along the jumplist, to where `]u` was pressed.
+        let back = editor.shown_on_grid(b"\x0f", "1:1");
+        assert!(
+            at(&back).contains("1:1"),
+            "<C-o> returned to where the jump started; statusline was: {}",
+            at(&back)
+        );
+
+        // `<C-i>` — forward again, the same list read the other way.
+        let forward = editor.shown_on_grid(b"\x09", "4:1");
+        editor.quit();
+        assert!(
+            at(&forward).contains("4:1"),
+            "<C-i> went forward along the same list; statusline was: {}",
+            at(&forward)
+        );
+    }
+
+    /// **Every deferred command key says which task builds it** — `T098`'s
+    /// claim, over the whole deferred surface rather than the one key it was
+    /// written for.
+    ///
+    /// `runtime/keymaps.scm`'s header promises exactly this: a binding is
+    /// *"legible when the capability's phase has not landed — the refusal names
+    /// the task"*. Nine keys rely on it and not one was pressed. The failure it
+    /// prevents is the one `T098` records: `q` bound to something unbuilt
+    /// looked exactly like `q` bound to nothing.
+    ///
+    /// **A table, so it cannot go stale quietly.** When a task lands its key
+    /// stops refusing and this goes red at the row that named it — the same
+    /// shape as `scripts/lint-action-arms.sh`'s RECORDED list one layer out, a
+    /// record that can only shrink.
+    ///
+    /// The tasks are not guesses: each is the `since.task` on that capability's
+    /// own row in `action.rs`, which is where the refusal reads it from. So
+    /// this asserts the sentence a person sees rather than a constant.
+    #[test]
+    fn a_deferred_binding_names_the_task_that_builds_it() {
+        let scratch = Scratch::new("deferred");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("deferred.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `(keys, what it is, the task its refusal must name)`.
+        //
+        // **The tasks were wrong three ways when this was first written**, from
+        // reading the keymap instead of the capability: `SPC c p` and `SPC c s`
+        // open a *prompt*, so they answer `T058` and not the session task their
+        // group is labelled with; `SPC t` is `set-pane-content`, `T054`; and
+        // `SPC r d` is `open-disk-diff`, `T070`, one task along from the reload
+        // beside it. Each is the `since` on that capability's own row in
+        // `action.rs` — checked there, because the whole point of the assertion
+        // is that a user is told the truth.
+        let deferred: &[(&[u8], &str, &str)] = &[
+            (b"?", "search backward", "T058"),
+            (b"N", "previous search match", "T058"),
+            (b" cp", "prompt claude", "T058"),
+            (b" cs", "steer the turn", "T058"),
+            (b" ci", "interrupt the session", "T062"),
+            (b" t", "the transcript pane", "T054"),
+            (b" rr", "reload from disk", "T069"),
+            (b" rd", "diff against disk", "T070"),
+            (b" j", "the jj timeline", "T073"),
+        ];
+        for (keys, what, task) in deferred {
+            // **`press_until`, not a quiet press and a grid read.** A refusal is
+            // a notice, so the claim is that it was *drawn*; the final grid is a
+            // race with whatever redraws next, and reading it that way is what
+            // made an early version of this survey report four working keys as
+            // silently broken.
+            let said = editor.press_until(keys, task);
+            assert!(
+                shows(&said, task),
+                "{what} is deferred and must say so by name; frame was: {said}"
+            );
+            editor.press_quietly(b"\x1b");
+        }
+        editor.quit();
     }
 
     /// **`↵` on a file row opens the file** — the half that was never pressed.

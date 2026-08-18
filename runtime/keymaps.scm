@@ -794,11 +794,24 @@
 ;; rather than with the motions — a jumplist entry has to survive the rewrite
 ;; that moves the code it points at, and surviving a rewrite is what an anchor
 ;; is. `<C-o>` walks back, `<C-i>` forward.
+;;
+;; **`<tab>` is bound to the same thing, and without it `<C-i>` is a binding no
+;; terminal can reach.** ctrl-i and tab are one byte — 0x09 — and crossterm
+;; reports it as `KeyCode::Tab`, which `decode` canonicalises to `<tab>`. so a
+;; keymap that only says `<C-i>` is asking for a spelling the wire never
+;; produces: half the jumplist was unpressable, and nothing noticed because
+;; nothing pressed it. vim treats the two as the same key for exactly this
+;; reason.
+;;
+;; `<C-i>` stays. it is the documented name, it is what `:help` should say, and
+;; a terminal speaking the kitty keyboard protocol can tell the two apart —
+;; this is a second spelling of one binding, not a replacement.
 (keymap-set-rows!
  '("normal")
  (list
   (list "<C-o>" (key/run (key/cmd "jump" "seek" "prev")) "back along the jumplist")
-  (list "<C-i>" (key/run (key/cmd "jump" "seek" "next")) "forward along the jumplist")))
+  (list "<C-i>" (key/run (key/cmd "jump" "seek" "next")) "forward along the jumplist")
+  (list "<tab>" (key/run (key/cmd "jump" "seek" "next")) "forward along the jumplist")))
 
 ;; leaving. `<C-c>` is the safety valve — raw mode means the terminal will not
 ;; deliver SIGINT, so an editor with no binding for it is one you cannot get

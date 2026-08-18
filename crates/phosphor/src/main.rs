@@ -4937,6 +4937,15 @@ struct Editing {
     jumplist: Vec<AnchorId>,
     /// Where in [`Editing::jumplist`] `<C-o>` has walked back to. Pushing a new
     /// jump from here truncates the forward half — a history, not a ring.
+    ///
+    /// **`jumplist.len()` means *the present*** — not walking, cursor wherever
+    /// the last jump left it. That one extra state is what makes `<C-o>` able to
+    /// reach the newest entry: it used to be set to `len - 1` by
+    /// [`Editing::push_jump`], pointing *at* the entry just recorded, so
+    /// `Seek::Prev` computed `0 - 1 = 0`, hit `jump`'s no-move guard and
+    /// answered *"already at the oldest jump"*. After a single jump you could
+    /// never get back — which is the rule `push_jump`'s own doc states, and
+    /// nothing pressed `<C-o>` until the key survey that found this.
     jump_at: usize,
     /// The unnamed register is `"`; `"a` is `a` (`request::RegisterName`).
     registers: BTreeMap<String, Register>,
@@ -5650,7 +5659,7 @@ impl Editing {
                 anchor,
                 label,
                 exact,
-            }) => self.goto_anchor(*anchor, label.as_deref(), *exact),
+            }) => self.goto_anchor(*anchor, label.as_deref(), *exact, true),
             Action::Motion(MotionAction::Jump { seek }) => self.jump(*seek),
             // `T049` — `]u` / `[u` and `SPC u n`. The other seven sequences
             // decline by naming what builds them, which is the same rule the
@@ -6526,7 +6535,22 @@ impl Editing {
     /// name rather than jumped to. It
     /// still holds its old span, and sending someone to a location the store
     /// knows is stale is the one behaviour worse than saying so.
-    fn goto_anchor(&mut self, id: Option<AnchorId>, label: Option<&str>, exact: bool) -> Outcome {
+    /// `record` says whether arriving here is itself a jump.
+    ///
+    /// **True for `` ` `` and `'`, false for `<C-o>` and `<C-i>`**, and the
+    /// difference is not a nicety: [`Editing::push_jump`] truncates the forward
+    /// half of the jumplist, so a walk that recorded itself would delete the
+    /// list it is walking. It did — `jump` called this unconditionally, so the
+    /// first `<C-o>` wiped every entry and pushed one, and `<C-i>` came back
+    /// *"already at the newest jump"* with nowhere to go. Vim's rule is the
+    /// same one: moving along the jumplist does not add to it.
+    fn goto_anchor(
+        &mut self,
+        id: Option<AnchorId>,
+        label: Option<&str>,
+        exact: bool,
+        record: bool,
+    ) -> Outcome {
         let focused = self.file.as_deref().map(store::key_for);
         let found = match (id, label) {
             (Some(id), _) => self.store.anchor(id),
@@ -6552,7 +6576,9 @@ impl Editing {
         if focused.as_deref() != Some(anchor.path.as_path()) {
             return declined("that anchor is in another file — T056 opens it");
         }
-        self.push_jump();
+        if record {
+            self.push_jump();
+        }
         let line = usize::try_from(anchor.span.start.line.saturating_sub(1)).unwrap_or(0);
         // `'` is the line, `` ` `` is the column it was written at.
         let column = if exact {
@@ -6598,13 +6624,31 @@ impl Editing {
     /// `Seek::Prev` is `<C-o>` and `Seek::Next` is `<C-i>`. `First` and `Last`
     /// are the ends. An empty list declines rather than answering a no-op, so
     /// `<C-o>` in a fresh session says why nothing happened.
+    ///
+    /// # The first `<C-o>` records where it left, and that is not bookkeeping
+    ///
+    /// A list of jump *origins* has no entry for where you are standing when
+    /// you start walking back, so `<C-i>` would have nothing to return to — you
+    /// could go back and never come forward. Vim's answer is to add the current
+    /// position the moment you first press `<C-o>`, and that is what the
+    /// `at_present` branch does. Without it the walk is one-way, which is how
+    /// this read before the key survey pressed it.
     fn jump(&mut self, seek: Seek) -> Outcome {
         if self.jumplist.is_empty() {
             return declined("the jumplist is empty");
         }
+        // At the present: not walking, so there is nowhere forward to go and a
+        // step back has to leave a way home first.
+        let at_present = self.jump_at >= self.jumplist.len();
+        if at_present && matches!(seek, Seek::Next) {
+            return declined("already at the newest jump");
+        }
+        if at_present && matches!(seek, Seek::Prev) {
+            self.push_here();
+        }
         let last = self.jumplist.len() - 1;
         let next = match seek {
-            Seek::Prev => self.jump_at.saturating_sub(1),
+            Seek::Prev => self.jump_at.min(last).saturating_sub(1),
             Seek::Next => (self.jump_at + 1).min(last),
             Seek::First => 0,
             Seek::Last => last,
@@ -6619,7 +6663,7 @@ impl Editing {
         let Some(id) = self.jumplist.get(next).copied() else {
             return declined("the jumplist moved under us");
         };
-        match self.goto_anchor(Some(id), None, true) {
+        match self.goto_anchor(Some(id), None, true, false) {
             Outcome::Done(_) => Outcome::Done(Receipt {
                 capability: "jump",
                 value: Value::Int(i64::try_from(next).unwrap_or(0)),
@@ -6635,6 +6679,24 @@ impl Editing {
     /// walking backwards truncates the forward half, which is what makes the
     /// list a history rather than a ring.
     fn push_jump(&mut self) {
+        // **Truncated at `jump_at`, not after it.** Everything from where the
+        // walk currently stands is unreachable once a new jump happens, and the
+        // entry *at* `jump_at` is the position `push_here` is about to record —
+        // keeping it would leave the same line in the list twice. At the
+        // present this is a no-op, which is the ordinary case.
+        self.jumplist
+            .truncate(self.jump_at.min(self.jumplist.len()));
+        self.push_here();
+        self.jump_at = self.jumplist.len();
+    }
+
+    /// Append the cursor's line to the jumplist, leaving `jump_at` alone.
+    ///
+    /// Two callers with two reasons: [`Editing::push_jump`], which is a jump
+    /// recording where it came *from*, and [`Editing::jump`]'s first `<C-o>`,
+    /// which is a walk recording where it is *leaving* so `<C-i>` has somewhere
+    /// to return to.
+    fn push_here(&mut self) {
         let Some(path) = self.file.clone() else {
             return;
         };
@@ -6644,11 +6706,7 @@ impl Editing {
         let id = self
             .store
             .place_anchor(store::key_for(&path), span, None, fingerprint);
-        if self.jump_at + 1 < self.jumplist.len() {
-            self.jumplist.truncate(self.jump_at + 1);
-        }
         self.jumplist.push(id);
-        self.jump_at = self.jumplist.len() - 1;
     }
 
     fn yank(&mut self, target: &Target, register: Option<&RegisterName>) {
