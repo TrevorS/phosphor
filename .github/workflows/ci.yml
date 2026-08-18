@@ -145,12 +145,28 @@ jobs:
   # that no longer exists is a required check that never runs, which reads as
   # green. This job carries the old name, does no work, and passes only if
   # every slice did.
+  #
+  # **`if: always()` and an explicit check, not bare `needs:`.** A dependent job
+  # whose `needs` failed is *skipped*, and a skipped check is not a failed one —
+  # it is a third state, and which of the two it is treated as depends on where
+  # it is read. That is the same shape as the renaming trap above: a required
+  # check that does not report is one nobody hears say no. So this always runs
+  # and turns the slices' result into a red one itself.
   test:
     name: cargo nextest run
     runs-on: ubuntu-latest
     needs: test-shard
+    if: always()
     steps:
-      - run: echo "all four nextest slices passed"
+      - name: Every slice passed, or say which state they ended in
+        run: |
+          set -euo pipefail
+          result='${{ needs.test-shard.result }}'
+          if [ "$result" != "success" ]; then
+            echo "the nextest slices ended in: $result" >&2
+            exit 1
+          fi
+          echo "all four nextest slices passed"
 
   lint:
     name: just lint (structural lints)
@@ -317,6 +333,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
+      # The one job that builds `--release`, so it warms a cache of its own —
+      # the default key includes the job id, and release artefacts share
+      # nothing with the debug ones every other job builds. Uncached this was
+      # a full optimised build of the whole graph on every push, which is most
+      # of why a job that cannot fail the run was the second longest one in it.
+      - uses: Swatinem/rust-cache@v2
       - name: Build phosphor (release) and put it on PATH
         run: |
           set -euo pipefail
