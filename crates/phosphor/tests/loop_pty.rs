@@ -501,6 +501,26 @@ mod driven {
             assert!(status.success(), "the shipping binary exited with {status}");
         }
 
+        /// Leave by a route the test chose, and prove the binary agreed.
+        ///
+        /// [`Editor::quit`] presses `ZQ` because that is the one exit every
+        /// test can end with. A test *about* an exit needs to press its own —
+        /// `:wq` writes first, `ZQ` throws work away, and the difference is the
+        /// thing under test — so this takes the keys and does the rest.
+        ///
+        /// No `<esc>` first: the keys are the subject here, and prefixing them
+        /// would hide a sequence that only works from a clean slate.
+        fn leave_by(mut self, keys: &[u8]) {
+            (&*self.master)
+                .write_all(keys)
+                .expect("the child takes the keys");
+            let status = self.child.wait().expect("the child exits");
+            if let Some(reader) = self.reader.take() {
+                reader.join().expect("the reader thread finishes");
+            }
+            assert!(status.success(), "the shipping binary exited with {status}");
+        }
+
         /// `SIGKILL` — no exit code runs, no destructor, no `fsync`.
         ///
         /// `CP-3` asks for this and `journal.rs` is designed against it: an
@@ -1943,6 +1963,194 @@ mod driven {
                 "{what} is deferred and must say so by name; frame was: {said}"
             );
             editor.press_quietly(b"\x1b");
+        }
+        editor.quit();
+    }
+
+    // -----------------------------------------------------------------------
+    // The rest of the surface
+    // -----------------------------------------------------------------------
+    //
+    // **The same survey, widened past the keymap.** Keys are one way in; the ex
+    // line, the mouse and the floats are the others, and each was counted the
+    // same way — enumerate what ships, grep for what presses it.
+    //
+    // * **Ex commands.** `(ex-entries)` answers **18**. Nine were typed by no
+    //   test at all: `wall`, `wq`, `xit`, `close-buffer`, `transcript`,
+    //   `inbox`, `diff-disk`, `reattach`, `comment`. Three of those are live.
+    // * **Mouse.** `mouse_actions` handles three kinds — press, drag, wheel —
+    //   and one test pressed the first two. The wheel had nothing.
+
+    /// **The wheel scrolls, and the cursor stays where you left it.**
+    ///
+    /// `mouse_actions` answers a wheel with `View::Scroll` and nothing else,
+    /// which is the whole claim: a viewport move is not a cursor move. It is
+    /// the mouse half of *"nothing moves unless you asked"* — reading further
+    /// down a file must not take your insertion point with it, or every wheel
+    /// nudge while reading is an edit in the wrong place waiting to happen.
+    ///
+    /// Nothing had turned a wheel. The one mouse test in this file presses and
+    /// drags, and those are the two kinds that *do* move the cursor, so the
+    /// invariant this asserts had no test pulling the other way.
+    #[test]
+    fn the_wheel_scrolls_the_viewport_and_leaves_the_cursor_alone() {
+        let scratch = Scratch::new("wheel");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("long.txt");
+        let body = (1..=60)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&file, format!("{body}\n")).expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        assert!(
+            editor.screen().line(0).contains("line 1"),
+            "the file opens at the top"
+        );
+
+        // SGR reporting spells the wheel 64 (up) and 65 (down); `?1006h` is
+        // what `mouse` writes, and it is the mode the editor asks for.
+        let down = editor.shown_on_grid(&mouse(65, 10, 5, true), "line 4");
+        assert!(
+            down.line(0).contains("line 4"),
+            "one notch moved the viewport down; row was: {}",
+            down.line(0)
+        );
+        assert!(
+            down.line(SCREEN.ws_row - 1).contains("1:1"),
+            "and the cursor did not come with it — a wheel is not a motion; \
+             statusline was: {}",
+            down.line(SCREEN.ws_row - 1)
+        );
+
+        // And back, by the same amount, so the notch is symmetric.
+        let up = editor.shown_on_grid(&mouse(64, 10, 5, true), "line 1");
+        editor.quit();
+        assert!(
+            up.line(0).contains("line 1"),
+            "a notch up undid a notch down; row was: {}",
+            up.line(0)
+        );
+    }
+
+    /// **`:wq` writes the buffer and leaves** — the commonest exit in vim, and
+    /// nothing typed it.
+    ///
+    /// The two halves are one Action list — `save-buffer` then `quit` — and
+    /// `CP-4` found by hand that the *order* of their refusals was wrong, which
+    /// is the whole reason `Session::key` takes the first refusal rather than
+    /// the last. That fix was pressed through `ZZ` and never through `:wq`,
+    /// although `submit_ex` and the keymap build the same list. This is the ex
+    /// half of it.
+    ///
+    /// **The assertion is on disk**, not on a frame: a `:wq` that quit without
+    /// writing would leave a green frame and a lost edit, which is exactly the
+    /// failure worth catching.
+    #[test]
+    fn wq_writes_the_buffer_and_leaves() {
+        let scratch = Scratch::new("wq");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("wq.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // `J` makes the buffer differ from disk, so a write has something to do
+        // and a quit has something to refuse if it happens first.
+        editor.shown_on_grid(b"J", "alpha bravo");
+        editor.leave_by(b":wq\r");
+
+        let written = fs::read_to_string(&file).expect("the file survives");
+        assert_eq!(
+            written, "alpha bravo\n",
+            "the join reached disk before the editor left"
+        );
+    }
+
+    /// `:xit` is vim's other spelling of the same thing, and it is a separate
+    /// row in the ex table — so it is a separate way for the list to be wrong.
+    #[test]
+    fn xit_is_the_same_exit_by_another_name() {
+        let scratch = Scratch::new("xit");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("xit.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.shown_on_grid(b"J", "alpha bravo");
+        editor.leave_by(b":xit\r");
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "alpha bravo\n",
+            ":xit wrote what :wq writes"
+        );
+    }
+
+    /// `:wall` — save every buffer. One buffer until `T088`, so what this can
+    /// hold is that it writes *this* one and does not leave.
+    #[test]
+    fn wall_writes_without_leaving() {
+        let scratch = Scratch::new("wall");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("wall.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.shown_on_grid(b"J", "alpha bravo");
+        // The dirty marker going out is the observable: `[+]` means *differs
+        // from disk*, so it clears exactly when the write lands.
+        let saved = editor.shown_on_grid(b":wall\r", "wall.txt");
+        let status = saved.line(SCREEN.ws_row - 1);
+        editor.quit();
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "alpha bravo\n",
+            ":wall wrote the buffer"
+        );
+        assert!(
+            !status.contains("[+]"),
+            "and the editor stopped calling it dirty; statusline was: {status}"
+        );
+    }
+
+    /// **Every deferred ex command names the task that builds it** — the ex
+    /// line's half of `a_deferred_binding_names_the_task_that_builds_it`.
+    ///
+    /// Six of the eighteen answer a refusal rather than doing something, and
+    /// none of them was typed by anything. The same table shape, for the same
+    /// reason: when a task lands its command stops refusing and the row that
+    /// named it goes red, so this can only shrink.
+    ///
+    /// `close-buffer` is the odd one and belongs here anyway. It is not
+    /// deferred — the arm exists — but it declines while there is one pane, and
+    /// naming `T088` is the whole of what it can honestly say.
+    #[test]
+    fn a_deferred_ex_command_names_the_task_that_builds_it() {
+        let scratch = Scratch::new("ex-deferred");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("ex.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `(command, the task its refusal must name)`, each read off that
+        // capability's own row in `action.rs`.
+        let deferred: &[(&str, &str)] = &[
+            ("transcript", "T054"),
+            ("inbox", "T067"),
+            ("diff-disk", "T070"),
+            ("reattach", "T057"),
+            ("comment", "T068"),
+            ("close-buffer", "T088"),
+        ];
+        for (command, task) in deferred {
+            let said = editor.press_until(format!(":{command}\r").as_bytes(), task);
+            assert!(
+                shows(&said, task),
+                ":{command} is not built and must say which task builds it; \
+                 frame was: {said}"
+            );
         }
         editor.quit();
     }

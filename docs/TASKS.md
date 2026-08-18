@@ -1910,6 +1910,32 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > `action.rs` — `SPC c p`/`SPC c s` open a *prompt* (`T058`, not their group's session task),
   > `SPC t` is `set-pane-content` (`T054`), and `SPC r d` is `open-disk-diff` (`T070`).
   >
+  > **Widened past the keymap, same day.** Keys are one way in; the ex line, the mouse and the
+  > floats are the others, and each was counted the same way — enumerate what ships, grep for what
+  > presses it.
+  >
+  > * **Ex commands.** `(ex-entries)` answers **18**, and **nine** were typed by no test at all:
+  >   `wall`, `wq`, `xit`, `close-buffer`, `transcript`, `inbox`, `diff-disk`, `reattach`,
+  >   `comment`. Probing each showed three are live and six refuse legibly.
+  > * **The mouse.** `mouse_actions` handles three kinds — press, drag, **wheel** — and the one
+  >   mouse test in the repository pressed the first two. Nothing had ever turned a wheel.
+  >
+  > Five tests came out of it. `:wq` and `:xit` are the commonest exit in vim and neither was
+  > typed, although `Session::key`'s *"first refusal wins"* fix — found by hand at `CP-4` — exists
+  > because `:wq` and `ZZ` are the same Action list and were answering differently. That fix was
+  > pressed through `ZZ` only. Both new tests assert **on disk**, because a `:wq` that quit without
+  > writing leaves a green frame and a lost edit. `:wall` gets the third.
+  >
+  > The wheel test asserts the invariant the two tested mouse kinds pull the *other* way on: a
+  > viewport move is not a cursor move. Reading further down a file must not take the insertion
+  > point along, and press and drag both legitimately move it, so nothing was holding that line.
+  > Pressed against a planted violation — the wheel emitting `MoveCursor` instead of `Scroll` — and
+  > it fails on the statusline reading.
+  >
+  > The sixth is the ex line's half of the deferred table: `transcript` (`T054`), `inbox`
+  > (`T067`), `diff-disk` (`T070`), `reattach` (`T057`), `comment` (`T068`), and `close-buffer`,
+  > which is not deferred but declines while there is one pane and can only honestly name `T088`.
+  >
   > **A methodological finding worth more than any of them.** The first pass of this survey used
   > a quiet press and a read of the final grid, and reported four working keys as silently broken —
   > including `SPC j`, written up as *"produces nothing at all"* before being checked. The grid is
