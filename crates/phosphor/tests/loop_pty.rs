@@ -2478,6 +2478,112 @@ mod driven {
         );
     }
 
+    /// **`'` goes to the line, `` ` `` goes to the column** — the whole of what
+    /// separates the two keys, and only one of them was pressed.
+    ///
+    /// `goto_anchor` takes an `exact` flag and the keymap generates 26 rows for
+    /// each spelling, so this is one boolean with 52 bindings over it. The test
+    /// above presses `` `a ``; the only `'` in this file presses `'z` and asserts
+    /// the **refusal** for a mark that was never set. So the success path of `'`
+    /// — and with it the flag's `false` arm — had nothing.
+    ///
+    /// The mark is set at a column well inside the line, which is what makes
+    /// the two answers different: `` ` `` returns to that column and `'` returns
+    /// to column 1. A fixture marked at column 1 would pass either way.
+    #[test]
+    fn quote_returns_to_the_line_and_backtick_to_the_column() {
+        let scratch = Scratch::new("mark-column");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("marks.txt");
+        fs::write(&file, "alpha\nbravo\ncharlie\ndelta\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // Line 3, column 5 — `charlie`'s `i`. Marked there.
+        editor.press(b"jj");
+        editor.press(b"llll");
+        editor.press(b"mq");
+        let marked = editor.screen().line(SCREEN.ws_row - 1);
+        assert!(
+            marked.contains("3:5"),
+            "the mark is set away from column 1, or this proves nothing; \
+             statusline was: {marked}"
+        );
+
+        // Away, then back the exact way.
+        editor.press(b"G");
+        let exact = editor.shown_on_grid(b"`q", "3:5");
+        assert!(
+            exact.line(SCREEN.ws_row - 1).contains("3:5"),
+            "backtick returned to the column the mark was written at; \
+             statusline was: {}",
+            exact.line(SCREEN.ws_row - 1)
+        );
+
+        // And back the line way, which must land in column 1.
+        editor.press(b"G");
+        let line = editor.shown_on_grid(b"'q", "3:1");
+        editor.quit();
+        assert!(
+            line.line(SCREEN.ws_row - 1).contains("3:1"),
+            "quote returned to the line and not the column; statusline was: {}",
+            line.line(SCREEN.ws_row - 1)
+        );
+    }
+
+    /// **`ZZ` writes and leaves**, and `CP-4` found a defect in it by hand
+    /// while nothing pressed it.
+    ///
+    /// It is `save-buffer` then `quit` — the same Action list `:wq` builds —
+    /// and the fix that came out of `CP-4` was about which of the two refusals
+    /// a user is shown: on a buffer with no name it said *"unsaved work — force
+    /// it or save first"* and swallowed *"no file name — :write <path>"*, which
+    /// is the half that says what to type. `Session::key` takes the **first**
+    /// refusal because of it.
+    ///
+    /// That fix has a test through `:wq` (`wq_writes_the_buffer_and_leaves`)
+    /// and had none through the key, although the key is where it was found.
+    #[test]
+    fn zz_writes_the_buffer_and_leaves() {
+        let scratch = Scratch::new("zz-exit");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("zz.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.shown_on_grid(b"J", "alpha bravo");
+        editor.leave_by(b"ZZ");
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "alpha bravo\n",
+            "ZZ wrote before it left — the whole difference from ZQ"
+        );
+    }
+
+    /// And the other half of that pair: `ZQ` throws the edit away.
+    ///
+    /// Asserted because it is the one exit every other test in this file ends
+    /// with — `Editor::quit` presses it — so a `ZQ` that quietly started
+    /// writing would make every one of those tests lie about the file it left
+    /// behind, and nothing would say so.
+    #[test]
+    fn zq_leaves_without_writing() {
+        let scratch = Scratch::new("zq-exit");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("zq.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.shown_on_grid(b"J", "alpha bravo");
+        editor.leave_by(b"ZQ");
+
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "alpha\nbravo\n",
+            "ZQ left the file alone, which is what makes it the harness's exit"
+        );
+    }
+
     /// **`T043`'s criterion: markers work correctly on an extensionless file
     /// with no grammar.**
     ///
