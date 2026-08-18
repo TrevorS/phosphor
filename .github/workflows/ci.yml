@@ -65,19 +65,45 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just
+      - uses: Swatinem/rust-cache@v2
       - run: just clippy
         env:
           RUST_BACKTRACE: "1"
 
-  test:
-    name: cargo nextest run
+  # The suite, in four slices that run at once.
+  #
+  # **Measured before it was changed.** The single test job was 17m12s, and the
+  # build was 163s of it — the other 866s was the tests themselves, on a
+  # `ubuntu-latest` box that is **2 vCPU** for a private repo. nextest defaults
+  # to one thread per core, so the whole suite ran two at a time.
+  #
+  # Raising `--test-threads` is the obvious lever and is the wrong one here. The
+  # numbers are in the justfile's `test-shard` comment: the pty suite goes
+  # 146s → 74s → 46s at 2, 4 and 8 threads, and then *back up* to 52s at 12 with
+  # a test failing. The harness has 30s deadlines and a starved child editor
+  # blows them; flakes appeared exactly when threads exceeded logical CPUs.
+  # Four 2-vCPU runners are the same parallelism with none of the starvation.
+  #
+  # `--partition count:k/4` is nextest's own splitter, so nothing here maintains
+  # a list of which tests go where — measured at 76.5s and 75.9s for the first
+  # two slices, which is as even as a hand-written split would have been on its
+  # best day and cannot rot when a test file is added.
+  #
+  # This is where Tier 1 (docs/TASKS.md's three-tier table — the committed
+  # cell-grid snapshots T018/T034/etc. add via `insta`) actually gates: no
+  # `continue-on-error`, and `insta` panics on a real mismatch by default
+  # (verified against insta 1.48.0's own source this session — see V008's
+  # report for the exact call site). Contrast `tapes-diff` below, Tier 2,
+  # which is `continue-on-error: true` by construction.
+  test-shard:
+    name: nextest ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
-    # This is where Tier 1 (docs/TASKS.md's three-tier table — the committed
-    # cell-grid snapshots T018/T034/etc. add via `insta`) actually gates: no
-    # `continue-on-error`, and `insta` panics on a real mismatch by default
-    # (verified against insta 1.48.0's own source this session — see V008's
-    # report for the exact call site). Contrast `tapes-diff` below, Tier 2,
-    # which is `continue-on-error: true` by construction.
+    strategy:
+      # Every slice runs even when one fails: a suite that stops at the first
+      # red slice tells you less than the one that tells you all four.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
       # cargo-nextest: per-test process isolation (SPIKES.md's hygiene table) —
@@ -92,9 +118,39 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just
-      - run: just test
+      # **No per-slice key, deliberately.** The default key is built from the
+      # job id, which is `test-shard` for all four legs — so they share one
+      # cache entry, which is right: `--partition` changes which tests *run*,
+      # never what gets *built*, so all four compile the identical workspace.
+      # Keying per slice was the first draft and would have made four ~1 GB
+      # entries of the same artefacts against a 10 GB repo-wide limit that
+      # evicts LRU — four jobs competing to push each other's caches out.
+      # On a cold run all four miss and one wins the save; the rest are a
+      # harmless "already exists".
+      - uses: Swatinem/rust-cache@v2
+      - run: just test-shard ${{ matrix.shard }} 4
         env:
           RUST_BACKTRACE: "1"
+      # **Doctests, on one slice only.** `cargo test --doc` is a second compiler
+      # invocation rather than a second test run, and running it four times
+      # would pay for the rustdoc pass four times to learn the same thing.
+      - if: matrix.shard == 1
+        run: just test-doc
+        env:
+          RUST_BACKTRACE: "1"
+
+  # The name branch protection knows, kept.
+  #
+  # Sharding renames a job — a matrix always suffixes — and a required check
+  # that no longer exists is a required check that never runs, which reads as
+  # green. This job carries the old name, does no work, and passes only if
+  # every slice did.
+  test:
+    name: cargo nextest run
+    runs-on: ubuntu-latest
+    needs: test-shard
+    steps:
+      - run: echo "all four nextest slices passed"
 
   lint:
     name: just lint (structural lints)
@@ -115,6 +171,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just
+      - uses: Swatinem/rust-cache@v2
       # The whole seam: every lint is one scripts/lint-*.sh script, and
       # `just lint` runs all of them. Nobody edits this workflow to add a lint —
       # nineteen exist now and not one of them changed a *step* here. (It said
@@ -180,6 +237,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just
+      - uses: Swatinem/rust-cache@v2
       - run: just hack
         env:
           RUST_BACKTRACE: "1"

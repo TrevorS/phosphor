@@ -87,6 +87,38 @@ test:
     cargo nextest run --workspace --no-tests=pass
     cargo test --doc --workspace
 
+# One slice of the suite, for CI's matrix. `just test` is still the whole thing
+# and is what you run locally.
+#
+# **Sharding rather than more threads, and that is a measurement not a taste.**
+# The test phase on a runner was 866s of a 17m job — the build was only 163s of
+# it — because `ubuntu-latest` on a private repo is a **2-vCPU** box and nextest
+# defaults to one thread per core. The same suite takes 319s at `--test-threads
+# 2` on the machine this was measured on, so the runner is not doing anything
+# strange; it has two slow cores.
+#
+# The obvious fix is to raise the thread count, because these tests are
+# latency-bound rather than CPU-bound: the pty harness waits 250ms of quiet
+# after every keystroke and the fake language servers sleep on purpose. Measured
+# on the pty suite, 2 threads → 146s, 4 → 74s, 8 → 46s. But at 12 threads it went
+# *back up* to 52s and a test failed, and that is the whole argument against
+# turning the knob: the harness has 30s deadlines, and a starved child editor
+# blows them. Flakes appeared exactly when threads exceeded logical CPUs.
+#
+# Four 2-thread runners are the same parallelism with none of the starvation —
+# each shard runs at the concurrency that is proven clean, and they run at once.
+#
+# `--partition count:k/n` is nextest's own splitter, so nothing here maintains a
+# list of which tests go where. A hand-written split is a list that rots the
+# first time somebody adds a test file.
+test-shard k n:
+    cargo nextest run --workspace --no-tests=pass --partition count:{{ k }}/{{ n }}
+
+# The doctests alone. One shard runs this so the rustdoc pass happens exactly
+# once — it is a second compiler invocation, not a second test run.
+test-doc:
+    cargo test --doc --workspace
+
 # cargo-deny: bans a second major of ratatui/ratatui-core (the rule SPIKES.md
 # says matters most), plus licenses and the RustSec advisory DB. See
 # deny.toml for the advisory-ignore list and why each entry is there.
