@@ -875,18 +875,37 @@ fn every_cli_part_is_covered() {
 /// workflow, not a property of the registry.
 const CLI_PARTS: usize = 4;
 
-/// One part's registrations, by modular arithmetic over the whole table.
+/// One part of anything, by modular arithmetic.
 ///
 /// Round-robin rather than contiguous chunks on purpose: the registry is
 /// grouped by family, so contiguous slices would give one part all of the
 /// expensive neighbours and another all of the cheap ones.
-fn cli_part(registered: &[Registration], part: usize, parts: usize) -> Vec<&Registration> {
-    registered
+///
+/// Generic over the item because two walks spawn the binary per row now — the
+/// verb route and the `--eval` route — and they slice different lists: the
+/// second runs only over rows whose flags cannot express an argument.
+fn part_of<T>(items: &[T], part: usize, parts: usize) -> Vec<&T> {
+    items
         .iter()
         .enumerate()
         .filter(|(index, _)| index % parts == part - 1)
-        .map(|(_, registration)| registration)
+        .map(|(_, item)| item)
         .collect()
+}
+
+fn cli_part(registered: &[Registration], part: usize, parts: usize) -> Vec<&Registration> {
+    part_of(registered, part, parts)
+}
+
+/// How many lanes a walk should use for `count` process launches.
+///
+/// A lane spawns the binary and waits for it, so this is sized by the waiting
+/// — see [`MIN_LANES`] and the note on the CLI walk for the measurement.
+fn lanes_for(count: usize) -> usize {
+    std::thread::available_parallelism()
+        .map_or(4, |cores| cores.get())
+        .max(MIN_LANES)
+        .clamp(1, count.max(1))
 }
 
 fn cli_walk(part: usize, parts: usize) {
@@ -896,10 +915,7 @@ fn cli_walk(part: usize, parts: usize) {
         !registered.is_empty(),
         "part {part} of {parts} is empty — the split stopped covering the registry"
     );
-    let lanes = std::thread::available_parallelism()
-        .map_or(4, |cores| cores.get())
-        .max(MIN_LANES)
-        .clamp(1, registered.len().max(1));
+    let lanes = lanes_for(registered.len());
     let per_lane = registered.len().div_ceil(lanes).max(1);
 
     let failures: Vec<String> = std::thread::scope(|scope| {
@@ -1062,44 +1078,146 @@ fn a_verb_that_answers_for_another_capability_is_caught() {
 /// there is to observe. A capability the `S2` host **carries out** answers `#ok`
 /// and is exempt, because "it happened" is a stronger proof of reach than a
 /// refusal is.
+/// # In lanes and in four parts, for the CLI walk's reasons twice over
+///
+/// This spawns the binary once per row that needs `--eval`, exactly as the verb
+/// walk does, and it was doing it **end to end in a `for` loop** — no lanes at
+/// all. On a runner that made it 126.5 s and the second-slowest test in the
+/// suite, behind only the walk it is a sibling of.
+///
+/// So it gets both fixes the verb walk got, and for the same measured reasons:
+/// lanes, because a lane is mostly waiting on a child process; and four parts,
+/// because a shard is never smaller than its slowest test and CI runs four
+/// slices on four runners.
+///
+/// [`every_eval_part_is_covered`] holds the split, and it is not the same
+/// assertion as the verb walk's: this one slices the **filtered** list, so it
+/// has to prove the filter and the partition compose — every row that needs
+/// eval is in exactly one part, and no row that does not need it crept in.
 #[test]
-fn the_eval_route_reaches_what_no_flag_can_express() {
-    let mut failures = Vec::new();
-    for registration in registrations() {
-        if !registration.cli.needs_eval() {
-            continue;
-        }
-        let capability = &registration.capability;
-        let source = match scheme_call(capability, &registration.steel) {
-            Ok(source) => source,
-            Err(why) => {
-                failures.push(format!("{} — {why}", capability.name));
-                continue;
-            }
-        };
-        let output = run(&["--eval".to_owned(), source.clone()]);
-        let printed = String::from_utf8_lossy(&output.stdout).into_owned();
-        // **Not answered yet** is what has to name a task; anything else was
-        // carried out and reached the VM and then the host, which is more than
-        // the refusal below proves.
-        //
-        // This read `printed.trim() == "#ok"` until `T041`, which is the same
-        // check for a build where every carried-out capability answered
-        // `Value::Null`. `mark-seen` answers *how many regions were in scope* —
-        // a number is the composable answer for something a script calls — so
-        // the narrow form started failing on capabilities that had just been
-        // built. The claim was never about the shape of a success.
-        let unanswered = printed.contains("refused") || printed.contains("raised");
-        if !unanswered {
-            // Carried out.
-        } else if !printed.contains(capability.since.task) {
-            failures.push(format!(
-                "{} — `--eval {source}` answered {printed:?}, which names no task of its own",
-                capability.name
-            ));
-        }
-    }
+fn the_eval_route_reaches_what_no_flag_can_express_1_of_4() {
+    eval_walk(1, CLI_PARTS);
+}
+
+#[test]
+fn the_eval_route_reaches_what_no_flag_can_express_2_of_4() {
+    eval_walk(2, CLI_PARTS);
+}
+
+#[test]
+fn the_eval_route_reaches_what_no_flag_can_express_3_of_4() {
+    eval_walk(3, CLI_PARTS);
+}
+
+#[test]
+fn the_eval_route_reaches_what_no_flag_can_express_4_of_4() {
+    eval_walk(4, CLI_PARTS);
+}
+
+/// Every row that needs `--eval` is walked, by exactly one part.
+///
+/// Spawns nothing. The `needs_eval` filter is asserted here rather than assumed
+/// because it is the half a partition check would otherwise miss: four parts
+/// can add up perfectly and still be four parts of the wrong list.
+#[test]
+fn every_eval_part_is_covered() {
+    let all = registrations();
+    let expected: Vec<&str> = all
+        .iter()
+        .filter(|registration| registration.cli.needs_eval())
+        .map(|registration| registration.capability.name)
+        .collect();
+    assert!(
+        !expected.is_empty(),
+        "no capability needs --eval, so these walks assert nothing"
+    );
+
+    let mut seen: Vec<&str> = (1..=CLI_PARTS)
+        .flat_map(|part| {
+            eval_part(&all, part, CLI_PARTS)
+                .into_iter()
+                .map(|registration| registration.capability.name)
+        })
+        .collect();
+    seen.sort_unstable();
+    let before = seen.len();
+    seen.dedup();
+    assert_eq!(before, seen.len(), "a capability is walked by two parts");
+
+    let mut expected = expected;
+    expected.sort_unstable();
+    assert_eq!(
+        seen, expected,
+        "the {CLI_PARTS} eval parts are not the rows that need --eval"
+    );
+}
+
+/// The rows one part walks: those needing `--eval`, sliced.
+///
+/// Filtered **before** slicing, so the parts are even in the work they do. The
+/// other order — slice the whole registry, then filter — would leave each part
+/// with whatever fraction of eval-needing rows happened to fall in it.
+fn eval_part(all: &[Registration], part: usize, parts: usize) -> Vec<&Registration> {
+    let needs: Vec<&Registration> = all
+        .iter()
+        .filter(|registration| registration.cli.needs_eval())
+        .collect();
+    part_of(&needs, part, parts).into_iter().copied().collect()
+}
+
+fn eval_walk(part: usize, parts: usize) {
+    let all = registrations();
+    let registered = eval_part(&all, part, parts);
+    assert!(
+        !registered.is_empty(),
+        "part {part} of {parts} is empty — the split stopped covering the eval rows"
+    );
+    let lanes = lanes_for(registered.len());
+    let per_lane = registered.len().div_ceil(lanes).max(1);
+
+    let failures: Vec<String> = std::thread::scope(|scope| {
+        let lanes: Vec<_> = registered
+            .chunks(per_lane)
+            .map(|slice| scope.spawn(move || slice.iter().filter_map(|r| eval_row(r)).collect()))
+            .collect();
+        lanes
+            .into_iter()
+            .flat_map(|lane: std::thread::ScopedJoinHandle<'_, Vec<String>>| {
+                lane.join().expect("a lane spawns the binary and no more")
+            })
+            .collect()
+    });
+
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// One row through `--eval`, or why it did not reach.
+fn eval_row(registration: &Registration) -> Option<String> {
+    let capability = &registration.capability;
+    let source = match scheme_call(capability, &registration.steel) {
+        Ok(source) => source,
+        Err(why) => return Some(format!("{} — {why}", capability.name)),
+    };
+    let output = run(&["--eval".to_owned(), source.clone()]);
+    let printed = String::from_utf8_lossy(&output.stdout).into_owned();
+    // **Not answered yet** is what has to name a task; anything else was
+    // carried out and reached the VM and then the host, which is more than
+    // the refusal below proves.
+    //
+    // This read `printed.trim() == "#ok"` until `T041`, which is the same
+    // check for a build where every carried-out capability answered
+    // `Value::Null`. `mark-seen` answers *how many regions were in scope* —
+    // a number is the composable answer for something a script calls — so
+    // the narrow form started failing on capabilities that had just been
+    // built. The claim was never about the shape of a success.
+    let unanswered = printed.contains("refused") || printed.contains("raised");
+    if unanswered && !printed.contains(capability.since.task) {
+        return Some(format!(
+            "{} — `--eval {source}` answered {printed:?}, which names no task of its own",
+            capability.name
+        ));
+    }
+    None
 }
 
 /// `§14` — one door, one refusal, one exit code.
