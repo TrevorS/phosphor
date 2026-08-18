@@ -737,6 +737,14 @@ fn every_capability_is_reachable_at_the_mcp_door() {
     walk(Door::Mcp);
 }
 
+/// The fewest lanes [`every_capability_is_reachable_at_the_cli_door`] will use,
+/// however few cores it is given.
+///
+/// A lane spawns the binary and waits for it, so the count is sized by the
+/// waiting and not by the machine — see that test's own note for the
+/// measurement this number comes from.
+const MIN_LANES: usize = 16;
+
 /// The CLI door, and the only walk that does not go through [`Doors::check`].
 ///
 /// **This third is the whole cost, and the split is what proved it.** Measured
@@ -757,6 +765,33 @@ fn every_capability_is_reachable_at_the_mcp_door() {
 /// rearrangement: the work per capability is unchanged and every one of them
 /// still runs.
 ///
+/// # A lane is not a core, and sizing it like one cost CI eleven minutes
+///
+/// The lane count was `available_parallelism()`. That is the right number for
+/// work that *computes* and the wrong one for work that **waits**: a lane here
+/// spawns a process and blocks on it, so the machine is idle for most of the
+/// lane's life. On the two-vCPU runner a private repo gets, two lanes ran 217
+/// launches end to end and this single test took **460 s** — 80% of its whole
+/// CI shard, and the one shape sharding can never split, because a shard
+/// cannot be smaller than its slowest test.
+///
+/// Measured here rather than reasoned about, which is the same lesson the
+/// paragraph above already records once:
+///
+/// ```text
+///  2 lanes   83.5s
+///  8 lanes   32.7s
+/// 16 lanes   28.1s
+/// 32 lanes   28.0s
+/// ```
+///
+/// It plateaus at 16 and does **not** degrade past it — unlike the pty suite,
+/// where oversubscription starts blowing 30 s deadlines. Nothing here has a
+/// deadline: each child boots, refuses, and exits. So the floor is the number
+/// the work wants and the machine only raises it.
+///
+/// [`MIN_LANES`] is that floor.
+///
 /// This is why the walk calls [`cli_door`] directly. The `match` on [`Door`] in
 /// [`Doors::check`] still exists and is still what the other two walks go
 /// through, so a fourth door remains a compile error there — and
@@ -767,6 +802,7 @@ fn every_capability_is_reachable_at_the_cli_door() {
     let registered = registrations();
     let lanes = std::thread::available_parallelism()
         .map_or(4, |cores| cores.get())
+        .max(MIN_LANES)
         .clamp(1, registered.len().max(1));
     let per_lane = registered.len().div_ceil(lanes).max(1);
 
