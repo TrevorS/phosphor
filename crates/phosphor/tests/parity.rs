@@ -797,9 +797,105 @@ const MIN_LANES: usize = 16;
 /// through, so a fourth door remains a compile error there — and
 /// `the_registry_is_one_row_per_capability_at_three_doors` fails first, saying
 /// a fourth walk is owed.
+/// # Four tests, because a shard is never smaller than its slowest test
+///
+/// The lane fix above took this from 460 s to 329 s on a runner and then hit a
+/// floor, and the floor is not laziness — it is arithmetic. Each launch costs
+/// **1.05 s of CPU** (measured: `time phosphor quit --force`), because every
+/// one of them boots the Steel layer on the way up. 217 × 1.05 s is 228
+/// core-seconds, and a two-core box cannot spend fewer than ~114 s of wall
+/// clock on that however many lanes wait at once. Lanes overlap *waiting*;
+/// nothing overlaps work that is genuinely there.
+///
+/// So the remaining win is not inside this test, it is *above* it: CI runs the
+/// suite in four slices on four runners, and one test — however slow — lands
+/// on exactly one of them. Splitting the walk into four lets the machinery
+/// already in place carry it, instead of one slice being the wall clock for
+/// the whole run.
+///
+/// **Nothing is skipped and no list is maintained.** [`cli_walk`] takes
+/// `part/parts` and slices `registrations()` by modular arithmetic, so the four
+/// are a partition by construction — every capability is in exactly one, and
+/// adding a capability lands it in one without anybody choosing which.
+/// `the_registry_is_one_row_per_capability_at_three_doors` still counts the
+/// rows, and [`every_cli_part_is_covered`] holds the split itself: four parts
+/// that between them name every registration, once.
 #[test]
-fn every_capability_is_reachable_at_the_cli_door() {
+fn every_capability_is_reachable_at_the_cli_door_1_of_4() {
+    cli_walk(1, CLI_PARTS);
+}
+
+#[test]
+fn every_capability_is_reachable_at_the_cli_door_2_of_4() {
+    cli_walk(2, CLI_PARTS);
+}
+
+#[test]
+fn every_capability_is_reachable_at_the_cli_door_3_of_4() {
+    cli_walk(3, CLI_PARTS);
+}
+
+#[test]
+fn every_capability_is_reachable_at_the_cli_door_4_of_4() {
+    cli_walk(4, CLI_PARTS);
+}
+
+/// The split is a partition: every registration in exactly one part.
+///
+/// Cheap — it spawns nothing — and it is what keeps the four walks above from
+/// quietly covering three quarters of the table if the slicing is ever
+/// rewritten.
+#[test]
+fn every_cli_part_is_covered() {
     let registered = registrations();
+    let mut seen: Vec<&str> = (1..=CLI_PARTS)
+        .flat_map(|part| {
+            cli_part(&registered, part, CLI_PARTS)
+                .into_iter()
+                .map(|registration| registration.capability.name)
+        })
+        .collect();
+    seen.sort_unstable();
+    let before = seen.len();
+    seen.dedup();
+    assert_eq!(
+        before,
+        seen.len(),
+        "a capability is named by more than one part"
+    );
+    assert_eq!(
+        seen.len(),
+        registered.len(),
+        "the {CLI_PARTS} parts do not add up to the registry"
+    );
+}
+
+/// How many ways [`cli_walk`] splits the registry. Four, to match CI's four
+/// slices — the number is a pairing with `--partition count:k/4` in the
+/// workflow, not a property of the registry.
+const CLI_PARTS: usize = 4;
+
+/// One part's registrations, by modular arithmetic over the whole table.
+///
+/// Round-robin rather than contiguous chunks on purpose: the registry is
+/// grouped by family, so contiguous slices would give one part all of the
+/// expensive neighbours and another all of the cheap ones.
+fn cli_part(registered: &[Registration], part: usize, parts: usize) -> Vec<&Registration> {
+    registered
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| index % parts == part - 1)
+        .map(|(_, registration)| registration)
+        .collect()
+}
+
+fn cli_walk(part: usize, parts: usize) {
+    let all = registrations();
+    let registered = cli_part(&all, part, parts);
+    assert!(
+        !registered.is_empty(),
+        "part {part} of {parts} is empty — the split stopped covering the registry"
+    );
     let lanes = std::thread::available_parallelism()
         .map_or(4, |cores| cores.get())
         .max(MIN_LANES)
