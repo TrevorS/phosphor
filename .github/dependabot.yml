@@ -1,0 +1,30 @@
+# Dependency updates, opened as pull requests so `just gate` judges them.
+#
+# Two ecosystems and no more. `vendor/` is deliberately outside the workspace
+# (see the root `Cargo.toml`) and its two forks are pinned by SHA with a
+# `VENDOR.md` recording each divergence — an automated bump there would be a
+# merge nobody reviewed against that contract, so it is not listed.
+#
+# Grouped rather than one pull request per crate: this workspace pins
+# `steel-core` and `ratatui` exactly, and a stream of single-crate bumps against
+# pins that cannot move is noise somebody learns to close unread.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  # The workflow's own actions. These are the dependency nobody thinks of, and
+  # the one that runs with a token.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

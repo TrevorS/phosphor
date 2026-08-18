@@ -34,6 +34,15 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# **Read, and said out loud.** The repository default is already read-only, but a
+# default is a setting somebody can change from a web page and a workflow cannot
+# see. Nothing here writes: no job pushes, comments, or releases. Declaring it
+# means a job that grows a write needs an edit here, in review, rather than
+# inheriting one — which matters more now that the repository is public and
+# `pull_request` fires on forks.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 

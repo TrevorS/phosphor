@@ -22,6 +22,11 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 publish = false
+# Recorded here as well as in LICENSE-MIT and LICENSE-APACHE. Inert while every
+# crate is `publish = false` — cargo only enforces it on a publish — but the
+# manifest is the first place a reader looks for the answer, and `cargo deny`
+# reads licences for a living.
+license = "MIT OR Apache-2.0"
 # The real floor, recomputed from the dependency graph rather than asserted.
 #
 # This read `1.85` — edition 2024's floor, and the fork's — from `T002` until the
