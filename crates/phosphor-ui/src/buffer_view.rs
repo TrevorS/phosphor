@@ -475,6 +475,9 @@ pub struct BufferView<'a> {
     editor: &'a Editor,
     theme: &'a Theme,
     state_column: &'a [StateMark],
+    /// How the state bar draws a mark — §8's degradation, and the field that
+    /// makes it reachable. See [`BufferView::fill`].
+    fill: Fill,
 }
 
 impl std::fmt::Debug for BufferView<'_> {
@@ -498,7 +501,28 @@ impl<'a> BufferView<'a> {
             editor,
             theme,
             state_column: &[],
+            fill: Fill::Block,
         }
+    }
+
+    /// How the state bar draws a mark: §3's filled block, or §8's `▎` for a
+    /// terminal that will not render a background colour.
+    ///
+    /// **This builder exists because the degradation was unreachable.** The
+    /// render below hardcoded [`Fill::Block`], and `Fill::Marker` appeared
+    /// nowhere in the workspace outside `gutter`'s own module and its unit
+    /// tests — so §8's *"markers become `▎`"* was implemented, covered, and
+    /// impossible to ask for. Under `NO_COLOR` the block is written with its
+    /// background dropped by `crossterm` and the column goes blank, which is
+    /// `CP-5`'s thesis losing the only thing it draws with.
+    ///
+    /// The caller decides, because deciding needs the environment and this
+    /// crate reads none: `phosphor_term::colour_available` is the binary's
+    /// source for it.
+    #[must_use]
+    pub const fn fill(mut self, fill: Fill) -> Self {
+        self.fill = fill;
+        self
     }
 
     /// The state bar's contents, indexed by **visual row** — the same
@@ -561,7 +585,7 @@ impl Widget for BufferView<'_> {
             // this column is drawn in two widgets and a `StateMark` becomes a
             // cell in exactly one place (`R9` in `docs/OPEN-QUESTIONS.md`).
             let (symbol, style) =
-                crate::gutter::state_cell(self.mark_at(visual_row), self.theme, Fill::Block);
+                crate::gutter::state_cell(self.mark_at(visual_row), self.theme, self.fill);
             set_cell(buf, area, area.x, y, symbol, style);
             set_cell(
                 buf,
@@ -768,6 +792,82 @@ pub fn retry_with_backoff<T, E>(
         for y in 0..area.height {
             assert_eq!(buf[(1, y)].bg, theme.neutrals.ground);
         }
+    }
+
+    /// **§8's degradation, reachable at last.** *"Markers become `▎`"* — and
+    /// this widget hardcoded [`Fill::Block`], so `Fill::Marker` appeared
+    /// nowhere in the workspace outside `gutter`'s own module and its unit
+    /// tests. It was implemented, covered, and impossible to ask for.
+    ///
+    /// What that cost is not cosmetic. `crossterm` drops a background colour on
+    /// a `NO_COLOR` terminal, so a state bar that is one cell of background and
+    /// no glyph came out **blank**: the unseen markers vanished, and `CP-5`'s
+    /// thesis — the gutter pulling your eye to what Claude touched — had
+    /// nothing left to pull with. `V009`'s degraded capture is what made it
+    /// visible.
+    ///
+    /// The assertion is the pair, not the glyph alone: the same marks drawn
+    /// both ways have to differ in *where the colour is*. A `▎` in the ground
+    /// colour would be as invisible as the block it replaced.
+    #[test]
+    fn the_degraded_state_bar_carries_its_hue_in_a_glyph() {
+        let theme = Theme::phosphor_dark();
+        let editor = editor(RETRY_RS);
+        let area = Rect::new(0, 0, 40, 4);
+        let marks = [
+            StateMark::None,
+            StateMark::ClaudeUnseen,
+            StateMark::Attention,
+            StateMark::Trouble,
+        ];
+        let mut buf = Buffer::empty(area);
+        BufferView::new(&editor, &theme)
+            .state_column(&marks)
+            .fill(Fill::Marker)
+            .render(area, &mut buf);
+
+        // Row 0 is `StateMark::None` and stays a space in both forms — a row
+        // nothing covers has nothing to say, and `state_cell` writes the cell
+        // anyway so a symbol from whatever drew underneath cannot survive.
+        assert_eq!(buf[(0, 0)].symbol(), " ", "nothing to mark, nothing drawn");
+        assert_eq!(buf[(0, 0)].bg, theme.neutrals.ground);
+
+        let expected = [
+            (1_u16, theme.actors.claude),
+            (2, theme.actors.attention),
+            (3, theme.actors.trouble),
+        ];
+        for (y, want) in expected {
+            let cell = &buf[(0, y)];
+            assert_eq!(
+                cell.symbol(),
+                crate::gutter::MARKER,
+                "degraded, the bar is a glyph rather than a coloured cell"
+            );
+            assert_eq!(
+                cell.fg, want,
+                "and it carries the actor hue in the foreground, row {y}"
+            );
+            assert_eq!(
+                cell.bg, theme.neutrals.ground,
+                "with no background to lose, row {y}"
+            );
+        }
+
+        // The block form puts the same hue in the background — so a terminal
+        // that drops backgrounds keeps the meaning and one that does not is
+        // unchanged. Asserted here rather than assumed, because "it degrades"
+        // is only true if the two forms actually differ.
+        let mut block = Buffer::empty(area);
+        BufferView::new(&editor, &theme)
+            .state_column(&marks)
+            .fill(Fill::Block)
+            .render(area, &mut block);
+        assert_ne!(
+            buf[(0, 1)].symbol(),
+            block[(0, 1)].symbol(),
+            "the two fills draw different cells, or nothing degraded"
+        );
     }
 
     #[test]

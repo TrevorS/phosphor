@@ -199,7 +199,7 @@ use phosphor_ui::float::{
     FloatHeader, FloatSlot, FooterHint, SignatureBody, SignatureVm, TextBody,
 };
 use phosphor_ui::frame::FrameCache;
-use phosphor_ui::gutter;
+use phosphor_ui::gutter::{self, Fill};
 use phosphor_ui::interpret::{Interpreter, NoResources, Resources};
 use phosphor_ui::key_hints::KeyHints;
 use phosphor_ui::picker::PickerVm;
@@ -4141,8 +4141,24 @@ fn draw(
     // The state column is empty on purpose: §3's marks are a store query
     // (`T041`, S5) and there is no store. The column is still reserved, which
     // is the half of the 3-column contract S1 can be held to.
+    // **§8's degradation, asked for.** `crossterm` drops a background colour on
+    // a `NO_COLOR` terminal where it writes the escape, so a state bar — one
+    // cell of background and no glyph — comes out blank and the unseen markers
+    // disappear. `phosphor_ui::gutter::state_cell` has always known how to draw
+    // `▎` instead; nothing selected it, so §8's fallback was unreachable and
+    // `V009`'s degraded capture is what made that visible.
+    //
+    // The capability question is `phosphor-term`'s: `phosphor-ui` takes
+    // `ratatui-core` only and reads no environment, deliberately.
+    let fill = if phosphor_term::colour_available() {
+        Fill::Block
+    } else {
+        Fill::Marker
+    };
     frame.render_widget(
-        BufferView::new(editor, theme).state_column(overlay.marks),
+        BufferView::new(editor, theme)
+            .state_column(overlay.marks)
+            .fill(fill),
         body,
     );
     if let Some((row, hint)) = hint_row {

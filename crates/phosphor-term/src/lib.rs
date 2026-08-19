@@ -548,6 +548,48 @@ impl Drop for Term {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Colour, and whether the terminal will take any
+// ---------------------------------------------------------------------------
+
+/// Will this terminal render colour at all?
+///
+/// # Why the editor has to ask, when `crossterm` already knows
+///
+/// It does not know it *out loud*. `crossterm` honours `NO_COLOR` where it
+/// writes the escape — `Colored::ansi_color_disabled`, per
+/// <https://no-color.org> — so a `Style` carrying a background is simply
+/// written without one, and nothing above ever learns that happened. For most
+/// of a screen that is exactly right: text drawn in the terminal's own
+/// foreground is still text.
+///
+/// **It is wrong for anything whose whole content is a colour.** Design
+/// Language §3's state bar is one cell of *background* and no glyph, so with
+/// the colour dropped it is a space: the unseen markers vanish, and `CP-5`'s
+/// thesis — that the gutter pulls your eye to what Claude touched — has nothing
+/// to pull with. §8 already says what to do instead (*"markers become `▎`"*)
+/// and `phosphor_ui::gutter::state_cell` already implements it as
+/// `Fill::Marker`; what was missing was anybody deciding to ask for it.
+///
+/// So this is the question the widget layer cannot answer for itself:
+/// `phosphor-ui` takes `ratatui-core` only and reads no environment by design.
+/// Terminal capability is this crate's, alongside raw mode and the keyboard
+/// protocol.
+///
+/// # The rule, matched to `crossterm`'s deliberately
+///
+/// Set **and non-empty**. That is `no-color.org`'s wording and
+/// `crossterm`'s implementation, and matching it is the point: a build that
+/// degraded on a different rule than the one that drops the escapes would draw
+/// markers on a terminal still getting colour, or blocks on one that is not.
+/// Read live rather than memoized — `crossterm` memoizes, and the difference
+/// only shows in a test that sets the variable, which is exactly where being
+/// able to see the change is worth more than one atomic load.
+#[must_use]
+pub fn colour_available() -> bool {
+    !std::env::var("NO_COLOR").is_ok_and(|value| !value.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;

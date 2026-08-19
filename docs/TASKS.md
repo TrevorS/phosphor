@@ -408,7 +408,18 @@ lifetime: the harness outlives any single phase and gets extended at every check
   > capture — so `tapes/2a-degraded-nocolor.tape` is the first screen in this
   > repository where a marker has ever had anything to degrade *from*.
   >
-  > **The `▎` fallback is unreachable.** §8 says markers become `▎` when colour
+  > **~~The `▎` fallback is unreachable.~~ Fixed 2026-08-19**, and the capture
+  > above is what found it. `phosphor_term::colour_available` answers the
+  > question `crossterm` answers silently — `NO_COLOR` set and non-empty, the
+  > same rule at <https://no-color.org> and in `Colored::ansi_color_disabled`,
+  > matched deliberately so the editor degrades on exactly the condition that
+  > drops the escapes. `BufferView::fill` is the builder that was missing, the
+  > binary chooses, and `phosphor-ui` still reads no environment.
+  > `the_degraded_state_bar_carries_its_hue_in_a_glyph` asserts the pair rather
+  > than the glyph: a `▎` in the ground colour would be as invisible as the
+  > block it replaced. Re-recorded, and the markers are on the screen.
+  >
+  > The finding as it stood: §8 says markers become `▎` when colour
   > is gone; `gutter::state_cell` implements it as `Fill::Marker` and `gutter`'s
   > own unit tests cover it. But `grep -rn "Fill::" crates/` outside that module
   > returns exactly one line — `buffer_view.rs:564` — and it hardcodes
