@@ -17,7 +17,7 @@
 #
 # SENTINEL, and a vhs gotcha worth the two lines. Not the word "unseen": the
 # statusline draws it too (`2 unseen`), from launch, so the wait would satisfy
-# itself before the float opened. And **not the picker's `4/4` counter**, which
+# itself before the float opened. And **not the picker's matched/total counter**, which
 # was the first choice and never matched — `/` is `Wait+Screen`'s own pattern
 # delimiter, so `4\/4` does not parse as an escaped slash and the wait silently
 # times out. vhs then skips the rest of the tape and still exits 0, so the only

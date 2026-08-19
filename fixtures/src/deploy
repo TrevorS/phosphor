@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# The deploy script. Deliberately EXTENSIONLESS.
+#
+# `T043`'s criterion is that markers work on a file no grammar parses, and
+# `CP-5` asks for a capture of it — but every other file in this tree has a
+# declared language on purpose, all twelve of them, so until this file there
+# was nothing here the node tier could fail on.
+#
+# An anchor over these lines resolves at the *line* tier rather than the node
+# tier, because there is no syntax tree to name. The marker draws either way,
+# which is the whole claim.
+set -euo pipefail
+
+region="${1:-staging}"
+image="phosphor:$(git rev-parse --short HEAD)"
+
+build() {
+    docker build -t "$image" .
+}
+
+push() {
+    docker push "$image"
+    echo "pushed $image to $region"
+}
+
+build
+push
