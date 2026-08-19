@@ -75,6 +75,21 @@
 ;; the file list arrives in `args` because no capability walks a directory and
 ;; a source runs inside the VM (OPEN-QUESTIONS §42) — the same seam that hands
 ;; `grep` the buffer's lines. rust walks, steel decides what a row says.
+;;
+;; **a row's head is its address, and there are two spellings.** the head is the
+;; first whitespace-separated token, and `picker-accept` reads it:
+;;
+;;   `path:line` — a *place*. what `grep`, `unseen` and `references` write, and
+;;                 what 8a draws (`src/retry.rs:9`). `↵` opens it at that line.
+;;   `path`      — a *file*. what this source writes, and what 3d draws
+;;                 (`src/main.rs`, bare, under a footer of `↵ open`). `↵` opens
+;;                 it carrying no position, so a fresh buffer starts at the top
+;;                 and a file you already have open keeps its cursor.
+;;
+;; this is written here, and not only in `accept_picker`, because a new source
+;; is written in this file: the doc comment on the rust side said *every* source
+;; writes `path:line` first, which was false about this one and made `↵` decline
+;; every files row until Teej pressed it at a real terminal.
 
 ;; how many unseen regions each path has, as a hash.
 (define (picker/unseen-by-path)
