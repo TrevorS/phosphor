@@ -1191,7 +1191,7 @@ version of the bulk approval, and it is indistinguishable afterwards from having
 
 ---
 
-### 37 · The statusline can say `1:1` while the cursor is on line 2
+### 37 · ~~The statusline can say `1:1` while the cursor is on line 2~~ — refuted, 2026-08-19
 
 **Found sideways, and recorded late.** Chasing a flaky pty test in the `S4` window, a wait was
 written on the statusline redrawing the cursor position after a `gd` jump. It hung for the
@@ -1221,6 +1221,44 @@ a frame budget goes quietly, and `T079` exists because that budget is worth some
 `T086`'s neighbourhood. The cheap experiment first, and it is two runs: press `j`, read the
 position, then `gd`, read it again, on the same buffer. That settles which of the two causes it
 is before a line of it is written.*
+
+**The experiment was run, and the entry above is wrong in its cause and in its claim.** It is
+`the_statusline_says_where_the_cursor_is_after_a_motion_and_after_a_jump` in
+`crates/phosphor/tests/loop_pty.rs` — the two runs this recommendation asks for, on one buffer:
+`j`, then `gd` into a server-named place at **line 2, column 5**, a position the row had never
+drawn. The statusline reads `2:1` and then `2:5`. It is right both times, and it is right for the
+motion that arrives through the event queue as well as the one handled in a keystroke's own frame.
+
+**The cache was never the cause.** `StatusVm` carries `cursor: Some(cursor_of(&editing.editor))`
+and the revision advances whenever `last_vm != vm`, so the key has always covered the cursor.
+The entry asserted the opposite about a struct literal in `main.rs` that says so plainly, which
+is what `CLAUDE.md` means by *"state a fact about a file only if you read that file in this
+session"*.
+
+**What actually happened, and it is two things, neither a defect.**
+
+1. **The wait was on a delta.** `Editor::press_until` scans the bytes drawn *since* a keypress,
+   and `1:1` → `2:1` repaints one cell. The string `2:1` was on the screen and never in the
+   delta, so the wait could only ever time out. `Editor::shown_on_grid` — which polls the
+   composed grid — was written later for exactly this and bit three other tests the day it
+   landed. There is now `Editor::landed_at`, which is that wait narrowed to the statusline and
+   which says *why* on timeout instead of hanging silently.
+
+2. **§11 was doing its job.** `Scratch` built its trees under `std::env::temp_dir()`, which is
+   `/tmp` on CI and `/var/folders/wl/nflr33r52fd_yc7hdl9kw6340000gn/T` on macOS. A 110-character
+   path in a 120-column row leaves nothing, and the shed ladder drops the **cursor** two rungs
+   before it starts shortening the path — so the same test read
+   `NORMAL  /tmp/…/sample.toy   toy-lsp ✓ │ 2:1` on a runner and ` N  sample.toy   toy-lsp ✓`
+   on this machine. Not a stale position: **no position**, dropped exactly as §11 says to drop
+   it. `Scratch` now canonicalises `/tmp`, so both agree.
+
+The second half is worth more than the entry it closes: **any assertion about statusline content
+passed on CI and failed locally, or the reverse, for reasons no diff explains.** That is a live
+flake in every test that reads that row, and it was invisible because the two machines were never
+compared. It is the same shape as the four register entries this entry itself warns about — a
+finding that lived in one comment, audited by nobody, and wrong about its own cause.
+
+*Left open: nothing. The recommendation is discharged and no task is needed.*
 
 ---
 

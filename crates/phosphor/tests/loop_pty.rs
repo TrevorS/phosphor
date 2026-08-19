@@ -369,6 +369,52 @@ mod driven {
             }
         }
 
+        /// Presses `keys` and waits for `want` on the **statusline**.
+        ///
+        /// [`Editor::shown_on_grid`] narrowed to the bottom row, and what it
+        /// buys is the failure message rather than the wait. A cursor position
+        /// that never arrives has two causes and they look identical from a
+        /// timeout: the editor did not move, or §11 shed the segment to make
+        /// the row fit. The second is not a bug and costs thirty seconds to
+        /// find out, so this says which.
+        ///
+        /// Prefer this over `press_until` for anything positional — that scans
+        /// the bytes drawn *since* the keys, and `1:1` becoming `2:1` repaints
+        /// one cell.
+        fn landed_at(&self, keys: &[u8], want: &str) -> Screen {
+            (&*self.master)
+                .write_all(keys)
+                .expect("the child takes the keys");
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                let screen = self.screen();
+                let row = statusline(&screen);
+                if row.contains(want) {
+                    self.settle();
+                    return self.screen();
+                }
+                if Instant::now() >= deadline {
+                    // A position segment is `line:column`; §11 drops it whole
+                    // rather than squeezing it, so its absence is the tell.
+                    let positional = row.split_whitespace().any(|word| {
+                        word.contains(':') && word.ends_with(|c: char| c.is_ascii_digit())
+                    });
+                    let why = if positional {
+                        "the statusline has a position and it is not this one — the editor did not move"
+                    } else {
+                        "the statusline has no position at all: §11 shed it to fit. \
+                         The scratch path is the usual reason a 120-column row runs out of room"
+                    };
+                    panic!(
+                        "{want:?} never reached the statusline after typing {:?} — {why}.\n\
+                         The row was: {row}",
+                        printable(keys)
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+
         /// Writes `keys` and waits for the editor to go quiet, asserting
         /// nothing about frames.
         ///
@@ -642,6 +688,23 @@ mod driven {
     /// where. `ESC [ … final` and `ESC ] … BEL/ST` are dropped whole; anything
     /// else printable is kept, with a space between runs so two cells that
     /// happen to abut across a style change do not read as one word.
+    /// The statusline — the bottom row of a composed [`Screen`].
+    ///
+    /// **Read a position off the grid, never out of a delta.** A statusline
+    /// going `1:1` → `2:1` repaints one cell, so the string `"2:1"` is on the
+    /// screen and never in the bytes drawn since a keypress. Pair this with
+    /// [`Editor::shown_on_grid`], which polls the grid, and not with
+    /// [`Editor::press_until`], which scans the delta and will wait out its
+    /// full thirty seconds for a line that is already there.
+    ///
+    /// This was a local closure named `at` in two tests before it was a
+    /// function, and `OPEN-QUESTIONS.md` §37 is what it cost to have it in
+    /// neither: a `press_until` on a cursor position hung, and the hang was
+    /// recorded as a product defect in the statusline's cache.
+    fn statusline(screen: &Screen) -> String {
+        screen.line(SCREEN.ws_row - 1)
+    }
+
     fn printable(bytes: &[u8]) -> String {
         let text = String::from_utf8_lossy(bytes);
         let mut out = String::with_capacity(text.len());
@@ -723,9 +786,36 @@ mod driven {
     }
 
     impl Scratch {
+        /// A scratch tree, under a **short** root — and the shortness is load
+        /// bearing.
+        ///
+        /// `std::env::temp_dir()` is `/tmp` on CI and
+        /// `/var/folders/wl/nflr33r52fd_yc7hdl9kw6340000gn/T` on macOS: 48
+        /// characters before a name is added, against 4. The statusline is 120
+        /// columns and §11 sheds by width, in this order — counters, server,
+        /// vcs, **cursor**, session prose, mode word, then the path's
+        /// directories. So one fixture drew
+        /// `NORMAL  /tmp/…/sample.toy   toy-lsp ✓ │ 2:1` on a runner and
+        /// ` N  sample.toy   toy-lsp ✓` here, from a 110-character path,
+        /// with the cursor position dropped exactly as §11 says to drop it.
+        ///
+        /// **That is a flake whether or not anyone has hit it**: any assertion
+        /// about statusline content passes on one machine and fails on the
+        /// other, and the failure looks like a 30s hang rather than a width
+        /// problem. `OPEN-QUESTIONS.md` §37 is what it cost the first time —
+        /// recorded as the statusline *lying* about the cursor, which it never
+        /// did.
+        ///
+        /// Canonicalised because `/tmp` is a symlink to `/private/tmp` on
+        /// macOS and the editor compares absolute paths: a symlink on one side
+        /// and `lsp::absolute` on the other is how `gd` into the file you are
+        /// already in concludes it is a different file. Falls back to the
+        /// platform temp dir if `/tmp` is not there, because a long path only
+        /// costs legibility while a missing one costs the test.
         fn new(name: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "phosphor-pty-{name}-{}-{:?}",
+            let root = fs::canonicalize("/tmp").unwrap_or_else(|_| std::env::temp_dir());
+            let path = root.join(format!(
+                "ph-{name}-{}-{:?}",
                 std::process::id(),
                 std::thread::current().id()
             ));
@@ -1876,31 +1966,30 @@ mod driven {
 
         // The cursor readout is the observable, and it is *state* — so all
         // three of these read the grid rather than the wire.
-        let at = |screen: &Screen| screen.line(SCREEN.ws_row - 1);
 
         // `]u` — the next unseen region, from line 1.
         let moved = editor.shown_on_grid(b"]u", "4:1");
         assert!(
-            at(&moved).contains("4:1"),
+            statusline(&moved).contains("4:1"),
             "]u landed on the region's first line; statusline was: {}",
-            at(&moved)
+            statusline(&moved)
         );
 
         // `<C-o>` — back along the jumplist, to where `]u` was pressed.
         let back = editor.shown_on_grid(b"\x0f", "1:1");
         assert!(
-            at(&back).contains("1:1"),
+            statusline(&back).contains("1:1"),
             "<C-o> returned to where the jump started; statusline was: {}",
-            at(&back)
+            statusline(&back)
         );
 
         // `<C-i>` — forward again, the same list read the other way.
         let forward = editor.shown_on_grid(b"\x09", "4:1");
         editor.quit();
         assert!(
-            at(&forward).contains("4:1"),
+            statusline(&forward).contains("4:1"),
             "<C-i> went forward along the same list; statusline was: {}",
-            at(&forward)
+            statusline(&forward)
         );
     }
 
@@ -2260,23 +2349,22 @@ mod driven {
             "landed=3",
         );
         editor.press_until(b"(close-repl!)\r", "1    one");
-        let at = |screen: &Screen| screen.line(SCREEN.ws_row - 1);
 
         // `SPC u n` — `3c`'s `+unseen · next`, the same capability `]u` names.
         let next = editor.shown_on_grid(b" un", "2:1");
         assert!(
-            at(&next).contains("2:1"),
+            statusline(&next).contains("2:1"),
             "SPC u n walked to the first region; statusline was: {}",
-            at(&next)
+            statusline(&next)
         );
 
         // Forward again with the bracket spelling, onto the middle one — the
         // only place from which backwards and forwards disagree.
         let further = editor.shown_on_grid(b"]u", "4:1");
         assert!(
-            at(&further).contains("4:1"),
+            statusline(&further).contains("4:1"),
             "]u walked to the second; statusline was: {}",
-            at(&further)
+            statusline(&further)
         );
 
         // `[u` — backwards, the arm with no coverage at all. A `Prev` wired to
@@ -2284,10 +2372,10 @@ mod driven {
         let back = editor.shown_on_grid(b"[u", "2:1");
         editor.quit();
         assert!(
-            at(&back).contains("2:1"),
+            statusline(&back).contains("2:1"),
             "[u walked back to the first — the seek is a direction, not a \
              synonym; statusline was: {}",
-            at(&back)
+            statusline(&back)
         );
     }
 
@@ -3645,14 +3733,18 @@ mod driven {
         // matching the picker tests above, and it is unambiguous here: a
         // scratch path holds no colon, so the only `3` that can follow one is
         // a line number.
-        // Typed and accepted in two presses rather than one, and the narrowing
-        // is waited for on the **grid**: `3/3` becoming `1/3` repaints a single
-        // cell, so the count is on the screen and never in a delta — which is
-        // the distinction `shown_on_grid` exists for. The wait is the
-        // assertion; it panics with the grid if the filter never isolated a
-        // single row.
-        drop(editor.shown_on_grid(b":3", "1/3"));
-        editor.press_until(b"\r", "wxyzQrst");
+        // **`<C-n>` rather than a filter**, which is what the second row needs
+        // and nothing more. This typed `:3` at first and waited for `1/3`, and
+        // it went red on CI showing `3/3…` — the matcher had not finished, and
+        // `picker.rs`'s notify was a no-op so nothing drew again. That is fixed
+        // and this still should not go through the matcher: a test about which
+        // *column* a row carries has no business depending on how a fuzzy
+        // filter scores a temporary directory's name.
+        //
+        // `picker_key` binds `<C-n>`/`<C-p>` and `Down`/`Up` to
+        // `matcher.select(±1)`, all four synchronous, and the rows are sorted
+        // by path — so one press is the second place the server named.
+        editor.press_until(b"\x0e\r", "wxyzQrst");
         editor.press_quietly(b"x");
         editor.press_quietly(b":w\r");
         editor.quit();
@@ -4824,6 +4916,57 @@ mod driven {
             "the edit survived the refused jump"
         );
         editor.quit();
+    }
+
+    /// **`OPEN-QUESTIONS.md` §37's experiment, run — two motions on one buffer.**
+    ///
+    /// §37 records *"the statusline can say `1:1` while the cursor is on line
+    /// 2"* as a product defect, blames *"a cache whose key does not include the
+    /// cursor"*, and refuses to widen that key on a guess: *"measure first —
+    /// two runs, `j` then `gd` on the same buffer"*. These are those two runs,
+    /// and the difference between them is the whole question — `j` is handled
+    /// on the keystroke, `gd` arrives through the event queue.
+    ///
+    /// **It reads the grid, and that is the point.** The evidence §37 was
+    /// written from is a `press_until` that hung for 30s waiting for `2:1`, and
+    /// `press_until` scans the bytes drawn *since* a mark. A statusline going
+    /// `1:1` → `2:1` repaints **one cell**, so `"2:1"` is on the screen and
+    /// never in the delta — the trap [`Editor::shown_on_grid`] exists for.
+    #[test]
+    fn the_statusline_says_where_the_cursor_is_after_a_motion_and_after_a_jump() {
+        let (scratch, runtime, file) = toy(
+            "statusline-position",
+            "definition-column",
+            "the first line\nwxyzQrst\n",
+        );
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+
+        // (1) `j` — a motion handled on the keystroke itself.
+        let moved = editor.landed_at(b"j", "2:1");
+        assert!(
+            statusline(&moved).contains("2:1"),
+            "`j` moved to line 2 and the statusline says so; it read: {}",
+            statusline(&moved)
+        );
+
+        // (2) `gd` — a jump arriving through the event queue, from a real
+        // server, landing on a column the statusline has never drawn. `2:5` is
+        // a sharper needle than `2:1`: line **and** column, neither of them a
+        // value already on screen.
+        let home = editor.landed_at(b"k", "1:1");
+        assert!(
+            statusline(&home).contains("1:1"),
+            "back at the top; statusline read: {}",
+            statusline(&home)
+        );
+        let jumped = editor.landed_at(b"gd", "2:5");
+        editor.quit();
+        assert!(
+            statusline(&jumped).contains("2:5"),
+            "`gd` landed on line 2 column 5 and the statusline says so; it read: {}",
+            statusline(&jumped)
+        );
     }
 
     /// The same jump into the file you are **already in** does not re-read it,
