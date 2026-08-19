@@ -981,6 +981,15 @@ fn listening_server(dir: &TempDir, tag: &str, frames: &str) -> (ServerSpec, Path
 }
 
 /// Polls until `file` holds `want`, and hands back what it last read.
+///
+/// **Wait for the thing you are about to assert, not for a prefix of it.** Both
+/// callers below waited for `"id":0` — and the client's *own* `initialize`
+/// request is `{"jsonrpc":"2.0","id":0,"method":"initialize",…}`, which lands in
+/// this file long before the client answers anything. So the poll returned on
+/// the request, the assertion read a file the response had not reached yet, and
+/// the test passed only because a fast machine got there first. It failed on a
+/// runner inside 0.42 s, on a pull request that changed nothing but an action
+/// version.
 fn heard(file: &Path, want: &str) -> String {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
@@ -1025,7 +1034,8 @@ fn a_capability_we_announced_is_a_request_we_answer() {
     servers.attach(spec, dir.path.clone());
     assert!(settle(&servers, &language("rust"), ServerState::is_ready).is_ready());
 
-    let said = heard(&file, r#""id":0"#);
+    // The response, not the request: only a response carries `result`.
+    let said = heard(&file, r#""id":0,"result""#);
     assert!(
         said.contains(r#""result":null"#),
         "the client answered the request its own capability invited: {said}"
@@ -1065,7 +1075,8 @@ fn a_request_we_never_invited_is_still_refused() {
     let state = settle(&servers, &language("rust"), ServerState::is_ready);
     assert!(state.is_ready(), "state was {state:?}");
 
-    let said = heard(&file, r#""id":0"#);
+    // The refusal itself, which is what this asserts.
+    let said = heard(&file, "answers no requests yet");
     assert!(
         said.contains("answers no requests yet"),
         "an uninvited method is refused, not accepted: {said}"
