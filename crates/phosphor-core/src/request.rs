@@ -332,7 +332,8 @@ pub enum Target {
     },
 }
 
-/// `"path:line"` and `"path:first-last"`, the way a person writes a location.
+/// `"path:line"`, `"path:line:column"` and `"path:first-last"`, the way a
+/// person writes a location.
 ///
 /// **Ruled at `§8`, and the build was the bug.** Mockup `6b` draws
 /// `(watch-place "src/retry.rs:24" 'delay)`; the vocabulary took only a tagged
@@ -349,13 +350,48 @@ pub enum Target {
 /// silently different request. Anything this does not recognise falls through
 /// to the tagged shape and its error, which names the tags.
 ///
-/// The span is half-open and whole-line, and the last colon wins, so a path
-/// that itself contains one still parses — or, failing to, is rejected rather
-/// than guessed at.
+/// The span is half-open, and it spans exactly what the text names: a line
+/// with no column is the whole line, and `path:line:column` is the one
+/// character at that column. **`gr` is what made the third spelling
+/// necessary.** The references picker draws one row per place a server named
+/// and `↵` opens the row's own first token, so a row that could only spell the
+/// line put the cursor at column 1 of the right line — measured in the running
+/// editor, then in `a_reference_row_lands_on_the_column_the_server_named`,
+/// which deletes the character it lands on and reads the file back, because
+/// `3:1` and `3:5` draw the same statusline cell after a jump the frame does
+/// not repaint.
+///
+/// The last colon wins, so a path that itself contains one still parses — or,
+/// failing to, is rejected rather than guessed at. Which of the two numeric
+/// spellings applies is decided by what sits *left* of that colon: a bare line
+/// number there means the field just split off is a column. The exchange is a
+/// file whose name ends in `:<number>`, and it is the same one `path:line`
+/// already makes against a file called `notes.txt:12`.
 fn target_from_text(text: &str) -> Option<Target> {
     let (path, lines) = text.rsplit_once(':')?;
     if path.is_empty() {
         return None;
+    }
+
+    // `path:line:column`. A column names one character, so that is what the
+    // span covers — the same rule as the line spellings below, one unit down.
+    if let Some((left, line)) = path.rsplit_once(':')
+        && !left.is_empty()
+        && let Ok(line) = line.parse::<u32>()
+        && let Ok(column) = lines.parse::<u32>()
+        && line > 0
+        && column > 0
+    {
+        return Some(Target::Explicit {
+            path: PathBuf::from(left),
+            span: Span {
+                start: Position { line, column },
+                end: Position {
+                    line,
+                    column: column.saturating_add(1),
+                },
+            },
+        });
     }
 
     let (first, last) = match lines.split_once('-') {
@@ -1716,6 +1752,74 @@ mod tests {
             target,
             Target::Explicit {
                 path: PathBuf::from("src/retry.rs"),
+                span: Span {
+                    start: Position {
+                        line: 24,
+                        column: 1
+                    },
+                    end: Position {
+                        line: 25,
+                        column: 1
+                    },
+                },
+            }
+        );
+    }
+
+    /// `gr`'s spelling: a server names a column, so the address carries one.
+    ///
+    /// The span is the **one character** at that column, which is the same
+    /// rule as the whole-line spelling a size down — a half-open span covers
+    /// exactly what the text names.
+    #[test]
+    fn a_place_can_name_its_column_and_the_span_is_that_character() {
+        let target = Target::from_value(&Value::Text("src/retry.rs:24:9".to_owned())).unwrap();
+        assert_eq!(
+            target,
+            Target::Explicit {
+                path: PathBuf::from("src/retry.rs"),
+                span: Span {
+                    start: Position {
+                        line: 24,
+                        column: 9
+                    },
+                    end: Position {
+                        line: 24,
+                        column: 10
+                    },
+                },
+            }
+        );
+    }
+
+    /// A column of 0 is refused rather than read as line 0 of a path that ends
+    /// in a number.
+    ///
+    /// Columns are 1-based everywhere else in this vocabulary, so `:0` is not
+    /// a position — and the fall-through would otherwise turn `a.rs:3:0` into
+    /// line 0 of a file called `a.rs:3`, which is a different request that
+    /// happens to parse.
+    #[test]
+    fn a_zero_column_is_not_a_position() {
+        assert_eq!(
+            Target::from_value(&Value::Text("src/retry.rs:24:0".to_owned())),
+            Target::from_value(&Value::Text("src/retry.rs:24:x".to_owned())),
+        );
+        assert!(Target::from_value(&Value::Text("src/retry.rs:24:0".to_owned())).is_err());
+    }
+
+    /// A path that itself holds a colon is still read the old way.
+    ///
+    /// Which spelling applies is decided by what sits left of the last colon,
+    /// so `odd:name.rs:24` is line 24 of `odd:name.rs` — the field before the
+    /// line is not a number, so there is no column to find.
+    #[test]
+    fn a_colon_in_the_path_does_not_become_a_column() {
+        let target = Target::from_value(&Value::Text("odd:name.rs:24".to_owned())).unwrap();
+        assert_eq!(
+            target,
+            Target::Explicit {
+                path: PathBuf::from("odd:name.rs"),
                 span: Span {
                     start: Position {
                         line: 24,

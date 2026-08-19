@@ -76,11 +76,17 @@
 ;; a source runs inside the VM (OPEN-QUESTIONS §42) — the same seam that hands
 ;; `grep` the buffer's lines. rust walks, steel decides what a row says.
 ;;
-;; **a row's head is its address, and there are two spellings.** the head is the
-;; first whitespace-separated token, and `picker-accept` reads it:
+;; **a row's head is its address, and there are three spellings.** the head is
+;; the first whitespace-separated token, and `picker-accept` reads it:
 ;;
-;;   `path:line` — a *place*. what `grep`, `unseen` and `references` write, and
-;;                 what 8a draws (`src/retry.rs:9`). `↵` opens it at that line.
+;;   `path:line:column`
+;;               — a *point*. what `references` writes, because a server names
+;;                 one and dropping it lands you on column 1 of the right line.
+;;   `path:line` — a *line*. what `grep` and `unseen` write, and what 8a draws
+;;                 (`src/retry.rs:9`). a grep row is a whole matched line and
+;;                 an unseen row a whole region, so neither has a column to
+;;                 carry — this is the honest spelling for them, not a
+;;                 shortened one. `↵` opens it at that line.
 ;;   `path`      — a *file*. what this source writes, and what 3d draws
 ;;                 (`src/main.rs`, bare, under a footer of `↵ open`). `↵` opens
 ;;                 it carrying no position, so a fresh buffer starts at the top
@@ -203,14 +209,25 @@
 ;; lines do: **nothing in the vocabulary carries a list of places**, which is
 ;; the sentence that put `request-references` on T047 in the first place.
 ;;
-;; a row is `path:line` and the file's name, which is what `↵` needs — accept
-;; reads the row's own first token, so what you see is what opens.
+;; a row is `path:line:column` and the file's name, which is what `↵` needs —
+;; accept reads the row's own first token, so what you see is what opens.
+;;
+;; **the column is in the row because the row is the whole address.** this
+;; drew `path:line` and dropped the column a server had just gone to the
+;; trouble of naming, so `gr` landed you on the right line at column 1 —
+;; reported from the running editor. the fix is not in accept: the row *is*
+;; the target, `target_from_text` parses all three spellings, and a second
+;; channel carrying the half the text left out is how the two disagree.
 (define (picker/place-row place)
   (let* ([path (hash-ref place "path")]
          [span (hash-ref place "span")]
-         [line (if span (hash-ref (hash-ref span "start") "line") 1)])
+         [start (if span (hash-ref span "start") #f)]
+         [line (if start (hash-ref start "line") 1)]
+         [column (if start (hash-ref start "column") 1)])
     (picker/row
-     (picker/run (string-append path ":" (number->string line)) 'text)
+     (picker/run
+      (string-append path ":" (number->string line) ":" (number->string column))
+      'text)
      (picker/run "  " 'meta)
      (picker/run "reference" 'steel))))
 

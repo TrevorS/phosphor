@@ -36,6 +36,12 @@ unsolicited push arrives on its own schedule:
                  the common case and the one that used to re-read the buffer
                  from disk; answer no lookups, so no float competes for the
                  frame
+    definition-column
+                 the same jump, at a **non-zero character**. Every other answer
+                 in this file starts at character 0, where a column carried
+                 correctly and a column dropped land on the same cell — so no
+                 test here could tell them apart, and the references picker
+                 shipped dropping it
 
 `7c`'s own labels and detail column are used for the completion items so the
 frame a test reads is the frame the mockup draws.
@@ -273,15 +279,19 @@ def main():
             # sibling is named off the document's own URI, because this process
             # is told nothing about the directory it was started in.
             uri = message["params"]["textDocument"]["uri"]
+            here = MODE in ("definition-here", "definition-column")
+            # Character 0 for every mode but one. `definition-column` is the
+            # only answer in this file that names a column at all, because a
+            # column is the one part of a place a client can drop while still
+            # looking right.
+            character = 4 if MODE == "definition-column" else 0
             reply(
                 request_id,
                 {
-                    "uri": uri
-                    if MODE == "definition-here"
-                    else uri.rsplit("/", 1)[0] + "/target.toy",
+                    "uri": uri if here else uri.rsplit("/", 1)[0] + "/target.toy",
                     "range": {
-                        "start": {"line": 1, "character": 0},
-                        "end": {"line": 1, "character": 0},
+                        "start": {"line": 1, "character": character},
+                        "end": {"line": 1, "character": character},
                     },
                 },
             )

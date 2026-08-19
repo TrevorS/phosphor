@@ -6381,7 +6381,7 @@ impl Editing {
     /// the shadow list does not. This cannot go out of step because there is
     /// only one thing.
     ///
-    /// # Two spellings, because the mockups draw two
+    /// # Three spellings, because a place has three sizes
     ///
     /// **This used to say *"every source writes its first run as
     /// `path:line`"*, and that was false about the shipped layer.** `8a` draws
@@ -6392,21 +6392,29 @@ impl Editing {
     /// write `path:line` first"*, which is the invariant this comment asserted
     /// rather than one anything checked. Reported by Teej at a real terminal.
     ///
-    /// Both are addresses and a file is a place, so both open:
+    /// All three are addresses and a file is a place, so all three open. The
+    /// first two are [`Target`]'s own text spellings (`request.rs`'s
+    /// `target_from_text`, the `text =` clause on its `wire_union!`):
     ///
-    /// * `path:line` — [`Target`]'s own text spelling (`request.rs`'s
-    ///   `target_from_text`, the `text =` clause on its `wire_union!`), which
-    ///   carries a position, and the cursor lands on it.
+    /// * `path:line:column` — a point, and the cursor lands on it. `gr` is why
+    ///   this exists: a server answers references *with* columns, the
+    ///   `references` source drew only the line, and the jump put you at column
+    ///   1 of the right line. Nothing here had to change to fix it — the row is
+    ///   the whole address, so widening the spelling widened every source that
+    ///   has a column to write.
+    /// * `path:line` — a line, and the cursor lands at its start. What `grep`
+    ///   and `unseen` write, because a matched line and a region are lines
+    ///   rather than points.
     /// * `path` — a whole file, which carries **no** position, so `open_at`
     ///   stays [`None`]. That is the difference doing real work rather than a
     ///   default standing in for one: a fresh buffer starts at the top anyway,
     ///   and accepting the file you already have open leaves the cursor where
     ///   you left it instead of yanking it to line 1.
     ///
-    /// The order matters where a path could be read either way. `path:line`
-    /// wins, so a file genuinely named `notes.txt:12` is unreachable here — an
-    /// exchange nobody will make, against `8a` being the picker that exists to
-    /// name lines.
+    /// The order matters where a path could be read either way. The longest
+    /// numeric spelling wins, so a file genuinely named `notes.txt:12` is
+    /// unreachable here — an exchange nobody will make, against `8a` being the
+    /// picker that exists to name lines.
     ///
     /// Nothing else is refused. A head that does not exist on disk is not this
     /// function's to judge: `open-file` already answers a missing path with
@@ -6439,7 +6447,8 @@ impl Editing {
         if head.is_empty() {
             return declined("that row names nothing");
         }
-        // `path:line` if it reads as one, the whole file if it does not. The
+        // `path:line[:column]` if it reads as one, the whole file if it does
+        // not. The
         // non-`Explicit` arms of `Target` are focus-relative words like
         // `cursor` that no source writes, so a row's head matching one is a
         // *file* with that name and is opened as one.

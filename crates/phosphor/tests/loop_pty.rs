@@ -3616,6 +3616,95 @@ mod driven {
         );
     }
 
+    /// **A reference row lands on the column the server named, not on 1.**
+    ///
+    /// Reported from the running editor: `gr` puts you on the right *line* and
+    /// the wrong *column*. Nothing here could have caught it — every place the
+    /// toy server answers starts at character 0 but one, and what the picker
+    /// tests assert is the statusline's `3:1`, which is also what a dropped
+    /// column draws.
+    ///
+    /// So the assertion is the **file**, for the reason
+    /// `a_jump_inside_the_open_file_moves_the_cursor_and_keeps_the_edits`
+    /// gives: `x` takes the character under the cursor, and which character
+    /// that was is a fact on disk rather than a diff on a frame. Line 3 is
+    /// `wxyzQrst` and the server's second place is character 4 — so a cursor
+    /// on the column it named deletes the `Q`, and one snapped to the start of
+    /// the line deletes the `w`. The two files differ in their first byte.
+    #[test]
+    fn a_reference_row_lands_on_the_column_the_server_named() {
+        let (scratch, runtime, file) = toy("gr-column", "definition", "one\ntwo\nwxyzQrst\n");
+        fs::write(scratch.path.join("target.toy"), "a\nb\n").expect("the sibling");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        drop(shown(&editor, "toy-lsp \u{2713}"));
+        editor.press_until(b"gr", "3/3");
+
+        // The three places are `sample.toy` line 1, `sample.toy` line 3 and
+        // `target.toy` line 2. `:3` filters rather than moving the selection,
+        // matching the picker tests above, and it is unambiguous here: a
+        // scratch path holds no colon, so the only `3` that can follow one is
+        // a line number.
+        // Typed and accepted in two presses rather than one, and the narrowing
+        // is waited for on the **grid**: `3/3` becoming `1/3` repaints a single
+        // cell, so the count is on the screen and never in a delta — which is
+        // the distinction `shown_on_grid` exists for. The wait is the
+        // assertion; it panics with the grid if the filter never isolated a
+        // single row.
+        drop(editor.shown_on_grid(b":3", "1/3"));
+        editor.press_until(b"\r", "wxyzQrst");
+        editor.press_quietly(b"x");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        let written = fs::read_to_string(&file).expect("the buffer was written");
+        assert_eq!(
+            written, "one\ntwo\nwxyzrst\n",
+            "`x` took the character at the column the server named"
+        );
+    }
+
+    /// The same claim for `gd`, which does not go through a picker at all.
+    ///
+    /// `request-definition` posts an `open-file` carrying the whole position,
+    /// so this half has a column to lose somewhere else entirely — the two
+    /// paths share nothing below `FileSpan`. Worth its own test for that
+    /// reason: a fix for one says nothing about the other.
+    #[test]
+    fn gd_lands_on_the_column_the_server_named() {
+        let (scratch, runtime, file) = toy(
+            "gd-column",
+            "definition-column",
+            "the first line\nwxyzQrst\n",
+        );
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        ready(&editor);
+
+        // `gd` is asynchronous and `x` is not, so the terminal's own cursor is
+        // the signal that the answer landed — the same wait, and the same
+        // reason, as the same-file jump test further down.
+        let before = editor.screen().row;
+        editor.press_quietly(b"gd");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while editor.screen().row == before {
+            assert!(
+                Instant::now() < deadline,
+                "the jump never moved the cursor off row {before}. Last frame: {}",
+                editor.tail()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        editor.press_quietly(b"x");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        let written = fs::read_to_string(&file).expect("the buffer was written");
+        assert_eq!(
+            written, "the first line\nwxyzrst\n",
+            "`x` took the character at the column the server named"
+        );
+    }
+
     /// **`T038`'s *done when*, verbatim:** *"screen `7c`'s completion
     /// reproduces **from a keystroke** — typing in insert mode in the running
     /// binary raises the float"*.
