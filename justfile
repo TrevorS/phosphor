@@ -105,8 +105,17 @@ test:
 # turning the knob: the harness has 30s deadlines, and a starved child editor
 # blows them. Flakes appeared exactly when threads exceeded logical CPUs.
 #
-# Four 2-thread runners are the same parallelism with none of the starvation —
-# each shard runs at the concurrency that is proven clean, and they run at once.
+# Four runners are the same parallelism with none of the starvation, and each
+# runs at the concurrency that is proven clean.
+#
+# **That last clause was a claim and not a setting, for a while.** This recipe
+# passes no `--test-threads`, so "proven clean" was whatever one-per-logical-CPU
+# came to on the runner — true while `ubuntu-latest` was the 2-vCPU box measured
+# above, and not after. `.config/nextest.toml` pins it where it belongs: the
+# tests that spawn a child process are charged two threads for the two processes
+# they run, so the bound holds on any runner and the rest of the suite keeps
+# running at full width. Four CI runs went red on four different pty tests in
+# between, each a 30s timeout on a starved child.
 #
 # `--partition count:k/n` is nextest's own splitter, so nothing here maintains a
 # list of which tests go where. A hand-written split is a list that rots the
