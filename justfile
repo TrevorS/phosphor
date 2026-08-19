@@ -434,6 +434,20 @@ tape id:
 install:
     cargo install --path crates/phosphor --locked
 
+# V006 / CP-5 — does seeding the fixture twice leave the same store?
+#
+# `scripts/seed-fixtures.sh` reports what each line of the seed plan answers;
+# this asks the question that one names as unasserted, and it is the question
+# `CP-5`'s tapes stand on. A capture of the unseen picker is evidence about the
+# editor only if the store behind it is the same store every time it is made —
+# otherwise the pixel diff is measuring the seed.
+#
+# Not in `gate` and not a lint: it needs `phosphor` on $PATH (`just install`)
+# and runs the whole plan twice, two dozen process launches. Run it before
+# blessing a tape.
+seed-determinism:
+    bash scripts/seed-determinism.sh
+
 # CP-4's three language servers, in a container that has all of them.
 #
 # `crates/phosphor-buffer/tests/lsp_servers.rs` attaches to rust-analyzer,

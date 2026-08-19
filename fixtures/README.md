@@ -341,6 +341,28 @@ Read against the tree this session, not assumed:
    the store from the list of suspects without answering the question for the
    session subsystems that will carry a clock.
 
+9. ~~**The fixed point.**~~ **Asserted, 2026-08-18.**
+   `scripts/seed-determinism.sh` (`just seed-determinism`) seeds two clean
+   `XDG_STATE_HOME`s from the same plan and the same tree, then asks each the
+   same queries and diffs the answers. They agree: four unseen regions — six
+   declared, two marked seen — with the same ids in the same order.
+
+   This is what `CP-5`'s tapes stand on. A capture of the unseen picker is
+   evidence about the *editor* only if the store behind it is the same store
+   every time it is made; otherwise the pixel diff is measuring the seed.
+
+   **What it does not claim** is "identical on two machines", which one machine
+   cannot check. What it removes is the only cause of drift this repository
+   controls — a seed that varied run to run here could never agree across two.
+   The remainder is item 8 above, and it is about clocks in subsystems that do
+   not exist yet.
+
+   Two ways it can fail, and both were pressed: an extra region declared into
+   one home only produces a diff naming the count and the id, and a seed that
+   lands *nothing* is reported as a failure rather than as agreement — because
+   two empty stores agree perfectly and prove nothing, which is exactly how
+   this check would rot the day the plan stops landing anything.
+
 None of this is `V006` marking itself done. `docs/TASKS.md`'s checkbox for
 `V006` stays unchecked — the store half is met and the session half is not,
 and a half-met checkbox is the kind of half-truth this file exists to avoid.
