@@ -386,7 +386,13 @@ jobs:
       # — most runs match) costs nothing.
       - name: Upload diff artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        # v4 to v7 is three majors and none of them touches what this step
+        # uses. v5 and v6 are runtime bumps to Node 24 — v6 needs runner
+        # >= 2.327.1 and GitHub's hosted runners report 2.336.0 — and v7 moves
+        # the action's own internals to ESM and adds an opt-in `archive: false`
+        # for unzipped single-file uploads. `name` and `path` behave as before,
+        # and this step sets nothing else.
+        uses: actions/upload-artifact@v7
         with:
           name: tapes-diff-${{ github.sha }}
           path: |
