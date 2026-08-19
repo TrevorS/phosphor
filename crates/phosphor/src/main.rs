@@ -2366,12 +2366,20 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         Some(file) => Timeline::opened(file),
         None => (Timeline::detached(), None),
     };
+    // **The queue, opened here rather than beside its reader.** `events::open`
+    // is an `mpsc::channel()` and starts no thread — the *"after `Term::new()`,
+    // never before"* rule below belongs to `read_terminal`, which is what races
+    // the protocol negotiation. Opening it early is what lets the picker's
+    // matcher be handed a way to say *"I have more"*, which it needs at
+    // construction and which nothing could give it when the channel came later.
+    let (queue, poster) = events::open();
     let mut editing = Editing::with_timeline(
         editor,
         path,
         Rc::clone(&dirty),
         timeline,
         Arc::clone(&host.store),
+        picker::waking(poster.clone()),
     );
 
     // `T033`'s ex line, and the one line of chrome that answers it. Both live
@@ -2449,7 +2457,6 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // reads the terminal's answer back through `crossterm`'s own event source,
     // and a reader thread started first would take it. `read_terminal` says so
     // at length.
-    let (queue, poster) = events::open();
     // **The first producer** (`T036`). `events`' `AppEvent::Posted` carried an
     // `expect(dead_code)` saying it should disappear when one landed; this is
     // the line that made it disappear. The clone is what lets the terminal
@@ -3372,7 +3379,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     }
                 }
                 Intent::OpenPicker(id, query) => {
-                    editing.picker = Some(PickerSession::open(SourceId(id), query));
+                    editing.picker = Some(PickerSession::open(SourceId(id), query, &editing.wake));
                     editing.open_picker = true;
                 }
                 // **Dropping the rows is the whole of invalidation**, because
@@ -4911,6 +4918,13 @@ struct Editing {
     /// `T041`'s store, shared with [`AppHost`] so the gutter, the statusline
     /// and the `region` queries cannot disagree about a file.
     store: Arc<store::Shared>,
+    /// How a picker's matcher says it has results this frame did not show.
+    ///
+    /// Held here because a session is opened from three places — the loop's
+    /// source-cycling and two capability arms — and nucleo takes its notify at
+    /// construction. One handed down from the loop is the only version of this
+    /// that cannot be forgotten at one of the three.
+    wake: picker::Wake,
     /// Regions whose virtual-text rail is collapsed — `set-virtual-text-visible`
     /// with `on: false`. See [`Editing::collapse`] for why the set lives here
     /// rather than in the fork.
@@ -5062,6 +5076,8 @@ impl Editing {
             dirty,
             Timeline::detached(),
             Arc::new(store::Shared::default()),
+            // No loop to wake: these tests drive `tick` themselves.
+            Arc::new(|| {}),
         )
     }
 
@@ -5071,6 +5087,7 @@ impl Editing {
         dirty: Rc<Cell<bool>>,
         timeline: Timeline,
         store: Arc<store::Shared>,
+        wake: picker::Wake,
     ) -> Self {
         Self {
             editor,
@@ -5102,6 +5119,7 @@ impl Editing {
             falling_through: false,
             signature: None,
             store,
+            wake,
             collapsed: BTreeSet::new(),
             picker: None,
             float: None,
@@ -5713,7 +5731,11 @@ impl Editing {
             // *rows* are what `T046` actually owes. An open picker over a
             // source nobody has defined draws `0/0`, which is honest.
             Action::Picker(PickerAction::OpenPicker { source, query }) => {
-                self.picker = Some(PickerSession::open(source.clone(), query.clone()));
+                self.picker = Some(PickerSession::open(
+                    source.clone(),
+                    query.clone(),
+                    &self.wake,
+                ));
                 self.open_picker = true;
                 done()
             }
@@ -5791,7 +5813,11 @@ impl Editing {
                 // Re-opened rather than mutated: a source change is a new
                 // corpus, and `open-picker` is the one path that fills one.
                 let filter = self.picker.as_ref().map(|s| s.filter.clone());
-                self.picker = Some(PickerSession::open(SourceId(id.clone()), filter));
+                self.picker = Some(PickerSession::open(
+                    SourceId(id.clone()),
+                    filter,
+                    &self.wake,
+                ));
                 self.open_picker = true;
                 Outcome::Done(Receipt {
                     capability: "cycle-picker-source",

@@ -38,6 +38,25 @@ use nucleo::{Config, Nucleo};
 use phosphor_core::request::SourceId;
 use phosphor_ui::picker::{PickerVm, RowVm, RunVm};
 
+use crate::events;
+
+/// What the matcher calls when it has results the last frame did not show.
+///
+/// The same shape as `phosphor_buffer::lsp::Woke` and for the same reason: a
+/// producer that finishes on its own thread has to be able to say so, and
+/// posting an [`events::AppEvent::Woke`] is how everything else here does it.
+pub(crate) type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// Which producer a picker wake names.
+const SOURCE: &str = "picker";
+
+/// A [`Wake`] that posts into the loop's queue — `crate::lsp::waking`'s twin.
+pub(crate) fn waking(poster: events::Poster) -> Wake {
+    Arc::new(move || {
+        let _listening = poster.post(events::AppEvent::Woke(SOURCE));
+    })
+}
+
 /// How long a frame is willing to spend inside the matcher.
 ///
 /// One millisecond of a 16.7ms budget. Not a guess at how long matching takes —
@@ -199,16 +218,29 @@ impl std::fmt::Debug for Picker {
 }
 
 impl Picker {
-    /// An empty session.
+    /// An empty session, which wakes the loop when it has more to show.
     ///
-    /// The notify callback is a no-op because this loop is a **poll**, not a
-    /// wake: the frame already runs on its own schedule, and a matcher that
-    /// could interrupt it would be a second thing deciding when to draw.
-    /// `T079`'s cache is the thing that would have to be told, and it is told
-    /// by the revision.
-    pub(crate) fn new() -> Self {
+    /// **This callback used to be a no-op, and the reason given for it was
+    /// false about the loop as built.** It read *"this loop is a **poll**, not
+    /// a wake: the frame already runs on its own schedule"*. It does not:
+    /// `events::Queue::recv`'s own doc is *"No timeout, no tick, no sleep — a
+    /// quiet editor is parked in `recv`"*, and the loop ticks this matcher once
+    /// per drawn frame. So a match that outran [`TICK_BUDGET_MS`] left the
+    /// partial list and its `…` on screen and **nothing ever drew again** until
+    /// the next keystroke. Typing into a large picker could stop halfway and
+    /// stay there.
+    ///
+    /// Found from a 30s CI timeout on a three-row picker — `3/3…` with the
+    /// query typed and the filter never applied — which is the same freeze at
+    /// the small end, where a starved runner made a microsecond of matching
+    /// miss its millisecond.
+    ///
+    /// Waking is not drawing on the matcher's schedule: the callback posts an
+    /// [`events::AppEvent::Woke`] and the loop decides what to do about it,
+    /// exactly as the LSP client's state changes do.
+    pub(crate) fn new(wake: Wake) -> Self {
         Self {
-            nucleo: Nucleo::new(Config::DEFAULT, Arc::new(|| {}), None, 1),
+            nucleo: Nucleo::new(Config::DEFAULT, wake, None, 1),
             filter: String::new(),
             selected: 0,
         }
@@ -329,11 +361,12 @@ impl Picker {
     }
 }
 
-impl Default for Picker {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// **No `Default`, deliberately.** It existed and had no caller. A default
+// picker would have to invent a wake, and the only one available to a `Default`
+// is the no-op that caused the freeze this callback exists to fix — a
+// constructor that compiles everywhere and silently reintroduces the bug. The
+// notify is not a detail a matcher can supply for itself; it belongs to the
+// loop, so the loop has to hand it over.
 
 /// One open picker: which source, what the filter reads, and the matcher.
 ///
@@ -358,8 +391,8 @@ pub(crate) struct PickerSession {
 
 impl PickerSession {
     /// A session over `source`, seeded with `query`.
-    pub(crate) fn open(source: SourceId, query: Option<String>) -> Self {
-        let mut matcher = Picker::new();
+    pub(crate) fn open(source: SourceId, query: Option<String>, wake: &Wake) -> Self {
+        let mut matcher = Picker::new(Arc::clone(wake));
         let filter = query.unwrap_or_default();
         matcher.filter(&filter);
         Self {
@@ -375,6 +408,7 @@ impl PickerSession {
 mod tests {
     use super::*;
     use phosphor_ui::picker::RunVm;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{Duration, Instant};
 
     /// One frame at 60fps. Design Language §8 makes a torn frame a P0 and the
@@ -555,9 +589,60 @@ mod tests {
     /// [`FRAME_BUDGET`] survives only as a **hang detector** — a bound so loose
     /// (500 frames' worth in one call) that no load can reach it and only a
     /// genuinely blocking `tick` can.
+    /// **The matcher says when it has more, because nothing else will ask.**
+    ///
+    /// This is the half `a_hundred_thousand_rows_never_block_a_frame` cannot
+    /// reach. That test drives `tick` in a loop, so it proves the matcher
+    /// *converges when something keeps asking*. The loop does not: it is parked
+    /// in `events::Queue::recv` — *"No timeout, no tick, no sleep"* — and ticks
+    /// this matcher once per **drawn frame**. A keystroke buys exactly one
+    /// tick, and if matching outruns that tick's budget there is no second one.
+    ///
+    /// So without the notify, typing a filter drew the partial list and its `…`
+    /// and then **froze there** until the next key. Found as a 30s CI timeout on
+    /// a three-row picker showing `3/3…` with the query typed and never
+    /// applied — the same freeze at the small end, where a starved runner made
+    /// a microsecond of work miss its millisecond.
+    ///
+    /// The shape, not a time, for the reason the test below sets out at length:
+    /// **one tick, then nothing**, and the wake still arrives. The injection
+    /// wakes are dropped first so what is left is the filter's own.
+    /// [`Picker::new`] taking the callback rather than defaulting it is what
+    /// makes this reachable — a `Default` supplying a no-op would compile
+    /// everywhere and freeze here.
+    #[test]
+    fn a_matcher_with_work_outstanding_wakes_the_loop() {
+        let woke = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&woke);
+        let mut picker = Picker::new(Arc::new(move || {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        picker.feed(rows(100_000));
+        drop(picker.tick(10));
+        // Injection wakes for the same reason matching does. Only the filter's
+        // are the claim here.
+        woke.store(0, Ordering::SeqCst);
+
+        picker.filter("row");
+        // The one tick a keystroke's frame gives it. Nothing ticks again — that
+        // is the whole point, and it is what the loop actually does.
+        drop(picker.tick(10));
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while woke.load(Ordering::SeqCst) == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "the matcher never woke the loop, so the frame drawn above is \
+                 the last one — a filter typed into a big list would stop here",
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
     fn a_hundred_thousand_rows_never_block_a_frame() {
-        let mut picker = Picker::new();
+        let mut picker = Picker::new(Arc::new(|| {}));
         picker.feed(rows(100_000));
 
         // (1) A tick returns rather than hanging, and (2) the whole corpus
@@ -610,7 +695,7 @@ mod tests {
     /// pays for it — which is what the loop below asserts on both counts.
     #[test]
     fn rows_appear_within_a_few_frames_of_opening() {
-        let mut picker = Picker::new();
+        let mut picker = Picker::new(Arc::new(|| {}));
         picker.feed(rows(100_000));
 
         let mut frames = 0;
@@ -634,7 +719,7 @@ mod tests {
 
     #[test]
     fn a_filter_narrows_and_an_empty_one_restores() {
-        let mut picker = Picker::new();
+        let mut picker = Picker::new(Arc::new(|| {}));
         picker.feed(rows(500));
         settle(&mut picker);
         let everything = picker.matched();
@@ -652,7 +737,7 @@ mod tests {
 
     #[test]
     fn a_filter_matching_nothing_answers_none_rather_than_everything() {
-        let mut picker = Picker::new();
+        let mut picker = Picker::new(Arc::new(|| {}));
         picker.feed(rows(200));
         picker.filter("zzzzz-no-such-thing");
         settle(&mut picker);
@@ -667,7 +752,7 @@ mod tests {
     /// selection cannot leave it pointing past the end.
     #[test]
     fn the_selection_is_clamped_to_what_matched() {
-        let mut picker = Picker::new();
+        let mut picker = Picker::new(Arc::new(|| {}));
         picker.feed(rows(50));
         settle(&mut picker);
 
@@ -682,7 +767,7 @@ mod tests {
 
     #[test]
     fn feeding_again_replaces_the_rows_rather_than_appending() {
-        let mut picker = Picker::new();
+        let mut picker = Picker::new(Arc::new(|| {}));
         picker.feed(rows(100));
         settle(&mut picker);
         assert_eq!(picker.matched(), 100);
@@ -697,7 +782,7 @@ mod tests {
     /// still findable.
     #[test]
     fn a_filter_matches_across_run_boundaries() {
-        let mut picker = Picker::new();
+        let mut picker = Picker::new(Arc::new(|| {}));
         picker.feed(vec![RowVm::new(vec![
             RunVm::text("src/retry.rs"),
             RunVm::text(" · "),
