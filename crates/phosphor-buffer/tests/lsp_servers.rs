@@ -54,9 +54,11 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use phosphor_buffer::lsp::{LanguageServers, ServerSpec, ServerState, blessed, unwatched};
+use phosphor_buffer::lsp::{
+    Insight, LanguageServers, Lookup, ServerSpec, ServerState, blessed, unwatched,
+};
 use phosphor_core::action::Action;
-use phosphor_core::request::LanguageId;
+use phosphor_core::request::{LanguageId, Position};
 
 /// A project small enough that its server answers `initialize` before it has
 /// anything to index, written fresh so no test depends on the state of the
@@ -454,3 +456,152 @@ fn pyright_attaches_and_reports_ready() {
 // channel reached EOF`. `tests/lsp.rs::a_crash_carries_what_the_server_said_on_
 // the_way_out` states that with a fake, so it holds on every machine instead of
 // only on one.
+
+// ---------------------------------------------------------------------------
+// How long a completion takes, against the real thing
+// ---------------------------------------------------------------------------
+
+/// **`CP-4`'s one manual item with no instrument.** It asks:
+///
+/// > Type in all three languages. Is completion fast enough to be useful, or
+/// > fast enough to be annoying? Both are findings.
+///
+/// Nothing measured that. This does — and it deliberately **prints a number
+/// rather than asserting one**, which is the rule the benchmarks already
+/// follow: a figure that moves with the machine has no business failing a
+/// build. What it asserts is a *shape* — that every lookup was answered — so a
+/// server that stopped answering reddens while a slow afternoon does not.
+///
+/// The measurement is `look_up` to callback: the client's round trip to a real
+/// server over a real pipe. Not the whole keystroke-to-float path — the typing
+/// gate, the debounce and the compose belong to the loop, and `loop_pty.rs`
+/// presses those — but it is the part that leaves the process, which is the
+/// part that can be slow for reasons no amount of local care fixes.
+///
+/// Ten samples, because one is a coin toss and the first is always the worst: a
+/// server that has just answered `initialize` has usually not finished
+/// indexing. `first` is the honest *what does it cost cold* and `min` the
+/// honest *how fast can this be*; both are printed rather than averaged away.
+fn completion_latency(language: &str, source: &str, at: Position) {
+    let root = fixture(language);
+    let language = LanguageId(language.to_owned());
+    let spec = blessed(&language).expect("a first-class language has a blessed server");
+
+    if language.0 == "typescript"
+        && let Err(why) = usable_typescript(&root)
+    {
+        println!("SKIP  completion latency — nothing to drive: {why}");
+        drop(std::fs::remove_dir_all(&root));
+        return;
+    }
+    if let Err(why) = usable(&spec, &root) {
+        println!(
+            "SKIP  completion latency — no usable {}: {why}",
+            spec.command
+        );
+        drop(std::fs::remove_dir_all(&root));
+        return;
+    }
+
+    let command = spec.command.clone();
+    let file = root.join(source);
+    let found = spec
+        .root_for(&file)
+        .expect("the fixture carries a root marker");
+    let servers = LanguageServers::start(Arc::new(|_action| true), unwatched());
+    servers.open(
+        &language,
+        file.clone(),
+        std::fs::read_to_string(&file).expect("fixture source"),
+    );
+    servers.attach(spec, found);
+
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !servers.state(&language).is_ready() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(
+        servers.state(&language).is_ready(),
+        "{command} never became ready, so there is nothing to time"
+    );
+
+    let mut samples: Vec<(Duration, bool)> = Vec::new();
+    for _ in 0..10 {
+        let done: Arc<Mutex<Option<Insight>>> = Arc::new(Mutex::new(None));
+        let sink = Arc::clone(&done);
+        let started = Instant::now();
+        servers.look_up(
+            &language,
+            Lookup::Completion,
+            file.clone(),
+            at,
+            Arc::new(move |insight| {
+                *sink.lock().expect("sink") = Some(insight);
+            }),
+        );
+        let wait = Instant::now() + Duration::from_secs(20);
+        while done.lock().expect("sink").is_none() && Instant::now() < wait {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let elapsed = started.elapsed();
+        // **Every lookup answers exactly once**, `Answer`'s `Drop` included, so
+        // a `None` here is the client breaking that contract rather than a slow
+        // server — see `lsp.rs`'s `answer`.
+        if let Some(insight) = done.lock().expect("sink").take() {
+            samples.push((elapsed, matches!(insight, Insight::Completions(_))));
+        }
+    }
+    drop(std::fs::remove_dir_all(&root));
+
+    assert_eq!(
+        samples.len(),
+        10,
+        "{command} answered {} of 10 completion lookups — the client promises \
+         exactly one answer per lookup",
+        samples.len()
+    );
+
+    let first = samples[0].0;
+    let lists = samples.iter().filter(|(_, list)| *list).count();
+    let mut times: Vec<Duration> = samples.iter().map(|(elapsed, _)| *elapsed).collect();
+    times.sort_unstable();
+    println!(
+        "CP-4 completion latency — {command}: first {first:?}, min {:?}, median {:?}, max {:?} \
+         ({lists}/10 returned a list)",
+        times[0],
+        times[times.len() / 2],
+        times[times.len() - 1],
+    );
+}
+
+/// `CP-4` asks for all three languages, so there are three tests rather than
+/// one loop: a `typescript-language-server` that cannot start on this host
+/// should not stop the rust number being reported.
+#[test]
+fn rust_completion_latency() {
+    completion_latency("rust", "src/lib.rs", Position { line: 2, column: 9 });
+}
+
+#[test]
+fn typescript_completion_latency() {
+    completion_latency(
+        "typescript",
+        "src/lib.ts",
+        Position {
+            line: 2,
+            column: 12,
+        },
+    );
+}
+
+#[test]
+fn python_completion_latency() {
+    completion_latency(
+        "python",
+        "src/lib.py",
+        Position {
+            line: 2,
+            column: 12,
+        },
+    );
+}

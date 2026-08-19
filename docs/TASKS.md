@@ -400,6 +400,35 @@ lifetime: the harness outlives any single phase and gets extended at every check
   *Done when:* the degradation path is captured for `1a` and `2a` without touching a real
   terminal. *Needs:* V005
 
+  > **Both blockers gone, `2a` captured, and it found the thing it was for
+  > (2026-08-19).** The outstanding note below said `2a` could not be captured
+  > because `T046` was unbuilt, and that none of the three fallback paths
+  > rendered on `1a` because the `▎` marker needs regions from `T041`. Both are
+  > ticked, and `tapes/seed-state.sh` now puts a seeded store in front of a
+  > capture — so `tapes/2a-degraded-nocolor.tape` is the first screen in this
+  > repository where a marker has ever had anything to degrade *from*.
+  >
+  > **The `▎` fallback is unreachable.** §8 says markers become `▎` when colour
+  > is gone; `gutter::state_cell` implements it as `Fill::Marker` and `gutter`'s
+  > own unit tests cover it. But `grep -rn "Fill::" crates/` outside that module
+  > returns exactly one line — `buffer_view.rs:564` — and it hardcodes
+  > `Fill::Block`. Nothing in the shipping editor can select the marker, so
+  > under `NO_COLOR` the block simply loses its background and the state column
+  > says nothing at all. That is `T016`'s shape one layer over: a path that
+  > exists, is tested, and no configuration reaches. It is a **product** finding
+  > for `CP-5`, whose failure condition is that the markers do not change how
+  > you read the file — on that terminal there are none to read. Recorded rather
+  > than fixed: which capability selects the fill, and where detection lives, is
+  > a design question.
+  >
+  > **No `2a-degraded-term` capture, deliberately.** It recorded byte-identical
+  > to `2a.png` (same sha256), exactly as `1a-degraded-term.png` is identical to
+  > its sibling — `tapes/artifacts/DUPLICATES.md` already records
+  > `TERM=xterm-256color`, *"confirmed no visual effect"*. Committing a second
+  > one would add a reference image that proves the wrong screen, which
+  > `scripts/lint-repo-hygiene.sh` calls a correctness bug rather than waste.
+  > The inertness is now confirmed on a store-backed screen too.
+
   > **CP-3 audit — partial, not ticked.** `1a` has both variants captured —
   > `tapes/1a-degraded-term.tape` and `tapes/1a-degraded-nocolor.tape`, artifacts present.
   > **Outstanding, two things.** (1) `2a` cannot be captured: it is the unseen picker and
@@ -1609,6 +1638,33 @@ Tier 3.
 >   own line is *"the name a server gives itself"*. Nothing on screen is wrong; the prose is
 >   looser than it reads.
 >
+> **Completion latency, measured (2026-08-19).** `CP-4`'s first *Teej verifies*
+> item — *"Is completion fast enough to be useful, or fast enough to be
+> annoying? Both are findings"* — had no instrument.
+> `lsp_servers.rs::completion_latency` is one, and it **prints rather than
+> asserts**, on the benchmarks' rule that a figure which moves with the machine
+> has no business failing a build. What it asserts is a shape: every lookup was
+> answered, which is the client's own one-answer-per-lookup contract.
+>
+> Ten samples each, in the container, `look_up` to callback:
+>
+> | server | first | min | median | returned a list |
+> | --- | --- | --- | --- | --- |
+> | `rust-analyzer` | 8.0 ms | 1.1 ms | 1.4 ms | **0/10** |
+> | `pyright-langserver` | 123.6 ms | 3.2 ms | 4.8 ms | 10/10 |
+> | `typescript-language-server` | 320.6 ms | 10.3 ms | 15.2 ms | 10/10 |
+>
+> **The interesting column is the last one, and it is a finding on the first
+> run.** rust-analyzer answers a freshly-opened project in about a millisecond
+> and answers it *empty* — it has not indexed yet. To a person that is not
+> "fast", it is "this editor has no completions", which is the worse half of the
+> question `CP-4` asks. The same number on the host, so it is not the container.
+> Reported rather than papered over: waiting for a non-empty list would have
+> measured a different thing and hidden this one.
+>
+> The other two are honest: a third of a second cold for typescript, then
+> comfortably interactive.
+
 > **~~A defect it found and did not fix~~ — found, then fixed (2026-08-17).**
 > `typescript-language-server` reached `Ready` and was gone within the second with
 > `Exited("the underlying channel reached EOF")`. It was **ours**, it was one line, and the
