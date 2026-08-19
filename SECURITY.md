@@ -25,8 +25,20 @@ at the keyboard:
   the VM and nothing else, and every capability crosses one registry.
 - **The parsers** behind `fuzz/fuzz_targets/` — the journal, key notation, theme files, CSV.
 
-`cargo deny check` runs in CI over advisories, licences, bans and sources. Its ignore list is in
-`deny.toml`, with a note per entry saying why.
+## How dependency risk is watched
+
+Two channels, neither of which opens a pull request:
+
+- **`cargo deny check`** runs in CI on every push, over the RustSec advisory database plus
+  licences, bans and sources. Its ignore list is in `deny.toml`, with a note per entry saying why
+  — all four current entries are "unmaintained" advisories rather than vulnerabilities, and each
+  records what would have to change upstream for it to go away.
+- **Dependabot alerts** are enabled, which notifies on a vulnerable dependency.
+
+Automated version-bump pull requests are deliberately not configured. This repository merges to
+its primary branch rather than working through pull requests, so a weekly bot PR is a queue
+somebody has to close rather than a signal anybody reads. Updates land as ordinary commits, with
+the release notes read and the reasoning in the commit body.
 
 ## What is not a vulnerability
 
