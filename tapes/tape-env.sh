@@ -42,3 +42,33 @@ PHOSPHOR_TAPES_CONFIG_HOME="${TMPDIR:-/tmp}/phosphor-tapes-config"
 rm -rf "${PHOSPHOR_TAPES_CONFIG_HOME}"
 mkdir -p "${PHOSPHOR_TAPES_CONFIG_HOME}"
 export XDG_CONFIG_HOME="${PHOSPHOR_TAPES_CONFIG_HOME}"
+
+# ── The same hole, one variable over ──────────────────────────────────────
+#
+# This file closed `XDG_CONFIG_HOME` and left `XDG_STATE_HOME` open, and that
+# was correct exactly until `T041`/`T044` landed a store that persists. Since
+# then the seen-state journal lives under `$XDG_STATE_HOME/phosphor/<hash of
+# the canonical workspace root>/seen.journal`, so a capture of any screen the
+# store feeds — the gutter's unseen markers, the unseen picker, the files
+# picker's activity column — read whatever store the recording machine
+# happened to have. `grep -rn XDG_STATE_HOME tapes/` returned nothing before
+# this block: every tape inherited the operator's.
+#
+# That is the same false positive the paragraph above describes, and worse in
+# one way: an `init.scm` is something an operator knows they wrote, and a
+# journal is a file they have never heard of, written by an editor session
+# they have forgotten.
+#
+# Scratch and emptied every run, for the config home's reasons. Absolute for
+# its reason too — `phosphor_core::config`'s XDG handling ignores a relative
+# one and falls back to `$HOME`, which is the operator's.
+#
+# **Empty is the right default.** Most of the library draws files under
+# `tapes/fixtures/`, which no seed touches, so those screens want a store with
+# nothing in it and now provably get one. A screen that needs *seeded* state —
+# `CP-5`'s — asks for it with `tapes/seed-state.sh`, which fills this same home
+# from `fixtures/seed/plan.scm` and nowhere else.
+PHOSPHOR_TAPES_STATE_HOME="${TMPDIR:-/tmp}/phosphor-tapes-state"
+rm -rf "${PHOSPHOR_TAPES_STATE_HOME}"
+mkdir -p "${PHOSPHOR_TAPES_STATE_HOME}"
+export XDG_STATE_HOME="${PHOSPHOR_TAPES_STATE_HOME}"

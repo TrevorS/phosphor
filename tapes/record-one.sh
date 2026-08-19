@@ -19,4 +19,11 @@ fi
 # shellcheck source=tape-env.sh
 source ./tape-env.sh
 
+# shellcheck source=needs-seed.sh
+source ./needs-seed.sh
+
+if needs_seed "$1.tape"; then
+  bash ./seed-state.sh
+fi
+
 exec vhs "$1.tape"
