@@ -1425,7 +1425,7 @@ downstream depends on the answer, which is why this is a question rather than a 
 
 ---
 
-### 42 · `broken-init` photographs the boot layer's size, so every Scheme form moves it
+### 42 · ~~`broken-init` photographs the boot layer's size, so every Scheme form moves it~~ — ruled, 2026-08-20
 
 **§40 fixed the file this tape edits and missed the layer it boots.** That entry found 21
 references photographing the live source tree and repointed them at frozen fixtures;
@@ -1454,8 +1454,30 @@ drift and costs the thing the screen exists for: `broken-init` is the boot-fault
 real layer**, and a frozen copy is a photograph of a layer nobody boots. It would also be a second
 copy of `runtime/**` in a repository whose `harness` explicitly does not own that directory.
 
-*Recommendation: Teej's, and it is the same shape as §40's — which was also a ruling rather than a
-repair. Three candidates, in the order I would defend them:*
+**RULED and DONE, 2026-08-20.** Teej: the first. `tapes/fixtures/runtime/` is a verbatim snapshot
+of `runtime/` and the tape copies that instead of the live tree.
+
+**The second candidate was checked before it was offered and is not available.** `broken-init.tape`
+is one of the `CP-2` tapes (`tapes/README.md`'s artifact table), so dropping it drops a checkpoint
+deliverable — which the recommendation below did not know when it listed it. The boot fault does
+have Tier-1 coverage in `crates/phosphor-steel/tests/broken_init.rs`; the artifact requirement is a
+separate claim and it stands.
+
+**Proven, not assumed.** A form was planted in the live `runtime/keymaps.scm` and `tapes-diff`
+re-run: `broken-init` still matched. Before this, that is exactly the edit that moved it.
+
+`harness` owning the fixture is the point rather than a convenience. This tape copies to a scratch
+at all because *"`harness` does not own `runtime/**`"* — its own note says so — and a fixture under
+`tapes/` is the version of that rule which also holds still. Divergence from the live layer is
+expected and harmless: the claim the screen makes is *"a bad form in `init.scm` produces this
+surface"*, which a frozen layer states exactly as well and goes on stating. If the snapshot ever
+stops booting, the tape's sentinel does not appear and the capture fails loudly instead of
+drifting.
+
+`6b.tape` and `repl-liveness.tape` still copy `../runtime` and are deliberately left alone: neither
+draws a count, so neither moves when the layer does.
+
+*The original recommendation, kept for the record:*
 
 1. *Freeze a **minimal** layer under `tapes/fixtures/runtime/` — enough boot files to draw the
    screen, small enough to read — and accept that the counts describe that layer. The screen's
@@ -1468,8 +1490,8 @@ repair. Three candidates, in the order I would defend them:*
    nothing to do with drawing, forever" *— and it is listed only so the ruling is a choice among
    three rather than between two.*
 
-**~~Left un-blessed deliberately.~~ Blessed with the library, 2026-08-19**, and the entry stands
-unchanged. The chrome-field fix regenerated all forty-eight references, this one among them, so it
+**~~Left un-blessed deliberately.~~ ~~Blessed with the library, 2026-08-19~~, and the entry stands
+unchanged.** The chrome-field fix regenerated all forty-eight references, this one among them, so it
 now carries `init.scm:151:21 · 206 of 207 forms ran` and `just tapes-diff` reports **48 matched, 0
 mismatched**.
 
@@ -1481,7 +1503,7 @@ screen went red. Left here instead.
 
 ---
 
-### 41 · CI's Tier-2 job compares against a font the runner does not have
+### 41 · ~~CI's Tier-2 job compares against a font the runner does not have~~ — ruled, 2026-08-19
 
 **Raised 2026-08-19, by making the job run for the first time.** `V008` put a non-blocking
 `tapes-diff` job in CI. It had never compared a single pixel: `diff-tapes.sh` checks for
@@ -1564,15 +1586,27 @@ statusline reads `rust-analyzer ✓` in the reference and `rust-analyzer ✗` on
 the server is installed on one machine and not the other. Real content, not rendering, and it
 would need handling however the colour question is settled.
 
-*Ruling wanted: the third or the fourth. The first is measured and dead — a shared font is
-necessary and nowhere near sufficient, and the remaining term is not one this repository can
-control from a tape file. The second inherits the same colour problem the moment anyone compares
-across machines, which leaves it a two-platform library that only ever compares within a platform;
-that is the third option with extra images.*
+**RULED and DONE, 2026-08-19.** Teej: the third. The job captures `9c` and asserts a PNG came out
+of it; it compares nothing.
 
-*What argues against simply deleting the job is that the last two things to break here were the
-**tooling** rather than the pixels, and both were invisible for exactly as long as nothing ran. So
-the third — one tape, capture only, no comparison — keeps that alarm and drops the noise.*
+Three things changed with it, and the third is the one worth arguing about.
+
+* **ImageMagick is no longer installed.** Nothing compares, so nothing needs `compare`.
+* **The size floor is the assertion.** `vhs` exits 0 when a `Wait+Screen` times out — it skips the
+  rest of the tape and leaves whatever was on disk — so *"the command succeeded"* and *"a frame was
+  captured"* are different claims and this makes the second. 10 kB is far below a real 1228×700
+  capture and far above a truncated one.
+* **It gates now.** `continue-on-error: true` was right for a change detector and wrong for a
+  health check, and this job is the proof: it died in under a second on every run it ever had and
+  reported green, so the tick carried no information and nobody looked. A check that can only go
+  red for a real defect belongs in the required set — which is the rule the `features` job already
+  states — and *"the capture toolchain produced no frame"* is such a defect. **If it proves flaky,
+  the answer is a retry or a smaller tape, not `continue-on-error`**: a green tick that means
+  nothing is worse than no job, because it looks like coverage.
+
+The pixel comparison is still the right tool and still runs — locally, by a person changing the
+drawing, which is who it was always for. `just tapes-diff` reports **48 matched, 0 mismatched** on
+a machine with the pinned tools.
 
 **Not open: the local path.** `just tapes-diff` on a machine with the pinned tools reports
 **45 of 48 frames matched**, and the three that do not are named in `docs/TASKS.md`'s `CP-5`

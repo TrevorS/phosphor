@@ -277,12 +277,12 @@ jobs:
   # promise: the tool was not installed and no recipe named it. This job and
   # `just hack` are the promise, kept.
   #
-  # THIS ONE GATES, unlike `tapes-diff` above, and the distinction is the whole
-  # of `harness`'s standing rule rather than an exception to it. "Feature set X
-  # does not compile" is a deterministic fact about the tree with one right
-  # answer; a pixel comparison across font rendering and vhs versions is not.
-  # A check that can only go red for a real defect belongs in the required set;
-  # a change detector never does.
+  # This gates, and so does `tapes-diff` above now that it asks a question with
+  # one right answer. The rule is the same one in both places: "feature set X
+  # does not compile" and "the capture toolchain produced no frame" are facts
+  # about the tree; a pixel comparison across font rendering and vhs versions is
+  # not. A check that can only go red for a real defect belongs in the required
+  # set; a change detector never does.
   #
   # Its own job, not a step in `test`, for the reason every job here is its own
   # job: a failure should name which check failed without reading a log. And in
@@ -312,25 +312,48 @@ jobs:
         env:
           RUST_BACKTRACE: "1"
 
-  # V008 — Tier 2 (VHS pixel diff). docs/TASKS.md's three-tier table is
-  # explicit that only Tier 1 (the `test` job above, via T018's committed
-  # snapshots) gates CI; Tier 2 is a change detector — "harness"'s own
-  # characteristic failure (TEAM.md) is letting pixel comparison across font
-  # rendering and vhs versions redden a correct build. `continue-on-error:
-  # true` on the *job* is what makes that structural rather than a matter of
-  # remembering it on a step: even a full job failure — a missing tool, a
-  # `vhs` capture crash, an install step that can't reach an exact pin —
-  # reports as a passing check and cannot fail the workflow run, so this job
-  # is structurally incapable of blocking merge even if someone later adds
-  # its name to a branch-protection required-checks list by mistake.
+  # V008 — Tier 2, and it **captures rather than compares**. Ruled by Teej,
+  # 2026-08-19, on the measurement in `OPEN-QUESTIONS.md` §41.
   #
-  # Deliberately its own job, not a step tacked onto `test`: a flaky
-  # renderer failing mid-job must never take a passing Tier-1 run down with
-  # it (docs/TASKS.md's V008 acceptance line).
+  # It used to run `just tapes-diff` here, and the comparison it made was
+  # meaningless: the references are recorded on macOS and this runner is Linux.
+  # Measured rather than assumed — the same pinned font installed on both sides
+  # fixed the *layout* completely and left ~850,000 px of difference, which is
+  # colour management (macOS converts the capture through a display profile and
+  # the runner does not). No fuzz absorbs a transform applied to every pixel.
+  # §41 has the numbers.
+  #
+  # What is left is the question that has a right answer on any machine: **can
+  # this toolchain produce a frame at all?** That is worth asking in CI, because
+  # the last two things to break here were the tooling rather than the pixels —
+  # ImageMagick missing outright, then Ubuntu shipping ImageMagick 6 where the
+  # omnibus tool is `convert` and not `magick` — and each was invisible for
+  # exactly as long as nothing ran.
+  #
+  # **THIS ONE GATES**, and the change is deliberate. `continue-on-error: true`
+  # used to be on the job, and the argument for it was sound for a *change
+  # detector*: a pixel comparison across renderers must never redden a correct
+  # build. It is the wrong setting for a health check, and this job proved why —
+  # it died in under a second on every run it ever had and reported green, so
+  # the tick carried no information and nobody looked. A check that can only go
+  # red for a real defect belongs in the required set, which is the rule the
+  # `features` job below states; capture-or-not is such a check.
+  #
+  # If it turns out flaky in practice, the answer is a retry or a smaller tape —
+  # not `continue-on-error`. A green tick that means nothing is worse than no
+  # job, because it looks like coverage.
+  #
+  # Deliberately its own job, not a step tacked onto `test`: a flaky renderer
+  # failing mid-job must never take a passing Tier-1 run down with it
+  # (docs/TASKS.md's V008 acceptance line).
+  #
+  # The pixel comparison is still the right tool and still runs — locally, by a
+  # person changing the drawing, which is who it was always for. `just
+  # tapes-diff` reports 48 matched, 0 mismatched on a machine with the pinned
+  # tools.
   tapes-diff:
-    name: Tier 2 — VHS pixel diff (non-blocking)
+    name: Tier 2 — VHS capture health
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
 
@@ -382,16 +405,11 @@ jobs:
       # `continue-on-error` above, never blocks on. See this phase's report
       # for what that means for how much real Tier-2 signal to expect here
       # until someone closes this gap.
-      # ImageMagick alongside it, and `compare` is the whole job: without it
-      # `diff-tapes.sh` exits 1 on its own tool check before capturing a single
-      # frame. It did exactly that on every run this job has ever had — under a
-      # second, a green tick from `continue-on-error`, and not one pixel
-      # compared. A non-blocking job that cannot run is indistinguishable from
-      # a non-blocking job that passes, which is what made it survive.
-      - name: Install ffmpeg and ImageMagick
+      # No ImageMagick: nothing here compares. See the job's header for why.
+      - name: Install ffmpeg
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg imagemagick
+          sudo apt-get install -y ffmpeg
 
       # The one job that builds `--release`, so it warms a cache of its own —
       # the default key includes the job id, and release artefacts share
@@ -409,22 +427,34 @@ jobs:
         env:
           RUST_BACKTRACE: "1"
 
-      # V007's diff-tapes.sh already exits 0 for any number of pixel
-      # mismatches — those are findings, not failures, printed with a
-      # pointer to the diff image (see tapes/README.md's V007 section). A
-      # nonzero exit here means a genuine tool failure (missing binary, a
-      # `vhs` capture crash, a version mismatch from the ffmpeg step above),
-      # which is real signal worth a failed step — `continue-on-error` on
-      # the job is what stops that from blocking merge, not silencing it
-      # here.
-      - name: just tapes-diff
-        run: just tapes-diff 2>&1 | tee /tmp/tapes-diff.log
+      # **One screen, recorded, and the PNG has to exist.**
+      #
+      # `9c` because it is the cheapest real capture in the library: a buffer
+      # and a statusline, no language server to wait for and no seeded store.
+      # If vhs, ttyd, ffmpeg and the `phosphor` binary can produce this frame
+      # on a runner, the capture toolchain works; if any of them cannot, this
+      # is where it says so.
+      #
+      # The size floor is what makes it an assertion rather than a formality.
+      # `vhs` exits 0 when a `Wait+Screen` times out — it skips the rest of the
+      # tape and leaves whatever was on disk — so "the command succeeded" and
+      # "a frame was captured" are different claims, and the second is the one
+      # worth making. 10 kB is far below any real 1228×700 capture and far
+      # above an empty or truncated file.
+      - name: Capture one screen
+        run: |
+          set -euo pipefail
+          rm -f tapes/artifacts/9c.png
+          just tape 9c 2>&1 | tee /tmp/tapes-diff.log
+          size=$(wc -c < tapes/artifacts/9c.png)
+          echo "9c.png is ${size} bytes"
+          test "${size}" -gt 10000
 
       - name: Post diff summary
         if: always()
         run: |
           {
-            echo "## Tier 2 — VHS pixel diff (change detector, does not block merge)"
+            echo "## Tier 2 — VHS capture health (can the toolchain produce a frame)"
             echo
             echo '```'
             cat /tmp/tapes-diff.log 2>/dev/null || echo "(no output captured — see the job log above)"
@@ -447,7 +477,7 @@ jobs:
         with:
           name: tapes-diff-${{ github.sha }}
           path: |
-            tapes/artifacts/_diffs/
+            tapes/artifacts/9c.png
             /tmp/tapes-diff.log
           if-no-files-found: ignore
           retention-days: 14

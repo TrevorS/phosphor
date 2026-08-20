@@ -32,8 +32,32 @@ Source "_config.tape"
 Set Width 1228
 Set Height 700
 
+# **The layer is frozen, and that is what makes this reference reproducible.**
+#
+# It copied `../runtime` — the live layer — and the screen it captures draws two
+# numbers the layer's *size* decides: `init.scm:<line>` is where the appended
+# form lands, and `N of M forms ran` is the whole boot layer's count. So any
+# Scheme form anybody added, anywhere, moved this reference. It read as
+# flakiness (`97.5`, `388`, `92.5` px across three runs, matching whenever run
+# alone) and was nothing of the kind: three different numbers because the layer
+# was different each time. `OPEN-QUESTIONS.md` §42 has the diff that showed it.
+#
+# `fixtures/runtime/` is a verbatim snapshot of `runtime/` and `harness` owns
+# it, which is the point: this tape copies to a scratch in the first place
+# because `harness` does not own `runtime/**` (see this file's own note below),
+# and a fixture under `tapes/` is the version of that rule which also holds
+# still.
+#
+# **Divergence from the live layer is expected and harmless here.** The claim
+# this screen makes is *"a bad form in `init.scm` produces this surface"*, and a
+# frozen layer states it exactly as well as a live one. What a frozen layer also
+# does is stay true. If it ever stops booting, this tape's sentinel does not
+# appear and the capture fails loudly rather than drifting.
+#
+# `6b.tape` and `repl-liveness.tape` still copy `../runtime` and are left alone:
+# neither draws a count, so neither moves when the layer does.
 Hide
-Type "rm -rf /tmp/phosphor-broken-init && cp -R ../runtime /tmp/phosphor-broken-init && printf '\n(define broken (+ 1 nonesuch))\n' >> /tmp/phosphor-broken-init/init.scm && PHOSPHOR_RUNTIME=/tmp/phosphor-broken-init phosphor --theme phosphor-dark fixtures/core-lib.rs"
+Type "rm -rf /tmp/phosphor-broken-init && cp -R fixtures/runtime /tmp/phosphor-broken-init && printf '\n(define broken (+ 1 nonesuch))\n' >> /tmp/phosphor-broken-init/init.scm && PHOSPHOR_RUNTIME=/tmp/phosphor-broken-init phosphor --theme phosphor-dark fixtures/core-lib.rs"
 Enter
 Show
 Wait+Screen@10s /init.scm/

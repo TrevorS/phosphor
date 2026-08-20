@@ -960,15 +960,30 @@ if a declaration does not have exactly one `lsp_command` line, rather than
 rewriting a line nobody looked at. Same scratch-`$PHOSPHOR_RUNTIME` rule as
 `broken-init.tape`, for the same reason: `harness` does not own `runtime/**`.
 
-**The diagnostics half `CP-4` asks for and this does not answer.** The line
-says *"gutter priority **against other region states**"*, and there is exactly
-one source of regions until `T041` — which is why `T040` is unticked and why
-its task entry is worth reading before judging the screen. The host
-concatenates diagnostic regions with every other source and calls
-`gutter::state_column` once; the composition is written and the `Vec` has one
-element in it. `diagnostics.png` is the first clause. Re-capturing it once
-`T041` puts a second source in that `Vec` is what would make it the checkpoint
-item.
+**The diagnostics half `CP-4` asks for — answered, 2026-08-20, by a second
+tape.** The line says *"gutter priority **against other region states**"*, and
+there was exactly one source of regions until `T041`: the host concatenated
+diagnostic regions with every other source and called `gutter::state_column`
+once, with a `Vec` holding a single element. `diagnostics.png` is the first
+clause and could never be more than that.
+
+`T041` shipped, and `diagnostics-regions.tape` is the screen. It declares an
+unseen region over lines 1–8 of `policy.rs` through the CLI door, into this
+tape's own scratch — seen-state keys on the workspace root (Q1) and that root
+is `/tmp/phosphor-tape-diagnostics-regions`, not `fixtures/`. The toy server
+publishes its error on line 2, so **line 2 carries both** and the ladder is
+observable there: §3 is trouble > attention > claude, and the state bar on that
+row is trouble-red while lines 1 and 3–8 stay claude-green.
+
+A region merely *near* the diagnostic would show two colours in one column and
+prove nothing about precedence. The ladder is only visible where two states
+compete for one cell.
+
+**A new tape rather than a re-capture**, which this paragraph used to ask for.
+`diagnostics.png` is a `CP-4` artifact in its own right *and* the fixed point
+the undercurl pair is measured against — the Signal-3 table below reads ink
+coverage at `x=62..112` off it. Rewriting what it photographs would settle one
+checkpoint item by invalidating another.
 
 ### The undercurl pair, and the signal that separates them
 
@@ -1173,7 +1188,10 @@ tapes/
   7c-{rust,typescript,python}.tape,      the CP-4 tapes — see "CP-4 — the S4
   signature-help.tape,                   tapes" above. All six need `python3`
   diagnostics.tape,                      as well as `phosphor`, and each
-  diagnostics-undercurl.tape             `Require`s both
+  diagnostics-undercurl.tape,            `Require`s both.
+  diagnostics-regions.tape               `diagnostics-regions` is the gutter-
+                                          priority screen: a diagnostic and an
+                                          unseen region on one row
   artifacts/                             V005 — committed Screenshot/gif output
     .gitkeep
     DUPLICATES.md                        why each byte-identical pair is allowed

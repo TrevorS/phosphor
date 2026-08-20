@@ -1617,10 +1617,16 @@ Tier 3.
 >   an answer: `_config.tape` sets `Menlo`, which is a macOS system font the runner does not have,
 >   so every glyph is a substitution and every frame mismatches whole.
 >
->   **One `CP-4` VHS item is still owed**: *"a file with real diagnostics showing gutter priority
->   **against other region states**"*. `tapes/diagnostics.tape` builds its own fixture in `/tmp`
->   with no store regions, so it captures diagnostics alone and there is nothing for the priority
->   to be *against*. It is newly capturable now that both runners seed.
+>   **~~One `CP-4` VHS item is still owed~~ — captured, 2026-08-20.**
+>   *"A file with real diagnostics showing gutter priority **against other region states**"* is
+>   `tapes/diagnostics-regions.tape`. It declares an unseen region over lines 1–8 of `policy.rs`
+>   through the CLI door while the toy server publishes an error on line 2, so **line 2 carries
+>   both** and §3's ladder is observable on it: trouble-red where the two compete, claude-green on
+>   the rows the region holds alone.
+>
+>   A second tape rather than a re-capture of `diagnostics.png`, which is both a `CP-4` artifact of
+>   its own and the fixed point the undercurl pair's ink-coverage measurement reads from.
+>   **`CP-4`'s VHS list is complete.**
 >
 >   **Worth more than the correction is how it got here**, because it is this repo's own rule
 >   failing in the one place nothing lints: a claim about a directory, written in the same change
