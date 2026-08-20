@@ -593,23 +593,36 @@ mod tests {
     ///
     /// This is the half `a_hundred_thousand_rows_never_block_a_frame` cannot
     /// reach. That test drives `tick` in a loop, so it proves the matcher
-    /// *converges when something keeps asking*. The loop does not: it is parked
+    /// converges *when something keeps asking*. The loop does not: it is parked
     /// in `events::Queue::recv` — *"No timeout, no tick, no sleep"* — and ticks
     /// this matcher once per **drawn frame**. A keystroke buys exactly one
-    /// tick, and if matching outruns that tick's budget there is no second one.
+    /// tick, and if work is still outstanding there is no second one coming.
     ///
-    /// So without the notify, typing a filter drew the partial list and its `…`
-    /// and then **froze there** until the next key. Found as a 30s CI timeout on
-    /// a three-row picker showing `3/3…` with the query typed and never
-    /// applied — the same freeze at the small end, where a starved runner made
-    /// a microsecond of work miss its millisecond.
+    /// So without the notify, opening a picker over a large source drew
+    /// whatever the first frame caught and **froze there** until the next key.
+    /// Found as a 30s CI timeout on a three-row picker showing `3/3…`: three
+    /// rows, and `PickerVm::matching` true because *injection* had not finished
+    /// — which is the shape this actually fixes.
     ///
-    /// The shape, not a time, for the reason the test below sets out at length:
-    /// **one tick, then nothing**, and the wake still arrives. The injection
-    /// wakes are dropped first so what is left is the filter's own.
+    /// # It is injection that notifies, and that was worth measuring
+    ///
+    /// The first version of this test asserted the wrong half. It cleared the
+    /// counter after the first tick and waited up to 30 seconds for the
+    /// *filter* to wake it, which passed here and went red the first time CI
+    /// ran macOS. Measured rather than argued: `feed` of 100k rows calls the
+    /// callback **100,000 times** — once per injected item — and a filter over
+    /// them, selective or not, calls it **zero** times and settles in two
+    /// frames.
+    ///
+    /// That is not a defect, it is where the latency is: injection is the part
+    /// that outlives a frame, and matching is fast enough to finish inside the
+    /// ticks a redraw already provides. Asserting the notify against injection
+    /// is therefore both the honest claim and a deterministic one — no clock,
+    /// no scheduler race.
+    ///
     /// [`Picker::new`] taking the callback rather than defaulting it is what
-    /// makes this reachable — a `Default` supplying a no-op would compile
-    /// everywhere and freeze here.
+    /// makes this reachable: a `Default` supplying a no-op would compile
+    /// everywhere and freeze the picker in the shipping loop.
     #[test]
     fn a_matcher_with_work_outstanding_wakes_the_loop() {
         let woke = Arc::new(AtomicUsize::new(0));
@@ -619,25 +632,24 @@ mod tests {
         }));
 
         picker.feed(rows(100_000));
-        drop(picker.tick(10));
-        // Injection wakes for the same reason matching does. Only the filter's
-        // are the claim here.
-        woke.store(0, Ordering::SeqCst);
 
-        picker.filter("row");
-        // The one tick a keystroke's frame gives it. Nothing ticks again — that
-        // is the whole point, and it is what the loop actually does.
-        drop(picker.tick(10));
+        assert!(
+            woke.load(Ordering::SeqCst) > 0,
+            "the matcher never called its notify. In the shipping loop nothing \
+             would ask it again — `events::Queue::recv` parks until a producer \
+             posts — so the partial list drawn on the opening frame would be \
+             the last one, and a picker over a large source would stop halfway \
+             and stay there",
+        );
 
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while woke.load(Ordering::SeqCst) == 0 {
-            assert!(
-                Instant::now() < deadline,
-                "the matcher never woke the loop, so the frame drawn above is \
-                 the last one — a filter typed into a big list would stop here",
-            );
-            std::thread::sleep(Duration::from_millis(5));
+        // And it does settle, in a frame count no machine can inflate into a
+        // failure — a hang detector, not a deadline.
+        let mut frames = 0;
+        while picker.tick(10).matching {
+            frames += 1;
+            assert!(frames < 5_000, "the matcher never settled");
         }
+        assert_eq!(picker.matched(), 100_000, "every row is there");
     }
 
     #[test]
