@@ -2500,19 +2500,26 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     let mut sent = edits.get();
 
     loop {
-        // The size the *next* frame will be laid out at. `draw` re-splits
-        // `frame.area()` itself, so this is only for what needs `&mut editor`
-        // and therefore cannot happen inside the closure: the wrap width, and
-        // the area a scroll is measured against.
+        // The size the *next* frame will be laid out at, and the layout itself.
+        // **`draw` used to re-split `frame.area()`**, so the wrap width and the
+        // rect a scroll is measured against were one answer and the rects that
+        // were painted were another — see [`Geometry`] for what diverged. The
+        // split happens once, here; the two strips come off it below, where
+        // whether they exist this frame is known.
+        //
+        // `term.size()` rather than `frame.area()` because this half needs
+        // `&mut editor` and therefore cannot happen inside the closure. The two
+        // agree except across a resize between this line and the draw, which
+        // ratatui answers with a `Resize` event and the next pass corrects.
         let size = term.size()?;
-        let (body, _status) = split(Rect::new(0, 0, size.width, size.height));
-        editing.area = editor_area(body);
+        let mut geometry = lay_out(Rect::new(0, 0, size.width, size.height));
+        editing.area = editor_area(geometry.body);
         // `init.scm` sets `soft-wrap` at boot and `(set-option! …)` can change
         // it at the REPL, so it is read per frame rather than once: the option
         // is the editor layer's, and the flag is the override.
         if cli.soft_wrap || host.flag("soft-wrap") == Some(true) {
             // Free when the width has not changed, and it moves no viewport.
-            soft_wrap::wrap_to(&mut editing.editor, body);
+            soft_wrap::wrap_to(&mut editing.editor, geometry.body);
         }
         // `T104` — what one indent level is, and how wide a `\t` draws. Both
         // are read per pass for the reason `soft-wrap` and the completion floor
@@ -2786,6 +2793,11 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             .then(|| under(&mut layer, &machine))
             .unwrap_or_default();
 
+        // The rest of the layout, now that both strips' conditions are known.
+        // The rects a scroll and the wrap width were measured against above are
+        // deliberately the ones from before this call — see [`Geometry`].
+        geometry.take_strips(&leader, hint.is_some(), &theme);
+
         // `T045`. **Ticked here, once, before the draw** — the matcher needs
         // `&mut` and `Resources` has no `&mut` in it and must never grow one.
         // The deadline is a millisecond, so a 100k-file filter costs the frame
@@ -2802,6 +2814,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
 
         let overlay = Overlay {
             chrome,
+            status: status_tree,
             leader: &leader,
             hint: hint.as_ref(),
             marks: &marks,
@@ -2814,7 +2827,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 frame,
                 &editing.editor,
                 &theme,
-                status_tree,
+                &geometry,
                 &floats,
                 tree.as_ref(),
                 &overlay,
@@ -3690,6 +3703,81 @@ fn take_rows(body: &mut Rect, rows: u16) -> Option<Rect> {
     })
 }
 
+/// Where every part of the frame goes, computed once per pass.
+///
+/// **It was computed twice**, and the two answers were not the same one. The
+/// loop split the terminal for what needs `&mut editor` — the wrap width and
+/// the rect a scroll is measured against — and [`draw`] split `frame.area()`
+/// again for what it painted, taking the two strips off its own copy of the
+/// body. So on a frame with `3c`'s leader grid or `8e`'s hint row up, the loop
+/// measured against rows that were about to be given away, and the divergence
+/// was invisible because no consumer read both.
+///
+/// Both are kept here rather than reconciled, and [`Geometry::body`] versus
+/// [`Geometry::pane`] is that divergence written down: reconciling them moves a
+/// viewport, which is a pixel change and not this step's. `T088`'s pane layout
+/// replaces [`Geometry::pane`] with N of them, which is what this type exists
+/// to make possible.
+#[derive(Debug, Clone, Copy)]
+struct Geometry {
+    /// The whole terminal — what a tree-composed surface owns.
+    frame: Rect,
+    /// The buffer's rows **before** the strips come off them. What the loop
+    /// measures a wrap width, a scroll and a mouse hit test against.
+    body: Rect,
+    /// The buffer's rows **after** them: what `BufferView` is drawn into, what
+    /// a float dims, and what the cursor is placed inside.
+    pane: Rect,
+    /// `3c`'s leader grid, when a prefix is half-typed and its rows fit.
+    leader: Option<Rect>,
+    /// `8e`'s unknown-key hint row, when there is one and it fits.
+    hint: Option<Rect>,
+    /// The statusline's row — the ex line and a notice borrow it.
+    status: Rect,
+}
+
+/// The frame's layout, from the size the next frame will be drawn at.
+///
+/// Two calls rather than one, and deliberately: the split is knowable at the
+/// top of the pass and the two strips are not. Whether the leader grid is up is
+/// [`under`]'s answer, and `under` asks the VM — `Layer::entries` sets the flag
+/// `Layer::stale` reads, and that read happens **once**, in the middle of the
+/// pass. Hoisting the question above it would move a Steel call across the one
+/// door the frame cache learns staleness through, to buy nothing. So the split
+/// happens here and [`Geometry::take_strips`] finishes the layout where the
+/// conditions are known — one `split`, one pass of `take_rows`, and a `draw`
+/// that lays out nothing.
+fn lay_out(area: Rect) -> Geometry {
+    let (body, status) = split(area);
+    Geometry {
+        frame: area,
+        body,
+        pane: body,
+        leader: None,
+        hint: None,
+        status,
+    }
+}
+
+impl Geometry {
+    /// Takes the two strips off the buffer's rows, bottom-up.
+    ///
+    /// The order is `8e`'s and it is load-bearing: the leader grid sits
+    /// directly above the statusline and the hint row between it and the code,
+    /// so the grid comes off first. Both are [`take_rows`], so a terminal too
+    /// short drops a strip rather than squeezing it (§11).
+    fn take_strips(&mut self, leader: &[KeyHint], hint: bool, theme: &Theme) {
+        self.leader = (!leader.is_empty())
+            .then(|| {
+                let rows =
+                    KeyHints::new(leader, Density::Grid, theme).desired_height(self.pane.width);
+                take_rows(&mut self.pane, rows)
+            })
+            .flatten();
+        self.hint = hint.then(|| take_rows(&mut self.pane, 1)).flatten();
+    }
+}
+
 /// How many answers this editor is still owed, per [`Lookup`] (`T038`,
 /// `T039`).
 ///
@@ -4071,16 +4159,23 @@ impl Resources for Painted<'_> {
     }
 }
 
-/// What rides over the buffer on this frame, and takes rows from it.
+/// What rides over the buffer on this frame, and what claims the chrome row.
 ///
-/// One struct rather than three parameters, so [`draw`] stays inside
+/// One struct rather than several parameters, so [`draw`] stays inside
 /// `clippy::too_many_arguments` — and because they compose in one place: the
-/// two strips come off the bottom of the body in `8e`'s order, and the ex line
-/// and the notice take the statusline's row.
+/// two strips come off the bottom of the body in `8e`'s order, and the ex line,
+/// the notice and the statusline are three things competing for one row.
+///
+/// [`Overlay::status`] moved in here when [`Geometry`] became a parameter: it
+/// is read in exactly one place, as [`Overlay::chrome`]'s `None` arm, so the
+/// two travelling apart was the accident.
 #[derive(Debug, Clone, Copy)]
 struct Overlay<'a> {
     /// The ex line, or a notice, where the statusline goes.
     chrome: Option<Chrome<'a>>,
+    /// What `runtime/statusline.scm` composed, drawn when [`Overlay::chrome`]
+    /// is not borrowing the row. [`None`] when the layer composed none.
+    status: Option<&'a Tree>,
     /// `3c`'s which-key grid, for whatever prefix is half-typed. Empty when
     /// nothing is.
     leader: &'a [KeyHint],
@@ -4114,17 +4209,19 @@ struct Overlay<'a> {
 /// statusline and the hint is a one-row strip set off from the code. Neither is
 /// a float — a float would impose a border, a header and a footer, and neither
 /// drawing has any of the three.
+///
+/// **It lays nothing out.** The rects arrive as a [`Geometry`] the loop
+/// computed, because it had to compute them anyway for the wrap width and the
+/// scroll bounds, and two answers to one question is how they came to disagree.
 fn draw(
     frame: &mut Frame<'_>,
     editor: &Editor,
     theme: &Theme,
-    status: Option<&Tree>,
+    geometry: &Geometry,
     floats: &FloatSlot<'_>,
     tree: Option<&Tree>,
     overlay: &Overlay<'_>,
 ) {
-    let area = frame.area();
-    let (mut body, status_area) = split(area);
     let painted = Painted {
         editor,
         marks: overlay.marks,
@@ -4136,23 +4233,15 @@ fn draw(
     // A surface composed as a view tree owns the whole frame — `6b` draws its
     // own statusline, so the widgets below would be drawing it twice.
     if let Some(tree) = tree.filter(|tree| !matches!(tree.root, Node::Empty { .. })) {
-        Interpreter::new(theme, &painted).render(tree, area, frame.buffer_mut());
+        Interpreter::new(theme, &painted).render(tree, geometry.frame, frame.buffer_mut());
         return;
     }
 
     // The strips, bottom-up: the leader grid sits directly above the
-    // statusline, the hint between it and the code.
-    let grid = (!overlay.leader.is_empty())
-        .then(|| {
-            let rows =
-                KeyHints::new(overlay.leader, Density::Grid, theme).desired_height(body.width);
-            take_rows(&mut body, rows)
-        })
-        .flatten();
-    let hint_row = overlay
-        .hint
-        .and_then(|_| take_rows(&mut body, 1))
-        .zip(overlay.hint);
+    // statusline, the hint between it and the code. Both rects were taken off
+    // the body by `Geometry::take_strips`; what is left here is what goes in
+    // them.
+    let hint_row = geometry.hint.zip(overlay.hint);
 
     // The state column is empty on purpose: §3's marks are a store query
     // (`T041`, S5) and there is no store. The column is still reserved, which
@@ -4175,7 +4264,7 @@ fn draw(
         BufferView::new(editor, theme)
             .state_column(overlay.marks)
             .fill(fill),
-        body,
+        geometry.pane,
     );
     if let Some((row, hint)) = hint_row {
         let strip = Tree::new(unknown_key::strip(
@@ -4184,7 +4273,7 @@ fn draw(
         ));
         Interpreter::new(theme, &NoResources).render(&strip, row, frame.buffer_mut());
     }
-    if let Some(row) = grid {
+    if let Some(row) = geometry.leader {
         let strip = Tree::new(Node::KeyHints {
             density: Density::Grid,
             hints: overlay.leader.to_vec(),
@@ -4194,9 +4283,9 @@ fn draw(
     // A tree with an empty root is a float over what the widgets painted —
     // `T021`'s boot report, `T097`'s help page, and `T038`'s completion list.
     if let Some(tree) = tree {
-        Interpreter::new(theme, &painted).render(tree, body, frame.buffer_mut());
+        Interpreter::new(theme, &painted).render(tree, geometry.pane, frame.buffer_mut());
     }
-    floats.render(body, frame.buffer_mut(), theme);
+    floats.render(geometry.pane, frame.buffer_mut(), theme);
     let chrome = overlay.chrome;
     // `T025`: the statusline is whatever `runtime/statusline.scm` composed, and
     // a layer that composes none draws none. There is deliberately no widget
@@ -4231,7 +4320,7 @@ fn draw(
     // first cannot flatten it.
     frame
         .buffer_mut()
-        .set_style(status_area, Style::new().bg(theme.chrome.statusline));
+        .set_style(geometry.status, Style::new().bg(theme.chrome.statusline));
 
     match chrome {
         // The ex line and the notice both take the statusline's row rather
@@ -4245,13 +4334,13 @@ fn draw(
                     emphasis: Emphasis::Plain,
                 })],
             });
-            Interpreter::new(theme, &NoResources).render(&row, status_area, frame.buffer_mut());
+            Interpreter::new(theme, &NoResources).render(&row, geometry.status, frame.buffer_mut());
         }
         None => {
-            if let Some(composed) = status {
+            if let Some(composed) = overlay.status {
                 Interpreter::new(theme, &NoResources).render(
                     composed,
-                    status_area,
+                    geometry.status,
                     frame.buffer_mut(),
                 );
             }
@@ -4261,14 +4350,15 @@ fn draw(
     match chrome.filter(|chrome| chrome.caret) {
         Some(chrome) => {
             let typed = u16::try_from(chrome.text.chars().count()).unwrap_or(u16::MAX);
-            let x = status_area
+            let x = geometry
+                .status
                 .x
                 .saturating_add(typed)
-                .min(status_area.right().saturating_sub(1));
-            frame.set_cursor_position((x, status_area.y));
+                .min(geometry.status.right().saturating_sub(1));
+            frame.set_cursor_position((x, geometry.status.y));
         }
         None => {
-            if let Some((x, y)) = editor.get_visible_cursor(&editor_area(body)) {
+            if let Some((x, y)) = editor.get_visible_cursor(&editor_area(geometry.pane)) {
                 frame.set_cursor_position((x, y));
             }
         }
