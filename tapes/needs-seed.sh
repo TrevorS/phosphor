@@ -20,3 +20,25 @@
 needs_seed() {
     grep -lq 'cd \.\./fixtures' "$@" 2>/dev/null
 }
+
+# `seed_if_needed <tape>` — a fresh store for this capture, when it reads one.
+#
+# **Per tape, and that is the whole point.** Seeding once per run was the first
+# shape and it has an ordering hazard with teeth: `seen-cleared.tape` presses
+# `SPC u s`, which is the screen it exists to capture and also a **write** to
+# the store every later capture then reads. Measured — `diff-tapes.sh
+# seen-cleared 2a` leaves `2a` waiting on a picker row that the region it just
+# marked seen no longer draws, and reports a capture failure.
+#
+# The library survives today only because `seen-cleared` sorts last among the
+# seven seeded ids. That is luck, not design: `just tape-diff 2a` after it, or
+# any new seeded tape sorting later, brings it back.
+#
+# `seed-state.sh` is idempotent and clears before it writes, so this is safe to
+# call per tape; it costs about two dozen process launches for the captures
+# that need one and nothing for the forty that do not.
+seed_if_needed() {
+    if needs_seed "$1"; then
+        bash ./seed-state.sh
+    fi
+}

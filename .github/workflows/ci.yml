@@ -337,10 +337,16 @@ jobs:
       # `continue-on-error` above, never blocks on. See this phase's report
       # for what that means for how much real Tier-2 signal to expect here
       # until someone closes this gap.
-      - name: Install ffmpeg
+      # ImageMagick alongside it, and `compare` is the whole job: without it
+      # `diff-tapes.sh` exits 1 on its own tool check before capturing a single
+      # frame. It did exactly that on every run this job has ever had — under a
+      # second, a green tick from `continue-on-error`, and not one pixel
+      # compared. A non-blocking job that cannot run is indistinguishable from
+      # a non-blocking job that passes, which is what made it survive.
+      - name: Install ffmpeg and ImageMagick
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg imagemagick
 
       # The one job that builds `--release`, so it warms a cache of its own —
       # the default key includes the job id, and release artefacts share

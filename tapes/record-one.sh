@@ -22,8 +22,6 @@ source ./tape-env.sh
 # shellcheck source=needs-seed.sh
 source ./needs-seed.sh
 
-if needs_seed "$1.tape"; then
-  bash ./seed-state.sh
-fi
+seed_if_needed "$1.tape"
 
 exec vhs "$1.tape"

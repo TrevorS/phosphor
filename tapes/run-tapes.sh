@@ -50,13 +50,10 @@ fi
 # shellcheck source=needs-seed.sh
 source ./needs-seed.sh
 
-if needs_seed "${to_run[@]}"; then
-  bash ./seed-state.sh
-fi
-
 failed=()
 for tape in "${to_run[@]}"; do
   echo "phosphor tapes: recording ${tape}"
+  seed_if_needed "${tape}"
   if ! vhs "${tape}"; then
     failed+=("${tape}")
   fi

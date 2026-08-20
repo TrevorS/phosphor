@@ -126,6 +126,29 @@ if [[ ${#ids[@]} -eq 0 ]]; then
     exit 0
 fi
 
+# **Seed the store when a tape being diffed reads one** — the same two lines
+# `run-tapes.sh` and `record-one.sh` run before they record.
+#
+# Missing here, and the omission was invisible because it degrades rather than
+# errors. `tape-env.sh` gives every run an empty `$XDG_STATE_HOME`, so the seven
+# `CP-5` screens that `cd ../fixtures` were captured against a store with
+# nothing in it and compared against references recorded with one. Four of them
+# — `2a`, `2a-degraded-nocolor`, `seen-cleared`, `no-grammar` — wait on a picker
+# row that an empty store never draws, so they timed out and reported *"vhs
+# capture failed"*. The other three — `3d`, `6a`, `8a` — draw counts, so they
+# captured cleanly and reported a **pixel mismatch**, which reads exactly like a
+# drawing change and is not one.
+#
+# That is the worse half: a capture failure is at least loud. A mismatch on a
+# screen whose store was never seeded is a diff image a reviewer would look at,
+# believe, and bless — turning the reference for the checkpoint's own thesis
+# into a picture of an empty store.
+#
+# Seeded per tape inside the capture loop below, never once here — see
+# `needs-seed.sh`'s `seed_if_needed` for the ordering hazard that settles.
+# shellcheck source=needs-seed.sh
+source ./needs-seed.sh
+
 # Every real tape id in the library, always — not just the ones being
 # diffed. This is the exclusion set for the frame rule in the header: a
 # committed `<id>-<suffix>.png` that names another tape is that tape's
@@ -224,6 +247,7 @@ for id in "${ids[@]}"; do
 
     if [[ "$no_capture" -eq 0 ]]; then
         echo "diff-tapes.sh: capturing ${id}"
+        seed_if_needed "${id}.tape"
         if ! vhs "$tape" >/dev/null 2>&1; then
             echo "x ${id} — vhs capture failed (see \`vhs ${tape}\` directly for the reason)" >&2
             hard_error=1
