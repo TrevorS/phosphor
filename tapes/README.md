@@ -1174,6 +1174,9 @@ tapes/
   1a.tape, 9c.tape, 8c.tape, 8d.tape   V005 — the four CP-1 stills
   1a-degraded-term.tape,                V009 — the TERM=xterm-256color and
   1a-degraded-nocolor.tape                NO_COLOR=1 variants of `1a`
+  1a-seeded.tape                        CP-5 — `1a` in full, over the V006
+                                          fixture and its store, which is the
+                                          half `1a.tape` cannot draw
   sweep-{200,120,100,80,60,40}.tape     V005 — the CP-1 width sweep
   theme-{phosphor-dark,phosphor-light,catppuccin,catppuccin-latte,
          tokyo-night,tokyo-night-day}.tape

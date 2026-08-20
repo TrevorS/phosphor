@@ -2590,12 +2590,19 @@ bet; a lukewarm result here is worth stopping over, not building past.
 >   are covered by VHS and by nothing at Tier 1. That is a real gap and it is the second thing
 >   this checkpoint still owes.
 >
-> **The VHS half.** `2a`, `3d`, `8a`, `6a`, `seen-cleared` and `no-grammar` are captured and match.
-> The clip of `s` clearing a marker is `seen-cleared`, and it presses **`SPC u s`** rather than
-> `s`: the shipped keymap binds bare `s` to vim's substitute, and `CP-5`'s wording predates that
-> ruling. **`1a` against the `V006` fixture is still owed** — `tapes/1a.tape` opens
-> `tapes/fixtures/core-lib.rs`, the frozen file §40 repointed it at, not the seeded tree, so the
-> flagship screen is the one screen here drawn without a store behind it.
+> **The VHS half — complete, 2026-08-20.** `2a`, `3d`, `8a`, `6a`, `seen-cleared` and
+> `no-grammar` are captured and match. The clip of `s` clearing a marker is `seen-cleared`, and it
+> presses **`SPC u s`** rather than `s`: the shipped keymap binds bare `s` to vim's substitute, and
+> `CP-5`'s wording predates that ruling.
+>
+> **`1a` in full against the `V006` fixture is `tapes/1a-seeded.tape`.** `1a.tape` opens
+> `tapes/fixtures/core-lib.rs` — the frozen file §40 repointed all twenty-five tapes at — with an
+> empty store, so the flagship screen was the one screen here drawn with nothing behind it. The new
+> capture opens `fixtures/src/retry.rs` against the seeded store: markers on line 4 and lines
+> 12–24, the region tint on those rows, `2 unseen` on the statusline. A second tape rather than a
+> repoint, because `1a` is a `CP-1` artifact and `1a-degraded-{term,nocolor}` are `V009` variants
+> of that same frame — changing what it photographs would settle one checkpoint item by
+> invalidating three.
 >
 > **Two frames of forty-eight do not match**, and neither is drift: `6b` is a blessed change
 > (`unseen-regions` answered `T041`'s deferral until `T041` shipped; it answers `()` now, and the

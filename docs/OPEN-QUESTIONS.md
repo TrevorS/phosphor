@@ -1542,6 +1542,12 @@ if after, the node tier answers. **Two tiers, two answers, and which one runs is
 a race with the parser** — one open in five is what a race that usually loses
 looks like.
 
+**A contrast that narrows it.** `1a-seeded.tape` draws the same kind of screen — declared regions
+rendered in the state column, over the `V006` fixture — and is **stable across three captures**, as
+are `2a`, `3d`, `6a` and `8a`. What `diagnostics-regions` has that none of those have is a language
+server publishing on `didOpen`. So the race is not "regions render nondeterministically"; it is
+narrower, and something about a publish arriving during the open is in it.
+
 *Not asserted:* that the tier ladder is the mechanism. The candidate fits every
 measurement above and `anchor.rs`'s own tests cover the ladder in isolation, but
 nothing here has watched a fingerprint being taken with and without a syntax
