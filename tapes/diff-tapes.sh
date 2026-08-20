@@ -97,12 +97,26 @@ done
 # pinned by version like vhs/ttyd/ffmpeg (tapes/check-versions.sh): it never
 # touches a committed reference, only scratch diff output, so a different
 # release changes nothing this repo asserts against.
-for tool in compare magick; do
-    if ! command -v "$tool" >/dev/null 2>&1; then
-        echo "diff-tapes.sh: '$tool' not found — install ImageMagick (e.g. brew install imagemagick)" >&2
-        exit 1
-    fi
-done
+if ! command -v compare >/dev/null 2>&1; then
+    echo "diff-tapes.sh: 'compare' not found — install ImageMagick (e.g. brew install imagemagick)" >&2
+    exit 1
+fi
+
+# **ImageMagick 6 and 7 spell the omnibus tool differently**, and both are in
+# use here: 7 calls it `magick`, 6 calls it `convert` and ships no `magick` at
+# all. Homebrew installs 7; Ubuntu 24.04's `imagemagick` package is 6, so
+# requiring the 7 spelling made CI's Tier-2 job die one step later than the
+# missing package had — *"'magick' not found"*, in under a second, reported
+# green by `continue-on-error`. `compare` is spelled the same in both, which is
+# why only this one needs a name.
+if command -v magick >/dev/null 2>&1; then
+    IM_CONVERT=magick
+elif command -v convert >/dev/null 2>&1; then
+    IM_CONVERT=convert
+else
+    echo "diff-tapes.sh: neither 'magick' nor 'convert' found — install ImageMagick" >&2
+    exit 1
+fi
 
 # `pixels`, not the full gate: this script compares PNGs and nothing else, and
 # a PNG's pixels do not pass through ffmpeg. See check-versions.sh's header for
@@ -308,7 +322,7 @@ for id in "${ids[@]}"; do
         # committed reference, fresh capture, highlighted diff, documented here
         # since there is no in-image label to say so.
         diff_png="${diff_dir}/${name}.diff.png"
-        magick "$ref" "$fresh" "$highlight" -background '#222222' -splice 4x0+0+0 +append "$diff_png"
+        "$IM_CONVERT" "$ref" "$fresh" "$highlight" -background '#222222' -splice 4x0+0+0 +append "$diff_png"
 
         echo "x ${name} — MISMATCH (${ae} px beyond ${FUZZ} tolerance) — see ${diff_png}"
         echo "    left to right: committed reference | fresh capture | diff (red = changed)"
