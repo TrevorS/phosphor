@@ -1970,10 +1970,18 @@ Three things changed with it, and the third is the one worth arguing about.
   path that skips it (`check-versions.sh pixels` — *"a PNG's pixels do not pass
   through ffmpeg"*), so the capture goes through there and compares as a side
   effect whose result is ignored.
-* **The size floor is the assertion.** `vhs` exits 0 when a `Wait+Screen` times out — it skips the
-  rest of the tape and leaves whatever was on disk — so *"the command succeeded"* and *"a frame was
-  captured"* are different claims and this makes the second. 10 kB is far below a real 1228×700
-  capture and far above a truncated one.
+* **The size floor is the assertion — and the reason given for it here was false.** *"The command
+  succeeded"* and *"a frame was captured"* are different claims, and the floor makes the second:
+  10 kB is far below a real 1228×700 capture and far above a truncated one. That much stands.
+  What does not is the sentence that justified it. This entry said **`vhs` exits 0 when a
+  `Wait+Screen` times out**, skipping the rest of the tape silently. **It exits 1.** Measured on
+  vhs 0.11.0 on 2026-08-20, by breaking `broken-init`'s sentinel and running vhs directly: it
+  prints `recording failed` and returns 1, which `diff-tapes.sh`'s `if ! vhs` already catches.
+
+  It was inherited prose that nobody had run, and it was load-bearing twice over — the stated
+  reason this floor exists, and it was one edit away from being written into `diff-tapes.sh` as
+  the justification for a new guard. The guard is still right; the reason was not. **A silent
+  timeout is not a failure mode this toolchain has.**
 * **It gates now.** `continue-on-error: true` was right for a change detector and wrong for a
   health check, and this job is the proof: it died in under a second on every run it ever had and
   reported green, so the tick carried no information and nobody looked. A check that can only go
@@ -2065,6 +2073,104 @@ One entry, and it is filed rather than answered on purpose. `T088`'s design work
 three rulings — one Teej's, two the tree's — and all three are recorded at `T088`'s entry in
 [TASKS.md](TASKS.md). What came here is the fourth thing it found, which was never a ruling `T088`
 could make: it is here so that `T060` inherits a citation instead of a reading.
+
+### 49 · The `_`-prefixed investigation captures are committed, unchecked, and two of them are already wrong
+
+**Found while verifying `T088`'s step 3**, by an agent that ran the tapes the
+diff set skips. Both claims below were re-verified directly on 2026-08-20.
+
+`tapes/diff-tapes.sh` excludes every `_`-prefixed tape by construction
+(`[[ "$base" == _* ]] && continue`), which is correct and deliberate: their own
+headers call them *"ad hoc investigation, not part of `V005`'s screen
+library"*. They were `CP-1` and `V002` evidence — does a float draw its
+contract, does undercurl survive capture — and they answered.
+
+**But their PNGs are committed, and nothing has compared them since.** Two are
+now wrong:
+
+* **`_float-check-informational` no longer reproduces.** A fresh capture is
+  `sha256 d8124066…` against the committed `8fa7652a…`. Measured this session by
+  running `vhs` on it directly, since `tapes-diff` will not.
+* **`_soft-wrap-check` cannot record at all.** It opens
+  `/tmp/soft-wrap-fixture.rs`, which nothing creates, so the editor shows
+  *"new file — `:w` creates it"*, the sentinel never matches and vhs exits 1
+  with `recording failed`. It has presumably been in this state since whoever
+  last had that file in `/tmp`.
+
+**Why this is worth an entry rather than a shrug.** A committed PNG is a claim
+about what the build draws. These are claims nothing checks, that no longer
+reproduce, sitting in the same directory as the references that do — and this
+session has now been misled twice by exactly that shape (`§42`'s moving
+reference, and 25 artifacts a bad `git add -A` corrupted while looking like
+ordinary blobs). The `_` prefix keeps them out of the *comparison*; it does not
+keep them out of the *repository*, and a reader who finds one has no way to
+know it is historical.
+
+*Recommendation: delete the artifacts, keep the tapes.* The tapes are cheap to
+re-run when a question needs them and are self-documenting about what they were
+for; the PNGs are evidence for checkpoints that have passed. `CP-1` is passed,
+`V002` answered *"does undercurl survive capture — yes"* in `tapes/README.md`,
+and neither is re-argued from a stale still. **This is Teej's call rather than a
+cleanup, because deleting evidence for a passed checkpoint is a judgement about
+what the record is for.** The alternative — bring them into the diff set — costs
+capture time on every run for screens nobody is changing, and `_soft-wrap-check`
+would need its fixture created before it could pass at all.
+
+---
+
+### 48 · A tape can report `= matches` for a build it never captured, and the likely cause is `$PATH`
+
+**Observed twice, during `T088`'s step 3.** `just tape-diff 2a-degraded-nocolor`
+reported a match against a binary that provably differed — checksum-verified —
+and the *same* comparison later reported the real 515 px mismatch reproducibly
+against two separately-built binaries. The agent that saw it recorded it as a
+guess rather than a finding, which was the right call and is why it survived to
+be looked at.
+
+**A false match is the worst answer a change detector has.** A mismatch gets
+investigated; a match closes the question. Every `tapes-diff` number in this
+session rests on the assumption that this does not happen.
+
+**The mechanism this is NOT, ruled out by measurement on 2026-08-20.** The
+obvious candidate was a silent capture failure leaving the previous PNG on disk
+— §44's shape, and the reason `diff-tapes.sh` now deletes each frame before
+capturing. But the failure that was supposed to be silent is not: `vhs` 0.11.0
+prints `recording failed` and **exits 1** when a `Wait+Screen` times out,
+verified by breaking `broken-init`'s sentinel and running vhs directly, and
+`diff-tapes.sh` already catches a non-zero exit. §44 said otherwise and was
+wrong; that is corrected at the entry.
+
+**The mechanism this probably IS, and it is not in the script at all.** Every
+tape opens `phosphor` by name — `Require phosphor`, then `Type "… phosphor …"` —
+so a capture runs whatever is on `$PATH`, which is
+`~/.cargo/bin/phosphor`, put there by `just install` (`cargo install --path
+crates/phosphor --locked`). **It is not `target/debug/phosphor`.** So a rebuilt
+tree and a captured screen can disagree completely: `cargo build` changes
+`target/`, the tape photographs the last thing installed, and the result matches
+the old reference because it *is* the old build. Checksumming `target/` proves
+nothing about what vhs ran.
+
+That fits the observation exactly, including why it was intermittent — it would
+false-match precisely until the next `just install`, and the agent reported
+reinstalling between runs.
+
+*Not asserted:* that this is what happened. Nobody has reproduced it
+deliberately, and the run that saw it is gone.
+
+*Recommendation, cheapest first.* **(a)** Have `diff-tapes.sh` record the
+`sha256` of `$(command -v phosphor)` in its output, so every capture says which
+binary produced it and a stale one is visible rather than inferred — this is the
+same move that made the contaminated runs of step 3 legible, and it costs one
+line. **(b)** Make `just tapes-diff` depend on `just install`, so the two cannot
+drift; the cost is that every diff run rebuilds and installs, which is the
+reason it does not today. **(c)** Nothing, and accept that a Tier-2 result is
+only as good as the reader remembering to install first — which is what the
+current state is, undocumented.
+
+*(a) is worth doing regardless of whether the diagnosis is right, because it is
+what would have told us.*
+
+---
 
 ### 47 · A buffer nobody is looking at: `T088` can hold one, and nothing says whether it may
 

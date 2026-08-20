@@ -123,6 +123,20 @@ fi
 # the measurement behind that — and for what blocking on it cost.
 if [[ "$no_capture" -eq 0 ]]; then
     bash check-versions.sh pixels || exit 1
+    # **Say which binary is about to be photographed.** Every tape opens
+    # `phosphor` by name, so a capture runs whatever is on `$PATH` — the one
+    # `just install` put in `~/.cargo/bin`, never `target/debug`. A rebuilt tree
+    # and a captured screen can therefore disagree completely, and the result
+    # looks like a clean match because it *is* the old build. See
+    # `OPEN-QUESTIONS.md` §48, where that is the leading explanation for a
+    # `= matches` reported against a binary that provably differed.
+    #
+    # Printing it does not prevent the drift; it makes it visible, which is what
+    # nobody could do after the fact.
+    phosphor_bin="$(command -v phosphor || true)"
+    if [[ -n "$phosphor_bin" ]]; then
+        echo "diff-tapes.sh: capturing with ${phosphor_bin} (sha256 $(shasum -a 256 "$phosphor_bin" | cut -c1-12))"
+    fi
 fi
 
 if [[ ${#ids[@]} -eq 0 ]]; then
@@ -261,6 +275,27 @@ for id in "${ids[@]}"; do
 
     if [[ "$no_capture" -eq 0 ]]; then
         echo "diff-tapes.sh: capturing ${id}"
+        # **Delete the frames before capturing.** A comparison whose input can
+        # survive a failed capture is a comparison that can report `= matches`
+        # for a screen nothing looked at, and a false match is the worst answer
+        # a change detector has: a mismatch gets investigated, a match closes
+        # the question.
+        #
+        # This is the shape `OPEN-QUESTIONS.md` §44 recorded and fixed in CI's
+        # capture step with one `rm -f`, and did not fix here — so the hole
+        # stayed open in the path everybody actually runs.
+        #
+        # **What it does NOT close, measured rather than assumed on 2026-08-20:
+        # a `Wait+Screen` timeout.** §44, CI's step and an earlier draft of this
+        # comment all state that `vhs` exits 0 on one and skips the rest of the
+        # tape. That is false for vhs 0.11.0 — a tape whose sentinel can never
+        # match prints `recording failed` and **exits 1**, which the `if ! vhs`
+        # below already catches. Verified by breaking `broken-init`'s sentinel
+        # and running vhs directly. So this guard is defence against the class,
+        # not against that member of it.
+        for frame in "${frames[@]}"; do
+            rm -f "artifacts/${frame}"
+        done
         seed_if_needed "${id}.tape"
         # **vhs's own output is kept, and OPEN-QUESTIONS.md §44 is why.**
         #

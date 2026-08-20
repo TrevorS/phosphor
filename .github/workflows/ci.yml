@@ -455,12 +455,16 @@ jobs:
       # on a runner, the capture toolchain works; if any of them cannot, this
       # is where it says so.
       #
-      # The size floor is what makes it an assertion rather than a formality.
-      # `vhs` exits 0 when a `Wait+Screen` times out — it skips the rest of the
-      # tape and leaves whatever was on disk — so "the command succeeded" and
-      # "a frame was captured" are different claims, and the second is the one
-      # worth making. 10 kB is far below any real 1228×700 capture and far
-      # above an empty or truncated file.
+      # The size floor is what makes it an assertion rather than a formality —
+      # "the command succeeded" and "a frame was captured" are different claims,
+      # and the second is the one worth making. 10 kB is far below any real
+      # 1228x700 capture and far above an empty or truncated file.
+      #
+      # **This said `vhs` exits 0 when a `Wait+Screen` times out. It does not.**
+      # Measured on vhs 0.11.0, 2026-08-20: a tape whose sentinel can never
+      # match prints `recording failed` and exits 1. The floor is still worth
+      # keeping — it catches a truncated or empty write, which an exit code
+      # cannot — but the failure it was justified by does not exist.
       # **`vhs` is run directly here, and that is `OPEN-QUESTIONS.md` §44's own
       # recommendation carried out.**
       #
@@ -483,14 +487,17 @@ jobs:
       # `check-versions.sh pixels` is the same tool gate `diff-tapes.sh` uses —
       # PNG pixels do not pass through ffmpeg, so the GIF pin is not consulted.
       #
-      # The size floor is what makes this an assertion rather than a
-      # formality: `vhs` exits 0 when a `Wait+Screen` times out — it skips the
-      # rest of the tape and leaves whatever was on disk — so "the command
-      # succeeded" and "a frame was captured" are different claims, and the
-      # second is the one worth making. 10 kB is far below a real 1228×700
+      # The size floor makes this an assertion rather than a formality: "the
+      # command succeeded" and "a frame was captured" are different claims, and
+      # the second is the one worth making. 10 kB is far below a real 1228x700
       # capture and far above a truncated one. The `rm -f` is what makes even
       # that meaningful: without it the checked-out PNG is still sitting there
       # and every check passes by default, which is how §44 hid.
+      #
+      # **The "vhs exits 0 on a timeout" justification was wrong** — vhs 0.11.0
+      # prints `recording failed` and exits 1, measured 2026-08-20. Both guards
+      # stay: they cover a truncated write and a stale file, neither of which an
+      # exit code reports.
       - name: Capture one screen
         run: |
           set -euo pipefail
