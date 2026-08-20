@@ -1503,6 +1503,67 @@ screen went red. Left here instead.
 
 ---
 
+### 43 · A declared region draws one row lower, about one open in five
+
+**Found by building `CP-4`'s gutter-priority capture**, which could not be made
+reproducible: `diagnostics-regions.tape` matched three or four captures out of
+five and drew its state column one row off in the rest, at exactly `209` px
+every time. Two stable outcomes rather than noise.
+
+**Measured off the diff image**, sampling the state column at `x=3`:
+
+    y:       60      70      80      90     140     150     160
+    ref:   green   green   green   green   green   green   ground
+    fresh: ground  ground  green   green   green   green   green
+
+The bar is the **same length**, shifted down by one row height (~19 px). The
+region is declared over lines 4–8 through the CLI door and renders on 4–8 or on
+5–9 depending on the run.
+
+**Not the harness, and each of these was ruled out by measurement rather than
+by argument:**
+
+* **Not a settle race.** Raising the tape's `Sleep` from 500 ms to 1500 ms
+  changed nothing — still one capture in five.
+* **Not the store.** Declaring the same region into a clean state home six
+  times and reading `unseen-regions` back gives an identical record every time.
+* **Not the contested cell.** The first version put the region over lines 1–8
+  so it overlapped the diagnostic on line 2; moving it to 4–8, with no overlap
+  at all, kept the same flake at the same size.
+
+**Where it almost certainly lives.** `Regions::reanchor_in`
+(`store/region.rs`) moves a region to wherever `anchor::resolve` finds its
+fingerprint, preserving height — which is exactly the shape of what is
+observed, a fixed-length bar at a different origin. Regions are fingerprinted
+when the file is focused (`Editing::fingerprint_declared`) and the fingerprint
+carries a syntax path taken from `code.syntax_path(byte)`. If that runs before
+the grammar has parsed, the path is empty and `resolve` falls to the line tier;
+if after, the node tier answers. **Two tiers, two answers, and which one runs is
+a race with the parser** — one open in five is what a race that usually loses
+looks like.
+
+*Not asserted:* that the tier ladder is the mechanism. The candidate fits every
+measurement above and `anchor.rs`'s own tests cover the ladder in isolation, but
+nothing here has watched a fingerprint being taken with and without a syntax
+tree and compared what `resolve` returned. **That is the experiment**, and it is
+one test rather than an investigation: fingerprint a region twice against the
+same buffer, once with a grammar and once without, and read the resolved line.
+
+*Recommendation: worth a task rather than a patch, and it belongs with whoever
+owns `T043`. It is louder than it looks — the gutter is `CP-5`'s entire thesis,
+and a marker that lands a row off one open in five is a marker pointing at the
+wrong line of somebody's code. It also explains something already on the books:
+`CP-5`'s anchor-survival criterion is ticked from unit tests over the ladder,
+and this is the first evidence that the ladder's* choice *is not stable.*
+
+**What it costs the library meanwhile.** `diagnostics-regions.png` is committed
+as one of the two outcomes, so `just tapes-diff` will report it as a mismatch
+roughly one run in five. **That is this entry, not a drawing change**, and the
+tape's own header says so — do not bless a shifted reference thinking the
+gutter moved on purpose.
+
+---
+
 ### 41 · ~~CI's Tier-2 job compares against a font the runner does not have~~ — ruled, 2026-08-19
 
 **Raised 2026-08-19, by making the job run for the first time.** `V008` put a non-blocking

@@ -42,6 +42,16 @@
 # `--eval` and the editor below share one store and the operator's own is
 # untouched.
 
+# # KNOWN FLAKE — `OPEN-QUESTIONS.md` §43, and it is the editor's, not this
+# # tape's
+#
+# This screen renders its region on lines 4–8 or on 5–9, about one open in
+# five, at exactly 209 px. The committed reference is one of the two outcomes,
+# so `just tapes-diff` will call this a mismatch occasionally. **It is not a
+# drawing change and must not be blessed as one.** §43 has the measurements
+# that ruled out the settle, the store and the contested cell, and names
+# `Regions::reanchor_in` as where it almost certainly lives.
+
 Output "artifacts/diagnostics-regions.gif"
 
 Require phosphor
@@ -52,9 +62,17 @@ Set Width 1228
 Set Height 700
 
 Hide
+# **The store is cleared first, and it has to be.** `declare-regions!` appends,
+# and `$XDG_STATE_HOME` outlives a capture — seen-state keys on the workspace
+# root, which is the same path every run, so a second capture into an uncleared
+# store draws a second region. Measured: this tape matched, mismatched and
+# matched again over three consecutive captures before this line existed.
+# `seed-state.sh` clears for the same reason and says so in the same words.
+Type `rm -rf "$XDG_STATE_HOME/phosphor"`
+Enter
 Type "bash lsp-fixture.sh diagnostics-regions rust diagnostics policy.rs && cd /tmp/phosphor-tape-diagnostics-regions"
 Enter
-Type `PHOSPHOR_RUNTIME=runtime phosphor --eval '(declare-regions! (list (hash "path" "policy.rs" "span" (hash "start" (hash "line" 1 "column" 1) "end" (hash "line" 8 "column" 2)) "author" "claude")))'`
+Type `PHOSPHOR_RUNTIME=runtime phosphor --eval '(declare-regions! (list (hash "path" "policy.rs" "span" (hash "start" (hash "line" 4 "column" 1) "end" (hash "line" 8 "column" 2)) "author" "claude")))'`
 Enter
 Type "PHOSPHOR_RUNTIME=runtime phosphor --theme phosphor-dark policy.rs"
 Enter
@@ -66,6 +84,14 @@ Wait+Screen@10s /1 unseen/
 Type "j"
 Wait+Screen@10s /expected Duration, found u128/
 
-# 1a.tape's header for the full finding and why this isn't V004's Sleep.
-Sleep 500ms
+# **1500ms, not the library's usual 500.** Measured: at 500ms this tape matched
+# three captures in four and drew its state column one row off in the fourth —
+# the region and the diagnostic land in the gutter from different directions
+# (the store on open, the server on publish) and the last recomposition can fall
+# after the virtual text this tape waits on. Waiting on that text proves the
+# diagnostic *arrived*, not that the column has settled around it.
+#
+# This is the one screen in the library where two region sources compete for one
+# cell, which is exactly why it is the one that needs the longer settle.
+Sleep 1500ms
 Screenshot "artifacts/diagnostics-regions.png"
