@@ -159,6 +159,31 @@ mod driven {
         }
 
         fn started(file: Option<&Path>, state: &Path, runtime: &Path, flags: &[&str]) -> Self {
+            Self::started_with(file, state, runtime, flags, &[])
+        }
+
+        /// **The editor on a terminal with no colour — §8's degraded path.**
+        ///
+        /// `NO_COLOR=1` is the condition `phosphor_term::colour_available`
+        /// answers on, matched deliberately to <https://no-color.org> and to
+        /// `crossterm`'s own rule, so this is the same question the shipping
+        /// binary asks rather than a switch invented for a test.
+        ///
+        /// Exists because `T088`'s collapse verification measured that nothing
+        /// headless covered the binding: with the fill defeated in a form that
+        /// kept `state_fill` referenced, **1387 tests passed**. The interpreter
+        /// half has a unit test; this is the half that reaches it.
+        fn degraded(file: &Path, state: &Path, runtime: &Path) -> Self {
+            Self::started_with(Some(file), state, runtime, &[], &[("NO_COLOR", "1")])
+        }
+
+        fn started_with(
+            file: Option<&Path>,
+            state: &Path,
+            runtime: &Path,
+            flags: &[&str],
+            extra: &[(&str, &str)],
+        ) -> Self {
             let binary = PathBuf::from(env!("CARGO_BIN_EXE_phosphor"));
             let (master, slave_path) = open_pty();
             let slave = OpenOptions::new()
@@ -193,6 +218,7 @@ mod driven {
                     .env("XDG_STATE_HOME", state)
                     .env("XDG_CONFIG_HOME", config_home(state))
                     .env("TERM", "xterm-256color")
+                    .envs(extra.iter().copied())
                     .stdin(Stdio::from(slave.try_clone().expect("the slave clones")))
                     .stdout(Stdio::from(slave.try_clone().expect("the slave clones")))
                     .stderr(Stdio::from(slave))
@@ -5509,6 +5535,54 @@ fn retry_with_backoff(base: u64) -> u64 {
         // what you have not read, and a region that quietly went seen on a
         // reanchor would empty the gutter every time an agent edited above you.
         editor.press_until(COUNT, "unseen=1");
+        editor.quit();
+    }
+
+    /// **§8's degradation, end to end on the shipping binary — the half nothing
+    /// covered.**
+    ///
+    /// When colour is gone a state marker becomes `▎`
+    /// (`gutter::state_cell`'s `Fill::Marker` arm), because a bar drawn as one
+    /// cell of *background* and no glyph comes out blank on a terminal that
+    /// drops the escape — and `CP-5`'s thesis is the markers changing how you
+    /// read the file. On that terminal there would be none to read.
+    ///
+    /// # Why this test exists rather than a unit test
+    ///
+    /// The chain is six links and five of them were already covered.
+    /// `T088`'s collapse verification planted a defeat of the **sixth** — the
+    /// binding in `draw` where `phosphor_term::colour_available()` reaches the
+    /// interpreter — in a form that kept `state_fill` referenced, and measured
+    /// that **all 1387 tests still passed**. `draw` has one caller and nothing
+    /// headless reaches it, so the only thing covering that link was a Tier-2
+    /// capture, and CI's Tier-2 job captures one screen and does not compare it.
+    ///
+    /// So this presses the whole chain through a real child on a real pty with
+    /// `NO_COLOR=1` set, which is the condition the binary itself asks about.
+    #[test]
+    fn a_terminal_with_no_colour_draws_the_marker_as_a_glyph() {
+        let scratch = Scratch::new("no-colour");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\n").expect("a fixture");
+
+        let editor = Editor::degraded(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(declare(&file, &[(2, 3)]).as_bytes(), "landed=1");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // The marker is in the state column, which is column 0 of the frame.
+        // Waiting for it on the grid rather than reading one frame: the
+        // declaration lands through the door and the redraw follows it.
+        let screen = editor.shown_on_grid(b"", "▎");
+        let column: String = (0..SCREEN.ws_row)
+            .map(|row| screen.line(row).chars().next().unwrap_or(' '))
+            .collect();
+        assert!(
+            column.contains('▎'),
+            "§8 says the marker degrades to `▎` when colour is gone; column 0 \
+             reads {column:?}",
+        );
         editor.quit();
     }
 

@@ -72,6 +72,19 @@ Wait+Screen@10s /(?m)^ (NORMAL|N)\b/
 # 1a.tape's header for the full finding and why this isn't V004's Sleep.
 Sleep 500ms
 Screenshot "artifacts/insert-whitespace-marks-normal.png"
+# **And a settle *after* it, which is this tape's original defect finally
+# fixed at the cause.** `R20` recorded these two stills arriving
+# byte-identical, and closed as DONE on a recapture where they differed —
+# but a recapture cannot settle a race, and it recurred on 2026-08-20 during
+# `T088`'s step 3: the fresh `-normal` came back byte-identical to the fresh
+# `-insert` AND to the committed `-insert`, with the `INSERT` chip visible in
+# the frame that is supposed to say `NORMAL`.
+#
+# `signature-help.tape` has carried the fix and the reason since `S4` —
+# *"a `Screenshot` is asynchronous to the key stream, and without this the
+# next key's frame lands in the previous key's PNG"* — and this tape, where
+# the defect was first seen, never got it.
+Sleep 500ms
 
 Type "i"
 Wait+Screen@10s /(?m)^ (INSERT|I)\b/

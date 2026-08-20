@@ -47,10 +47,17 @@
 //!
 //! **Which form is a fact about the terminal, and this crate never touches
 //! one** (TEAM.md: *"`surface` draws, and never touches a terminal"*). A host
-//! drawing a [`GutterBar`] directly chooses; `Node::Gutter` carries no
-//! capability prop, so composition draws [`Fill::Block`] until the protocol
-//! grows a channel for it. Flagged rather than folded in — the view tree is
-//! `spine`'s single writer.
+//! drawing a [`GutterBar`] directly chooses.
+//!
+//! **A composed one now chooses too, and the channel is not the prop this
+//! paragraph waited for.** It read *"`Node::Gutter` carries no capability prop,
+//! so composition draws [`Fill::Block`] until the protocol grows a channel for
+//! it"* — true until `T088`'s collapse, which needed the same answer for
+//! `Node::Buffer` and found it one layer out: the host sets the fill on the
+//! *interpreter*, and both arms read it. The view tree still carries no
+//! terminal capability, which is what the flag was protecting; `spine` is still
+//! its single writer. The prop was the wrong shape for the requirement, and
+//! waiting for it was the wrong thing to wait for.
 //!
 //! Owned by `surface`.
 

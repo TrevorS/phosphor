@@ -2232,11 +2232,36 @@ only what is left cannot tell you whether the rest was done or forgotten.
   `buffer_view.rs:180` citation has also drifted, which is the failure *Concurrency* rule 5 in
   [TEAM.md](TEAM.md) names. No lint reads doc prose against the tree, so this will not surface
   on its own.
-- **R20 · DONE — recaptured, and it answered its own question.** The pair now differs
-  (`insert-whitespace-marks-normal.png` and `-insert.png` have different digests), so the
-  byte-identical stills were the VHS pipeline duplicating a frame and **not** the surface failing
-  to render — the build was right all along. `tapes/artifacts/DUPLICATES.md` records the pairs
-  that are identical by construction.
+- **R20 · ~~DONE — recaptured, and it answered its own question.~~ REOPENED and fixed at the
+  cause, 2026-08-20.** The original entry was right about the *diagnosis* — the byte-identical
+  stills were the VHS pipeline duplicating a frame and not the surface failing to render, and the
+  build was right all along — and wrong about being done. **It closed a timing race on one clean
+  recapture**, which is the one thing a single run cannot establish, and the race recurred during
+  `T088`'s step 3: the fresh `-normal` came back byte-identical to the fresh `-insert` *and* to the
+  committed `-insert`, with the `INSERT` chip visible in the frame that is supposed to say
+  `NORMAL`.
+
+  **The cost was not the stale still.** It was that an intermittent Tier-2 reference mismatched by
+  419 px in the middle of verifying a commit whose entire contract is byte-identical output, and a
+  verifier had to take three digests and read the diff image to establish that the *tape* was
+  wrong rather than the collapse. A change detector that intermittently accuses the change is
+  worse than one that says nothing.
+
+  **The fix already existed in this repository and this tape never got it.**
+  `tapes/signature-help.tape` has carried it since `S4`, with the reason in its own words: *"a
+  `Screenshot` is asynchronous to the key stream, and without this the next key's frame lands in
+  the previous key's PNG."* Every tape settles *before* a screenshot; only two settle *after* one,
+  and the tape where this defect was first observed was not among them. One `Sleep 500ms` between
+  the `-normal` screenshot and the `i` that follows it. Verified by three consecutive captures,
+  each matching the committed reference, with the pair's digests distinct (`eea770db…` /
+  `31caff2c…`) — three runs rather than one, deliberately, because that is the correction.
+
+  *The general lesson, and it is the third instance of it in this file:* **a finding closed on one
+  observation of an intermittent fault is not closed.** §36 recorded a state and stopped being
+  true; §44 named a cause it did not have; R20 recaptured a race and called it fixed. In all three
+  the reasoning was sound and the evidence did not support the word DONE.
+  `tapes/artifacts/DUPLICATES.md` still records the pairs that are identical by construction, and
+  this pair is not one of them.
 - **R15 · DONE — `main` is protected, and it was not "only Teej" after all.** This entry said a
   GitHub settings change only he could make; the API takes it, and the pre-`S4` scout made it on
   his instruction. Six required status checks, which are the six blocking CI jobs by name, with
