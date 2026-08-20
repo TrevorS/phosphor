@@ -1658,7 +1658,14 @@ of it; it compares nothing.
 
 Three things changed with it, and the third is the one worth arguing about.
 
-* **ImageMagick is no longer installed.** Nothing compares, so nothing needs `compare`.
+* **ImageMagick is still installed, and not for comparing.** The first version
+  dropped it and ran `just tape 9c` — the *record* path — which went red on the
+  ffmpeg pin: recording writes a GIF, GIFs go through ffmpeg, and
+  `check-versions.sh` wants 9.0.1 where Ubuntu ships 6.1.1. That pin exists for
+  GIF determinism, which nothing in CI reads. `diff-tapes.sh` already has the
+  path that skips it (`check-versions.sh pixels` — *"a PNG's pixels do not pass
+  through ffmpeg"*), so the capture goes through there and compares as a side
+  effect whose result is ignored.
 * **The size floor is the assertion.** `vhs` exits 0 when a `Wait+Screen` times out — it skips the
   rest of the tape and leaves whatever was on disk — so *"the command succeeded"* and *"a frame was
   captured"* are different claims and this makes the second. 10 kB is far below a real 1228×700

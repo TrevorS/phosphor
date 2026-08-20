@@ -405,11 +405,13 @@ jobs:
       # `continue-on-error` above, never blocks on. See this phase's report
       # for what that means for how much real Tier-2 signal to expect here
       # until someone closes this gap.
-      # No ImageMagick: nothing here compares. See the job's header for why.
-      - name: Install ffmpeg
+      # ImageMagick is back, and not because anything is compared: the capture
+      # path that skips the ffmpeg pin lives in `diff-tapes.sh`, which checks
+      # for `compare` before it runs. See the capture step below.
+      - name: Install ffmpeg and ImageMagick
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg imagemagick
 
       # The one job that builds `--release`, so it warms a cache of its own —
       # the default key includes the job id, and release artefacts share
@@ -441,11 +443,31 @@ jobs:
       # "a frame was captured" are different claims, and the second is the one
       # worth making. 10 kB is far below any real 1228×700 capture and far
       # above an empty or truncated file.
+      # **Captured through `tape-diff`, and the comparison is not the point.**
+      #
+      # The first version ran `just tape 9c` — the *record* path — and went red
+      # on the ffmpeg pin: recording writes a GIF, GIFs go through ffmpeg, and
+      # `check-versions.sh` wants 9.0.1 where Ubuntu ships 6.1.1. That pin
+      # exists for GIF determinism, which nothing in CI reads.
+      #
+      # `diff-tapes.sh` already has the path that skips it — `check-versions.sh
+      # pixels`, on the grounds that *"a PNG's pixels do not pass through
+      # ffmpeg"*. So the capture goes through there. It compares as a side
+      # effect and **the result is deliberately ignored**: the references are
+      # macOS-recorded, §41 measured what that comparison is worth, and this
+      # step exists to answer a different question.
+      #
+      # What is checked is the exit code and the file. `diff-tapes.sh` exits 0
+      # for any number of pixel mismatches and non-zero only for a genuine tool
+      # failure, which is the health signal; and the size floor catches the
+      # other failure, because `vhs` exits 0 when a `Wait+Screen` times out —
+      # it skips the rest of the tape and leaves whatever was on disk. 10 kB is
+      # far below a real 1228×700 capture and far above a truncated one.
       - name: Capture one screen
         run: |
           set -euo pipefail
           rm -f tapes/artifacts/9c.png
-          just tape 9c 2>&1 | tee /tmp/tapes-diff.log
+          just tape-diff 9c 2>&1 | tee /tmp/tapes-diff.log
           size=$(wc -c < tapes/artifacts/9c.png)
           echo "9c.png is ${size} bytes"
           test "${size}" -gt 10000
