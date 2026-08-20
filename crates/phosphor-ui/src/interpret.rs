@@ -45,15 +45,17 @@
 //! | still deferred | widget | task |
 //! |---|---|---|
 //! | `tab-bar` | `TabBar` | `T089` |
-//! | `picker` | `Picker` | `T045` |
 //! | `diff` | `DiffBody` | `T063` |
 //! | `question` | `QuestionBody` | `T059` |
 //! | `transcript` | `TranscriptPane` | `T054` |
 //! | `prompt` | `PromptLine` | `T058` |
 //! | `watch` | `WatchOverlay` | `T076` |
 //!
-//! Every other kind draws. The two that arrived most recently are `completion`
-//! ([`crate::float::CompletionList`], `T038`) and `signature`
+//! Every other kind draws. The most recent arrival is `picker`
+//! ([`crate::picker::Picker`], `T045`) — this table carried its row for a
+//! window after it started drawing, which is the drift the row-deletion rule
+//! above exists to make cheap and does not by itself prevent. Before it,
+//! `completion` ([`crate::float::CompletionList`], `T038`) and `signature`
 //! ([`crate::float::SignatureBody`], `T039`); before them, `gutter`
 //! ([`crate::gutter`], `T031`), `virtual-text` ([`crate::virtual_text`],
 //! `T032`) and `key-hints` ([`crate::key_hints`], `T034` / `T086`) — each in an

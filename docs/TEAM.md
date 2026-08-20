@@ -443,6 +443,73 @@ built on an unverified foundation.
 > the one place the "windows narrow as the build goes on" shape doesn't hold, and the reason is
 > structural: the transcript is the first surface that forces a second pane into existence.
 
+> ### Window F's shape, scoped against the tree on 2026-08-20
+>
+> Every prerequisite outside the window is ticked — `T004`, `T010`, `T015`, `T017`, `T019`,
+> `T020`, `T041`, `T084`. **Two roots and five levels:** `T050` and `T088` need only ticked work;
+> the critical path is `T050 → T051 → T057 → T059 → T060`, and peak concurrency after the roots
+> is five (`T051`, `T052`, `T054`, `T058`, `T089`).
+>
+> **Plan it by file, not by that graph.** This is `S4`'s lesson applied before rather than after:
+> *a dependency graph says what may run together; only the file list says what can.* **Eight of
+> the fifteen tasks land in `crates/phosphor/src/main.rs`** — `T050`, `T051`, `T054`, `T057`,
+> `T058`, `T060`, `T062` and `T088` — so the file graph is far narrower than the task graph and
+> that file, not the dependencies, is what serialises this window.
+>
+> #### `T088` is a refactor, not a feature, and it is the whole shape of the window
+>
+> * `Editing` is a **single-buffer struct** (`main.rs:4817–5061`, 244 lines) with **193**
+>   `editing.` references and **78** `self.editor` references. Its own doc comment says *"this
+>   struct is per buffer"*. Panes make it per-pane and force something above it to own what is
+>   left.
+> * `draw` (`main.rs:4117`) has **two paths**: a tree-composed surface that owns the whole frame,
+>   and a widget path that paints `BufferView` directly and floats a tree over it.
+>   `scripts/lint-node-kinds.sh` states the consequence — the buffer *"is not a node"*, and *"a
+>   tree-composed buffer is what a pane holds, which is `T088`"*.
+> * Closing it collapses the two paths into one, which also retires `Node::Prompt`'s scaffolding
+>   ([OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) §13's recorded demolition date at `T058`) and the
+>   `Buffer` and `Gutter` composition gaps.
+>
+> **So `T088` runs alone at the front**, and everything else is cheaper after it. Then `T050` and
+> `T089` in parallel — different crates entirely — and then the level-2 fan-out. `T060` runs last,
+> after `T088` has settled whether the off-screen-buffer problem below is real.
+>
+> #### What the window owes, counted rather than estimated
+>
+> * **48 S6 capabilities** are already declared in `crates/phosphor-core/tests/surfaces.txt`. The
+>   vocabulary is complete; the arms are not.
+> * **Four new widgets** in `phosphor-ui` — `TabBar`, `QuestionBody`, `TranscriptPane`,
+>   `PromptLine`. The interpreter's deferred set is six kinds; F owns four, `T063` and `T076` own
+>   `diff` and `watch`.
+> * **Eight of eleven** recorded `Node` gaps: `Pane`, `TabBar`, `Buffer`, `Spinner`, `Elapsed`,
+>   `Question`, `Transcript`, `Prompt`.
+> * **One of eight** recorded Action-arm gaps — `ApplyWorkspaceEdit`, owed to `T060`.
+> * **Eleven inert calls** in `fixtures/seed/plan.scm` become real, closing **`V006`**'s session
+>   half; **`V009`**'s last half (the static `✻`) closes at `T051`.
+> * **Ten screens** across two checkpoints — `1b`, `7d`, `5d`, `7b`, `2d`, `2c` at `CP-6`, then
+>   `1c`, `4a`, `7a`, `7e` and a 40-column capture at `CP-7`.
+>
+> **Risk, as flags rather than adjectives:** public API change **yes** (the pane and `Editing`
+> model) · data migration **no** · cross-module **yes** (`main.rs`, `phosphor-ui`,
+> `phosphor-agent`, `phosphor-core`, `runtime/`) · reversible **yes** · external blocker **yes**.
+> The blocker is named: `agent-client-protocol` 2.0.0 and `rmcp` 3.1.2 are in
+> [SPIKES.md](SPIKES.md)'s table and have **never been in this workspace's dependency graph**.
+> `tokio` already is, through `phosphor-buffer`'s LSP client, so `T050` adds two crates to an
+> existing async story rather than introducing one — but nothing has resolved or compiled either,
+> and `deny.toml`'s multiple-version ban on `ratatui-core` is the kind of thing that only speaks
+> up once they are in.
+>
+> #### Two things the scout found that are not in any task
+>
+> * **`T060`'s second blocker may survive `T088`.** `ApplyWorkspaceEdit` edits files that are not
+>   open, and the RECORDED entry names `T088` for it while calling that *"a reading rather than a
+>   citation"*. Nothing in this window is actually tasked with holding a buffer that is not on
+>   screen. That is a gap with no creditor — the same shape as `Node::Gutter` — and whoever
+>   builds `T088` should decide it explicitly rather than discover it at `T060`.
+> * **F is the only window with two checkpoints since Window D**, and D is the one that produced
+>   the concurrency rules below, after sixteen agents finished green and left four surfaces dead
+>   to the keyboard. The rules were written for exactly this shape.
+
 > **`harness` has no `T`/`V` tasks after Window D**, yet is live in E, F and H. That is
 > deliberate — from `CP-5` on, its work is producing each checkpoint's tapes under `V005`'s
 > one-tape-per-screen convention, which is standing work rather than a numbered task. The
