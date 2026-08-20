@@ -1178,7 +1178,7 @@ whatever `runtime/permissions.scm` defines has to load **before** the persisted 
 `phosphor/boot-files`. The thing to check when `T061` lands is that `allow` is defined there and
 not somewhere the boot reaches later. → `T061`.
 
-### 36 · The whole capture library's references are a window or three old
+### 36 · ~~The whole capture library's references are a window or three old~~ — closed by measurement, 2026-08-20
 
 **What running it says now.** With `6b.tape` and `repl-liveness.tape` repaired and
 `run-tapes.sh` collecting failures instead of stopping at the first, a full
@@ -1229,6 +1229,31 @@ Teej's:
 *Recommendation: by screen group, starting with whatever `CP-4` makes Teej look at anyway. And
 whichever is chosen, do not run `just tapes` to make the red go away: that is the one-command
 version of the bulk approval, and it is indistinguishable afterwards from having reviewed them.*
+
+---
+
+**Closed by measurement, 2026-08-20 — the review sitting this entry asks for is no longer owed.**
+`just tapes-diff` reports **49 frames matched, 1 mismatched, 0 skipped**. The single mismatch is
+`diagnostics-regions`, at exactly `209` px, which is §43 rather than drift — that entry's own text
+predicts this and says not to bless it.
+
+So *"thirty-three of forty-one frames mismatch"* and *"Tier 2 is dark"* are both false against the
+tree, and the choice this entry poses — bless by screen group, or abandon the baseline — no longer
+has anything to choose between. **Neither option was taken.** What actually happened is that the
+causes were fixed one at a time across the following windows: `diff-tapes.sh` never seeded the
+store, so seven screens were compared against an empty one (fixed); `6b`'s sentinel waited on a
+deferral that had shipped (fixed); `broken-init` photographed the live boot layer's form count
+(§42, fixed with a frozen snapshot); and the references were a window or three old (re-captured
+and reviewed).
+
+**The lesson is the same one §44 taught the hard way three entries down.** This entry described a
+state, correctly, on the day it was written — and then went on describing it for four windows
+after it stopped being true, because nothing recomputes a measurement written in prose and no
+lint can. It was still handing Teej a review sitting on 2026-08-20, listed in a backlog, on
+numbers from before three of its four causes were fixed. **A finding needs a closing note as much
+as it needs an opening one**, and an entry that asks somebody to do something is the kind that
+costs most when it goes stale — a wrong number misleads a reader, but a stale task list spends
+their afternoon.
 
 ---
 

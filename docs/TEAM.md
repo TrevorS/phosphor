@@ -343,6 +343,39 @@ Each window ends at a checkpoint. **Nobody starts the next window until Teej pas
 current one** — the manual half of every checkpoint is the point, and a team that runs ahead has
 built on an unverified foundation.
 
+> ### The rule is under a standing waiver, from 2026-08-20
+>
+> **Teej: *"im fine with delaying all of this until we are done with the primary work for the
+> editor."*** The manual halves of `CP-4` and `CP-5`, the sixteen unapplied design amendments and
+> the four open rulings are deferred as a block until `S6`–`S8` are built.
+>
+> **This is the second waiver and the first standing one, and the difference matters.** Window E
+> opened under a one-off waiver — recorded further down this file, deliberately *"rather than
+> amended, because the next agent to read this file should not learn it as precedent."* That
+> reasoning still holds and the rule below is unchanged: what is written here is an exception with
+> a name and a date on it, not a new default. An agent reading this in a later window should
+> treat the rule as the rule and this block as spent once `S8` closes.
+>
+> **What it costs, stated once so the record carries it rather than implying it.** `CP-5` is not
+> an ordinary checkpoint — its own text calls it *"the product moment"* and its failure condition
+> is that the markers do not change how you read the file, *"worth stopping over, not building
+> past."* Deferring it means `S6`, `S7` and `S8` are built on an unvalidated product bet. The
+> three cheapest consequences, none hypothetical:
+>
+> * **A `CP-5` failure would reopen the awareness model** — the design brief's, not a bug fix —
+>   and three windows of work would be sitting on top of it by then.
+> * **Design amendments compound.** Sixteen are pending, and `OPEN-QUESTIONS.md` §12's two
+>   already have **39 of 51 tapes plus five golden frames** riding on the reading the build
+>   picked by default. Every window adds captures to that number.
+> * **Two Tier-3 sweep items are P0-class and unrun** — no torn frames (*"a tear is a P0"*, and
+>   no recording can show you one) and tmux passthrough. Those are the two failures that cannot
+>   be found by anything in CI, in a build that has never been checked for them since `CP-3`.
+>
+> None of that makes the call wrong. It makes it a *choice*, which is the thing a waiver should
+> leave visible — and `CP-2`'s lesson is the reason it is written here at all: **a checkpoint
+> decision that is made in conversation and never written down is one this file and `TASKS.md`
+> will disagree with the build about for a whole window.**
+
 | Window | Ends at | Live teammates | Tasks |
 |---|---|---|---|
 | **A** | `CP-0` (build half) | spine, **surface**, harness | T001–T007, T083, V001 |
@@ -502,9 +535,12 @@ built on an unverified foundation.
 > pty is the only thing that finds a class of composition defect; this says the same about Tier 1
 > and the frame. A widget test draws a widget, and a widget cannot be wrong about the screen.
 >
-> **Window F does not start on this.** Both checkpoints still owe their manual halves, which are
-> Teej's alone, and the rule above is unchanged by a green mechanical half — that is precisely the
-> distinction `CP-2`'s entry exists to insist on.
+> **~~Window F does not start on this.~~ It does, under the standing waiver above — Teej, the
+> same day.** The sentence this replaces was right about the rule and is worth keeping in view:
+> a green mechanical half is not a checkpoint, and the distinction `CP-2`'s entry exists to
+> insist on is unchanged. What changed is not the rule but who chose to stand aside from it, and
+> the deferral is a block decision covering both manual halves at once — see *"The rule is under
+> a standing waiver"* under **Windows and gates** for what it costs.
 >
 > That bookkeeping gap is closed. `TASKS.md` now carries `CP-2 · **PASSED**` and dates the verdict
 > to 2026-08-12, where it belonged all along: the manual half was run and answered in conversation,

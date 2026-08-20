@@ -65,6 +65,10 @@ each is accounted for at
 its task: `apply-workspace-edit` is RECORDED against `T060`, `request-references` was re-homed to
 `T047`, and `align-columns` has no creditor at all, which is why `T082` stays unticked.
 **No `CP-4` verdict is recorded here, because the manual half is Teej's and has not happened.**
+**Deferred by Teej on 2026-08-20**, together with `CP-5`'s, until `S6`–`S8` are built — a standing
+waiver of the rule that no window starts on an unpassed checkpoint. It is recorded at
+[TEAM.md](TEAM.md)'s *Windows and gates* with what it costs, and it is a deferral rather than a
+pass: nothing below may be read as a verdict, and the residue is unchanged.
 
 Checkboxes below track *tasks*, not checkpoints: a task is ticked when its own *done when* is
 demonstrably met. The two are deliberately separate, because a checkpoint is a human judgement
@@ -2583,8 +2587,14 @@ bet; a lukewarm result here is worth stopping over, not building past.
 
 **A failure here reopens:** the design brief's awareness model — a conversation, not a bug fix.
 
-> **The mechanical half, recorded 2026-08-19 — and this is not a verdict.** `CP-5` has two halves
-> and only Teej can run the second. This is written here because `CP-2`'s rule puts it here: **a
+> **Deferred by Teej on 2026-08-20**, with `CP-4`'s, until `S6`–`S8` are built. The mechanical
+> half below is complete; **the manual half is the one this checkpoint is actually for**, and it
+> has not run. `CP-5`'s own failure condition — *"the markers don't change how you read the file
+> … worth stopping over, not building past"* — is the thing being deferred, not a formality, and
+> [TEAM.md](TEAM.md)'s waiver entry carries the cost. Nothing here is a pass.
+>
+> **The mechanical half, recorded 2026-08-19 and closed 2026-08-20 — and this is not a verdict.**
+> `CP-5` has two halves and only Teej can run the second. This is written here because `CP-2`'s rule puts it here: **a
 > checkpoint verdict is written where the checkpoint is, or it did not happen** — and the same
 > holds for the half that comes before one. `CP-4` has had such a paragraph since `S4`; this
 > checkpoint had none, while the work it describes was spread across commit messages.
