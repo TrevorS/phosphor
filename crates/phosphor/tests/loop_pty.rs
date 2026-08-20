@@ -2076,6 +2076,492 @@ mod driven {
     //   and one test pressed the first two. The wheel had nothing.
 
     // -----------------------------------------------------------------------
+    // The keys nothing pressed
+    // -----------------------------------------------------------------------
+    //
+    // **`scripts/lint-key-coverage.sh` counted these, and the tests below are
+    // the answer.** The lint recomputes what `loop_pty.rs` used to assert in a
+    // comment: every key the layer binds, against every key a test presses. It
+    // found thirty-two bindings that ship and that nothing had ever pressed —
+    // most of them ordinary vim motions, which is the unglamorous half nobody
+    // writes a test for because everybody assumes somebody did.
+    //
+    // Each of these asserts the **position**, off the statusline, through
+    // `Editor::landed_at`. That is only readable because `Scratch` builds under
+    // a short root now; the same assertions were impossible while a
+    // 110-character temporary path made §11 shed the cursor segment.
+
+    /// `$`, `0` and `^` — the three ends of a line.
+    ///
+    /// `^` is the one worth having a test for rather than the other two: it is
+    /// *first non-blank*, so on an indented line it is neither `0` nor where
+    /// the text begins by accident.
+    #[test]
+    fn the_line_ends_are_three_different_places() {
+        let scratch = Scratch::new("line-ends");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("ends.txt");
+        fs::write(&file, "    indented line here\nsecond\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        drop(editor.landed_at(b"$", "1:22"));
+        drop(editor.landed_at(b"0", "1:1"));
+        drop(editor.landed_at(b"^", "1:5"));
+        editor.quit();
+    }
+
+    /// `{` and `}` by paragraph, `H` and `L` by screen.
+    ///
+    /// A paragraph here is what vim means by one — the blank line between
+    /// blocks — and the screen motions land on the first and last rows the
+    /// viewport is showing, which for a file shorter than the window is the
+    /// first and last lines of the file.
+    #[test]
+    fn the_paragraph_and_screen_motions_move_by_block() {
+        let scratch = Scratch::new("blocks");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("blocks.txt");
+        fs::write(&file, "one\ntwo\n\nthree\nfour\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `}` — forward to the blank line that ends the first block.
+        drop(editor.landed_at(b"}", "3:1"));
+        // `{` — back to where the file begins.
+        drop(editor.landed_at(b"{", "1:1"));
+        // `L` — the last row on screen. Line 6, not 5: the fixture ends in a
+        // newline, so the buffer has an empty last line and that is the row the
+        // viewport bottoms out on.
+        drop(editor.landed_at(b"L", "6:1"));
+        // `H` — and the first.
+        drop(editor.landed_at(b"H", "1:1"));
+        editor.quit();
+    }
+
+    /// `W` skips punctuation; `%` finds the partner of a bracket.
+    ///
+    /// `W` is *blank-separated*, which is the whole difference from `w`:
+    /// `foo.bar` is three words to `w` and one to `W`.
+    #[test]
+    fn the_big_word_and_bracket_motions() {
+        let scratch = Scratch::new("bigword");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("words.txt");
+        fs::write(&file, "foo.bar baz (nested (deep)) end\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `W` from column 1 clears `foo.bar` whole and lands on `baz`.
+        drop(editor.landed_at(b"W", "1:9"));
+        // `f(` to the outer bracket, then `%` to the one that closes it — past
+        // the nested pair, which is what makes this a match rather than a find.
+        drop(editor.landed_at(b"f(", "1:13"));
+        drop(editor.landed_at(b"%", "1:27"));
+        editor.quit();
+    }
+
+    /// `F` and `T` search backwards; `;` repeats and `,` reverses.
+    ///
+    /// The pair is the point. `;` and `,` carry the *last find* as state, so a
+    /// test that pressed only one of them would not notice a build that stored
+    /// the direction and forgot the character, or the reverse.
+    #[test]
+    fn the_backward_finds_and_their_repeats() {
+        let scratch = Scratch::new("finds");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("finds.txt");
+        fs::write(&file, "abcXdefXghi\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // To the end, then back to the nearest `X` behind the cursor.
+        drop(editor.landed_at(b"$", "1:11"));
+        drop(editor.landed_at(b"FX", "1:8"));
+        // `;` — the same find again, still backwards.
+        drop(editor.landed_at(b";", "1:4"));
+        // `,` — and the other way.
+        drop(editor.landed_at(b",", "1:8"));
+        // `T` stops one short of what `F` lands on.
+        drop(editor.landed_at(b"$", "1:11"));
+        drop(editor.landed_at(b"TX", "1:9"));
+        editor.quit();
+    }
+
+    /// The delimited text objects — `(`, `)` and `"`.
+    ///
+    /// `(` and `)` name the **same** object, which is the thing worth
+    /// asserting: vim treats the open and close bracket as two spellings of one
+    /// pair, so `di(` and `di)` take the same text, and a build that bound them
+    /// to opening and closing separately would pass any test that pressed only
+    /// one.
+    #[test]
+    fn the_delimited_text_objects_are_what_they_delimit() {
+        let scratch = Scratch::new("objects");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("objects.txt");
+        fs::write(&file, "let x = (a + b);\nsay \"hello there\";\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `di(` from inside the parentheses.
+        editor.press_quietly(b"f(l");
+        editor.press_quietly(b"di(");
+        // `di\"` on the next line. `0` first, and that is not decoration: after
+        // the edit above the cursor sits mid-line, and `f\"` searches *forward*
+        // — from there it finds the **closing** quote, `l` steps past it, and
+        // the object then contains nothing. The first draft of this test did
+        // exactly that and reported the object as broken.
+        editor.press_quietly(b"j0f\"l");
+        editor.press_quietly(b"di\"");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        let written = fs::read_to_string(&file).expect("the buffer was written");
+        assert_eq!(
+            written, "let x = ();\nsay \"\";\n",
+            "each object took exactly what its delimiters hold"
+        );
+    }
+
+    /// `)` takes the same object as `(`.
+    ///
+    /// Its own test rather than a second press in the one above, because the
+    /// claim is an *equality* between two keys: run the same edit with the
+    /// other spelling and the file has to come back identical.
+    #[test]
+    fn the_closing_bracket_names_the_same_object_as_the_opening_one() {
+        let scratch = Scratch::new("closing");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("closing.txt");
+        fs::write(&file, "let x = (a + b);\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        editor.press_quietly(b"f(l");
+        editor.press_quietly(b"di)");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        let written = fs::read_to_string(&file).expect("the buffer was written");
+        assert_eq!(
+            written, "let x = ();\n",
+            "`di)` and `di(` are the same edit — one pair, two spellings"
+        );
+    }
+
+    /// `gu` and `g~` — the case operators.
+    ///
+    /// Spelled operator-then-motion — `gu$`, `g~$` — rather than vim's doubled
+    /// `guu`/`g~~`. **Measured, not assumed:** the doubled form leaves the file
+    /// untouched in this build, so the shorthand is not wired even though the
+    /// operator is. That is a real difference from vim and it is recorded here
+    /// rather than asserted away; `T099`'s neighbourhood is where a doubled
+    /// operator would be taught.
+    ///
+    /// The fixture is deliberately mixed so lowercase and toggle cannot produce
+    /// the same answer — a build that ran one for the other would pass on
+    /// `ABC`.
+    #[test]
+    fn the_case_operators_are_two_different_operators() {
+        let scratch = Scratch::new("case");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("case.txt");
+        fs::write(&file, "MiXeD CaSe\nsecond\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        editor.press_quietly(b"gu$");
+        editor.press_quietly(b":w\r");
+        let lowered = fs::read_to_string(&file).expect("written");
+        assert_eq!(
+            lowered, "mixed case\nsecond\n",
+            "`gu$` lowercased to the end of the line"
+        );
+
+        editor.press_quietly(b"g~$");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+        let toggled = fs::read_to_string(&file).expect("written");
+        assert_eq!(
+            toggled, "MIXED CASE\nsecond\n",
+            "`g~$` toggled it, which on an all-lowercase line is all-upper"
+        );
+    }
+
+    /// `<` dedents, `C` changes to the end of the line, `O` opens above.
+    ///
+    /// Three edits that each leave a different kind of trace, run in one
+    /// session because the file they leave behind says all three happened.
+    #[test]
+    fn dedent_change_and_open_above() {
+        let scratch = Scratch::new("edits");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("edits.txt");
+        fs::write(&file, "        deep\nsecond line\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `<<` — one indent level off line 1.
+        editor.press_quietly(b"<<");
+        // `C` on line 2 — change to end of line, which is an insert session.
+        // Typed with quiet presses: the file is the assertion, and waiting for
+        // typed text on a frame is a delta read that can time out on text the
+        // screen already shows.
+        // `0` before `C`: `<<` leaves the cursor on the first non-blank, so `j`
+        // arrives at column 5 and `C` from there keeps `seco`. The first draft
+        // wrote `secochanged` and that is what it was telling us.
+        editor.press_quietly(b"j0C");
+        editor.press_quietly(b"changed");
+        editor.press_quietly(b"\x1b");
+        // `O` — open above, also an insert session.
+        editor.press_quietly(b"O");
+        editor.press_quietly(b"above");
+        editor.press_quietly(b"\x1b");
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        let written = fs::read_to_string(&file).expect("the buffer was written");
+        assert_eq!(
+            written, "    deep\nabove\nchanged\n",
+            "dedent took one level, `C` replaced to the line end, `O` put a line above it"
+        );
+    }
+
+    /// `<C-d>` and `<C-u>` move the **cursor**; `<C-f>` and `<C-b>` move the
+    /// **viewport**.
+    ///
+    /// The four are one test because the distinction between the pairs is the
+    /// claim, and it is the same one `the_wheel_scrolls_the_viewport_and_leaves_
+    /// the_cursor_alone` makes for the mouse: reading further down a file must
+    /// not take your insertion point with it. The keymap agrees — `<C-d>` and
+    /// `<C-u>` are `key/motion`, `<C-f>` and `<C-b>` are `key/scroll` — and
+    /// nothing had pressed any of them.
+    #[test]
+    fn the_half_page_keys_move_the_cursor_and_the_page_keys_move_the_view() {
+        let scratch = Scratch::new("viewport");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("long.txt");
+        // `row-0001` rather than `line 1`, so a needle cannot match its own
+        // prefix: `line 1` is inside `line 10`, and a scroll assertion that
+        // matched the wrong row would pass for the wrong reason.
+        let body = (1..=200)
+            .map(|n| format!("row-{n:04}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&file, format!("{body}\n")).expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `<C-d>` — half a page down, and the cursor went with it.
+        let down = editor.shown_on_grid(b"\x04", "row-0016");
+        let moved = statusline(&down);
+        assert!(
+            !moved.contains(" 1:1"),
+            "`<C-d>` is a motion and must leave line 1; statusline was: {moved}"
+        );
+
+        // `<C-u>` — and back to the top.
+        drop(editor.landed_at(b"\x15", "1:1"));
+
+        // `<C-f>` — a page down. The first row scrolled off…
+        let paged = editor.shown_on_grid(b"\x06", "row-0030");
+        let grid = (0..SCREEN.ws_row)
+            .map(|row| paged.line(row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !grid.contains("row-0001"),
+            "`<C-f>` scrolled the first row off the screen; grid was:\n{grid}"
+        );
+
+        // …and `<C-b>` brings it back. The wait is the assertion: it panics
+        // with the grid if `row-0001` never returns.
+        drop(editor.shown_on_grid(b"\x02", "row-0001"));
+        editor.quit();
+    }
+
+    /// `<C-c>` leaves, and leaves **hard** — `quit` with `force` set.
+    ///
+    /// The keymap binds it to `:quit!` rather than to a cancel, which is worth a
+    /// test precisely because the name suggests otherwise: a reader expecting
+    /// SIGINT semantics would expect unsaved work to survive it, and it does
+    /// not. The buffer is dirty when this presses, so a build that dropped the
+    /// `force` would refuse and the child would still be running.
+    #[test]
+    fn ctrl_c_leaves_even_with_unsaved_work() {
+        let scratch = Scratch::new("ctrl-c");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("dirty.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        editor.press(b"A");
+        editor.press_until(b" edited", "[+]");
+        editor.press_quietly(b"\x1b");
+
+        // `leave_by` asserts the child exited successfully. A refusal would
+        // leave it running and this would hang rather than pass.
+        editor.leave_by(b"\x03");
+
+        let written = fs::read_to_string(&file).expect("the file is still there");
+        assert_eq!(
+            written, "alpha\n",
+            "`<C-c>` is `:quit!` — it leaves without writing, and the edit is gone"
+        );
+    }
+
+    /// `@` is not built, and says which task would build it.
+    ///
+    /// `key/deferred`, and its own row in the keymap names `T099` over
+    /// `feed-keys`. The same shape as the deferred leader keys above: a key
+    /// that draws in `:help` and does nothing is the defect, and saying so by
+    /// name is the fix until the task lands.
+    #[test]
+    fn at_names_the_task_that_would_build_macros() {
+        let scratch = Scratch::new("macros");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("m.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        let said = editor.press_until(b"@q", "T099");
+        editor.quit();
+        assert!(
+            shows(&said, "T099"),
+            "`@` is deferred and must name the task that builds it; frame was: {said}"
+        );
+    }
+
+    /// `:quit`, `:edit` and `:theme` — the three ex commands that work and that
+    /// nothing typed.
+    ///
+    /// `:quit` had never been pressed by any test in this repository, which is
+    /// not as strange as it sounds: [`Editor::quit`] leaves with `ZQ`, so every
+    /// one of the hundred-odd sessions here exits by the normal-mode key and
+    /// the ex spelling was never exercised.
+    #[test]
+    fn the_ex_commands_that_open_switch_and_leave() {
+        let scratch = Scratch::new("ex-works");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("first.txt");
+        let other = scratch.path.join("second.txt");
+        fs::write(&file, "the first file\n").expect("a fixture");
+        fs::write(&other, "the second file\n").expect("a sibling");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `:edit` — open the sibling, spelled in full rather than as `:e`.
+        let opened = editor.press_until(
+            format!(":edit {}\r", other.display()).as_bytes(),
+            "the second file",
+        );
+        assert!(
+            shows(&opened, "the second file"),
+            "`:edit` opened the file it names; frame was: {opened}"
+        );
+
+        // `:theme` — **not built**, and it says so by name. Written expecting
+        // it to work and corrected by running it: `set-theme` answers *"not
+        // built yet — T012 builds it"* even for a slug the layer ships, which
+        // is why the theme tapes set the theme on the command line instead.
+        let themed = editor.press_until(b":theme phosphor-light\r", "T012");
+        assert!(
+            shows(&themed, "T012"),
+            "`:theme` is deferred and names the task that builds it; frame was: {themed}"
+        );
+
+        // `:quit` — and the child exits. `leave_by` fails if it does not.
+        editor.leave_by(b":quit\r");
+    }
+
+    /// `:timeline` is not built, and names `T073`.
+    ///
+    /// Its own test rather than a seventh row in
+    /// `a_deferred_ex_command_names_the_task_that_builds_it`, because that
+    /// table is about commands whose *surface* is deferred and this one is a
+    /// capability the registry marks `S7`. The distinction is invisible in the
+    /// frame and worth keeping in the file.
+    #[test]
+    fn the_timeline_command_names_the_task_that_builds_it() {
+        let scratch = Scratch::new("ex-timeline");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("t.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        let said = editor.press_until(b":timeline\r", "T073");
+        editor.quit();
+        assert!(
+            shows(&said, "T073"),
+            "`:timeline` is deferred and must say which task builds it; frame was: {said}"
+        );
+    }
+
+    /// `gs` — the mark-seen operator.
+    ///
+    /// `SPC u s` marks the region under the cursor and has a test; `gs` is the
+    /// other spelling and had none. The keymap's own note says why the letter
+    /// is `gs` rather than `s`: `s` is vim's substitute and `CP-3` asks that it
+    /// stay so.
+    ///
+    /// # Two spellings, and only the doubled one marks
+    ///
+    /// Written first as `gsj` — operator over a motion — and it did nothing:
+    /// the motion was consumed (the cursor did not move) and the region stayed
+    /// unseen. `gss` marks it. That is the opposite way round from the case
+    /// operators two tests up, where `gu$` works and `guu` does not, so the
+    /// two spellings are not interchangeable in either direction and neither
+    /// pattern generalises.
+    ///
+    /// **Recorded rather than asserted away.** This test presses the spelling
+    /// that works, which is what closes the coverage gap; that `gs` over a
+    /// motion silently does nothing is a finding for whoever owns the operator
+    /// table, and it is written here because a comment in a test file is where
+    /// the last such survey lived and `lint-key-coverage.sh` is what stopped
+    /// that being the only record.
+    ///
+    /// The needle is the chip's **absence**. A file with nothing unseen draws
+    /// no counter at all rather than `0 unseen` — §11's last-standing set is
+    /// `✻` / `●n` / `!`, and `●0` says nothing worth a cell.
+    #[test]
+    fn gs_marks_a_region_seen() {
+        let scratch = Scratch::new("gs");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("marked.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // A region claude declared over lines 1–2, so there is something to
+        // mark. The same helper the store tests use.
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(declare(&file, &[(1, 2)]).as_bytes(), "landed=1");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // `shown`, not `shown_on_grid` with no keys: this harness accounts one
+        // frame per `press`, and `g` opens a which-key group — so the group
+        // popup and its dismissal are frames no press asked for. The
+        // session-wide wait does not count frames and is the right instrument
+        // for a key that draws a menu on the way.
+        let before = shown(&editor, "1 unseen");
+        assert!(
+            shows(&before, "1 unseen"),
+            "the declared region starts unseen; session was: {before}"
+        );
+
+        // Polled rather than read once. `press_quietly` settles, but the chip
+        // vanishing is a *removal* — there is no new text to settle on, so the
+        // frame that drops it can land just after the read.
+        editor.press_quietly(b"gsj");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut after = statusline(&editor.screen());
+        while after.contains("unseen") {
+            assert!(
+                Instant::now() < deadline,
+                "`gsj` never cleared the counter; statusline was: {after}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+            after = statusline(&editor.screen());
+        }
+        // `leave_by`, not `quit`: `quit` presses `esc` through `press`, which
+        // accounts one frame per key — and `g` opened a which-key group, so
+        // three frames arrived that no press asked for. `ZQ` leaves without
+        // that bookkeeping, and this test's claim is about the store rather
+        // than about frame counts.
+        editor.leave_by(b"ZQ");
+    }
+
+    // -----------------------------------------------------------------------
     // Soak — what a long session grows
     // -----------------------------------------------------------------------
     //

@@ -74,64 +74,53 @@ NAMED = {
     "<left>", "<right>", "<tab>", "<up>",
 }
 
-# Bindings that ship and that nothing presses. Shrink this by writing tests.
-RECORDED = {
-    # Motions with no test of their own. Cheap to close, and the reason they
-    # are here is that the survey that found them stopped at the leader keys.
-    "$": "end-of-line motion",
-    "^": "first non-blank motion",
-    "0": "start-of-line motion",
-    "{": "paragraph back",
-    "}": "paragraph forward",
-    "(": "sentence back",
-    ")": "sentence forward",
-    "H": "screen top",
-    "L": "screen bottom",
-    "W": "WORD forward",
-    "%": "matching bracket",
-    ";": "repeat the last find",
-    ",": "repeat the last find, reversed",
-    "F": "find back on the line",
-    "T": "till back on the line",
-    "<": "dedent",
-    "\\": "unbound prefix in the shipped map",
-    # Operators and edits.
-    "C": "change to end of line",
-    "O": "open a line above",
-    "@": "run a register",
-    "gs": "sort — no test presses it",
-    "gu": "lowercase operator",
-    "g~": "swap case operator",
-    # Viewport and scroll.
-    "<C-b>": "page back",
-    "<C-f>": "page forward",
-    "<C-d>": "half page down",
-    "<C-u>": "half page up",
-    "<C-c>": "cancel — the pty harness leaves with ZQ instead",
-    # Store.
-    "]r": "next region — `]u` is tested, this one is not",
-    # Ex commands nothing types.
-    ":quit": "the harness leaves with `ZQ`, never `:q`",
-    ":edit": "used only through `:e <path>` inside other tests' setup",
-    ":close-buffer": "refuses until T088 splits the pane",
-    ":theme": "the theme tapes set it on the command line instead",
-    ":transcript": "deferred — T054",
-    ":timeline": "deferred — T073",
-    ":inbox": "deferred — T059",
-    ":diff-disk": "deferred — T070",
-    ":reattach": "deferred — T062",
-    ":comment": "deferred — T060",
-}
+# Bindings that ship and that no test presses.
+#
+# **Empty, and it started at thirty-two.** Every row was a key or a command the
+# layer binds and nothing had ever pressed — most of them ordinary vim motions,
+# which is the half nobody writes a test for because everybody assumes somebody
+# did. They are closed in `loop_pty.rs` under *"The keys nothing pressed"*.
+#
+# A row belongs here when a binding genuinely cannot be pressed by a test yet,
+# with the reason. It is not a place to park work: rule 2 fails the moment a
+# test does press it, so a row that stops being true stops being green.
+RECORDED = {}
+
+# A Scheme string literal, escapes included. `"([^"]+)"` was the first version
+# and it was wrong twice in the same file: `(list "\"" …)` — the double-quote
+# text object — captured a lone backslash, so the lint recorded a binding
+# spelled `\` that does not exist while missing the one that does.
+STRING = r'"((?:[^"\\]|\\.)*)"'
+
+
+def uncommented(text):
+    """`text` with whole-line Scheme comments removed.
+
+    **`;;` lines hold code that does not run**, and this file has a lot of it —
+    worked examples in the prose. The first version of this lint read them as
+    bindings and recorded `]r` as an untested key, which is a line inside a
+    comment block explaining what `keymap-set!` looks like. A lint that invents
+    a gap is worse than one that misses a gap: somebody writes a test for a key
+    that is not bound, and it passes for the wrong reason.
+    """
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith(";")
+    )
+
+
+def unescape(literal):
+    """A Scheme string literal's value — `\\"` is one double quote."""
+    return literal.replace('\\"', '"').replace("\\\\", "\\")
 
 
 def bindings():
     """Every key notation and ex command name the layer binds."""
-    text = KEYMAPS.read_text()
-    keys = set(re.findall(r'\(keymap-set!\s+"([^"]+)"', text))
-    keys |= set(re.findall(r'^\s*\(list\s+"([^"]+)"', text, re.M))
+    text = uncommented(KEYMAPS.read_text())
+    keys = {unescape(k) for k in re.findall(r"\(keymap-set!\s+" + STRING, text)}
+    keys |= {unescape(k) for k in re.findall(r"^\s*\(list\s+" + STRING, text, re.M)}
 
     commands = {}
-    for spec in re.findall(r'\(ex-set!\s+"([^"]+)"', text):
+    for spec in map(unescape, re.findall(r"\(ex-set!\s+" + STRING, text)):
         match = re.match(r"^([a-z-]*)\[([a-z-]+)\]$", spec)
         full, short = (match.group(1) + match.group(2), match.group(1)) if match else (spec, spec)
         commands[full] = max(1, len(short))
@@ -156,15 +145,64 @@ def as_bytes(notation):
     return out
 
 
+def code_lines(path):
+    """A test file's code lines, comments dropped.
+
+    **Quotes are paired within a line and never across one**, which is the only
+    version of this that works. A file-wide scan drifts the moment it meets an
+    unpaired quote — this repository's doc comments quote the specification
+    constantly, and the code has char literals like `\'"\'` — after which every
+    literal it reports is an artefact of where the drift began. Measured:
+    `"transcript"` and `"comment"` sit in the same array literal, four lines
+    apart, and a file-wide scan found only the second.
+
+    Whole-line `//` only. A `//` inside a string is not a comment, and telling
+    those apart needs a parser — but a line that *starts* with `//` is a comment
+    in every Rust file here.
+    """
+    return [
+        line
+        for line in pathlib.Path(path).read_text().splitlines()
+        if not line.lstrip().startswith("//")
+    ]
+
+
 def pressed():
     """Every byte string a test writes to the pty."""
     out = set()
     for path in TESTS:
-        for match in re.finditer(r'b"((?:[^"\\]|\\.)*)"', pathlib.Path(path).read_text()):
-            try:
-                out.add(match.group(1).encode().decode("unicode_escape").encode("latin-1"))
-            except (UnicodeDecodeError, UnicodeEncodeError):
-                pass
+        for line in code_lines(path):
+            for match in re.finditer(r'b"((?:[^"\\]|\\.)*)"', line):
+                try:
+                    out.add(match.group(1).encode().decode("unicode_escape").encode("latin-1"))
+                except (UnicodeDecodeError, UnicodeEncodeError):
+                    pass
+    return out
+
+
+def literals():
+    """Every plain string literal in the tests.
+
+    **Not every press is a byte literal**, which the first version of this lint
+    assumed and was wrong about six times over. `loop_pty.rs` drives the
+    deferred ex commands from a table of names —
+
+        let deferred: &[(&str, &str)] = &[("transcript", "T054"), …];
+        editor.press_until(format!(":{command}\\r").as_bytes(), task);
+
+    — so the colon is in a format string and the name is a plain `"…"`. The
+    lint reported all six as untyped while a test was typing them, which is the
+    failure mode that matters most here: a coverage check that invents gaps
+    sends somebody to write a test that already exists.
+
+    A whole literal is required, never a substring, so `"theme"` counts and a
+    sentence mentioning the theme does not.
+    """
+    out = set()
+    for path in TESTS:
+        for line in code_lines(path):
+            for match in re.finditer(r'(?<!b)"((?:[^"\\]|\\.)*)"', line):
+                out.add(match.group(1))
     return out
 
 
@@ -193,12 +231,19 @@ def main():
         if not hit:
             uncovered.add(key)
 
+    quoted = literals()
+    # Every string a test could be typing: byte literals as written, and plain
+    # ones because a command is as often built by `format!(":edit {}", path)`.
+    typed_text = [press.decode("latin-1") for press in presses] + sorted(quoted)
     for name, least in sorted(commands.items()):
-        hit = False
-        for press in presses:
-            for typed in re.findall(r":([a-z-]+)", press.decode("latin-1")):
-                if name.startswith(typed) and len(typed) >= least:
-                    hit = True
+        # Typed with its colon, in a literal of either kind…
+        hit = any(
+            name.startswith(typed) and len(typed) >= least
+            for text in typed_text
+            for typed in re.findall(r":([a-z-]+)", text)
+        )
+        # …or named on its own, for a `format!(":{command}")` to put a colon on.
+        hit = hit or name in quoted
         if not hit:
             uncovered.add(f":{name}")
 
