@@ -2246,12 +2246,12 @@ mod driven {
 
     /// `gu` and `g~` — the case operators.
     ///
-    /// Spelled operator-then-motion — `gu$`, `g~$` — rather than vim's doubled
-    /// `guu`/`g~~`. **Measured, not assumed:** the doubled form leaves the file
-    /// untouched in this build, so the shorthand is not wired even though the
-    /// operator is. That is a real difference from vim and it is recorded here
-    /// rather than asserted away; `T099`'s neighbourhood is where a doubled
-    /// operator would be taught.
+    /// Spelled the way vim spells them — `guu`, `g~~`.
+    ///
+    /// **This test is why they work.** Written first as `guu` and it left the
+    /// file untouched: the keymap bound each operator whole in
+    /// operator-pending, so `gugu` doubled and vim's one-key shorthand had
+    /// nothing to resolve to. The tails are bound now, in that scope only.
     ///
     /// The fixture is deliberately mixed so lowercase and toggle cannot produce
     /// the same answer — a build that ran one for the other would pass on
@@ -2271,21 +2271,51 @@ mod driven {
         // was meant to save. The buffer row showing the new text is the signal
         // that the edit happened; the file then only checks that `:w` wrote
         // what was on screen.
-        drop(editor.shown_on_grid(b"gu$", "mixed case"));
+        drop(editor.shown_on_grid(b"guu", "mixed case"));
         editor.press_quietly(b":w\r");
         let lowered = fs::read_to_string(&file).expect("written");
-        assert_eq!(
-            lowered, "mixed case\nsecond\n",
-            "`gu$` lowercased to the end of the line"
-        );
+        assert_eq!(lowered, "mixed case\nsecond\n", "`guu` lowercased the line");
 
-        drop(editor.shown_on_grid(b"g~$", "MIXED CASE"));
+        drop(editor.shown_on_grid(b"g~~", "MIXED CASE"));
         editor.press_quietly(b":w\r");
         editor.leave_by(b"ZQ");
         let toggled = fs::read_to_string(&file).expect("written");
         assert_eq!(
             toggled, "MIXED CASE\nsecond\n",
-            "`g~$` toggled it, which on an all-lowercase line is all-upper"
+            "`g~~` toggled it, which on an all-lowercase line is all-upper"
+        );
+    }
+
+    /// A different operator on top of a pending one **aborts**.
+    ///
+    /// `dc` is not "change" — it is a sequence vim rejects, and this build used
+    /// to drop the `d` and wait for `c`'s operand, so a typo became a different
+    /// edit rather than nothing. It matters more since the operator tails are
+    /// bound in operator-pending: `du` now resolves to an operator where it
+    /// used to resolve to nothing, and replacing rather than aborting would
+    /// make `du` lowercase a line.
+    #[test]
+    fn a_second_operator_aborts_the_first_rather_than_replacing_it() {
+        let scratch = Scratch::new("abort");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("abort.txt");
+        fs::write(&file, "AlphaBeta\nsecond\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `du` — a pending delete, then the lowercase tail. Neither runs.
+        editor.press_quietly(b"du");
+        // And the editor is back in normal mode, taking keys as keys: `x`
+        // deletes one character, which it could not do from operator-pending.
+        editor.press_quietly(b"x");
+        drop(editor.shown_on_grid(b"", "lphaBeta"));
+        editor.press_quietly(b":w\r");
+        editor.quit();
+
+        let written = fs::read_to_string(&file).expect("the buffer was written");
+        assert_eq!(
+            written, "lphaBeta\nsecond\n",
+            "`du` did nothing at all — no delete, no lowercase — and left \
+             normal mode ready for the next key"
         );
     }
 
@@ -2504,21 +2534,9 @@ mod driven {
     /// is `gs` rather than `s`: `s` is vim's substitute and `CP-3` asks that it
     /// stay so.
     ///
-    /// # Two spellings, and only the doubled one marks
-    ///
-    /// Written first as `gsj` — operator over a motion — and it did nothing:
-    /// the motion was consumed (the cursor did not move) and the region stayed
-    /// unseen. `gss` marks it. That is the opposite way round from the case
-    /// operators two tests up, where `gu$` works and `guu` does not, so the
-    /// two spellings are not interchangeable in either direction and neither
-    /// pattern generalises.
-    ///
-    /// **Recorded rather than asserted away.** This test presses the spelling
-    /// that works, which is what closes the coverage gap; that `gs` over a
-    /// motion silently does nothing is a finding for whoever owns the operator
-    /// table, and it is written here because a comment in a test file is where
-    /// the last such survey lived and `lint-key-coverage.sh` is what stopped
-    /// that being the only record.
+    /// `gsj` — the operator over a motion. It marks, and the first reading of
+    /// this test said it did not: the mark lands a frame after the keys do, and
+    /// the statusline was read too early. The poll below is that lesson.
     ///
     /// The needle is the chip's **absence**. A file with nothing unseen draws
     /// no counter at all rather than `0 unseen` — §11's last-standing set is

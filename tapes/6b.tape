@@ -18,10 +18,22 @@
 # run against the real tree would write to the checked-in `persisted.scm`.
 # harness does not own `runtime/**` (TEAM.md).
 #
-# Sentinels wait on a word unique to each answer (`T041`, `region-author`,
+# Sentinels wait on a word unique to each answer (`()`, `region-author`,
 # `claude`, `T077`) rather than a generic prompt glyph, so a tape that
 # raced ahead of the VM would time out instead of screenshotting a partial
 # session.
+#
+# **The first sentinel was `T041` and `T041` shipped.** `unseen-regions` used to
+# refuse by naming the task that would build it; it answers now, and against the
+# scratch state home this tape runs with there is nothing in the store, so the
+# answer is the empty list. The tape waited ten seconds for a word the editor
+# had stopped saying and then skipped every line after it — and `vhs` exits 0
+# when it does that, so `just tapes` stayed green while this screen quietly
+# stopped being captured. Found by `just tapes-diff`, which reported it as
+# *"vhs capture failed"* the first time anything ran the whole library.
+#
+# That is the failure mode this file's own note about `place-watch` describes,
+# one task later: a sentinel on a refusal is a sentinel with an expiry date.
 #
 # The fourth sentinel was `place-watch`, which stopped appearing at `§8` and
 # took this tape — and, through `run-tapes.sh`'s `set -e`, every tape after it
@@ -47,7 +59,7 @@ Wait+Screen@10s /(?m)^ (REPL|R)\b/
 
 Type `(unseen-regions "src/retry.rs")`
 Enter
-Wait+Screen@10s /T041/
+Wait+Screen@10s /\(\)/
 
 Type `(map region-author (block-regions "retry logic"))`
 Enter

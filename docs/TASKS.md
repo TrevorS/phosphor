@@ -1603,10 +1603,23 @@ Tier 3.
 >   `tapes/README.md` records *"does undercurl survive VHS capture? — Answered: yes"* — so it does
 >   not stay Tier 3.
 >
->   **What is true, and is a different claim, is that the captures are stale.** `e096f88`'s own
->   message says *"Tier-2 tapes were NOT re-run and drawing changed"*, and it changed a tab's
->   width in five measuring walks; §36 already records the whole library as a window or three old.
->   So the work outstanding is `just tapes-diff`, not `just tapes` from nothing.
+>   **~~What is true, and is a different claim, is that the captures are stale.~~ Run, 2026-08-19,
+>   and they were not.** `e096f88`'s message says *"Tier-2 tapes were NOT re-run and drawing
+>   changed"* and §36 called the library a window or three old, so the outstanding work was
+>   recorded as `just tapes-diff`. It has now been run end to end, twice: **46 of 48 frames match**.
+>   The staleness was inherited prose rather than a measurement, and the two that do not match are
+>   named in `CP-5`'s record below — one a blessed change, one `OPEN-QUESTIONS.md` §42.
+>
+>   **The run was not possible before this window, and neither was CI's.** `diff-tapes.sh` never
+>   seeded the store, so the seven screens that read one were compared against an empty store; and
+>   CI's Tier-2 job had never compared a pixel, dying in under a second on a missing ImageMagick
+>   under `continue-on-error`. Both fixed. What CI's job reports now is §41's question rather than
+>   an answer: its references are macOS-recorded and its runner is Linux.
+>
+>   **One `CP-4` VHS item is still owed**: *"a file with real diagnostics showing gutter priority
+>   **against other region states**"*. `tapes/diagnostics.tape` builds its own fixture in `/tmp`
+>   with no store regions, so it captures diagnostics alone and there is nothing for the priority
+>   to be *against*. It is newly capturable now that both runners seed.
 >
 >   **Worth more than the correction is how it got here**, because it is this repo's own rule
 >   failing in the one place nothing lints: a claim about a directory, written in the same change
@@ -2538,6 +2551,50 @@ reproducible.
 bet; a lukewarm result here is worth stopping over, not building past.
 
 **A failure here reopens:** the design brief's awareness model — a conversation, not a bug fix.
+
+> **The mechanical half, recorded 2026-08-19 — and this is not a verdict.** `CP-5` has two halves
+> and only Teej can run the second. This is written here because `CP-2`'s rule puts it here: **a
+> checkpoint verdict is written where the checkpoint is, or it did not happen** — and the same
+> holds for the half that comes before one. `CP-4` has had such a paragraph since `S4`; this
+> checkpoint had none, while the work it describes was spread across commit messages.
+>
+> * **The gate is green** — `1349` tests and `21` lints.
+> * **Region state machine tests: yes.** `crates/phosphor-core/src/store/region.rs` and
+>   `tests/properties.rs`.
+> * **Markers on an extensionless file with no grammar: yes**, both tiers — the unit test is
+>   `anchor.rs::the_line_tier_catches_a_file_with_no_grammar_at_all` and the capture is
+>   `tapes/no-grammar.png`, over `fixtures/src/deploy`, which exists because every other fixture
+>   file carried one of the twelve declared languages and the node tier had nothing to fail on.
+> * **Seen-state survives restart and `kill -9`, in a jj repo and a bare directory: yes** —
+>   `loop_pty.rs::seen_state_survives_a_kill_nine`, and `T044`'s own
+>   `journal.rs` test for the two workspace shapes.
+> * **Picker responsive on 100k files: yes** —
+>   `picker.rs::a_hundred_thousand_rows_never_block_a_frame`, which asserts a shape rather than a
+>   time for the reason the benchmarks give.
+> * **A REPL-added picker source appears without restart: yes** —
+>   `loop_pty.rs::a_source_defined_at_the_repl_opens_with_no_restart`.
+> * **Anchor-survival across a real refactor (`6c`): partly.** The tier ladder is tested —
+>   `the_node_tier_follows_a_construct_that_moved`, `a_rename_falls_off_the_node_tier`,
+>   `a_node_tier_miss_still_lands_on_the_line_tier` — and a property test carries an anchor through
+>   an insertion. What does not exist is the `6c`-shaped end-to-end case: an anchor followed
+>   through a rewrite in the running editor. Recorded as owed rather than ticked.
+> * **`1a`, `2a`, `3d`, `8a`, `6a` snapshots: the captures exist, the *snapshot tests* do not.**
+>   `crates/phosphor/tests/snapshots/` holds `3c`, `6b`, `6d`, `7c` and `8e`; these five screens
+>   are covered by VHS and by nothing at Tier 1. That is a real gap and it is the second thing
+>   this checkpoint still owes.
+>
+> **The VHS half.** `2a`, `3d`, `8a`, `6a`, `seen-cleared` and `no-grammar` are captured and match.
+> The clip of `s` clearing a marker is `seen-cleared`, and it presses **`SPC u s`** rather than
+> `s`: the shipped keymap binds bare `s` to vim's substitute, and `CP-5`'s wording predates that
+> ruling. **`1a` against the `V006` fixture is still owed** — `tapes/1a.tape` opens
+> `tapes/fixtures/core-lib.rs`, the frozen file §40 repointed it at, not the seeded tree, so the
+> flagship screen is the one screen here drawn without a store behind it.
+>
+> **Two frames of forty-eight do not match**, and neither is drift: `6b` is a blessed change
+> (`unseen-regions` answered `T041`'s deferral until `T041` shipped; it answers `()` now, and the
+> tape's sentinel waited ten seconds for a word the editor had stopped saying), and `broken-init`
+> is `OPEN-QUESTIONS.md` §42 — it photographs the boot layer's own form count, so any Scheme form
+> anybody adds moves it.
 
 ---
 

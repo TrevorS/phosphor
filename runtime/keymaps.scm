@@ -521,6 +521,30 @@
 
 (keymap-set-rows! phosphor/motion-scopes phosphor/operators)
 
+;; **the doubling shorthand for the two-key operators.** vim accepts `guu` as
+;; well as `gugu`, and the rule is that the operator's *last* key doubles it.
+;; the line above binds each operator whole in operator-pending, which is what
+;; makes `gugu` work; these bind the tail, which is what makes `guu` work.
+;;
+;; operator-pending **only**. `u` in normal mode is undo and must stay undo;
+;; there is no scope here where both readings are live, because the tail is only
+;; a doubling when something is already waiting for an operand.
+;;
+;; `gc` gets no row, and the omission is the interesting one: its tail is `c`,
+;; which is already `change` in operator-pending and is what makes `cc` work.
+;; A binding cannot ask which operator is pending — a keymap is data — so the
+;; two readings of `c` cannot both live here. `gcgc` comments a line; `gcc` does
+;; not, and that is a real difference from vim-commentary rather than an
+;; oversight. Closing it needs the machine to know the key that started the
+;; operator, which is a bigger change than this file.
+(keymap-set-rows!
+ '("operator-pending")
+ (list
+  (list "u" (key/operator "lower") "lower case — doubles gu")
+  (list "U" (key/operator "upper") "upper case — doubles gU")
+  (list "~" (key/operator "toggle-case") "toggle case — doubles g~")
+  (list "s" (key/operator "mark-seen") "mark seen — doubles gs")))
+
 ;; the text objects, named after `i` or `a`. the last four are 6d's agent
 ;; nouns.
 ;;

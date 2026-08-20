@@ -1425,6 +1425,98 @@ downstream depends on the answer, which is why this is a question rather than a 
 
 ---
 
+### 42 · `broken-init` photographs the boot layer's size, so every Scheme form moves it
+
+**§40 fixed the file this tape edits and missed the layer it boots.** That entry found 21
+references photographing the live source tree and repointed them at frozen fixtures;
+`broken-init` was one of them, and it opens `tapes/fixtures/core-lib.rs` today like the rest. But
+its `Hide` line also does `cp -R ../runtime /tmp/phosphor-broken-init` and appends a deliberate
+error to the copy's `init.scm` — so the screen it captures is a **fault report about the live
+Scheme layer**, and it draws two numbers that the layer's size decides:
+
+    reference:   init.scm:147:21   ·   179 of 180 forms ran
+    fresh:       init.scm:148:21   ·   202 of 203 forms ran
+
+Read off the diff image, not inferred. The line number is where the appended form lands, which
+moves when `init.scm` does; the count is the whole boot layer's, which moves when **any** boot
+file gains a form. The fresh capture above is from adding four rows to `runtime/keymaps.scm` —
+the operator-doubling shorthand — a change with nothing to do with this screen.
+
+**It reads as flakiness and is not.** Run on its own it matches; run in a full `tapes-diff` after
+an unrelated layer edit it does not, and the excess was `97.5`, `388` and `92.5` px across three
+runs this session — three different numbers because the layer was different each time. A
+mismatch that changes size between runs is the signature of a moving reference rather than a
+racing one, and it cost most of an investigation to tell those apart.
+
+**Why the obvious fix is not obviously right.** §40's answer was to freeze the fixture, and the
+mechanical version here is `cp -R tapes/fixtures/runtime` instead of `../runtime`. That stops the
+drift and costs the thing the screen exists for: `broken-init` is the boot-fault surface **of the
+real layer**, and a frozen copy is a photograph of a layer nobody boots. It would also be a second
+copy of `runtime/**` in a repository whose `harness` explicitly does not own that directory.
+
+*Recommendation: Teej's, and it is the same shape as §40's — which was also a ruling rather than a
+repair. Three candidates, in the order I would defend them:*
+
+1. *Freeze a **minimal** layer under `tapes/fixtures/runtime/` — enough boot files to draw the
+   screen, small enough to read — and accept that the counts describe that layer. The screen's
+   claim is "a bad form in `init.scm` produces this surface", which a minimal layer states as
+   well as a real one.*
+2. *Drop the tape. `8e` already captures a float and the boot fault has unit coverage; a Tier-2
+   reference nobody can keep true is worth less than the review time it takes.*
+3. *Keep it and re-bless on every layer change. This is what §40 ruled out in prose —* "a
+   photograph of a moving target, so `tapes-diff` reports a mismatch for a reason that has
+   nothing to do with drawing, forever" *— and it is listed only so the ruling is a choice among
+   three rather than between two.*
+
+**Left un-blessed deliberately.** The reference still holds the old numbers, so `just tapes-diff`
+goes on reporting it. Blessing it would make the run green and change nothing about the cause.
+
+---
+
+### 41 · CI's Tier-2 job compares macOS-recorded references against Linux rendering
+
+**Raised 2026-08-19, by making the job run for the first time.** `V008` put a non-blocking
+`tapes-diff` job in CI. It had never compared a single pixel: `diff-tapes.sh` checks for
+ImageMagick before it captures, and the job installed vhs, ttyd, ffmpeg and a release `phosphor`
+but not ImageMagick — so every run ended in under a second on `'compare' not found`, and
+`continue-on-error: true` reported it green. **A non-blocking job that cannot run is
+indistinguishable from one that passes**, which is what let it survive; the tick was real and the
+signal was never there. Two commits to fix, because Ubuntu's `imagemagick` is version 6 and spells
+the omnibus tool `convert` where 7 spells it `magick`.
+
+With the tools present it runs, takes 8m25s, and reports **42 of 44 frames mismatched at roughly
+850,000 px each** — essentially the whole image, every time. That is not drift. The references are
+recorded on macOS and the runner is Linux, so every glyph is rendered by a different stack.
+
+This is precisely the failure `TEAM.md` names as `harness`'s characteristic one — *"letting pixel
+comparison across font rendering and vhs versions redden a correct build"* — and the reason the job
+is `continue-on-error` in the first place. Nothing is broken by it. But a job that costs eight
+minutes a push and produces a number nobody can read is not free either, and it now sits beside a
+CI run that was deliberately cut from 17m to under 4.
+
+Three ways out, and they are different bets rather than degrees of the same one:
+
+- **Record a Linux reference set in CI** and compare like against like. The library doubles, and
+  every blessed change has to be blessed twice — which is either honest coverage of both platforms
+  or a second set of images nobody looks at, depending on who is doing the blessing.
+- **Keep the job as a tool-health check**: run one tape, assert it captures at all, and drop the
+  comparison. Cheap, and it would have caught the ImageMagick hole on the day it appeared.
+- **Make Tier 2 explicitly local-only** and take the job out. `docs/TASKS.md`'s three-tier table
+  already says only Tier 1 gates CI; this would make the tooling agree with the table.
+
+*Recommendation: the second or the third, and it is Teej's call because it is a judgement about
+what CI is for rather than about what is true. The third is the smaller change and the more honest
+one — Tier 2 is a change detector for whoever is changing the drawing, and that is a person at a
+terminal. What argues for the second is that the last two things to break here were the **tooling**
+rather than the pixels, and both were invisible for exactly as long as nothing ran.*
+
+**Not open: the local path.** `just tapes-diff` on a machine with the pinned tools reports
+**45 of 48 frames matched**, and the three that do not are named in `docs/TASKS.md`'s `CP-5`
+record. The runner never seeded the store — fixed in the same window — which is why the seeded
+`CP-5` screens looked like drawing changes when what they were photographing was an empty store.
+
+---
+
 ### 40 · Twenty-one tape references photograph the live source tree, so they can never match
 
 **Raised by `CP-4`'s first full `tapes-diff` run, 2026-08-16** — the first one this repository has

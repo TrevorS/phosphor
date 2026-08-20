@@ -803,11 +803,30 @@ impl Machine {
 
     /// An operator key: doubled, over a selection, or waiting for an operand.
     fn operator(&mut self, operator: Operator, text: &dyn Text, out: &mut Vec<Action>) {
-        // `dd`, `yy`, `cc` — the doubled form is linewise over `count` lines.
+        // `dd`, `yy`, `cc`, `guu` — the doubled form is linewise over `count`
+        // lines. The keymap binds every operator in operator-pending scope, and
+        // the two-key ones bind their tail there as well, so both `gugu` and
+        // vim's `guu` arrive here as the same operator twice.
         if self.pending.operator == Some(operator) {
             let first = text.cursor().line;
             let span = text::line_span(text, first, first + self.pending.count() - 1);
             self.operate(operator, span, SelectionKind::Line, text, out);
+            return;
+        }
+        // **A different operator on top of a pending one aborts, and does not
+        // replace it.** `dc` is not "change"; it is a sequence vim rejects, and
+        // this used to quietly drop the `d` and wait for `c`'s operand — so a
+        // typo turned into a different edit rather than into nothing.
+        //
+        // It matters more now than it did: the tail bindings above mean `u`,
+        // `U`, `~` and `s` resolve to operators inside operator-pending, so
+        // `du` reaches this arm where before it reached no binding at all.
+        // Replacing would make `du` lowercase a line.
+        if let Some(waiting) = self.pending.operator
+            && waiting != operator
+        {
+            self.pending = Pending::default();
+            self.set_mode(EditMode::Normal, out);
             return;
         }
         // In visual mode the operand is already on screen.
