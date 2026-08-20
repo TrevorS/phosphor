@@ -2774,6 +2774,77 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   > would make finding a file a window-management decision, which is the thing telescope's
   > defaults exist to avoid.
 
+  > ### Rulings (b) and (c), 2026-08-20 — these two the tree settles, not Teej
+  >
+  > `WINDOW-F-PLAN.md` §0 filed three rulings. The block above is (a), together with §6's picker
+  > question, and both of those were Teej's because the tree genuinely could not make them. These
+  > are the other kind: the tree already answers them, and what was missing was writing the answer
+  > down where the builder reads it. Every citation below was re-read in the worktree on
+  > 2026-08-20.
+  >
+  > **(b) `collapsed: BTreeSet<RegionId>` is per *buffer*, and ruling (a) forces it.** The set is
+  > an `Editing` field (`main.rs:4977`) and its own doc sends you to `Editing::collapse`
+  > (`main.rs:6327`) for why it is not in the fork: *"The fork's own toggle is one flag for the
+  > whole editor (`virtual_text::set_visible`), and this capability addresses a rail by owning
+  > region… the host installs the row list every frame, so a collapsed owner's rows are simply not
+  > in the list it installs."* That install is
+  > `virtual_text::install(&mut editing.editor, &rows)` (`main.rs:2644`), and the filter that
+  > builds `rows` is the read: `Some(owner) if editing.collapsed.contains(&owner) => None`
+  > (`main.rs:2636`). So a collapse is expressed **by what is in the `Editor`**, and ruling (a)
+  > puts one `Editor` behind each `BufferId`. Two panes on one buffer therefore cannot hold two
+  > collapse sets without either a second row list inside one editor or the per-region flag inside
+  > the fork — and that flag is the permanent `VENDOR.md` debt ruling (a) has already declined.
+  > Per buffer, and mechanically so rather than by preference.
+  >
+  > *The one place this shows through, and it is worth stating because it looks like a
+  > contradiction:* a per-pane **viewport** is expressible because the host owns it — that is the
+  > `Resources::viewport(pane)` door above. A per-pane **virtual-text list** is not, because the
+  > host hands it *to the fork* and the fork has exactly one. Same fork, opposite answers, and the
+  > difference is only who holds the value.
+  >
+  > **(c) The buffer-swap reset list is written down, and it is two fields short today.** The swap
+  > is the `else` arm of the `open-file` drain — where a *different* file arrives —
+  > `main.rs:3061-3121`, its `Ok` body at `:3063-3115`. It rewrites `editor` (`:3069`),
+  > re-registers the dirty callback (`:3071`), `timeline` (`:3073`), `depth` (`:3074`),
+  > `alternate` (`:3087`) and `file` (`:3088`); drops the completion session through
+  > `close_completion()` (`:3103`, body at `main.rs:7172-7176`, clearing `completion`, `offered`
+  > and `chosen`); clears `signature` (`:3104`); and re-runs `adopt` (`:3099`), which rewrites
+  > `comment_prefix`, `server` and `language` (`main.rs:8569-8578`).
+  >
+  > **It does not touch `selection_kind` (`main.rs:5029`) or `selection_from` (`main.rs:5035`),
+  > and both are facts about a rope that is gone.** `selection_from` has exactly two clearing
+  > sites — `ClearSelection`'s arm (`:5370`) and undo (`:6038`) — and `ExtendSelection` reads it
+  > as `*self.selection_from.get_or_insert(head)` (`:5358`), which keeps whatever a `Some` holds.
+  > `SelectRange` guards its own anchor for containment (`:5329-5331`, *"an anchor outside the
+  > range it is the anchor **of** is not that range's anchor, whoever sent it"*) and
+  > `ExtendSelection` has no such guard. The swap replaces `editing.editor` wholesale, so the
+  > *highlight* goes with the old rope while the *anchor* survives it — and the first `v` plus a
+  > motion in the newly-opened file builds a `Selection` from a char offset measured in the
+  > previous one. That is the same defect class `CP-4`'s review already found once, documented at
+  > `main.rs:9985-9994`: *"a scripted selection left an anchor behind that the next `v` inherited
+  > and the next motion extended from."*
+  >
+  > **So the reset list adds exactly two entries: `selection_from` → `None` and `selection_kind`
+  > → `SelectionKind::Char`** (the constructor's own defaults, `main.rs:5178-5179`). Written as an
+  > explicit named reset and **not** by constructing a fresh `Editing`: a fresh construction would
+  > silently wipe `registers` (`:5027`), `jumplist` (`:5013`), `jump_at` (`:5025`), `store`
+  > (`:4959`), `wake` (`:4973`), `picker` (`:4985`), `source_order` (`:5002`), `mode` (`:5060`),
+  > `quit` (`:5044`), `falling_through` (`:4953`) and the whole mailbox, and no test covers any of
+  > them surviving a swap.
+  >
+  > **And what must *not* reset, so the list is closed rather than open-ended.** `registers` —
+  > vim's are global, and after the session fields move that is a decision rather than a reading.
+  > `jumplist` and `jump_at` — an entry is an `AnchorId` the store holds under
+  > `store::key_for(&path)` (`Editing::push_here`, `main.rs:6824-6835`), so it names a place in a
+  > *named file* rather than an offset in the current one, and clearing the list on a swap would
+  > throw away exactly the history `<C-o>` exists to walk. `alternate` — the swap *sets* it
+  > (`:3087`) and that is the point of it. `collapsed` — the set has exactly one read site,
+  > `:2636`, and it is consulted only for owners `store.covering(&path, at)` answers for the file
+  > now open, so another file's collapsed rails are inert rather than stale; clearing the set on a
+  > swap would lose every collapse across a `CTRL-^` round trip. And `dirty` needs no reset
+  > because the swap is refused outright while it is set — `if !same && dirty.get()` answers
+  > `WouldLoseWork` at `:3043`.
+
   > **The arms were added to this criterion on 2026-08-20, because the gate demands them and the
   > sentence did not.** There are **zero** `Action::Pane` arms in `main.rs` today — the domain
   > falls through to `NotYetImplemented`, which is why every pane verb already refuses by naming
@@ -2885,6 +2956,17 @@ live.
   > and focus, and "a buffer the user is not looking at" is adjacent to that rather than inside
   > it. Named here so that closing this queue and finding the arm still impossible is not a
   > surprise, and so that whoever builds `T088` sees the claim made on their behalf.
+  >
+  > **`T088` saw it and did not take it, 2026-08-20 — the reading is now a citation.** Filed as
+  > [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) §47, and `scripts/lint-action-arms.sh`'s row cites that
+  > rather than a bare `T088`. The split: **`T088` ships the container and nothing that fills
+  > it** — `Buffers` is a `BTreeMap<BufferId, Editing>`, nothing in a map requires a pane to point
+  > at an entry, and no verb `T088` adds creates one that has no pane. **This task inherits the
+  > container and owes the rules**, because they are judgements about product behaviour and this
+  > is the task with a caller for them: what attaches and detaches an entry, what `:wall` counts
+  > once it is a question about `Buffers`, what `:q` counts, and what an unattached buffer's wrap
+  > width is — `soft_wrap::wrap_to` takes a `Rect` and there is no pane to supply one. §47 carries
+  > the evidence and the two options it was chosen over.
 
 - [ ] **T061 · Permission asks + rule writing**
   Screen `7a`: exact invocation shown; always-allow **writes a legible rule**.

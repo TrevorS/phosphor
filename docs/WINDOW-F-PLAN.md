@@ -38,9 +38,13 @@ The original reasoning, superseded:
 
 **(b) `collapsed: BTreeSet<RegionId>` is per buffer, and ruling (a) forces it.** `virtual_text::install(&mut editing.editor, &rows)` at `main.rs:2644` installs the row list into the *editor*. With one `Editor` per `BufferId`, a per-pane `collapsed` is not expressible without a fork patch. This is a ruling, not a preference — the two designs disagreed and the tree settles it.
 
+> **RECORDED at `T088`'s entry in `docs/TASKS.md`, 2026-08-20, and the citation checked.** The call is where the plan says it is, and the read the plan did not name is the filter above it — `Some(owner) if editing.collapsed.contains(&owner) => None` at `main.rs:2636`. `Editing::collapse`'s own doc (`main.rs:6327`) is why it cannot move into the fork: the fork's toggle is one flag for the whole editor.
+
 **(c) The buffer-swap reset list is written down.** See step 5.
 
-Left open for Teej, deliberately: the T046 picker-into-a-split question (`docs/TASKS.md:2716-2717` asks for the answer in this entry), whether the same file may open in two panes, and whether `Editing` gets renamed. Listed in §5 below.
+> **RECORDED at `T088`'s entry, 2026-08-20 — the plan is right, and the list is two fields, not one.** The swap block is `main.rs:3061-3121` (the plan cites `3062-3117`; the `else` arm opens at `:3061` and its `Ok` body is `:3063-3115`). It rewrites exactly what the plan claims, and resets neither `selection_from` (`:5035`) nor `selection_kind` (`:5029`). **`selection_kind` is the second field** and step 5 must reset it to `SelectionKind::Char` as well: it drives `Editing::selected`'s linewise widening and the yank's `linewise` flag, and is as much a fact about the departed rope as the anchor is.
+
+~~Left open for Teej, deliberately: the T046 picker-into-a-split question (`docs/TASKS.md:2716-2717` asks for the answer in this entry), whether the same file may open in two panes, and whether `Editing` gets renamed. Listed in §5 below.~~ **Two of the three are ruled and the pointer was wrong — corrected 2026-08-20.** The picker question and same-file-in-two-panes are answered at `T088`'s entry (Teej: follow nvim and telescope), leaving `Editing`'s rename and `SetRegister`'s domain. The list is **§6**, not §5; §5 is the doc-versus-tree corrections.
 
 ---
 
@@ -52,7 +56,7 @@ Every step ends with `just gate` green. Root is `/Users/trevor/Projects/phosphor
 
 **Files:** `docs/TASKS.md`, `docs/TEAM.md`, `docs/OPEN-QUESTIONS.md`
 
-Write rulings (a), (b), (c) into T088's entry with their citations. Answer the T046 question `TASKS.md:2716-2717` asks for by name. File the off-screen-buffer question (`TEAM.md:504-508`) as an OPEN-QUESTIONS entry with the recommendation in §3 below, not as an answer. Apply the three document corrections in §4.
+Write rulings (a), (b), (c) into T088's entry with their citations. Answer the T046 question `TASKS.md:2716-2717` asks for by name. File the off-screen-buffer question (`TEAM.md:504-508`) as an OPEN-QUESTIONS entry with the recommendation in §3 below, not as an answer. Apply the document corrections in **§5** — there are **four**, and §4 is the transport verdict. *(Both numbers were wrong in the first draft of this line; corrected 2026-08-20 while executing it.)*
 
 **Verification:** `just lint` — `lint-doc-claims.sh` checks every `T0xx` cited in prose is a task that exists. 21 lint scripts under `scripts/lint-*.sh` (counted).
 
@@ -219,6 +223,8 @@ Both confirmed against the tree. **This is why the collapse is promoted to step 
 ### The off-screen-buffer question — T060's second blocker
 
 `TEAM.md:504-508` flags this as a gap with no creditor, and `TASKS.md:2818-2823` says the RECORDED attribution to T088 is *"a reading rather than a citation"*. Both are correct, and this is the one item Window F must not leave to discovery at T060.
+
+> **FILED, 2026-08-20, as `docs/OPEN-QUESTIONS.md` §47 — a question with a recommendation, not an answer.** The recommendation below is taken as option 3 of three. `scripts/lint-action-arms.sh`'s `ApplyWorkspaceEdit` row cites §47 now instead of naming `T088`, and `T060`'s entry and `TEAM.md`'s bullet both point at it. `T088` ruling the policy itself would be a second task answering on `T060`'s behalf, which is the exact thing the RECORDED entry complains about.
 
 **Recommendation: build the capacity, refuse the policy.**
 

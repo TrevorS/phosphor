@@ -533,6 +533,15 @@ built on an unverified foundation.
 >   citation"*. Nothing in this window is actually tasked with holding a buffer that is not on
 >   screen. That is a gap with no creditor — the same shape as `Node::Gutter` — and whoever
 >   builds `T088` should decide it explicitly rather than discover it at `T060`.
+>
+>   **Filed 2026-08-20, and deliberately not decided by `T088`** — §47 of
+>   [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md), with the evidence, three options and a recommendation.
+>   `T088` ships the container (`Buffers` is a `BTreeMap<BufferId, Editing>`) and nothing that puts
+>   an entry in it with no pane pointing at one; `T060` inherits it and owes the rules, because
+>   they are judgements about product behaviour and `T060` is the task with a caller for them.
+>   `T088` ruling them would have been a second task answering on `T060`'s behalf, which is the
+>   exact complaint the RECORDED entry makes. `scripts/lint-action-arms.sh`'s row cites §47 now,
+>   so the pointer is on every lint run rather than in a bullet.
 > * **F is the only window with two checkpoints since Window D**, and D is the one that produced
 >   the concurrency rules below, after sixteen agents finished green and left four surfaces dead
 >   to the keyboard. The rules were written for exactly this shape.

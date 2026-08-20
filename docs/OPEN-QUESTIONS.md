@@ -68,6 +68,19 @@ where every finding did. It also corrects the claim §29 item 3 made about *why*
 timer — *"the loop blocks on `recv` and has no tick to hang one off"* — which was true when
 written and is what changed.
 
+**And once more at Window F's front, 2026-08-20, which added exactly one entry — §47, in its own
+group at the end.** `T088`'s design workflow opened three rulings *and* one question that belonged
+to nobody. All three rulings are recorded at `T088`'s entry in [TASKS.md](TASKS.md) — the first
+Teej's, because the tree could not make it, the other two the tree's own — and none of them came
+here, because a ruling in this file is the rot it has lints against. The question did: a buffer no
+pane is pointing at turned out not to be `T088`'s to decide. It is here rather than answered
+because `T088` deciding it would be exactly the move that put a *reading* into `T060`'s RECORDED
+entry in the first place: the whole complaint is that a task answered a question on another task's
+behalf, and answering it a second time from the same seat would not fix that. **This is the second
+entry in this file whose subject is a gap with no creditor** — `Node::Gutter` is the other, and
+it is recorded in `scripts/lint-node-kinds.sh` with an empty blocking task rather than here,
+because a lint could hold that one and no lint can hold a policy question.
+
 ---
 
 ## Doc-versus-tree disagreements
@@ -2043,6 +2056,78 @@ regenerated with everything else and carry `T106`'s kind and source columns; the
 agreeing with the build is what a Tier-2 reference *is*, and Teej ruled that the build is right
 and the *drawing* gains the columns. `T106` is ticked and the amendment is the sixteenth entry in
 [README.md](README.md)'s list, pending Teej's hand edit at claude.ai.
+
+---
+
+## Raised by Window F's front
+
+One entry, and it is filed rather than answered on purpose. `T088`'s design workflow produced
+three rulings — one Teej's, two the tree's — and all three are recorded at `T088`'s entry in
+[TASKS.md](TASKS.md). What came here is the fourth thing it found, which was never a ruling `T088`
+could make: it is here so that `T060` inherits a citation instead of a reading.
+
+### 47 · A buffer nobody is looking at: `T088` can hold one, and nothing says whether it may
+
+**Found by the `T088` design workflow, reading `T060`'s RECORDED entry against what `T088`
+actually builds.** Two documents already flag this and neither has an owner for it.
+[TEAM.md](TEAM.md) calls it *"a gap with no creditor — the same shape as `Node::Gutter`"* and says
+*"whoever builds `T088` should decide it explicitly rather than discover it at `T060`"*.
+[TASKS.md](TASKS.md)'s `T060` entry is blunter: the RECORDED attribution to `T088` is *"a reading
+rather than a citation — `T088` is splits and focus, and 'a buffer the user is not looking at' is
+adjacent to that rather than inside it."* Both are correct.
+
+**What is actually blocked.** `ApplyWorkspaceEdit` is the one `Lsp` capability rated `Ask`, and
+`scripts/lint-action-arms.sh` records it against `T060` with two blockers in one entry: there is
+nowhere to put the question (that is `T060`'s queue, and it is the near one), *and* a server's
+rename edits files that are not open. `phosphor_buffer::lsp::file_edits_from_lsp` already turns a
+`&lsp_types::WorkspaceEdit` into `Vec<FileEdits>` (`crates/phosphor-buffer/src/lsp.rs:758-761`),
+so the reading half exists and the applying half is what waits.
+
+**What `T088` does and does not give it.** The container comes free and is not a decision:
+`Buffers` is a `BTreeMap<BufferId, Editing>`, and nothing in a map requires a pane to point at an
+entry. `BufferId`'s own declaration already reads *"An open buffer. Not a path: the same file can
+be open once and renamed"* (`crates/phosphor-core/src/request.rs:52-53`) — a buffer is already
+identified by something other than what is on screen.
+
+**The policy does not come free, and `T088` has no basis to invent it.** An entry with no pane
+pointing at it has no pane geometry, and `soft_wrap::wrap_to(&mut editing.editor, body)`
+(`crates/phosphor/src/main.rs:2515`) takes a `Rect` — so there is no width to wrap to and a scroll
+has no bounds to measure against. It has no `StatusVm` either. And once `:wall` becomes a question
+about `Buffers` rather than about one record — which is `T088`'s step 8 — it would write files the
+user cannot see. That last one is either exactly what
+`apply-workspace-edit` needs or exactly the surprise nobody wants, and which it is is a judgement
+about product behaviour rather than a fact about the tree. `:q` has the same question in the other
+direction: does an unattached dirty buffer refuse a quit?
+
+**Three options.**
+
+1. **`T088` rules it.** Cheapest to coordinate, and it is the option TEAM.md's bullet assumes. But
+   `T088`'s acceptance is splits and focus; a pane manager that also decided what an unattached
+   buffer means would be answering a question its own *Done when* never asks, on evidence it does
+   not have.
+2. **A new task owns the detached-buffer model.** Honest, and it is what a gap with no creditor
+   usually wants. It also puts a task between `T060` and its arm, which is a real cost for
+   something `T060` may be able to answer in one paragraph once the queue exists.
+3. **Build the capacity, refuse the policy** — `T088` ships the map and ships nothing that can
+   create a detached entry; `T060` inherits the container and owes the rules.
+
+**Recommendation: 3.** It is the only one where nothing is built without a caller and nothing is
+ruled without evidence. Concretely: `T088` ships `Buffers` as a map from the first line and indexes
+by id rather than by position, `close-pane` on the last pane holding a buffer destroys the entry,
+and no verb `T088` adds produces an entry no pane points at — so the capacity exists and is unused,
+which is a state the map can be in without anyone deciding anything. `T060` then owes four rules,
+and they are worth naming now so the entry is a specification rather than a shrug: **what attaches
+and detaches an entry**, **what `:wall` counts**, **what `:q` counts**, and **what an unattached
+buffer's wrap width is** (or that it has none until something looks at it, which is the answer that
+needs no invention).
+
+**Why this is filed rather than ruled:** `T088` reading its own ruling into `T060`'s entry is how
+the first reading got there. What `T088` owes is the container and the citation; the rules belong
+to the task that has a caller for them.
+
+*Recorded against the tree so the pointer survives:* `scripts/lint-action-arms.sh`'s
+`ApplyWorkspaceEdit` parenthetical cites this entry, so the lint names it on every run until the
+arm exists — the same self-enforcing shape `T060`'s entry already praises.
 
 ---
 

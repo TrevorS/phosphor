@@ -118,9 +118,15 @@ RECORDED = {
                                    "capability rated `Ask`, and `deliver` answers it *needs an "
                                    "ask first — T060 builds the queue*: there is nowhere to put "
                                    "the question, so the only arm that could exist today would "
-                                   "be one that skipped asking. (It also edits files that are "
-                                   "not open, which is `T088`; the ask is the nearer of the "
-                                   "two.)"),
+                                   "be one that skipped asking. The second blocker is that it "
+                                   "also edits files that are **not open**, and this row used to "
+                                   "name `T088` for that — a reading, since `T088` is splits and "
+                                   "focus. It is filed as OPEN-QUESTIONS.md §47 now: `T088` "
+                                   "ships a `BufferId`-keyed map and nothing that puts an entry "
+                                   "in it with no pane pointing at one, so `T060` inherits the "
+                                   "container and owes the rules — attach/detach, what "
+                                   "`:wall` and `:q` count, and what an unattached buffer wraps "
+                                   "to. The ask is still the nearer of the two."),
     # `SetVirtualTextVisible` was recorded here against `T041` and is gone: the
     # store landed, so a rail can be named by its owning region and the arm is
     # in `Editing::collapse`. It is per-owner without a fork patch — the host
