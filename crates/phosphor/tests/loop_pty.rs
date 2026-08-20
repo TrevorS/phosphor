@@ -2201,14 +2201,14 @@ mod driven {
 
         // `di(` from inside the parentheses.
         editor.press_quietly(b"f(l");
-        editor.press_quietly(b"di(");
+        drop(editor.shown_on_grid(b"di(", "let x = ();"));
         // `di\"` on the next line. `0` first, and that is not decoration: after
         // the edit above the cursor sits mid-line, and `f\"` searches *forward*
         // — from there it finds the **closing** quote, `l` steps past it, and
         // the object then contains nothing. The first draft of this test did
         // exactly that and reported the object as broken.
         editor.press_quietly(b"j0f\"l");
-        editor.press_quietly(b"di\"");
+        drop(editor.shown_on_grid(b"di\"", "say \"\";"));
         editor.press_quietly(b":w\r");
         editor.quit();
 
@@ -2233,7 +2233,7 @@ mod driven {
         let editor = Editor::open(&file, &scratch.state(), &runtime);
 
         editor.press_quietly(b"f(l");
-        editor.press_quietly(b"di)");
+        drop(editor.shown_on_grid(b"di)", "let x = ();"));
         editor.press_quietly(b":w\r");
         editor.quit();
 
@@ -2264,7 +2264,14 @@ mod driven {
         fs::write(&file, "MiXeD CaSe\nsecond\n").expect("a fixture");
         let editor = Editor::open(&file, &scratch.state(), &runtime);
 
-        editor.press_quietly(b"gu$");
+        // **Waited for on the grid, not written and read.** `press_quietly`
+        // settles on 250ms of quiet, and an operator's effect can land after
+        // that: this test passed here and went red on a macOS runner with the
+        // file still `MiXeD CaSe`, because `:w` won the race with the edit it
+        // was meant to save. The buffer row showing the new text is the signal
+        // that the edit happened; the file then only checks that `:w` wrote
+        // what was on screen.
+        drop(editor.shown_on_grid(b"gu$", "mixed case"));
         editor.press_quietly(b":w\r");
         let lowered = fs::read_to_string(&file).expect("written");
         assert_eq!(
@@ -2272,9 +2279,9 @@ mod driven {
             "`gu$` lowercased to the end of the line"
         );
 
-        editor.press_quietly(b"g~$");
+        drop(editor.shown_on_grid(b"g~$", "MIXED CASE"));
         editor.press_quietly(b":w\r");
-        editor.quit();
+        editor.leave_by(b"ZQ");
         let toggled = fs::read_to_string(&file).expect("written");
         assert_eq!(
             toggled, "MIXED CASE\nsecond\n",
@@ -2310,6 +2317,8 @@ mod driven {
         editor.press_quietly(b"O");
         editor.press_quietly(b"above");
         editor.press_quietly(b"\x1b");
+        // All three edits are on screen before `:w` is asked to save them.
+        drop(editor.shown_on_grid(b"", "above"));
         editor.press_quietly(b":w\r");
         editor.quit();
 
