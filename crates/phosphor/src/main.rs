@@ -208,6 +208,7 @@ use phosphor_ui::theme::{BUILTIN_SLUGS, Theme, builtin};
 use phosphor_ui::unknown_key::{self, UnknownKeyHint};
 use phosphor_ui::virtual_text;
 use ratatui::layout::Rect;
+use ratatui::style::Style;
 // The widget layer's re-export, not the fork's own path: after `T026` this file
 // no longer talks to the vendored *handler* at all, only to the editor value
 // `BufferView` draws. **The fork's `Undo`/`Redo` are gone with `R2`** — two live
@@ -4202,6 +4203,36 @@ fn draw(
     // fallback here — a Rust statusline behind a Steel one is the *"config file
     // with a Rust editor hiding behind it"* `CP-2` fails on, and it is what the
     // `CP-2` gate caught by deleting `statusline.scm` and still seeing a line.
+    // **§5's field, painted by the caller — which is the contract the
+    // interpreter states and nothing was holding up.**
+    //
+    // `interpret.rs`'s header records the gap: *"A `Node::Line` cannot say what
+    // ground it is painted on… This interpreter therefore draws a line
+    // transparently, over whatever the caller painted."* Nothing painted. The
+    // old `StatusLine` widget filled `chrome.statusline` itself; the composed
+    // tree that replaced it (`T025`) had no way to ask for a ground and no one
+    // supplied one, so the whole strip — statusline, ex line and notice alike —
+    // came out on the terminal's own background.
+    //
+    // Measured through the pty before it was fixed: the buffer row reported
+    // `48;2;12;15;12` and this row reported **no background sequence at all**.
+    // On a terminal whose default happens to be near `#0c0f0c` that reads as
+    // "the statusline lost its field"; on a light terminal it is a white strip
+    // under a dark editor.
+    //
+    // Painted here rather than given to `Node::Line` as a prop, because the
+    // view tree is `spine`'s single writer and a prop is a protocol change —
+    // which is the reason `interpret.rs` flagged it instead of patching it. The
+    // caller owning the strip's ground is the smaller claim and the true one:
+    // §5 says *which* three strips exist, and the binary is what lays them out.
+    //
+    // Before the branch, so all three chrome states get it. The mode chip
+    // paints its own actor-coloured field over the top, which is why filling
+    // first cannot flatten it.
+    frame
+        .buffer_mut()
+        .set_style(status_area, Style::new().bg(theme.chrome.statusline));
+
     match chrome {
         // The ex line and the notice both take the statusline's row rather
         // than a row of their own: `8d`'s ladder is about a line that has to

@@ -2286,6 +2286,54 @@ mod driven {
         );
     }
 
+    /// **§5's chrome strip has a field, and the ex line is on it.**
+    ///
+    /// Reported from the running editor as *"the cmd bar doesn't have the
+    /// background colour applied"*, and it was true of the whole strip rather
+    /// than the command line alone: the statusline had no background either.
+    ///
+    /// `interpret.rs`'s header had the cause written down the whole time —
+    /// *"A `Node::Line` cannot say what ground it is painted on… This
+    /// interpreter therefore draws a line transparently, over whatever the
+    /// caller painted"* — and nothing painted. The `StatusLine` widget that
+    /// `T025` replaced filled the field itself; the composed tree could not ask
+    /// for one, and the caller was never told it had inherited the job.
+    ///
+    /// **The assertion is the escape sequence, not a colour name.** A cell with
+    /// no background reports an empty string, which is the exact failure here:
+    /// not the wrong colour, *no* colour, leaving the strip on whatever the
+    /// terminal's default happens to be. That is invisible on a dark terminal
+    /// tuned near `#0c0f0c` and a white band on a light one, which is why it
+    /// survived every capture in the library.
+    #[test]
+    fn the_chrome_strip_is_painted_under_the_statusline_and_the_ex_line() {
+        let scratch = Scratch::new("chrome-bg");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("bg.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        let row = SCREEN.ws_row - 1;
+        // Column 60 is past the mode chip and the file name, so it is the
+        // field itself rather than anything drawn on it.
+        let idle = editor.shown_on_grid(b"", "alpha");
+        let status_bg = idle.background(row, 60);
+        assert!(
+            !status_bg.is_empty(),
+            "the statusline sits on §5's field, not on the terminal's default"
+        );
+
+        // `:` — the ex line takes the same row, and takes the field with it.
+        let ex = editor.shown_on_grid(b":", "NORMAL");
+        let ex_bg = ex.background(row, 60);
+        editor.quit();
+        assert_eq!(
+            ex_bg, status_bg,
+            "the ex line is drawn on the statusline's row and must be on the \
+             same field — it is the same strip, not a second one"
+        );
+    }
+
     /// **`CTRL-^` — the alternate file, and back again.**
     ///
     /// vim's most-used buffer key and this build did not have it. It is worth a

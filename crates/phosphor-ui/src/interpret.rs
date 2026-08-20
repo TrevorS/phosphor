@@ -72,17 +72,30 @@
 //! way — it renders through [`crate::float::FloatFooter`] and the float's own
 //! chrome, and always did.
 //!
-//! # Known gap, flagged not folded in
+//! # The ground a line is painted on belongs to the caller
 //!
-//! **A `Node::Line` cannot say what ground it is painted on.** The statusline's
-//! field (`#1a201a`, Design Language §5) is painted by
-//! [`crate::status_line::StatusLine`] today; a statusline *composed as a tree*
-//! (`T025`) has no way to ask for it — [`Tone`] names foregrounds and
-//! [`phosphor_core::view::Tint`] is a row tint on
-//! the `spans` hatch alone. This interpreter therefore draws a line
-//! transparently, over whatever the caller painted. Raised as a contract
-//! question rather than patched here, because the view tree is `spine`'s single
-//! writer and a prop is a protocol change.
+//! **A `Node::Line` cannot say what ground it is painted on**, and it still
+//! cannot: [`Tone`] names foregrounds and [`phosphor_core::view::Tint`] is a
+//! row tint on the `spans` hatch alone. This interpreter draws a line
+//! transparently, over whatever the caller painted.
+//!
+//! **What changed is that somebody paints.** This paragraph used to end
+//! *"raised as a contract question rather than patched here"*, and the
+//! question sat open long enough for the consequence to ship: the statusline's
+//! field (`#1a201a`, Design Language §5) was painted by
+//! [`crate::status_line::StatusLine`], `T025` replaced that widget with a
+//! composed tree, and **nothing painted the field at all**. Measured through
+//! the pty: the buffer row reported a background and the whole chrome strip —
+//! statusline, ex line and notice — reported none, so it sat on the terminal's
+//! own colour. Reported by Teej as *"the cmd bar doesn't have the background
+//! colour applied"*, which was true of the strip rather than the command line.
+//!
+//! The binary fills `status_area` before it renders either tree. That is the
+//! smaller claim and the true one — §5 says *which* three strips exist and the
+//! binary is what lays them out — and it leaves the protocol question exactly
+//! where it was: a tree still cannot ask for a ground, and if one ever needs to
+//! (a float body composed as a tree, say) that is when a prop is worth the
+//! change.
 //!
 //! Owned by `spine`.
 
