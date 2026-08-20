@@ -482,6 +482,30 @@ built on an unverified foundation.
 > Two unrun checkpoints is one more than the rule above allows, and it is recorded rather than
 > amended for the reason the last paragraph gives.
 >
+> **`CP-5`'s mechanical half is complete as of 2026-08-20**, in a repair pass after the window
+> rather than in it — green at **1,382 tests and 21 lints**, run as one `just gate`. The two items
+> the checkpoint's own record listed as owed are closed: the `6c` end-to-end case (an anchor
+> followed through a rewrite in the *running* editor, not through a hand-built `Snapshot`) and
+> Tier-1 golden frames for `1a`, `2a`, `3d`, `8a` and `6a`, which were covered by VHS and by
+> nothing that gates CI.
+>
+> **What that pass is worth recording for is not the two items.** Writing the frames found two
+> defects that no capture could show, and neither was what anybody was looking for: `2a`'s preview
+> pane cannot draw at 120 columns, because a threshold written in terminal columns is spent in
+> float-body columns (`OPEN-QUESTIONS.md` §45); and a mutation survivor in `reanchor_in` would have
+> resolved *other files'* regions against the reanchored file's snapshot, moving markers in files
+> nobody touched (§46). Running §43's own prescribed experiment — which the entry had asked for and
+> nobody had done — confirmed a race that puts a marker nine lines from where it belongs.
+>
+> The pattern is the one this file keeps recording in different words: **the defect is found by the
+> tier that draws the whole thing at a stated width and then looks at it.** `S4`'s report says the
+> pty is the only thing that finds a class of composition defect; this says the same about Tier 1
+> and the frame. A widget test draws a widget, and a widget cannot be wrong about the screen.
+>
+> **Window F does not start on this.** Both checkpoints still owe their manual halves, which are
+> Teej's alone, and the rule above is unchanged by a green mechanical half — that is precisely the
+> distinction `CP-2`'s entry exists to insist on.
+>
 > That bookkeeping gap is closed. `TASKS.md` now carries `CP-2 · **PASSED**` and dates the verdict
 > to 2026-08-12, where it belonged all along: the manual half was run and answered in conversation,
 > and never written down, so this file and `TASKS.md` disagreed with the build for a whole window.

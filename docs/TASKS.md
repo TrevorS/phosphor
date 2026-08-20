@@ -2151,6 +2151,30 @@ Where Phosphor stops being an editor. The highest-value checkpoint follows it.
   > and the line tier is the only thing holding the marker on. Two lines inserted above it and
   > the region's span moves from 2 to 4. A positional region would still have claimed line 2.
   >
+  > **The fill-only rule gained one exception, 2026-08-20, and `OPEN-QUESTIONS.md` §43 is why.**
+  > A fingerprint taken *before the grammar parsed* carries an empty syntax path, and an empty
+  > path means the node tier never applies again for the life of that region — so which tier a
+  > marker rides was decided by a race between the parser and the first describe. §43's prescribed
+  > experiment was run and confirms it: same region, same rewrite, **nine lines apart** depending
+  > only on that race. `fingerprint_in` now upgrades a syntax-less fingerprint when the file is
+  > described with syntax, under the one condition that keeps the rule intact — the line must
+  > still say what the fingerprint says it says.
+  >
+  > **The other direction is still open and is this task's to finish.** A *good* fingerprint
+  > meeting a snapshot with no syntax — which is what the editor produces before its own parse is
+  > ready — falls to the line tier and can move the region. That is not a bug in either function:
+  > the fall-through is a law with a property test on it
+  > (`a_node_tier_miss_still_lands_on_the_line_tier`), and reconciling the two turns on whether a
+  > `Snapshot` should be able to distinguish *"the construct is gone"* from *"nobody has parsed
+  > this yet"*. Pinned by `a_good_fingerprint_meeting_an_unparsed_snapshot_moves_to_the_wrong_line`
+  > so a change to the ladder has to look at it.
+  >
+  > **And a mutation survivor here was a real defect** (`OPEN-QUESTIONS.md` §46): `reanchor_in`'s
+  > filter read `region.path == path && region.fingerprint.is_some()`, and replacing `&&` with
+  > `||` survived the whole suite — every other test in the module uses one path, so nothing
+  > noticed that the mutant would resolve *other files'* regions against this file's snapshot.
+  > `reanchoring_one_file_leaves_another_files_regions_where_they_are` closes it.
+  >
   > [`Fingerprint`]: ../crates/phosphor-core/src/store/anchor.rs
 
 - [x] **T044 · Seen-state persistence**
@@ -2580,15 +2604,44 @@ bet; a lukewarm result here is worth stopping over, not building past.
 >   time for the reason the benchmarks give.
 > * **A REPL-added picker source appears without restart: yes** —
 >   `loop_pty.rs::a_source_defined_at_the_repl_opens_with_no_restart`.
-> * **Anchor-survival across a real refactor (`6c`): partly.** The tier ladder is tested —
->   `the_node_tier_follows_a_construct_that_moved`, `a_rename_falls_off_the_node_tier`,
->   `a_node_tier_miss_still_lands_on_the_line_tier` — and a property test carries an anchor through
->   an insertion. What does not exist is the `6c`-shaped end-to-end case: an anchor followed
->   through a rewrite in the running editor. Recorded as owed rather than ticked.
-> * **`1a`, `2a`, `3d`, `8a`, `6a` snapshots: the captures exist, the *snapshot tests* do not.**
->   `crates/phosphor/tests/snapshots/` holds `3c`, `6b`, `6d`, `7c` and `8e`; these five screens
->   are covered by VHS and by nothing at Tier 1. That is a real gap and it is the second thing
->   this checkpoint still owes.
+> * **~~Anchor-survival across a real refactor (`6c`): partly.~~ Met, 2026-08-20.** The tier ladder
+>   was already tested — `the_node_tier_follows_a_construct_that_moved`,
+>   `a_rename_falls_off_the_node_tier`, `a_node_tier_miss_still_lands_on_the_line_tier` — and a
+>   property test carried an anchor through an insertion. What did not exist was the `6c`-shaped
+>   end-to-end case, and it does now:
+>   `loop_pty.rs::an_unseen_marker_follows_its_construct_through_a_rewrite_in_the_running_editor`
+>   declares a region through the door, **types four lines into the live buffer**, runs `reanchor!`
+>   over the editor's own snapshot, and reads the region's new line back out through
+>   `unseen-regions`. It moves from 6 to 10 and stays unseen.
+>
+>   The distinction is worth stating because it is the one every test above it could not make:
+>   those prove `resolve` is correct **given** a snapshot, and this proves the editor takes a
+>   correct one. A host that described the wrong text, carried stale syntax, or had an off-by-one
+>   in its line indexing would pass all of them. That is not hypothetical —
+>   `OPEN-QUESTIONS.md` §43 is a defect in exactly that seam, found in the same window.
+> * **~~`1a`, `2a`, `3d`, `8a`, `6a` snapshots: the captures exist, the *snapshot tests* do not.~~
+>   All five committed, 2026-08-20.** `crates/phosphor/tests/snapshots/` held `3c`, `6b`, `6d`,
+>   `7c` and `8e`, and these five screens were covered by VHS and by nothing at Tier 1. Three new
+>   files close it, each at 120 and 80 columns:
+>
+>   * `screen_1a.rs` — the flagship. The state column is built by the *same two calls the frame
+>     loop makes* (`gutter::spans`, then `gutter::state_column`) over a real store, so the frame
+>     shows §3's ladder deciding that the seen region draws ground while the two unseen ones do
+>     not. This is `CP-5`'s failure condition — *"the markers don't change how you read the
+>     file"* — expressed as cells.
+>   * `screen_pickers.rs` — `2a`, `3d` and `8a`, in one file because `runtime/pickers.scm` says
+>     they are one screen: *"nothing in rust knows what a row means — which is why `2a`, `3d` and
+>     `8a` are one widget with three sources."* Every row is what the shipped Scheme answered
+>     through `phosphor_steel::picker::rows`, against a store seeded with `plan.scm`'s own spans.
+>   * `screen_6a.rs` — `:arch`, composed entirely through `T080`'s spans hatch with its five
+>     counts answered off the store. If this frame draws, the escape hatch is sufficient for a
+>     whole screen, which is `T048`'s acceptance restated as a picture.
+>
+>   **Two findings came out of writing them**, which is the argument for Tier 1 over Tier 2 in one
+>   sentence. `2a`'s preview pane does not draw at 120 columns — `PREVIEW_AT` is a terminal-column
+>   number checked against a float body (`OPEN-QUESTIONS.md` §45) — and `8a`'s row is the whole
+>   matched line, which silently settles half of §12 in the mockups' absence. Neither is visible
+>   in a capture, because neither changes a pixel anybody would look at twice.
 >
 > **The VHS half — complete, 2026-08-20.** `2a`, `3d`, `8a`, `6a`, `seen-cleared` and
 > `no-grammar` are captured and match. The clip of `s` clearing a marker is `seen-cleared`, and it

@@ -27,9 +27,12 @@ Use the `just` recipes, not raw cargo — several of them differ from the obviou
   this worktree saw absolute times swing 25× under concurrent load while every shape assertion
   held) · `just coverage` (per-file, worst first) · `just coverage-html` · `just unused-deps` ·
   `just mutants` (cargo-mutants — the planted violation asked of every line at once; scope it with
-  `--file`, a whole run is hours) · `just soak` (thousands of keystrokes through a real child
-  editor; asserts growth is *bounded*, since the undo journal is append-only and is supposed to
-  grow). None of these is in `gate` or CI, and a coverage floor should not be added: it reddens for
+  `--file`, a whole run is hours. **Write down what a run finds**, triaged, in
+  `docs/OPEN-QUESTIONS.md` — §46 is the precedent and the reason: a survivor count is not a
+  finding, and the one that mattered there would have moved markers in files nobody touched.
+  Equivalent mutants get named as such and left alive) · `just soak` (thousands of keystrokes
+  through a real child editor; asserts growth is *bounded*, since the undo journal is append-only
+  and is supposed to grow). None of these is in `gate` or CI, and a coverage floor should not be added: it reddens for
   reasons unrelated to correctness and gets raised until it means nothing.
   **This said "six benchmarks" while nine `[[bench]]` targets were declared** — `doc_claims.py`
   recomputes the task, capability, wave and lint counts and never this one, which is how it drifted

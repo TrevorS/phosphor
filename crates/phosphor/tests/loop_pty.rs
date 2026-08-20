@@ -5394,6 +5394,124 @@ mod driven {
         editor.quit();
     }
 
+    // -----------------------------------------------------------------------
+    // `T042` / `CP-5` — `6c`, an anchor followed through a rewrite
+    // -----------------------------------------------------------------------
+
+    /// `6c`'s file: two functions, and the marked line belongs to the second.
+    ///
+    /// **Every line is distinct**, and that is deliberate rather than
+    /// incidental. `resolve`'s two tiers can disagree when a file holds the
+    /// same text twice — `store/region.rs`'s §43 tests are built on exactly
+    /// that — and this test is not about which tier answered. It is about
+    /// whether the marker followed the rewrite at all, so the fixture is one
+    /// where both tiers agree and only *following* can be observed.
+    const REFACTOR_RS: &str = "\
+fn helper(base: u64) -> u64 {
+    base.saturating_mul(2)
+}
+
+fn retry_with_backoff(base: u64) -> u64 {
+    let delay = capped(helper(base));
+    delay
+}
+";
+
+    /// Reads one region's start line back out through the door, as a sentinel.
+    ///
+    /// `at=N` rather than a bare number for the reason [`COUNT`] gives: a digit
+    /// is on the screen already — it is a line number, a column, a count — and
+    /// `at=10` is on screen only because this query answered it.
+    fn region_line(file: &Path) -> String {
+        format!(
+            "(string-append \"at=\" (number->string (hash-ref (hash-ref (hash-ref \
+             (car (unseen-regions \"{}\")) \"span\") \"start\") \"line\")))\r",
+            file.display()
+        )
+    }
+
+    /// **`CP-5`'s owed criterion, and the last one it had: *"anchor-survival
+    /// across a real refactor (`6c`)"*, end to end on the shipping binary.**
+    ///
+    /// The checkpoint's own record called this *"partly"* met and said why: the
+    /// tier ladder is covered by unit tests and a property test carries an
+    /// anchor through an insertion, but **nothing followed a marker through a
+    /// rewrite in the running editor**. That is the gap this closes, and it is
+    /// a different claim from every test above it — those prove `resolve` is
+    /// correct given a snapshot, and this proves the editor actually takes one
+    /// and hands it over when the text underneath a region changes.
+    ///
+    /// # Every hop is the real one
+    ///
+    /// The region arrives through `declare-regions!` on `AppHost`'s side of the
+    /// door. The rewrite is **four keystroke sequences into the live buffer** —
+    /// `gg`, then `O` and a typed comment, four times — going through the input
+    /// machine, the operator table and the vendored editor's rope. `reanchor`
+    /// is the door verb, which reads `Editing::snapshot` off that same rope,
+    /// including whatever the grammar has resolved for it. The answer comes
+    /// back out through `unseen-regions`.
+    ///
+    /// Nothing here builds a `Snapshot`, and that is the point: a
+    /// hand-built one is what every existing test of this ladder uses, and a
+    /// host that took a *wrong* snapshot — the wrong text, stale syntax, an
+    /// off-by-one in the line indexing — would pass all of them.
+    ///
+    /// # What the numbers are
+    ///
+    /// The region covers line 6, `let delay = capped(helper(base));`, inside
+    /// `retry_with_backoff`. Four lines go in above line 1, so the same text is
+    /// line 10 afterwards. A marker that did not follow reads `at=6`; one that
+    /// followed reads `at=10`; one that was lost reads `at=6` as well, which is
+    /// why the file content is checked too — a rewrite that silently did
+    /// nothing would otherwise look like a marker that correctly held still.
+    #[test]
+    fn an_unseen_marker_follows_its_construct_through_a_rewrite_in_the_running_editor() {
+        let scratch = Scratch::new("refactor-6c");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("refactor.rs");
+        fs::write(&file, REFACTOR_RS).expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(declare(&file, &[(6, 7)]).as_bytes(), "landed=1");
+        editor.press_until(region_line(&file).as_bytes(), "at=6");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // The refactor: four lines of new code above everything, typed.
+        editor.press_quietly(b"gg");
+        for _ in 0..4 {
+            editor.press_quietly(b"O// added above you\x1b");
+        }
+
+        // The rewrite really happened — see the doc comment on why this is
+        // checked rather than assumed.
+        editor.press_quietly(b":w\r");
+        let written = fs::read_to_string(&file).expect("the buffer was written");
+        assert!(
+            written.starts_with("// added above you\n// added above you\n"),
+            "four lines went in above the file; it now reads:\n{written}"
+        );
+        assert!(
+            written.contains("\n    let delay = capped(helper(base));\n"),
+            "and the marked line itself is untouched:\n{written}"
+        );
+
+        // The ladder, run by the editor over its own buffer.
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(
+            format!("(reanchor! \"{}\")\r", file.display()).as_bytes(),
+            "moved",
+        );
+        editor.press_until(region_line(&file).as_bytes(), "at=10");
+
+        // And the marker is still a marker: following a rewrite must not
+        // consume it. `CP-5`'s thesis is that the gutter pulls your eye to
+        // what you have not read, and a region that quietly went seen on a
+        // reanchor would empty the gutter every time an agent edited above you.
+        editor.press_until(COUNT, "unseen=1");
+        editor.quit();
+    }
+
     /// **§43 — a float surface the editor layer registered, opened by a door.**
     ///
     /// `T093`. `open-float` has always taken a `SurfaceId` documented as *"a

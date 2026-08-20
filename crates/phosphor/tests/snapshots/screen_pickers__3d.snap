@@ -1,0 +1,159 @@
+---
+source: crates/phosphor/tests/screen_pickers.rs
+expression: frame.to_text(&buf)
+---
+screen 3d · phosphor-dark · 120x24 cells
+  Every row is what runtime/pickers.scm answered through
+    phosphor_steel::picker::rows against a real Store — not a fixture. A
+    change to the Scheme moves these frames.
+  The rows are unfiltered and unmatched: nucleo owns a thread pool and lives
+    in the binary, so a golden frame poses the settled list rather than
+    running the matcher. RunVm::matched is therefore false on every run,
+    which is what picker.rs's row_of already records as T047's to spend.
+  2a draws NO preview pane at 120 columns, and that is a finding rather
+    than a composition choice: PREVIEW_AT is 100 and is checked against the
+    float's *body*, which §8 caps at 80% of the screen less two columns of
+    border — 94 at 120 cols. T045's number is written in terminal columns
+    and spent in body columns. OPEN-QUESTIONS.md §45; the test that pins it
+    is the_preview_pane_is_shed_at_120_columns_....
+    What 2a's mockup draws there is a *diff* preview, which is T063 and does
+    not exist either — so both halves of that pane are owed.
+  3d's rows carry `\u{25cf}N unseen` from the store and no `activity` column:
+    the mockup's second annotation is a session fact (T050) and nothing in
+    the vocabulary answers it yet.
+  8a greps the *open buffer*, not the workspace — pickers.scm states the
+    limit and its reason (no capability searches files on disk).
+  8a's row is the WHOLE matched line (`src/retry.rs:4  \u{25cf}  use
+    util::jitter;`). The mockup at TUI Mockups.dc.html:165 draws the matched
+    *fragment* instead (`\u{25cf} .min(policy.max_delay)`), which is one half
+    of OPEN-QUESTIONS.md §12 — and this frame is the build's answer to it,
+    arrived at by pickers.scm rather than by a ruling. Flagged, not folded.
+  No footer: main.rs's picker_float composes none, and §4's `every legal key
+    always visible` is owed by T045's own row rather than by this frame.
+
+text
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │   1  //! Retry policy — exponential backoff with jitter for the fetch client.                                          │
+  1 │   2  //! Used by `fetch::request` when a transient error is retried.                                                   │
+  2 │   3        ┌──────────────────────────────────────────────────────────────────────────────────────────────┐            │
+  3 │   4  use ut│  files                                                                                       │            │
+  4 │   5        ├──────────────────────────────────────────────────────────────────────────────────────────────┤            │
+  5 │   6  pub st│                                                                                              │            │
+  6 │   7      pu│  >                                                                                      5/5  │            │
+  7 │   8      pu│  Cargo.toml                                                                                  │            │
+  8 │   9      pu│  src/deploy  ●1 unseen                                                                       │            │
+  9 │  10  }     │  src/fetch.rs  ●2 unseen                                                                     │            │
+ 10 │  11        │  src/main.rs                                                                                 │            │
+ 11 │  12  pub fn│  src/retry.rs  ●2 unseen                                                                     │            │
+ 12 │  13      mu│                                                                                              │            │
+ 13 │  14      po├──────────────────────────────────────────────────────────────────────────────────────────────┤            │
+ 14 │  15  ) -> R│                                                                                              │            │
+ 15 │  16      le└──────────────────────────────────────────────────────────────────────────────────────────────┘            │
+ 16 │  17      let mut last = None;                                                                                          │
+ 17 │  18      for attempt in 0..policy.max_attempts {                                                                       │
+ 18 │  19          match op() {                                                                                              │
+ 19 │  20              Ok(v) => return Ok(v),                                                                                │
+ 20 │  21              Err(e) => last = Some(e),                                                                             │
+ 21 │  22          }                                                                                                         │
+ 22 │  23          thread::sleep(jitter(delay));                                                                             │
+ 23 │ NORMAL  src/retry.rs                                                                                          4 unseen │
+
+fg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  1 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  2 │lllllllllllloooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooollllllllllll│
+  3 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+  4 │llllllllllllCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCllllllllllll│
+  5 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+  6 │llllllllllllohhjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhjjjhhollllllllllll│
+  7 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+  8 │llllllllllllohhhhhhhhhhhhjjaaaaaaaaahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+  9 │llllllllllllohhhhhhhhhhhhhhjjaaaaaaaaahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 10 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 11 │llllllllllllohhhhhhhhhhhhhhjjaaaaaaaaahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 12 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 13 │llllllllllllCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCllllllllllll│
+ 14 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 15 │lllllllllllloooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooollllllllllll│
+ 16 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+ 17 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+ 18 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+ 19 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+ 20 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+ 21 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+ 22 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+ 23 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+
+bg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  1 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+  2 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+  3 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+  4 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+  5 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+  6 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+  7 │ggggggggggggxxxppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppxxxgggggggggggg│
+  8 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+  9 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+ 10 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+ 11 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+ 12 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+ 13 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+ 14 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+ 15 │ggggggggggggxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxgggggggggggg│
+ 16 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 17 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 18 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 19 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 20 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 21 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 22 │gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg│
+ 23 │aaaaaaaa................................................................................................................│
+
+style
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │........................................................................................................................│
+  1 │........................................................................................................................│
+  2 │........................................................................................................................│
+  3 │........................................................................................................................│
+  4 │........................................................................................................................│
+  5 │........................................................................................................................│
+  6 │.................r......................................................................................................│
+  7 │........................................................................................................................│
+  8 │........................................................................................................................│
+  9 │........................................................................................................................│
+ 10 │........................................................................................................................│
+ 11 │........................................................................................................................│
+ 12 │........................................................................................................................│
+ 13 │........................................................................................................................│
+ 14 │........................................................................................................................│
+ 15 │........................................................................................................................│
+ 16 │........................................................................................................................│
+ 17 │........................................................................................................................│
+ 18 │........................................................................................................................│
+ 19 │........................................................................................................................│
+ 20 │........................................................................................................................│
+ 21 │........................................................................................................................│
+ 22 │........................................................................................................................│
+ 23 │........................................................................................................................│
+
+legend
+  a  #3ddc97  actors.claude
+  g  #0c0f0c  neutrals.ground = chrome.mode_chip_fg = chrome.tab_bar
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  l  #232823  neutrals.dimmed_under_float
+  o  #2a5c44  regions.anchor_undercurl = float.informational
+  p  #26332a  regions.selection
+  x  #101410  float.body
+  C  #242a24  chrome.divider
+
+style
+  ~  undercurl — SGR 4:3 wrapped around the glyph, plus Modifier::UNDERLINED
+  _  Modifier::UNDERLINED alone (the degraded path)

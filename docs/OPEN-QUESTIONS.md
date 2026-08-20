@@ -144,10 +144,22 @@ checked against the tree on 2026-08-14.**
   lives there. **This entry named a file that could not have held the answer**, which is worth
   more than the correction: a blocker recorded against the wrong file reads as blocked long after
   it is built.
-- **The `#1a201a` ground is still not drawn.** The committed 80-column snapshot's `bg` plane is
-  empty on every row except the `REPL` badge on row 23, and its legend names five colours
-  (`#9ec98c`, `#0c0f0c`, `#c6cec6`, `#9aa39a`, `#59635a`) — no ground among them. Unchanged, still
-  `spine`'s, still a view-tree contract question.
+- **~~The `#1a201a` ground is still not drawn.~~ Answered in the product, 2026-08-20 — and the
+  answer is that the tree never asks.** This half was framed as a view-tree contract question
+  (*"a tree-composed statusline cannot ask for §5's ground"*) and therefore as `spine`'s. The
+  ruling went the other way: `crates/phosphor/src/main.rs` fills the status area with
+  `theme.chrome.statusline` — §5's `#1a201a`, `theme.rs:206` — **before** the chrome branch, so
+  all three chrome states get it and the mode chip paints its own actor field over the top. Its
+  comment carries the argument: *"the view tree is `spine`'s single writer and a prop is a
+  protocol change… The caller owning the strip's ground is the smaller claim and the true one:
+  §5 says which three strips exist, and the binary is what lays them out."*
+
+  **The snapshots still show no ground, and that is now correct rather than outstanding.** Every
+  golden frame in this repository renders a *tree* through the interpreter; the fill is the
+  binary's and is applied outside it. So `6b`'s empty `bg` plane — and `1a`'s, and `6a`'s, and
+  every frame added since — is the honest picture of what the tree draws, and a future reader
+  should not go looking for a `Node` prop that would put it there. `interpret.rs` had flagged the
+  gap since `T025` and nobody owned it; the owner turned out not to be the tree.
 - **`T037` did not bring the literals, and could never have.** The typed rows in that snapshot are
   one colour end to end (`h`, `neutrals.text`), not per-token. The blocker was never
   `define-language`: `runtime/languages/steel.scm` declares `"grammar" "scheme"` and
@@ -157,12 +169,18 @@ checked against the tree on 2026-08-14.**
   spends five paragraphs saying so. So a `.scm` buffer renders unhighlighted today, and **the
   remaining half of this entry is a fork grammar arm that no task in the graph names.**
 
-*Recommendation, revised: close the frame half — it is built, and this entry should stop claiming
-otherwise. Keep the ground question, which is unchanged and is `spine`'s. Re-file the literals
-half: it is not `T037`'s and never was, and a grammar arm in the vendored fork is `surface`'s work
-under `T083`'s subject matter with no task naming it. This is §30's pattern wearing different
-clothes — a claim nothing recomputes, drifting quietly — except that here what drifted was the
-blocker's attribution rather than a count, and no lint could have caught it.*
+*Recommendation, revised twice. The frame half is closed — it is built, and this entry should stop
+claiming otherwise. The ground half is closed too, as of 2026-08-20, and not the way it was framed:
+the caller paints the strip and the tree never asks. **What is left is one thing**: the literals,
+and they are not `T037`'s and never were — a grammar arm in the vendored fork is `surface`'s work
+under `T083`'s subject matter with no task naming it.*
+
+*Two of this entry's three halves were wrong about **who owned the problem** rather than about
+whether it existed, which is worth more than either correction: the frame was recorded against a
+file that could not have held it, and the ground was recorded against a layer that turned out not
+to be responsible for it. This is §30's pattern wearing different clothes — a claim nothing
+recomputes, drifting quietly — except that what drifted was attribution rather than a count, and
+no lint could have caught either.*
 
 ---
 
@@ -187,6 +205,29 @@ whichever rendering wins is what every agent-surface tape at `CP-5` will show.
 
 *Recommendation: Teej picks one rendering per conflict at claude.ai, and `fixtures/` follows. There
 is no build change here — nothing is wrong in the tree.*
+
+**The deadline named below has passed, and the tree answered both conflicts on its own — recorded
+2026-08-20.** This entry's own ordering constraint was *"whichever rendering wins is what every
+agent-surface tape at `CP-5` shows"*, and `TASKS.md`'s repair list sharpened it: **Window E ends at
+`CP-5`**, so settling it afterwards means re-capturing. Window E is built and `CP-5`'s VHS half is
+complete. What happened in the meantime is that `fixtures/` went first and the build followed it,
+which is the reverse of what the recommendation above asks for:
+
+- **Conflict 1 — resolved as `3a`.** `fixtures/src/retry.rs:24` carries the full statement,
+  `delay = (delay * 2).min(policy.max_delay);`, which is `TUI Mockups.dc.html:872`'s rendering. And
+  `runtime/pickers.scm:85-89` rules that *"a grep row is a whole matched line"*, so `8a`'s picker
+  draws that whole line rather than `:165`'s matched fragment (`● .min(policy.max_delay)`). The
+  Tier-1 frame `screen_pickers.rs`'s `8a` commits it in cells, and its notes say so.
+- **Conflict 2 — resolved as `2b`.** `fixtures/README.md:142` cites `2b`
+  (`TUI Mockups.dc.html:1046`) for `fetch.rs:12`, and `fixtures/seed/plan.scm:72` declares that
+  region at lines 10–14. `2a`'s `fetch.rs:3-7` citation is not what any surface draws.
+
+**Neither was a ruling.** Both fell out of building the thing, which is exactly the failure mode
+this file exists to catch — and the cost of reversing either is now countable rather than
+hypothetical: **39 of the 51 tapes read `fixtures/`**, plus five Tier-1 golden frames.
+
+*Still Teej's call. Recorded here so that reopening it is a decision with a number attached rather
+than a discovery.*
 
 **A third conflict joined this category on 2026-08-14, and it is a different axis: §27 below.**
 The two above are mockup-versus-mockup, where either rendering could be made true. §27 is a mockup
@@ -1503,6 +1544,97 @@ screen went red. Left here instead.
 
 ---
 
+### 46 · ~~Mutation testing had never been recorded anywhere, so its findings could not survive a session~~ — closed, 2026-08-20
+
+**`just mutants` is in the justfile, is documented at length, gates nothing by
+design — and nothing had ever written down what it found.** A run against
+`store/region.rs` reported six survivors of ninety-six in an earlier window;
+that number lived in a conversation and in no file, so the next reader's only
+way to learn it was to spend the four minutes again.
+
+That is a gap of the same shape as the ones this file exists for: `just
+coverage` and `just bench` are also measurements-not-gates, and both are at
+least *described* in `CLAUDE.md` with what they are for. A measurement whose
+results are never recorded is a measurement nobody can act on.
+
+**The run, and its triage.** 101 mutants, **6 missed, 87 caught, 8 unviable**.
+One survivor is an **equivalent mutant** and is deliberately left alive:
+`Lens::everything -> Default::default()` is not a mutation, because
+`everything()`'s body is literally `Self::default()`. The remaining five were
+four real gaps, and every one names an invariant the module documents and
+nothing asserted:
+
+| Survivor | What it meant |
+| --- | --- |
+| `replace && with \|\| in Regions::reanchor_in` | **The real one.** Reanchoring one file would resolve *every other file's* fingerprinted regions against this file's snapshot, and the `let Some(fingerprint) = …` guard inside the loop cannot catch it — such a region has one. Markers would move in files nobody touched. Invisible to every other test in the module, because they all use a single path. |
+| `Regions::restore -> Default::default()` | A restored store could come back empty and nothing would say so. |
+| `Regions::minted -> 0` / `-> 1` | The id counter could come back wrong, which is exactly what `restore`'s doc comment spends a paragraph on: *"a dropped row's id stays retired across restarts."* |
+| `Regions::is_empty -> true` | Never asked of a store that held something. |
+
+All four are closed by tests named in `region.rs`'s
+*"The mutation survivors, closed 2026-08-20"* block, including the one the
+`restore` docs describe and no test reached: an id dropped **before** a restart
+must not be handed out **after** one.
+
+**Re-run to confirm, rather than assumed: 101 mutants, `1 missed, 92 caught, 8
+unviable`.** The one survivor is the equivalent mutant, still alive on purpose.
+That second run is the part worth copying — a test written *for* a survivor is
+a test written against a mutation you already know, and the only thing that says
+it kills the mutation is killing it.
+
+*Ruled, and this is the entry's outcome rather than a recommendation:* **mutation
+testing stays out of `gate` and out of CI**, for the reason the justfile already
+gives about coverage — a whole run is hours, and a score that gates gets tuned
+until it means nothing. What changes is that a run's findings get written down.
+This entry is the precedent for where: here, with the triage, because *"six
+survived"* is not a finding and *"reanchor could move another file's markers"*
+is.
+
+---
+
+### 45 · `2a`'s preview pane cannot draw at 120 columns, and the threshold is why
+
+**Found by writing `2a`'s Tier-1 golden frame** — the first thing in this build
+to draw that whole screen at a stated width and then look at it. The preview
+pane came back empty, and the cause is an arithmetic seam rather than a bug in
+either piece.
+
+`phosphor-ui/src/picker.rs`'s `PREVIEW_AT` is `100`, and its own doc comment
+says what it is: *"`T045`'s own number — `preview split (dropped under 100
+cols)`"*. But `Picker::shows_preview(width)` is asked about **the area the
+widget was handed**, which is the float's body — and Design Language §8 caps a
+float at 80% of the screen, less two columns of border. At 120 columns that
+body is **94**, so the split is shed on a terminal `T045`'s sentence calls
+comfortably wide.
+
+**Neither half is wrong on its own**, which is what makes this an entry rather
+than a fix. The widget is right to shed on its own width: it does not know what
+is around it, and a widget that asked would be a widget reaching for the
+terminal. §8 is right to cap the float. What is missing is that the threshold
+was *written* in terminal columns and is *spent* in body columns, and nothing
+compared the two — there is no test in the repository that renders a picker
+inside a float and asks whether the pane appeared, because until now no test
+rendered the whole screen.
+
+*Pinned by* `screen_pickers.rs::the_preview_pane_is_shed_at_120_columns_because_the_float_body_is_not_the_terminal`,
+which asserts the behaviour at 120 and at 160 rather than the crossover —
+asserting the crossover would be asserting §8's percentage, which is
+`float.rs`'s to change.
+
+**Three answers, three owners, and picking one is not a test's job.** Lower
+`PREVIEW_AT` to something a float body actually reaches; raise the float's cap
+for bodies that ask for one; or let a composition request a wider float, which
+is a protocol change and `spine`'s. The third is the only one that leaves both
+existing rules intact, and it is also the most expensive.
+
+*Worth knowing while it is open:* every VHS tape and every golden frame in this
+repository is 120 columns or narrower, so **no committed artifact has ever shown
+`2a`'s preview**. The pane is not untested — `picker.rs`'s own unit tests draw
+it, at widths a bare widget can be given — it has just never been photographed
+in the place it actually lives.
+
+---
+
 ### 44 · The CI runner cannot capture a frame, and nothing noticed for the job's whole life
 
 **Found by making §41's health check gate.** It went red on its second run with
@@ -1553,7 +1685,7 @@ entry is.
 
 ---
 
-### 43 · A declared region draws one row lower, about one open in five
+### 43 · A declared region draws one row lower, about one open in five — mechanism confirmed and half fixed, 2026-08-20
 
 **Found by building `CP-4`'s gutter-priority capture**, which could not be made
 reproducible: `diagnostics-regions.tape` matched three or four captures out of
@@ -1605,12 +1737,53 @@ tree and compared what `resolve` returned. **That is the experiment**, and it is
 one test rather than an investigation: fingerprint a region twice against the
 same buffer, once with a grammar and once without, and read the resolved line.
 
-*Recommendation: worth a task rather than a patch, and it belongs with whoever
-owns `T043`. It is louder than it looks — the gutter is `CP-5`'s entire thesis,
-and a marker that lands a row off one open in five is a marker pointing at the
-wrong line of somebody's code. It also explains something already on the books:
-`CP-5`'s anchor-survival criterion is ticked from unit tests over the ladder,
-and this is the first evidence that the ladder's* choice *is not stable.*
+**The experiment was run on 2026-08-20, and it confirms the mechanism.**
+`store/region.rs::the_same_region_resolves_nine_lines_apart_depending_on_whether_the_grammar_had_parsed`
+is the prescribed test: one region, one rewrite, two fingerprints differing only
+in whether the grammar had parsed when they were taken. The answers are **nine
+lines apart** — the size of the divergence is a property of the file, not of the
+bug, and §43 measured one row because `policy.rs` is small. Both tiers behave
+exactly as documented; what varies is which one the fingerprint makes reachable.
+
+**The race runs in two directions and only one of them is fixed.**
+
+*Fingerprint without a grammar, file described with one.* Closed.
+`Regions::fingerprint_in` now **upgrades** a syntax-less fingerprint the next
+time the same line is described with syntax, under the one condition that keeps
+the fill-only rule intact: the line must still say what the fingerprint says it
+says. Three tests carry it, including the one that keeps `T043`'s grammar-free
+file a permanent no-op.
+
+*Fingerprint with a grammar, snapshot without.* **Open, and it is the worse
+half.** `Editing::snapshot` reads `syntax_path` off the live buffer and keeps
+only non-empty answers, so a reanchor taken before the editor's parse is ready
+hands `resolve` a snapshot with no syntax at all — the node tier finds no
+candidates and the line tier moves the region to the nearest matching text.
+Pinned by `a_good_fingerprint_meeting_an_unparsed_snapshot_moves_to_the_wrong_line`.
+
+**Why the second half is not fixed here.** The fall-through is a *documented
+law* with a property test on it —
+`properties.rs::a_node_tier_miss_still_lands_on_the_line_tier`, whose stated
+reason is that *"the node tier is an optimisation over the line tier, so a
+node-tier miss must never be worse than having had no syntax at all."* That rule
+is good and this is its cost. Reconciling them turns on whether `resolve` should
+be able to tell *"the construct is gone"* from *"nobody has parsed this file
+yet"* — and a `Snapshot` cannot say which it is today. That is a protocol
+question, and answering it from inside a bug fix is how a law becomes an
+accident.
+
+*Recommendation: the remaining half is worth a task rather than a patch, and it
+belongs with whoever owns `T043`. It is louder than it looks — the gutter is
+`CP-5`'s entire thesis, and a marker that lands a row off is a marker pointing
+at the wrong line of somebody's code.*
+
+**One thing this does not claim.** The `diagnostics-regions` capture flake is
+*consistent* with the mechanism above and is not proved to be it. The door path
+that seeded that tape parses **synchronously** (`AppHost::parse` calls
+`SourceCode::new` and waits), so the fingerprint it took was a good one — which
+points at the second direction rather than the first, and neither has been
+watched happening in that tape. The mechanism is real and reachable; which of
+the two the photograph caught is still open.
 
 **What it costs the library meanwhile.** `diagnostics-regions.png` is committed
 as one of the two outcomes, so `just tapes-diff` will report it as a mismatch

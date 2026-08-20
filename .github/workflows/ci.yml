@@ -454,33 +454,51 @@ jobs:
       # "a frame was captured" are different claims, and the second is the one
       # worth making. 10 kB is far below any real 1228×700 capture and far
       # above an empty or truncated file.
-      # **Captured through `tape-diff`, and the comparison is not the point.**
+      # **`vhs` is run directly here, and that is `OPEN-QUESTIONS.md` §44's own
+      # recommendation carried out.**
       #
+      # The history is worth keeping because each step was a different mistake.
       # The first version ran `just tape 9c` — the *record* path — and went red
       # on the ffmpeg pin: recording writes a GIF, GIFs go through ffmpeg, and
-      # `check-versions.sh` wants 9.0.1 where Ubuntu ships 6.1.1. That pin
-      # exists for GIF determinism, which nothing in CI reads.
+      # `check-versions.sh` wants 9.0.1 where Ubuntu ships 6.1.1. That pin is
+      # for GIF determinism, which nothing in CI reads. So it moved to `just
+      # tape-diff`, the pixel path, which skips the pin — and *that* reported
+      # `no capture at artifacts/9c.png` with no reason attached, because
+      # `diff-tapes.sh` ran `vhs >/dev/null 2>&1` and then told the reader to
+      # go and run vhs themselves.
       #
-      # `diff-tapes.sh` already has the path that skips it — `check-versions.sh
-      # pixels`, on the grounds that *"a PNG's pixels do not pass through
-      # ffmpeg"*. So the capture goes through there. It compares as a side
-      # effect and **the result is deliberately ignored**: the references are
-      # macOS-recorded, §41 measured what that comparison is worth, and this
-      # step exists to answer a different question.
+      # That swallow is fixed in the script too, so `just tapes-diff` is loud
+      # now wherever it runs. This step goes straight to `vhs` regardless: the
+      # question it asks is *can this machine capture a frame at all*, and the
+      # fewer things standing between the runner and that answer, the better a
+      # failure reads.
       #
-      # What is checked is the exit code and the file. `diff-tapes.sh` exits 0
-      # for any number of pixel mismatches and non-zero only for a genuine tool
-      # failure, which is the health signal; and the size floor catches the
-      # other failure, because `vhs` exits 0 when a `Wait+Screen` times out —
-      # it skips the rest of the tape and leaves whatever was on disk. 10 kB is
-      # far below a real 1228×700 capture and far above a truncated one.
+      # `check-versions.sh pixels` is the same tool gate `diff-tapes.sh` uses —
+      # PNG pixels do not pass through ffmpeg, so the GIF pin is not consulted.
+      #
+      # The size floor is what makes this an assertion rather than a
+      # formality: `vhs` exits 0 when a `Wait+Screen` times out — it skips the
+      # rest of the tape and leaves whatever was on disk — so "the command
+      # succeeded" and "a frame was captured" are different claims, and the
+      # second is the one worth making. 10 kB is far below a real 1228×700
+      # capture and far above a truncated one. The `rm -f` is what makes even
+      # that meaningful: without it the checked-out PNG is still sitting there
+      # and every check passes by default, which is how §44 hid.
       - name: Capture one screen
         run: |
           set -euo pipefail
           rm -f tapes/artifacts/9c.png
-          just tape-diff 9c 2>&1 | tee /tmp/tapes-diff.log
+          {
+            ./tapes/check-versions.sh pixels
+            echo "--- vhs 9c.tape ---"
+            ( cd tapes && vhs 9c.tape )
+          } 2>&1 | tee /tmp/tapes-diff.log
+          if [ ! -f tapes/artifacts/9c.png ]; then
+            echo "vhs exited 0 and wrote no PNG — this is the §44 failure" >&2
+            exit 1
+          fi
           size=$(wc -c < tapes/artifacts/9c.png)
-          echo "9c.png is ${size} bytes"
+          echo "9c.png is ${size} bytes" | tee -a /tmp/tapes-diff.log
           test "${size}" -gt 10000
 
       - name: Post diff summary

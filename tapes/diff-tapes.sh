@@ -262,8 +262,22 @@ for id in "${ids[@]}"; do
     if [[ "$no_capture" -eq 0 ]]; then
         echo "diff-tapes.sh: capturing ${id}"
         seed_if_needed "${id}.tape"
-        if ! vhs "$tape" >/dev/null 2>&1; then
-            echo "x ${id} — vhs capture failed (see \`vhs ${tape}\` directly for the reason)" >&2
+        # **vhs's own output is kept, and OPEN-QUESTIONS.md §44 is why.**
+        #
+        # This read `vhs "$tape" >/dev/null 2>&1` and reported failures as
+        # *"see `vhs <tape>` directly for the reason"* — an instruction to a
+        # person standing at a terminal, and useless to the one place that
+        # cannot follow it. CI's capture job died with no capture and no
+        # explanation for the whole life of that job, because the explanation
+        # was being written to /dev/null one line above the message telling
+        # somebody to go and look for it.
+        #
+        # Kept in a file rather than passed through, so a normal run stays as
+        # quiet as it was and a failure prints everything.
+        vhs_log="${work_dir}/${id}.vhs.log"
+        if ! vhs "$tape" >"$vhs_log" 2>&1; then
+            echo "x ${id} — vhs capture failed:" >&2
+            sed 's/^/    /' "$vhs_log" >&2
             hard_error=1
             continue
         fi

@@ -378,6 +378,39 @@ impl Regions {
         self.next
     }
 
+    /// Whether a region's fingerprint is one §43's race produced: taken with
+    /// no syntax, against a file the grammar can now describe.
+    ///
+    /// Three conditions, and every one of them is load-bearing.
+    ///
+    /// 1. **The fingerprint has no syntax.** One that does is already at the
+    ///    node tier and there is nothing to gain.
+    /// 2. **The snapshot now has syntax for that line.** Without this, every
+    ///    describe of a grammar-free file would re-take the same fingerprint
+    ///    forever — `T043`'s whole case is a file where this is permanently
+    ///    false, and it must stay a no-op there.
+    /// 3. **The line still says what the fingerprint says.** This is the
+    ///    fill-only rule, kept: if the text moved, the correspondence between
+    ///    this region and this line number is exactly what we can no longer
+    ///    trust, and upgrading would describe a stranger.
+    fn stale_for_want_of_a_grammar(region: &Region, snapshot: &super::anchor::Snapshot) -> bool {
+        let Some(fingerprint) = region.fingerprint.as_ref() else {
+            return false;
+        };
+        if fingerprint.has_syntax() {
+            return false;
+        }
+        // The region's own line, not the fingerprint's, because that is the row
+        // the write path below reads — the two are kept in step by
+        // `reanchor_in`, and checking one while writing from the other is how
+        // they would stop being.
+        let index = usize::try_from(region.span.start.line.saturating_sub(1)).unwrap_or(0);
+        snapshot
+            .lines
+            .get(index)
+            .is_some_and(|row| !row.syntax.is_empty() && row.text == fingerprint.text)
+    }
+
     /// Give every region in a file a fingerprint, from the text it currently
     /// covers (`T043`).
     ///
@@ -394,14 +427,35 @@ impl Regions {
     /// description of the location with a description of whatever now sits at
     /// the old line number.
     ///
-    /// Answers how many it filled.
+    /// **With one exception, and it is `OPEN-QUESTIONS.md` §43's**: a
+    /// fingerprint taken *before the grammar parsed* carries an empty syntax
+    /// path, and an empty path means the node tier never applies again for the
+    /// life of that region. That is a race — the parser against the first
+    /// describe — and §43 measured what it costs on screen: the same region,
+    /// the same rewrite, and a marker nine lines from where it belongs
+    /// depending on which won. So a syntax-less fingerprint is *upgraded* when
+    /// the grammar catches up, under the one condition that makes it safe:
+    /// the line it names must still say what the fingerprint says it says.
+    /// See [`Self::stale_for_want_of_a_grammar`].
+    ///
+    /// This is not a relaxation of the fill-only rule. Fill-only exists so a
+    /// rewrite cannot overwrite a good description with whatever moved into
+    /// the old line number, and the text check is exactly that rule enforced
+    /// directly rather than by proxy: if the text still matches, nothing moved
+    /// in, and the only thing being added is knowledge the store did not have
+    /// the first time.
+    ///
+    /// Answers how many it filled or upgraded.
     ///
     /// [`resolve`]: super::anchor::resolve
     pub fn fingerprint_in(&mut self, path: &Path, snapshot: &super::anchor::Snapshot) -> usize {
         let ids: Vec<RegionId> = self
             .by_id
             .values()
-            .filter(|region| region.path == path && region.fingerprint.is_none())
+            .filter(|region| region.path == path)
+            .filter(|region| {
+                region.fingerprint.is_none() || Self::stale_for_want_of_a_grammar(region, snapshot)
+            })
             .map(|region| region.id)
             .collect();
         let mut filled = 0;
@@ -1292,5 +1346,485 @@ mod tests {
             0
         );
         assert!(regions.all().next().expect("one").fingerprint.is_none());
+    }
+
+    // -- `OPEN-QUESTIONS.md` §43 — the experiment the entry prescribes -------
+
+    use super::super::anchor::SyntaxStep;
+
+    /// Two functions, one of them holding a line the other also holds.
+    ///
+    /// The duplicate is the whole point: it is what makes the two tiers of
+    /// [`resolve`](super::super::anchor::resolve) disagree, and a file where
+    /// every line is unique cannot tell them apart.
+    const TWO_FUNCTIONS: &str = "\
+fn alpha() {
+    let delay = base;
+}
+
+fn beta() {
+    let delay = base;
+}
+";
+
+    /// The same file with four comment lines pushed in between the two
+    /// functions — `beta` moves down, `alpha` does not.
+    const REWRITTEN: &str = "\
+fn alpha() {
+    let delay = base;
+}
+
+// four lines that were not here before
+// which is what an agent editing above you
+// looks like from the store's point of view
+// and none of them is the line we anchored
+
+fn beta() {
+    let delay = base;
+}
+";
+
+    /// Attaches the syntax a Rust grammar would resolve for [`TWO_FUNCTIONS`]:
+    /// each body line inside the `function_item` that owns it.
+    fn with_grammar(text: &str) -> Snapshot {
+        // 0-indexed: whichever lines the two copies of the body landed on.
+        // Found rather than written down, so inserting a line into either
+        // constant above cannot silently point the syntax at the wrong row.
+        let bodies: Vec<usize> = text
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| line.trim() == "let delay = base;")
+            .map(|(index, _)| index)
+            .collect();
+        let [alpha, beta] = bodies[..] else {
+            panic!("both fixtures hold exactly two copies of the body line");
+        };
+        Snapshot::of(text)
+            .with_syntax(alpha, vec![SyntaxStep::new("function_item", "alpha")])
+            .with_syntax(beta, vec![SyntaxStep::new("function_item", "beta")])
+    }
+
+    /// **`OPEN-QUESTIONS.md` §43's experiment, and it confirms the mechanism.**
+    ///
+    /// The entry says a declared region draws one row lower about one open in
+    /// five, names [`Regions::fingerprint_in`] as the suspect, and prescribes
+    /// exactly this: *"fingerprint a region twice against the same buffer, once
+    /// with a grammar and once without, and read the resolved line."*
+    ///
+    /// It had never been run. Everything §43 ruled out — the settle, the store,
+    /// the contested cell — was ruled out by measurement, and this is the one
+    /// candidate that was left standing on argument alone.
+    ///
+    /// # What it shows
+    ///
+    /// Same region, same file, same rewrite. The only difference is whether the
+    /// grammar had parsed at the moment the fingerprint was taken, and the two
+    /// answers are **nine lines apart** — not one, because the size of the
+    /// divergence is a property of the file rather than of the bug. §43
+    /// measured one row because `policy.rs` is small.
+    ///
+    /// The with-grammar answer is the right one: the region is inside `beta`
+    /// and `beta` is where it lands. The without-grammar answer is not wrong
+    /// *for what it knows* — the line tier's rule is nearest-matching-text, and
+    /// `alpha`'s copy is nearer. It is wrong because the fingerprint was taken
+    /// a moment too early.
+    ///
+    /// **This is a race and not a bug in either function.** Both tiers behave
+    /// exactly as documented; what varies is which one the fingerprint makes
+    /// reachable, and that is decided by whoever wins between the parser and
+    /// the first `fingerprint_in`. That is why it is one open in five rather
+    /// than every open, and why raising the tape's `Sleep` did not help — the
+    /// settle happens after both.
+    #[test]
+    fn the_same_region_resolves_nine_lines_apart_depending_on_whether_the_grammar_had_parsed() {
+        let path = Path::new("retry.rs");
+        let rewritten = with_grammar(REWRITTEN);
+
+        // The grammar had parsed: the fingerprint carries `beta`'s syntax path.
+        let mut parsed = Regions::new();
+        parsed.declare(&[claude("retry.rs", (6, 1), (6, 1))], Actor::Claude);
+        assert_eq!(parsed.fingerprint_in(path, &with_grammar(TWO_FUNCTIONS)), 1);
+        parsed.reanchor_in(path, &rewritten);
+
+        // It had not: same buffer, same region, an empty syntax path.
+        let mut unparsed = Regions::new();
+        unparsed.declare(&[claude("retry.rs", (6, 1), (6, 1))], Actor::Claude);
+        assert_eq!(
+            unparsed.fingerprint_in(path, &Snapshot::of(TWO_FUNCTIONS)),
+            1
+        );
+        unparsed.reanchor_in(path, &rewritten);
+
+        let with = parsed.all().next().expect("one region").span.start.line;
+        let without = unparsed.all().next().expect("one region").span.start.line;
+
+        assert_eq!(
+            with, 11,
+            "the node tier follows `beta` through the rewrite, which is correct",
+        );
+        assert_eq!(
+            without, 2,
+            "the line tier takes the nearest identical text, which is `alpha`'s",
+        );
+        assert_ne!(
+            with, without,
+            "§43's mechanism: one fingerprint, two grammars, two answers",
+        );
+    }
+
+    /// **§43's remedy.** The race above is closed by letting the grammar catch
+    /// up: a fingerprint taken with no syntax is upgraded the next time the
+    /// file is described *with* syntax, so the region reaches the node tier it
+    /// should have had all along.
+    ///
+    /// This is the ordinary sequence in the running editor — the host describes
+    /// the file on open, the parser finishes, the host describes it again —
+    /// and before this the second describe was a no-op by construction.
+    #[test]
+    fn a_fingerprint_taken_before_the_grammar_parsed_is_upgraded_when_it_arrives() {
+        let path = Path::new("retry.rs");
+        let mut regions = Regions::new();
+        regions.declare(&[claude("retry.rs", (6, 1), (6, 1))], Actor::Claude);
+
+        // Open: the parser has not finished, so the snapshot has no syntax.
+        assert_eq!(
+            regions.fingerprint_in(path, &Snapshot::of(TWO_FUNCTIONS)),
+            1
+        );
+        assert!(
+            !regions
+                .all()
+                .next()
+                .expect("one region")
+                .fingerprint
+                .as_ref()
+                .expect("fingerprinted")
+                .has_syntax(),
+            "the race happened: this is the fingerprint §43 is about",
+        );
+
+        // The parser finishes and the host describes the same text again.
+        assert_eq!(
+            regions.fingerprint_in(path, &with_grammar(TWO_FUNCTIONS)),
+            1,
+            "the upgrade is the second describe doing something",
+        );
+        assert!(
+            regions
+                .all()
+                .next()
+                .expect("one region")
+                .fingerprint
+                .as_ref()
+                .expect("fingerprinted")
+                .has_syntax(),
+            "and now the node tier applies",
+        );
+
+        // Which is the whole point: the later rewrite lands correctly.
+        regions.reanchor_in(path, &with_grammar(REWRITTEN));
+        assert_eq!(
+            regions.all().next().expect("one region").span.start.line,
+            11,
+            "the marker follows `beta`, where the unparsed fingerprint sent it to 2",
+        );
+    }
+
+    /// `T043`'s file must not be touched by the upgrade, and this is the test
+    /// that says so: a grammar-free file is described over and over, and the
+    /// second describe fills nothing.
+    ///
+    /// Without the *"the snapshot now has syntax"* condition this would
+    /// re-fingerprint on every describe, which is the fill-only rule broken in
+    /// exactly the way it exists to prevent.
+    #[test]
+    fn a_file_with_no_grammar_is_never_upgraded_however_often_it_is_described() {
+        let path = Path::new("deploy");
+        let mut regions = Regions::new();
+        regions.declare(&[claude("deploy", (2, 1), (2, 1))], Actor::Claude);
+
+        let snapshot = Snapshot::of("#!/bin/sh\nrun_the_thing --now\nexit 0\n");
+        assert_eq!(regions.fingerprint_in(path, &snapshot), 1, "filled once");
+        assert_eq!(
+            regions.fingerprint_in(path, &snapshot),
+            0,
+            "and never again"
+        );
+        assert_eq!(regions.fingerprint_in(path, &snapshot), 0);
+    }
+
+    /// The safety condition, pressed. A grammar that arrives *after* the text
+    /// under the region changed must not upgrade: the fingerprint's line and
+    /// the region's line no longer describe the same thing, and taking a new
+    /// fingerprint there would describe whatever moved in.
+    ///
+    /// This is the fill-only rule, and the upgrade does not get to skip it.
+    #[test]
+    fn an_upgrade_is_refused_when_the_line_no_longer_says_what_it_said() {
+        let path = Path::new("retry.rs");
+        let mut regions = Regions::new();
+        regions.declare(&[claude("retry.rs", (6, 1), (6, 1))], Actor::Claude);
+        regions.fingerprint_in(path, &Snapshot::of(TWO_FUNCTIONS));
+
+        // The grammar arrives, but line 6 has been rewritten under it.
+        let mut edited = with_grammar(TWO_FUNCTIONS);
+        edited.lines[5].text = "something else entirely".to_owned();
+
+        assert_eq!(
+            regions.fingerprint_in(path, &edited),
+            0,
+            "no upgrade: the correspondence this would rely on is gone",
+        );
+        assert!(
+            !regions
+                .all()
+                .next()
+                .expect("one region")
+                .fingerprint
+                .as_ref()
+                .expect("fingerprinted")
+                .has_syntax(),
+            "left exactly as positional as it was, which is the honest state",
+        );
+    }
+
+    /// **The race runs the other way too, and this direction is worse.**
+    ///
+    /// Above, the fingerprint is taken without a grammar and the file is
+    /// described with one. Here the fingerprint is *good* — full syntax path,
+    /// taken when the parser had finished — and the **snapshot** arrives with
+    /// no syntax, which is what the binary's `Editing::snapshot` produces
+    /// whenever the live editor's parse is not ready: it reads `syntax_path`
+    /// off the open buffer and keeps only the non-empty answers.
+    ///
+    /// `resolve` then finds no node-tier candidates and falls to the line
+    /// tier, which takes the nearest matching text — and the region moves.
+    ///
+    /// # Why this is not fixed here
+    ///
+    /// The fall-through is a **documented law** with a property test standing
+    /// on it: `properties.rs::a_node_tier_miss_still_lands_on_the_line_tier`,
+    /// whose stated reason is that *"the node tier is an optimisation over the
+    /// line tier, so a node-tier miss must never be worse than having had no
+    /// syntax at all."* That is a good rule and this is its cost.
+    ///
+    /// Reconciling them is a design call rather than a patch, because it turns
+    /// on whether `resolve` should be able to tell *"the construct is gone"*
+    /// from *"nobody has parsed this file yet"* — and today a `Snapshot` cannot
+    /// say which it is. Recorded at `OPEN-QUESTIONS.md` §43 with the options.
+    ///
+    /// This test exists to make the behaviour *visible and pinned*: if someone
+    /// changes the ladder, this is the case that tells them what they changed.
+    #[test]
+    fn a_good_fingerprint_meeting_an_unparsed_snapshot_moves_to_the_wrong_line() {
+        let path = Path::new("retry.rs");
+        let mut regions = Regions::new();
+        regions.declare(&[claude("retry.rs", (6, 1), (6, 1))], Actor::Claude);
+
+        // The door parses synchronously, so the fingerprint is a good one.
+        assert_eq!(
+            regions.fingerprint_in(path, &with_grammar(TWO_FUNCTIONS)),
+            1
+        );
+
+        // The editor reanchors before its own parse is ready: same text, no
+        // syntax anywhere.
+        regions.reanchor_in(path, &Snapshot::of(REWRITTEN));
+
+        assert_eq!(
+            regions.all().next().expect("one region").span.start.line,
+            2,
+            "the node tier had nothing to match, so the line tier took \
+             `alpha`'s copy — the marker is now on the wrong function",
+        );
+    }
+
+    // -- The mutation survivors, closed 2026-08-20 -------------------------
+    //
+    // `just mutants --file crates/phosphor-core/src/store/region.rs` reported
+    // six survivors of 101. One is an **equivalent mutant** and is left alone:
+    // `Lens::everything -> Default::default()` is not a mutation at all, since
+    // `everything()`'s body is literally `Self::default()`. The other five are
+    // four real gaps, and these are the tests that close them. Each names an
+    // invariant this module documents at length and nothing asserted.
+
+    /// **`reanchor_in` must not move another file's regions**, and until this
+    /// test nothing said so.
+    ///
+    /// Found by mutation testing: replacing the `&&` in the filter with `||`
+    /// survived the whole suite. Under that mutation a region belonging to
+    /// *any other file* — as long as it has a fingerprint — is resolved
+    /// against **this** file's snapshot, and the `let Some(fingerprint) = …`
+    /// guard inside the loop does not catch it, because such a region has one.
+    ///
+    /// The consequence is not subtle: reanchoring one file after an edit would
+    /// silently drag markers around in files nobody touched. It is invisible
+    /// to every other test here because they all use a single path.
+    #[test]
+    fn reanchoring_one_file_leaves_another_files_regions_where_they_are() {
+        let mut regions = Regions::new();
+        regions.declare(
+            &[
+                claude("a.txt", (2, 1), (2, 1)),
+                claude("b.txt", (2, 1), (2, 1)),
+            ],
+            Actor::Claude,
+        );
+
+        // **The same text in both**, which is what makes the mutation reachable:
+        // a stray region can only be moved if the snapshot it is wrongly
+        // resolved against contains something its fingerprint matches.
+        let before = Snapshot::of("one\nshared line\nthree\n");
+        assert_eq!(regions.fingerprint_in(Path::new("a.txt"), &before), 1);
+        assert_eq!(regions.fingerprint_in(Path::new("b.txt"), &before), 1);
+
+        // Only `a.txt` is rewritten, and only `a.txt` is reanchored.
+        let after = Snapshot::of("one\ntwo\nthree\nshared line\n");
+        let moved = regions.reanchor_in(Path::new("a.txt"), &after);
+        assert_eq!(moved.len(), 1, "one region moved, and it is a.txt's");
+
+        let b = regions
+            .all()
+            .find(|region| region.path == Path::new("b.txt"))
+            .expect("b.txt's region");
+        assert_eq!(
+            b.span.start.line, 2,
+            "b.txt was never described and never rewritten, so nothing about \
+             it may have changed",
+        );
+        assert_eq!(
+            b.fingerprint.as_ref().expect("fingerprinted").line,
+            2,
+            "and its fingerprint is untouched too — a moved fingerprint would \
+             make the next reanchor wrong even after this one is fixed",
+        );
+    }
+
+    /// **A restored store does not reissue an id a persisted region already
+    /// has** — `Regions::restore`'s whole documented subtlety, asserted.
+    ///
+    /// Two mutants lived here: `restore` answering `Default::default()`, and
+    /// `minted` answering a constant. Between them they say nobody was checking
+    /// either that the rows come back or that the counter comes back past them.
+    #[test]
+    fn a_restored_store_keeps_its_rows_and_never_reissues_an_id() {
+        let mut original = Regions::new();
+        original.declare(
+            &[
+                claude("a.txt", (1, 1), (2, 1)),
+                claude("a.txt", (5, 1), (6, 1)),
+            ],
+            Actor::Claude,
+        );
+        let rows: Vec<Region> = original.all().cloned().collect();
+        let ids: Vec<RegionId> = rows.iter().map(|region| region.id).collect();
+        let minted = original.minted();
+        assert_eq!(rows.len(), 2);
+
+        let mut restored = Regions::restore(rows.clone(), minted);
+        assert_eq!(
+            restored.all().count(),
+            2,
+            "the rows came back — a default-constructed store would be empty",
+        );
+        assert_eq!(
+            restored.minted(),
+            minted,
+            "and so did the counter, which is what the next mint depends on",
+        );
+
+        // The invariant the doc comment spends a paragraph on.
+        let fresh = restored.declare(&[claude("a.txt", (9, 1), (10, 1))], Actor::Claude);
+        let new_id = fresh.created.first().copied().expect("one region created");
+        assert!(
+            !ids.contains(&new_id),
+            "a restored store minted {new_id:?}, which a persisted region already holds",
+        );
+    }
+
+    /// **A dropped row's id stays retired across a restart**, which is the
+    /// half of the rule above that a same-session test cannot reach.
+    ///
+    /// `restore` is told `minted` rather than deriving it from the rows, and
+    /// this is why: the highest *surviving* id is not the highest that ever
+    /// existed.
+    #[test]
+    fn an_id_dropped_before_a_restart_is_not_handed_out_after_one() {
+        let mut original = Regions::new();
+        original.declare(
+            &[
+                claude("a.txt", (1, 1), (2, 1)),
+                claude("a.txt", (5, 1), (6, 1)),
+            ],
+            Actor::Claude,
+        );
+        let doomed = original
+            .all()
+            .map(|region| region.id)
+            .max()
+            .expect("two regions");
+        original.drop_in(&Scope::Span {
+            path: std::path::PathBuf::from("a.txt"),
+            span: span((5, 1), (6, 1)),
+        });
+        let minted = original.minted();
+        let rows: Vec<Region> = original.all().cloned().collect();
+        assert_eq!(rows.len(), 1, "one row survives the drop");
+
+        let mut restored = Regions::restore(rows, minted);
+        let fresh = restored.declare(&[claude("a.txt", (9, 1), (10, 1))], Actor::Claude);
+        assert_ne!(
+            fresh.created.first().copied(),
+            Some(doomed),
+            "the dropped id came back after a restart",
+        );
+    }
+
+    /// `is_empty` agrees with `len`, in both directions.
+    ///
+    /// A mutant answering a constant `true` survived, which means nothing ever
+    /// asked this of a store that held something.
+    #[test]
+    fn a_store_is_empty_exactly_when_it_holds_nothing() {
+        let mut regions = Regions::new();
+        assert!(regions.is_empty(), "a fresh store holds nothing");
+        assert_eq!(regions.len(), 0);
+
+        regions.declare(&[claude("a.txt", (1, 1), (2, 1))], Actor::Claude);
+        assert!(!regions.is_empty(), "and one with a region in it does not");
+        assert_eq!(regions.len(), 1);
+
+        regions.drop_in(&Scope::File(std::path::PathBuf::from("a.txt")));
+        assert!(regions.is_empty(), "and it is empty again once that goes");
+    }
+
+    /// The same race, stated as the property that makes it invisible: the
+    /// *count* of regions never changes, so nothing downstream can notice.
+    ///
+    /// This is why §43 was found by photographing a screen rather than by a
+    /// test. `unseen-regions` answers one record either way, the statusline
+    /// says `1 unseen` either way, and the only observable difference is which
+    /// row the state column paints — which is a pixel, not a number.
+    #[test]
+    fn the_grammar_race_changes_where_a_marker_is_and_never_how_many_there_are() {
+        let path = Path::new("retry.rs");
+        let rewritten = with_grammar(REWRITTEN);
+
+        let mut parsed = Regions::new();
+        parsed.declare(&[claude("retry.rs", (6, 1), (6, 1))], Actor::Claude);
+        parsed.fingerprint_in(path, &with_grammar(TWO_FUNCTIONS));
+        parsed.reanchor_in(path, &rewritten);
+
+        let mut unparsed = Regions::new();
+        unparsed.declare(&[claude("retry.rs", (6, 1), (6, 1))], Actor::Claude);
+        unparsed.fingerprint_in(path, &Snapshot::of(TWO_FUNCTIONS));
+        unparsed.reanchor_in(path, &rewritten);
+
+        assert_eq!(parsed.all().count(), unparsed.all().count());
+        assert_eq!(
+            parsed.unseen_in(path).count(),
+            unparsed.unseen_in(path).count(),
+            "the query that every surface reads cannot tell the two apart",
+        );
     }
 }

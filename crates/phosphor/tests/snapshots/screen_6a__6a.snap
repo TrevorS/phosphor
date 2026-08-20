@@ -1,0 +1,111 @@
+---
+source: crates/phosphor/tests/screen_6a.rs
+expression: frame.to_text(&buf)
+---
+screen 6a · phosphor-dark · 120x24 cells
+  Every row is runtime/arch.scm's, composed through the T080 spans hatch
+    and drawn by the interpreter. No Rust in this repository knows what
+    `:arch` looks like, which is T048's whole acceptance.
+  The five counts come from the (arch) query over a seeded store: three
+    regions, one of them read. Anchors and diagnostics are 0 because
+    nothing placed or published any — that is the honest state, not a gap.
+  The language count is answered by the host rather than read off the VM:
+    `(arch)`'s `languages` field is the loop's own `languages.lock().len()`
+    and a test host has no such table. Asserted against the shipped layer
+    in the_language_count_is_the_shipped_layers_own.
+  6a's mockup draws box-drawing rules between the bands. arch.scm writes
+    them as meta-toned text rows, which is what a spans body can say.
+
+text
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │                                                                                                                        │
+  1 │            ┌──────────────────────────────────────────────────────────────────────────────────────────────┐            │
+  2 │            │  :arch                                                                        the substrate  │            │
+  3 │            ├──────────────────────────────────────────────────────────────────────────────────────────────┤            │
+  4 │            │                                                                                              │            │
+  5 │            │      tree-sitter        LSP          ACP              MCP                                    │            │
+  6 │            │      syntax nodes      meaning       agent stream     tool surface                           │            │
+  7 │            │           │             │              │                │                                    │            │
+  8 │            │           └──────┬──────┴──────┬───────┴────────────────┘                                    │            │
+  9 │            │                  ▼             ▼                                                             │            │
+ 10 │            │          ┌────────────────────────────────┐                                                  │            │
+ 11 │            │          │  semantic store                │  2 unseen · 1 seen                               │            │
+ 12 │            │          │  who touched what, and why     │  0 anchors · 0 diagnostics                       │            │
+ 13 │            │          └────────────────────────────────┘                                                  │            │
+ 14 │            │                  ▲             ▲                                                             │            │
+ 15 │            │           ┌──────┴──────┐      │                                                             │            │
+ 16 │            │      steel repl + config   vim grammar — motions · text objects · ex                         │            │
+ 17 │            │      one API, two callers: you and claude                                                    │            │
+ 18 │            │                                                                                              │            │
+ 19 │            │      12 languages declared  ·  every row above is view/spans                                 │            │
+ 20 │            │                                                                                              │            │
+ 21 │            ├──────────────────────────────────────────────────────────────────────────────────────────────┤            │
+ 22 │            │  q close                                                                                     │            │
+ 23 │ NORMAL  arc└──────────────────────────────────────────────────────────────────────────────────────────────┘   2 unseen │
+
+fg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  1 │lllllllllllloooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooollllllllllll│
+  2 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhjjjjjjjjjjjjjhhollllllllllll│
+  3 │llllllllllllCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCllllllllllll│
+  4 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+  5 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhaaaaaaaaaaaaaaaaaaaahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+  6 │llllllllllllohhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+  7 │llllllllllllohhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+  8 │llllllllllllohhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+  9 │llllllllllllohhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 10 │llllllllllllohhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 11 │llllllllllllohhjjjjjjjjjjjhhhhhhhhhhhhhhjjjjjjjjjjjjjjjjjjjaaaaaaaaaaaaaaaaahhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 12 │llllllllllllohhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 13 │llllllllllllohhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 14 │llllllllllllohhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 15 │llllllllllllohhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 16 │llllllllllllohhhhhhfffffffffffffffffffhhhhhhhhhhhhhhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 17 │llllllllllllohhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 18 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 19 │llllllllllllohhhhhhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 20 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 21 │llllllllllllCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCllllllllllll│
+ 22 │llllllllllllohhjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 23 │lllllllllllloooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooollllllllllll│
+
+bg
+     0         1         2         3         4         5         6         7         8         9         0         1
+     012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789
+  0 │........................................................................................................................│
+  1 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+  2 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+  3 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+  4 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+  5 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+  6 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+  7 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+  8 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+  9 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 10 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 11 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 12 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 13 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 14 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 15 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 16 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 17 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 18 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 19 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 20 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 21 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 22 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 23 │aaaaaaaa....xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+
+legend
+  a  #3ddc97  actors.claude
+  f  #9ec98c  actors.steel = syntax.function
+  h  #c6cec6  neutrals.text = syntax.text
+  j  #59635a  neutrals.meta = syntax.comment
+  l  #232823  neutrals.dimmed_under_float
+  o  #2a5c44  regions.anchor_undercurl = float.informational
+  x  #101410  float.body
+  C  #242a24  chrome.divider
