@@ -1614,7 +1614,8 @@ Tier 3.
 >   seeded the store, so the seven screens that read one were compared against an empty store; and
 >   CI's Tier-2 job had never compared a pixel, dying in under a second on a missing ImageMagick
 >   under `continue-on-error`. Both fixed. What CI's job reports now is §41's question rather than
->   an answer: its references are macOS-recorded and its runner is Linux.
+>   an answer: `_config.tape` sets `Menlo`, which is a macOS system font the runner does not have,
+>   so every glyph is a substitution and every frame mismatches whole.
 >
 >   **One `CP-4` VHS item is still owed**: *"a file with real diagnostics showing gutter priority
 >   **against other region states**"*. `tapes/diagnostics.tape` builds its own fixture in `/tmp`

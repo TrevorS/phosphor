@@ -1473,7 +1473,7 @@ goes on reporting it. Blessing it would make the run green and change nothing ab
 
 ---
 
-### 41 · CI's Tier-2 job compares macOS-recorded references against Linux rendering
+### 41 · CI's Tier-2 job compares against a font the runner does not have
 
 **Raised 2026-08-19, by making the job run for the first time.** `V008` put a non-blocking
 `tapes-diff` job in CI. It had never compared a single pixel: `diff-tapes.sh` checks for
@@ -1485,30 +1485,53 @@ signal was never there. Two commits to fix, because Ubuntu's `imagemagick` is ve
 the omnibus tool `convert` where 7 spells it `magick`.
 
 With the tools present it runs, takes 8m25s, and reports **42 of 44 frames mismatched at roughly
-850,000 px each** — essentially the whole image, every time. That is not drift. The references are
-recorded on macOS and the runner is Linux, so every glyph is rendered by a different stack.
+850,000 px each** — essentially the whole image, every time.
 
-This is precisely the failure `TEAM.md` names as `harness`'s characteristic one — *"letting pixel
-comparison across font rendering and vhs versions redden a correct build"* — and the reason the job
-is `continue-on-error` in the first place. Nothing is broken by it. But a job that costs eight
-minutes a push and produces a number nobody can read is not free either, and it now sits beside a
-CI run that was deliberately cut from 17m to under 4.
+## The cause is a missing font, not a different renderer
 
-Three ways out, and they are different bets rather than degrees of the same one:
+This entry first said *"every glyph is rendered by a different stack"* and left it there, which is
+the kind of explanation that sounds sufficient and stops an investigation. **Downloading the
+artifact and looking at the diff says something much more specific.**
 
-- **Record a Linux reference set in CI** and compare like against like. The library doubles, and
-  every blessed change has to be blessed twice — which is either honest coverage of both platforms
-  or a second set of images nobody looks at, depending on who is doing the blessing.
-- **Keep the job as a tool-health check**: run one tape, assert it captures at all, and drop the
+`tapes/artifacts/_diffs/1a.diff.png` from run `32330083525`: the reference and the fresh capture
+hold the same text, and the fresh one is **stretched horizontally** — a wider character advance,
+so fewer characters fit on a row and every line wraps in a different place. That is not
+antialiasing or hinting. It is a **different typeface with different metrics**.
+
+`tapes/_config.tape` sets `Set FontFamily "Menlo"`. Menlo is a macOS system font — it lives at
+`/System/Library/Fonts/Menlo.ttc` and ships with nothing else. The Ubuntu runner does not have it,
+`vhs` falls back to whatever monospace it finds, and the fallback's advance width is not Menlo's.
+
+So the 850,000 px is one substitution repeated in every cell, and the platform is only incidental
+to it. That matters because it makes a fourth option exist, and a cheaper one than the three below.
+
+## Four ways out
+
+- **Give both machines the same font.** A mono face available on Linux and macOS — installed by
+  the job, or committed under `tapes/` and set in `_config.tape`. This is the only option that
+  makes CI's number *mean* something. It costs a full regeneration of the library, because
+  changing the font changes every reference, and `tapes/README.md` already has the discipline for
+  that: a pin does not move without one. What it does **not** promise is a zero: CoreText and
+  FreeType will still differ at the pixel after the metrics agree, and whether that lands inside
+  the 0.6% fuzz is a measurement nobody has taken.
+- **Record a Linux reference set in CI** and compare like against like. The library doubles and
+  every blessed change is blessed twice — honest two-platform coverage, or a second set of images
+  nobody looks at, depending on who is blessing.
+- **Keep the job as a tool-health check**: run one tape, assert it captures at all, drop the
   comparison. Cheap, and it would have caught the ImageMagick hole on the day it appeared.
 - **Make Tier 2 explicitly local-only** and take the job out. `docs/TASKS.md`'s three-tier table
   already says only Tier 1 gates CI; this would make the tooling agree with the table.
 
-*Recommendation: the second or the third, and it is Teej's call because it is a judgement about
-what CI is for rather than about what is true. The third is the smaller change and the more honest
-one — Tier 2 is a change detector for whoever is changing the drawing, and that is a person at a
-terminal. What argues for the second is that the last two things to break here were the **tooling**
-rather than the pixels, and both were invisible for exactly as long as nothing ran.*
+*Recommendation: measure the first before ruling. Install a shared font on both sides, regenerate
+one screen — not the library — and read the number. If it lands inside the fuzz, CI gets a real
+change detector for the price of one regeneration. If it does not, the answer is the fourth option
+and the reason is then a measurement rather than an assumption, which is what this entry was
+missing when it was written an hour ago.*
+
+*Failing that, the third or the fourth, and it is Teej's call: it is a judgement about what CI is
+for rather than about what is true. What argues against simply deleting the job is that the last
+two things to break here were the **tooling** rather than the pixels, and both were invisible for
+exactly as long as nothing ran.*
 
 **Not open: the local path.** `just tapes-diff` on a machine with the pinned tools reports
 **45 of 48 frames matched**, and the three that do not are named in `docs/TASKS.md`'s `CP-5`
