@@ -1503,6 +1503,56 @@ screen went red. Left here instead.
 
 ---
 
+### 44 · The CI runner cannot capture a frame, and nothing noticed for the job's whole life
+
+**Found by making §41's health check gate.** It went red on its second run with
+`no capture at artifacts/9c.png`: `vhs` runs for six seconds on the runner and
+writes no PNG, silently. The same tape captures locally in three seconds,
+including with the target file deleted first.
+
+**What hid it is the shape of the check, not the runner.** `diff-tapes.sh`
+compares whatever is in `tapes/artifacts/` against the committed blob, and a
+capture that never ran leaves the **checked-out** file sitting there — which
+matches git by definition. So for the entire life of this job a silent capture
+failure was indistinguishable from a clean run, and the one line that separates
+them is `rm -f` before capturing.
+
+That is the second time in this file's history that the same class of mistake
+has been recorded, and the first is three entries up: §40's *"a freshness check
+that only checks existence is not a freshness check"*. This is its sibling — a
+comparison whose input defaults to the answer.
+
+**It also revises what §41's numbers were about.** That entry reports 42 of 44
+frames mismatching at ~850,000 px, and reads them as a colour-management
+difference between macOS and Linux. Those captures were real — a run that
+captured nothing would have reported everything *matching*, not mismatching —
+so the measurement stands. What is now open is why the same runner captured 44
+frames then and captures none today. **Nothing in this repository changed that
+should affect it**, which is the uncomfortable part and the reason this is an
+entry rather than a fix.
+
+*Candidates, none tested:* the runner image moved under us (ttyd and vhs are
+pinned, the browser they drive is not); the `9c` sentinel stopped matching
+because the chrome strip gained a background (`^ (NORMAL|…)` wants a space at
+column 0 and the fill paints that cell); or the capture is timing out earlier
+than its own `Wait+Screen@10s` for a reason `diff-tapes.sh` swallows, since it
+runs `vhs` quietly and only reports the missing file.
+
+*Recommendation: the third candidate first, because it is free — have the
+capture step run `vhs` directly rather than through `diff-tapes.sh` so the
+runner prints its own error. Everything after that depends on what it says. The
+second is worth ten minutes regardless: it is the only thing in this repository
+that changed between the run that captured 44 frames and the run that captured
+none, and `9c`'s sentinel is exactly the kind of regex a background fill could
+break without changing a pixel a person would notice.*
+
+**The job is non-blocking again meanwhile.** It gated for two runs, which is
+how this was found; leaving a red required check on every push while the cause
+is unknown is worse than the tick that lies. The tick is not the record — this
+entry is.
+
+---
+
 ### 43 · A declared region draws one row lower, about one open in five
 
 **Found by building `CP-4`'s gutter-priority capture**, which could not be made

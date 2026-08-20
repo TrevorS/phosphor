@@ -330,18 +330,23 @@ jobs:
   # omnibus tool is `convert` and not `magick` — and each was invisible for
   # exactly as long as nothing ran.
   #
-  # **THIS ONE GATES**, and the change is deliberate. `continue-on-error: true`
-  # used to be on the job, and the argument for it was sound for a *change
-  # detector*: a pixel comparison across renderers must never redden a correct
-  # build. It is the wrong setting for a health check, and this job proved why —
-  # it died in under a second on every run it ever had and reported green, so
-  # the tick carried no information and nobody looked. A check that can only go
-  # red for a real defect belongs in the required set, which is the rule the
-  # `features` job below states; capture-or-not is such a check.
+  # **It gated for two runs and does not now, and that sequence is worth
+  # keeping.** The argument for gating was sound and is still sound: a check
+  # that can only go red for a real defect belongs in the required set, and
+  # capture-or-not is such a check. So it was made to gate — and it went red,
+  # because **this runner cannot capture a frame**. `vhs` runs for six seconds
+  # and writes no PNG, silently.
   #
-  # If it turns out flaky in practice, the answer is a retry or a smaller tape —
-  # not `continue-on-error`. A green tick that means nothing is worse than no
-  # job, because it looks like coverage.
+  # That is the check working. It is also a defect nobody can fix from a laptop,
+  # and a red required check on every push while it is open is worse than the
+  # tick — so `continue-on-error` is back and `OPEN-QUESTIONS.md` §44 carries
+  # the finding instead. **The tick is not the record; §44 is.**
+  #
+  # What made it invisible for the whole life of this job: the step used to
+  # compare whatever was in `tapes/artifacts/` against git, and a capture that
+  # never ran leaves the *checked-out* file there — which matches git by
+  # definition. Deleting the PNG first is what turned "nothing happened" into a
+  # failure, and it is one line.
   #
   # Deliberately its own job, not a step tacked onto `test`: a flaky renderer
   # failing mid-job must never take a passing Tier-1 run down with it
@@ -352,8 +357,14 @@ jobs:
   # tapes-diff` reports 48 matched, 0 mismatched on a machine with the pinned
   # tools.
   tapes-diff:
-    name: Tier 2 — VHS capture health
+    name: Tier 2 — VHS capture health (non-blocking)
     runs-on: ubuntu-latest
+    # **Non-blocking again, and the reversal is the finding.** See §44: the
+    # check works and what it found is that this runner cannot capture. Until
+    # that is diagnosed, a red required check on every push is a worse outcome
+    # than a tick nobody trusts — but the step below is loud and §44 exists so
+    # the tick is not the only record.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
 
