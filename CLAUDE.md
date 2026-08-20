@@ -120,6 +120,16 @@ Hygiene and truthfulness — each of these exists because the thing it catches a
   `rust-toolchain.toml`, and every `T0xx` cited in a Rust comment must be a task that exists.
 - **Doc links** — `cargo doc` with warnings denied. This codebase cross-references itself through
   intra-doc links and nothing ran `cargo doc` until this lint; the first run found eight broken.
+- **Doc line citations** — prose is cited by heading or quoted phrase, never by a markdown path with a line number stapled to it.
+  `file:line` is right for *code*, where a moved line usually means a moved fact and two other
+  lints already check the references; nothing holds a line number pointed at a paragraph. Two
+  citations in `WINDOW-F-PLAN.md` went stale inside a day, one of them because executing that
+  plan's own step inserted 82 lines above its own pointer — leaving it aimed at prose that step
+  had just written. The 28 that already existed are **per-file budgets that can only shrink**,
+  the shape the two reachability lints use, because converting them in bulk is how a confidently
+  wrong phrase gets written: the first conversion attempted under this lint replaced an
+  already-stale number with a *freshly* wrong phrase, and the real target was three hundred lines
+  away.
 - **MSRV** — `workspace.package.rust-version` is recomputed from the dependency graph. It read
   `1.85` for two windows while `ratatui` required `1.88`.
 - **Vendor provenance** — each `VENDOR.md`'s recorded SHA and claimed licence are checked against
@@ -132,7 +142,7 @@ Hygiene and truthfulness — each of these exists because the thing it catches a
 - **Fuzz targets** — the `fuzz/` crate's targets are checked against the parsers they claim.
 - **Counts nothing else recomputes** — the capability and parity counts (`209`/`627` went stale in
   six places at once), and the lint count in CI's own prose, which said "six" while sixteen
-  existed. **Twenty-one lints now** — and this paragraph itself said seventeen for a window after the
+  existed. **Twenty-two lints now** — and this paragraph itself said seventeen for a window after the
   eighteenth landed, because `doc_claims.py` section 6 globbed `.github/workflows/*.yml` and could
   not see the file every agent reads on entry. It reads this one too now, so the sentence you are
   reading is recomputed rather than remembered.

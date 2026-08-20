@@ -985,7 +985,7 @@ CP-0 settled the shape: **the input machine is ours.**
   > live REPL, presses `<C-k>` on a real pty, and asserts the leaf appears under
   > `PHOSPHOR_KEYBOARD=legacy` and does **not** under `=kitty`. Both sides in one test.
   > **Still Teej's, not Claude's:** the criterion says *on the primary terminal*, and
-  > `TASKS.md:106` records that VHS's terminal does not implement the protocol. The hardware
+  > this file's *"What stays irreducibly Tier 3, and why"* table records that the browser-based terminal VHS drives does not implement it. The hardware
   > confirmation is `CP-3`'s manual half.
 
 - [x] **T028 · Agent nouns as text objects**

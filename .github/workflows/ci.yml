@@ -244,7 +244,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # The whole seam: every lint is one scripts/lint-*.sh script, and
       # `just lint` runs all of them. Nobody edits this workflow to add a lint —
-      # twenty-one exist now and not one of them changed a *step* here. (It said
+      # twenty-two exist now and not one of them changed a *step* here. (It said
       # "six" until the count was ten behind, which is the seam working and the
       # prose not: nothing recomputed a number written in a comment. Something
       # does now, and that is why the word above is the one thing a new lint
