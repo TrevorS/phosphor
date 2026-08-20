@@ -3718,7 +3718,7 @@ fn take_rows(body: &mut Rect, rows: u16) -> Option<Rect> {
 /// viewport, which is a pixel change and not this step's. `T088`'s pane layout
 /// replaces [`Geometry::pane`] with N of them, which is what this type exists
 /// to make possible.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Geometry {
     /// The whole terminal — what a tree-composed surface owns.
     frame: Rect,
@@ -3760,6 +3760,39 @@ fn lay_out(area: Rect) -> Geometry {
 }
 
 impl Geometry {
+    /// Every rect intersected with the area actually being rendered.
+    ///
+    /// **This exists because a rect that outlives its buffer panics the
+    /// editor**, and the step that introduced [`Geometry`] made that reachable
+    /// for the first time. The rects are laid out from `term.size()` at the top
+    /// of the pass; `term.draw` runs ~300 lines later and calls ratatui's
+    /// `autoresize()` first, whose own comment is *"otherwise we get glitches if
+    /// shrinking or potential desync between widgets and the terminal (if
+    /// growing), which may OOB"*. A height shrink landing in that window hands
+    /// [`draw`] a `pane` taller than the buffer.
+    ///
+    /// Nothing downstream catches it. `buffer_view`'s `set_cell` clips to the
+    /// rect it was *passed* rather than to the buffer, and `Buffer::set_stringn`
+    /// clamps `x` and never `y` — so the write reaches `index_of` and panics
+    /// out of `Raw::synchronized_frame`, which re-raises after restoring the
+    /// terminal. A resize drag emits a stream of sizes and reopens the window on
+    /// every one.
+    ///
+    /// `Frame::area`'s own doc states the contract this restores: *"It is the
+    /// area of the buffer that is actually being rendered for this pass."* On
+    /// every pass where the size is stable this is the identity, which is why it
+    /// costs nothing to hold to.
+    fn clamped_to(&self, area: Rect) -> Self {
+        Self {
+            frame: area,
+            body: self.body.intersection(area),
+            pane: self.pane.intersection(area),
+            leader: self.leader.map(|rect| rect.intersection(area)),
+            hint: self.hint.map(|rect| rect.intersection(area)),
+            status: self.status.intersection(area),
+        }
+    }
+
     /// Takes the two strips off the buffer's rows, bottom-up.
     ///
     /// The order is `8e`'s and it is load-bearing: the leader grid sits
@@ -4222,6 +4255,12 @@ fn draw(
     tree: Option<&Tree>,
     overlay: &Overlay<'_>,
 ) {
+    // **Against the buffer, not against the size the loop measured.** See
+    // [`Geometry::clamped_to`]: the rects arrive from a `term.size()` read
+    // before `autoresize()` ran, and a shrink between the two makes every rect
+    // below an out-of-bounds write. Identity on every pass where the size held.
+    let geometry = &geometry.clamped_to(frame.area());
+
     let painted = Painted {
         editor,
         marks: overlay.marks,
@@ -11731,5 +11770,74 @@ mod tests {
         assert_eq!(status, Rect::new(0, 0, 80, 1));
         let (body, status) = split(Rect::new(0, 0, 80, 0));
         assert!(body.is_empty() && status.is_empty());
+    }
+
+    /// **A rect laid out before a resize must never outlive its buffer.**
+    ///
+    /// The layout is computed from `term.size()` at the top of the pass and
+    /// `term.draw` runs hundreds of lines later, after ratatui's `autoresize()`
+    /// — whose own comment warns that shrinking "may OOB". A height shrink in
+    /// that window used to hand [`draw`] a `pane` taller than the buffer, and
+    /// nothing downstream clips it: `buffer_view`'s `set_cell` clips to the rect
+    /// it was passed rather than to the buffer, and `Buffer::set_stringn` clamps
+    /// `x` and never `y`. The write reaches `index_of` and panics the editor.
+    ///
+    /// Found by an adversarial read of the commit that introduced [`Geometry`],
+    /// not by the gate — every test in this repository renders at a size that
+    /// does not change mid-pass, so there was nothing for it to fail.
+    #[test]
+    fn a_layout_from_before_a_resize_never_reaches_outside_the_buffer() {
+        let measured = Rect::new(0, 0, 80, 24);
+        let mut geometry = crate::lay_out(measured);
+        // A leader hint and the unknown-key row both up: the deepest layout,
+        // and therefore the one with the most rects to get wrong.
+        geometry.take_strips(
+            &[phosphor_core::view::KeyHint {
+                key: phosphor_core::request::KeySeq("t".to_owned()),
+                verb: "theme".to_owned(),
+            }],
+            true,
+            &phosphor_ui::theme::Theme::phosphor_dark(),
+        );
+        assert!(
+            geometry.hint.is_some(),
+            "the strip is up, so there is a rect"
+        );
+
+        // The terminal shrank between the measurement and the draw.
+        let rendered = Rect::new(0, 0, 80, 20);
+        let clamped = geometry.clamped_to(rendered);
+
+        for (name, rect) in [
+            ("frame", clamped.frame),
+            ("body", clamped.body),
+            ("pane", clamped.pane),
+            ("leader", clamped.leader.unwrap_or_default()),
+            ("hint", clamped.hint.unwrap_or_default()),
+            ("status", clamped.status),
+        ] {
+            // **Empty rects are exempt, and that is the real invariant rather
+            // than a loosening.** `intersection` answers an empty rect when
+            // there is no overlap at all, and it keeps the stale origin while
+            // doing it — the strip that was at row 21 of a 24-row terminal
+            // comes back as `y: 21, height: 0`. Nothing writes through one:
+            // `buffer_view`'s render loops `0..area.height`, so zero rows is
+            // zero cells. What panics is a rect that *writes* outside the
+            // buffer, so that is what is asserted. The first draft of this test
+            // asserted the position of every rect and failed on exactly this.
+            if rect.is_empty() {
+                continue;
+            }
+            assert!(
+                rect.bottom() <= rendered.bottom() && rect.right() <= rendered.right(),
+                "`{name}` writes outside the buffer being rendered: {rect:?} \
+                 against {rendered:?}",
+            );
+        }
+
+        // And on the ordinary pass — the size held — it changes nothing, which
+        // is what makes holding to the contract free.
+        let same = crate::lay_out(measured);
+        assert_eq!(same.clamped_to(measured), same);
     }
 }
