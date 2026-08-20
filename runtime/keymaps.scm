@@ -1131,6 +1131,17 @@
 (keymap-set! "SPC j" (key/run (key/cmd "open-timeline")) "jj timeline" "normal")
 (keymap-set! "SPC f" (key/run (key/cmd "open-picker" "source" "files")) "files" "normal")
 
+;; vim's `CTRL-^` — back to the file you were in before this one, and again to
+;; come back. **two spellings, because the terminal decides which one arrives.**
+;; without the kitty protocol, ctrl+6 and ctrl+^ are the same byte (`0x1e`) and
+;; crossterm decodes it as `^`; with the protocol the terminal says which key
+;; was actually pressed and it arrives as `6`. binding one would work on one
+;; terminal and silently not on the other, which is `T027`'s whole subject.
+(keymap-set! "<C-^>" (key/run (key/cmd "open-alternate" "pane" (key/focused-pane)))
+             "the previous file" "normal")
+(keymap-set! "<C-6>" (key/run (key/cmd "open-alternate" "pane" (key/focused-pane)))
+             "the previous file" "normal")
+
 ;; **`:help` and `:repl` are deliberately not here.** 3c draws six rows and
 ;; those are the six; both surfaces are one ex command away, and a leader popup
 ;; that does not match its own drawing teaches the wrong thing.

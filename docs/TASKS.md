@@ -19,9 +19,9 @@ never executed and says so at the task.
 rulings came out of the manual half; three amend design docs and are tabled in
 [§5](IMPLEMENTATION-PLAN.md#5-decisions).
 
-**Window C is built and its mechanical half is green.** The `Action` vocabulary is 217
+**Window C is built and its mechanical half is green.** The `Action` vocabulary is 218
 capabilities generated from one table, the three doors are total functions over it, and the
-parity test walks all 651 door checks end to end. (`208`/`624` until `S3` added
+parity test walks all 654 door checks end to end. (`208`/`624` until `S3` added
 `Buffer::SetCase`, `209`/`627` until the repair window added `set-macro-recording`, `register`
 and `place-anchor`, `212`/`636` until `S4` added the three `ingest-` verbs the asynchronous
 LSP transport needs, `215`/`645` until `T104` added `insert-indent`, and `216`/`648` until
@@ -1169,7 +1169,7 @@ CP-0 settled the shape: **the input machine is ours.**
   > the keymap is written. One line in that file makes `MarkSeen` a head.
   >
   > **Third: the snapshot's own prose is now false in three places, and no lint sees it.**
-  > `crates/phosphor/tests/screen_6d.rs:213-217` (baked into
+  > `crates/phosphor/tests/screen_6d.rs:213-218` (baked into
   > `crates/phosphor/tests/snapshots/screen_6d__6d.snap:11-16`) says the mark-seen operator is
   > not bound, no bracket navigation is bound, and there is no `:c` ex command. All three were
   > true at the first gate and all three are false against the tree now —
@@ -1535,7 +1535,7 @@ is exact.
   > was* or *different from its neighbour*, which leaves §1 owning the hues and
   > `scripts/lint-no-colours.sh` unbothered. Pressed against a planted violation (`rank`'s
   > `ClaudeUnseen` raised above `Trouble`) and it fails with the two real hues off a real terminal,
-  > `48;2;217;123;108` demoted to `48;2;61;220;151`.
+  > `48;2;218;123;108` demoted to `48;2;61;220;151`.
   >
   > One incidental finding worth keeping: this session's statusline never draws the word `NORMAL`.
   > A server chip and an unseen count are enough for §11's ladder to contract the mode to `N`, so
@@ -3041,7 +3041,7 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   > - Files: `crates/phosphor-core/src/action.rs`, `crates/phosphor-steel/src/{float,view}.rs`,
   >   `crates/phosphor/src/main.rs`, `crates/phosphor/tests/loop_pty.rs`,
   >   `crates/phosphor-core/tests/surfaces.txt`, `scripts/lint-action-arms.sh`
-  > - Named units: 1 new capability (216 → **217**, 648 → **651** door checks), 4 door arms,
+  > - Named units: 1 new capability (216 → **218**, 648 → **654** door checks), 4 door arms,
   >   4 `Intent` variants, `Surface::Float`, `view::float`, `float::{surface, define_form,
   >   valid_surface_id, SurfaceError}`, 2 pty tests
   > - Verification: `just gate` green; the float composes from scheme with no Rust knowing its

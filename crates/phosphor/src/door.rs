@@ -270,7 +270,7 @@ impl Error for DoorError {
 /// takes `Cli::command()` and adds to it, so `--theme`, `--float` and the file
 /// argument keep one definition.
 ///
-/// The verbs are hidden from the top-level help rather than absent from it: 217
+/// The verbs are hidden from the top-level help rather than absent from it: 218
 /// subcommands would bury the four flags a person actually types, and a door you
 /// discover by name (`phosphor <verb> --help`) is the shape every multi-verb CLI
 /// already has. [`after_help`] says so in one line, with the count derived.
@@ -453,7 +453,7 @@ pub(crate) fn answer(call: &Call, runtime: Option<&mut dyn Evaluate>) -> Result<
 ///
 /// At `S2` there is no store, so every Action that touches one answers
 /// [`Refusal::NotYetImplemented`] carrying **its own row's task id** — derived,
-/// not listed, which is why 217 capabilities need no table here. The single
+/// not listed, which is why 218 capabilities need no table here. The single
 /// special case is the one capability whose implementation *is* a runtime rather
 /// than a store: scheme source needs a VM, and the VM is [`Evaluate`].
 fn apply(request: &Request, runtime: Option<&mut dyn Evaluate>) -> Outcome {
@@ -886,7 +886,7 @@ mod tests {
 
     #[test]
     fn the_host_flags_survive_the_extension() {
-        // One parser, not two: adding 217 subcommands must not cost `--theme`
+        // One parser, not two: adding 218 subcommands must not cost `--theme`
         // or the file argument, and a subcommand must not demand the file.
         let matches = parser(crate::Cli::command())
             .try_get_matches_from(["phosphor", "--theme", "tokyo-night", "src/main.rs"])

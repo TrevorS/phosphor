@@ -75,6 +75,7 @@ S3 T033 buffers
 S3 T033 close-buffer
 S3 T033 dirty-buffers
 S3 T033 keymap
+S3 T033 open-alternate
 S3 T033 open-file
 S3 T033 remove-keybinding
 S3 T033 save-all

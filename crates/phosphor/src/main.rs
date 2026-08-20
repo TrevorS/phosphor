@@ -55,7 +55,7 @@
 //! # `T023` — the CLI door, alongside the host
 //!
 //! [`door`] is the other half of this file's job and does not touch the loop at
-//! all. `phosphor --eval '(…)'` and the 217 generated capability verbs return
+//! all. `phosphor --eval '(…)'` and the 218 generated capability verbs return
 //! **before** [`Term`] is constructed: no alternate screen, no raw mode, no
 //! frame. That is a requirement, not an accident — `V006` seeds tape fixtures
 //! through `--eval` with no test-only backdoor, which needs the door to work
@@ -3076,6 +3076,14 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // the surprising one is the one that has to be said.
                         // The other is visible in the buffer, which is empty.
                         notice = note.or_else(|| fresh.then(|| new_file(&file)));
+                        // The file leaving the pane becomes the alternate, so
+                        // `CTRL-^` goes back to it. Here rather than in the
+                        // capability's arm because this is the branch that
+                        // knows a *different* file arrived: the `same` case
+                        // above never swaps, and an alternate set there would
+                        // make `CTRL-^` a no-op that points at the file you are
+                        // already in.
+                        editing.alternate = editing.file.take();
                         editing.file = Some(file);
                         surface = Surface::Buffer;
                         // The server hears about the swap in both directions:
@@ -4918,6 +4926,13 @@ struct Editing {
     /// `T041`'s store, shared with [`AppHost`] so the gutter, the statusline
     /// and the `region` queries cannot disagree about a file.
     store: Arc<store::Shared>,
+    /// The file that was open before this one — vim's alternate file, what
+    /// `CTRL-^` goes back to.
+    ///
+    /// Set by the loop when a *different* file takes the pane, never by the
+    /// arm that reads it: the swap is what creates an alternate, and the one
+    /// place that knows a swap happened is the one place that performs it.
+    alternate: Option<PathBuf>,
     /// How a picker's matcher says it has results this frame did not show.
     ///
     /// Held here because a session is opened from three places — the loop's
@@ -5119,6 +5134,7 @@ impl Editing {
             falling_through: false,
             signature: None,
             store,
+            alternate: None,
             wake,
             collapsed: BTreeSet::new(),
             picker: None,
@@ -5423,6 +5439,33 @@ impl Editing {
             Action::File(FileAction::OpenFile { path, at, .. }) => {
                 self.open = Some(path.clone());
                 self.open_at = *at;
+                done()
+            }
+            // **vim's `CTRL-^`.** The alternate file is the one you were in
+            // before this one, and pressing it twice puts you back — which is
+            // the whole of why it is worth a key: the two files you are moving
+            // between during an edit are almost never adjacent in any list.
+            //
+            // It is `open-file` with a path the *editor* supplies rather than
+            // the caller, which is why it needs a capability of its own: a
+            // keymap is data and cannot compute the path, and a door caller
+            // that knew it would not need this verb.
+            //
+            // Declines rather than doing nothing when there is nowhere to go.
+            // A key that silently no-ops is the shape `T016` was ticked with
+            // and `lint-action-arms` exists to catch; the first file of a
+            // session has no alternate and saying so is the honest answer.
+            Action::File(FileAction::OpenAlternate { .. }) => {
+                let Some(alternate) = self.alternate.clone() else {
+                    return declined("no alternate file — nothing else has been open yet");
+                };
+                self.open = Some(alternate);
+                // Deliberately no `open_at`: vim restores the alternate file's
+                // own last cursor position, and this build has nowhere to keep
+                // one per file. Landing at the top is the honest version of
+                // that until something does — `T030`'s journal is keyed per
+                // file and is where it would live.
+                self.open_at = None;
                 done()
             }
             // Not `NotYetImplemented`: the capability is built and the limit is

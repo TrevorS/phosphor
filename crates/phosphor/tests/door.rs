@@ -239,7 +239,7 @@ fn a_bare_phosphor_is_refused_by_the_terminal_rather_than_by_the_parser() {
 /// The host's own command line still parses with the generated verbs beside it.
 ///
 /// `--help` rather than an open, because opening would take the terminal and
-/// what is under test is the *parser*: 217 subcommands sit next to the host's
+/// what is under test is the *parser*: 218 subcommands sit next to the host's
 /// flags and clap has to keep telling them apart.
 #[test]
 fn the_hosts_flags_still_parse_beside_the_generated_verbs() {

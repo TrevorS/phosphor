@@ -2286,6 +2286,55 @@ mod driven {
         );
     }
 
+    /// **`CTRL-^` — the alternate file, and back again.**
+    ///
+    /// vim's most-used buffer key and this build did not have it. It is worth a
+    /// key rather than a picker row for the reason vim gives: the two files you
+    /// move between during one edit are almost never adjacent in any list, so
+    /// the thing you want is a toggle, not a search.
+    ///
+    /// **Pressed as `0x1e`, which is what the terminal actually sends.** Without
+    /// the kitty protocol ctrl+6 and ctrl+^ are the same byte and crossterm
+    /// decodes it as `^`; with the protocol the terminal distinguishes them and
+    /// it arrives as `6`. The keymap binds both spellings, and this harness runs
+    /// the legacy encoding — so a build that bound only `<C-6>` would pass a
+    /// keymap inspection and do nothing here.
+    #[test]
+    fn ctrl_caret_goes_to_the_alternate_file_and_back() {
+        let scratch = Scratch::new("alternate");
+        let runtime = copy_layer(&scratch.path);
+        let first = scratch.path.join("first.txt");
+        let second = scratch.path.join("second.txt");
+        fs::write(&first, "the first file\n").expect("a fixture");
+        fs::write(&second, "the second file\n").expect("a sibling");
+
+        let editor = Editor::open(&first, &scratch.state(), &runtime);
+
+        // Nothing has been open but this file, so there is nowhere to go and
+        // the key says so rather than doing nothing.
+        let refused = editor.press_until(b"\x1e", "no alternate file");
+        assert!(
+            shows(&refused, "no alternate file"),
+            "the first file of a session has no alternate; frame was: {refused}"
+        );
+
+        // Open the sibling, which makes `first.txt` the alternate.
+        editor.press_until(
+            format!(":edit {}\r", second.display()).as_bytes(),
+            "the second file",
+        );
+
+        // `CTRL-^` — back to where we were. **The grid, not the delta**: the
+        // two files share every word but one, so redrawing `first.txt` over
+        // `second.txt` rewrites a handful of cells and the sentence being
+        // waited for is never newly drawn in full.
+        drop(editor.shown_on_grid(b"\x1e", "the first file"));
+
+        // And again — the alternate is a toggle, not a stack.
+        drop(editor.shown_on_grid(b"\x1e", "the second file"));
+        editor.quit();
+    }
+
     /// A different operator on top of a pending one **aborts**.
     ///
     /// `dc` is not "change" — it is a sequence vim rejects, and this build used

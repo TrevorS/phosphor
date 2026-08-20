@@ -1522,16 +1522,49 @@ to it. That matters because it makes a fourth option exist, and a cheaper one th
 - **Make Tier 2 explicitly local-only** and take the job out. `docs/TASKS.md`'s three-tier table
   already says only Tier 1 gates CI; this would make the tooling agree with the table.
 
-*Recommendation: measure the first before ruling. Install a shared font on both sides, regenerate
-one screen — not the library — and read the number. If it lands inside the fuzz, CI gets a real
-change detector for the price of one regeneration. If it does not, the answer is the fourth option
-and the reason is then a measurement rather than an assumption, which is what this entry was
-missing when it was written an hour ago.*
+## Measured, 2026-08-19 — the first option fails, and it fails halfway
 
-*Failing that, the third or the fourth, and it is Teej's call: it is a judgement about what CI is
-for rather than about what is true. What argues against simply deleting the job is that the last
-two things to break here were the **tooling** rather than the pixels, and both were invisible for
-exactly as long as nothing ran.*
+The experiment this entry asked for was run on a throwaway branch: JetBrains Mono 2.304 installed
+on both machines, pinned by URL the way `vhs` and `ttyd` are; `_config.tape` switched to it; `9c`
+re-recorded on macOS; CI told to diff that one screen and nothing else. `fc-list` on the runner
+confirmed the font was found — `JetBrains Mono:style=Regular`.
+
+**The result: `849985 px beyond 0.6% tolerance`, against roughly 850,000 before.** Unchanged.
+
+**But look at the diff image and it is a different failure.** With Menlo the two panels held
+different *layouts* — a wider advance on the runner, so every line wrapped somewhere else. With
+the shared font the layouts are **identical**: same wrapping, same thirty-one rows, same columns.
+The font fixed the geometry completely.
+
+What is left is colour. Sampling the same pixel in each panel:
+
+    background    macOS srgb(48,56,49)    Linux srgb(8,15,10)
+    mode chip     macOS srgb(47,77,62)    Linux srgb(0,123,83)
+    dark text     macOS srgb(11,15,11)    Linux srgb(11,13,10)
+
+Dark pixels nearly agree and saturated ones do not: the macOS capture is washed out — lifted
+blacks, muted greens — and the Linux one is vivid. That is a **colour-management difference**, the
+capture on macOS going through a display profile that the runner has no equivalent for. It touches
+every non-black pixel, which is why the count did not move: the mismatch was never mostly about
+glyph shapes.
+
+No fuzz percentage bridges it. 0.6% exists to absorb antialiasing at glyph edges; this is a
+transform applied to the whole image.
+
+**A second difference the experiment surfaced**, worth knowing before anyone tries again: the
+statusline reads `rust-analyzer ✓` in the reference and `rust-analyzer ✗` on the runner, because
+the server is installed on one machine and not the other. Real content, not rendering, and it
+would need handling however the colour question is settled.
+
+*Ruling wanted: the third or the fourth. The first is measured and dead — a shared font is
+necessary and nowhere near sufficient, and the remaining term is not one this repository can
+control from a tape file. The second inherits the same colour problem the moment anyone compares
+across machines, which leaves it a two-platform library that only ever compares within a platform;
+that is the third option with extra images.*
+
+*What argues against simply deleting the job is that the last two things to break here were the
+**tooling** rather than the pixels, and both were invisible for exactly as long as nothing ran. So
+the third — one tape, capture only, no comparison — keeps that alarm and drops the noise.*
 
 **Not open: the local path.** `just tapes-diff` on a machine with the pinned tools reports
 **45 of 48 frames matched**, and the three that do not are named in `docs/TASKS.md`'s `CP-5`

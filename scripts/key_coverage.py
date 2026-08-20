@@ -72,6 +72,12 @@ PRESS_BYTES = 6
 NAMED = {
     "<S-tab>", "<cr>", "<del>", "<down>", "<end>", "<home>",
     "<left>", "<right>", "<tab>", "<up>",
+    # vim's `CTRL-^`, both spellings. A byte match cannot decide these for the
+    # opposite reason to the arrow keys: the two notations are **the same
+    # byte** (`0x1e`) without the kitty protocol, and which one the editor sees
+    # is the terminal's answer rather than the test's. Pressed by
+    # `ctrl_caret_goes_to_the_alternate_file_and_back`, which sends that byte.
+    "<C-^>", "<C-6>",
 }
 
 # Bindings that ship and that no test presses.

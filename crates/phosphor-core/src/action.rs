@@ -523,6 +523,10 @@ actions! {
             at: Option<Position> = "where to put the cursor",
             pane: PaneRef = "which pane it lands in",
         }
+        OpenAlternate = "open-alternate" [S3 / "T033" / Allow]
+            "opens the file you were in before this one — vim's `CTRL-^`" {
+            pane: PaneRef = "which pane it lands in",
+        }
         SaveBuffer = "save-buffer" [S3 / "T033" / Allow]
             "writes a buffer to disk, optionally under a new name" {
             target: Target = "which buffer",
