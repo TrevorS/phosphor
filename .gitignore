@@ -40,3 +40,8 @@
 # much of the right one.
 __pycache__/
 *.pyc
+
+# cargo-mutants scratch: a full run writes a copy of the tree per job here.
+# Never committed — `just mutants` is a measurement and its output is a
+# report you read, not an artefact anything asserts against.
+mutants.out*/

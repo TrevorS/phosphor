@@ -377,6 +377,56 @@ unused-deps *args:
     # scoping every `scripts/lint-*.sh` uses.
     cargo machete --with-metadata --skip-target-dir crates {{ args }}
 
+# Does the suite notice when the code changes? — cargo-mutants.
+#
+# **The planted violation, run everywhere at once.** Every lint in `scripts/`
+# and the golden journal in `tests/on_disk_format.rs` was proved by changing one
+# line and confirming a test went red. That is mutation testing done by hand, on
+# the line somebody already suspected; this asks the same question of every line
+# nobody suspects.
+#
+# The answer worth reading is the **survivors**: a `>` flipped to `>=`, a
+# `return` deleted, a boolean negated, and the suite still green. Each one is a
+# test worth writing or a line worth deleting.
+#
+# NOT in `gate` and NOT in CI, for the reason the measurements section above
+# gives: a full run is hours, the score moves with the timeout and the machine,
+# and a number like that gets raised until it means nothing. Scope it instead —
+# `just mutants --file crates/phosphor-core/src/store/region.rs` is the way this
+# is actually useful, one module at a time, on the module you are changing.
+#
+# **A non-zero exit means survivors, not an error.** cargo-mutants exits 2 when
+# any mutant lived, which is why this is a measurement and not a gate: the right
+# response to a survivor is to read it, and sometimes the answer is "that line
+# is unobservable and should go".
+#
+# Measured on one file when this landed — `store/region.rs`, 96 mutants in 2
+# minutes: 82 caught, 8 unviable, **6 missed**, among them `replace && with ||
+# in Regions::reanchor_in`. That is the shape of finding this produces: not a
+# score, a list of specific lines the suite cannot see.
+#
+# Configuration is `mutants.toml`, which says why `vendor/` and `fuzz/` are out.
+mutants *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{ justfile_directory() }}"
+    command -v cargo-mutants >/dev/null 2>&1 || {
+        echo "just mutants: cargo-mutants is not installed —"
+        echo "    cargo binstall cargo-mutants"
+        exit 1
+    }
+    cargo mutants {{ args }}
+
+# A long session, and what grows during it — the soak measurement.
+#
+# Runs the soak tests, which are `#[ignore]`d out of the ordinary suite because they
+# drive thousands of keystrokes through a real child editor and take far
+# longer than anything else here. They live in `loop_pty.rs` so they reuse that
+# harness rather than growing a second one. See their doc comments for what
+# they assert, and why it is a shape rather than a number of bytes.
+soak:
+    cargo nextest run -p phosphor --test loop_pty -E 'test(soak)' --run-ignored all --no-capture
+
 # The structural-lint seam (T005 + T006/T007). Every structural lint is one
 # executable script matching scripts/lint-*.sh — that glob is the entire
 # contract. This recipe runs all of them in sorted order and is the ONLY

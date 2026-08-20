@@ -1,0 +1,51 @@
+# cargo-mutants — does the suite notice when the code changes?
+#
+# **A measurement, not a gate**, and deliberately so: `just mutants` is not in
+# `gate` and not in CI, for the reason `justfile`'s measurements section gives
+# about `coverage` and `bench` — a number that moves with the machine, the
+# timeout, or an unrelated refactor teaches the team to stop reading it.
+#
+# # What it answers that nothing else here does
+#
+# This repository's discipline is the **planted violation**: change one line,
+# confirm a test goes red, revert. Every lint in `scripts/` was proven that way
+# and so was the golden journal in `tests/on_disk_format.rs`. That is exactly
+# what mutation testing is — applied by hand, one change at a time, to the line
+# whoever was working already suspected.
+#
+# `cargo mutants` asks it everywhere at once, including the lines nobody
+# suspects. The answer is a list of mutations that **survived**: a `>` flipped
+# to `>=`, a `return` deleted, a boolean negated, and 1332 tests staying green.
+# Each survivor is either a test worth writing or a line worth deleting, and
+# both are useful.
+#
+# # Why the exclusions
+#
+# `vendor/` is not ours — the two forks are `git subtree` copies and mutating
+# them measures upstream's test suite, which we do not ship.
+#
+# `fuzz/` needs nightly and has no test suite of its own to notice anything.
+#
+# Timeouts are the usual reason a mutants run is noise rather than signal: the
+# pty harness waits on a real child process with 30s deadlines, so a mutation
+# that makes the editor refuse a key does not fail fast — it hangs until the
+# harness gives up. The multiplier keeps a genuinely-hung mutant from being
+# reported as "caught by timeout", which would be a false positive in the
+# direction that flatters us.
+exclude_globs = [
+    "vendor/**",
+    "fuzz/**",
+]
+
+# A mutant is judged by the tests, and the tests here spawn processes. Baseline
+# × 5 rather than a constant: a constant is a wall clock and this file is meant
+# to be readable on a slow machine too.
+timeout_multiplier = 5.0
+minimum_test_timeout = 60
+
+# Skip functions whose bodies are unreachable-by-construction or pure plumbing:
+# a mutated `Debug` impl is a survivor that means nothing.
+exclude_re = [
+    "impl Debug",
+    "impl Display",
+]

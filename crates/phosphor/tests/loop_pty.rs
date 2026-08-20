@@ -2075,6 +2075,142 @@ mod driven {
     // * **Mouse.** `mouse_actions` handles three kinds — press, drag, wheel —
     //   and one test pressed the first two. The wheel had nothing.
 
+    // -----------------------------------------------------------------------
+    // Soak — what a long session grows
+    // -----------------------------------------------------------------------
+    //
+    // **The genre nothing here had.** Every other test in this file presses a
+    // handful of keys and asks what the frame says. None of them asks the
+    // question a person answers by leaving the editor open all day: does
+    // anything grow that should not?
+    //
+    // It is a real question for this build rather than a generic one. The
+    // editor holds a language server as a child process, nucleo's thread pool,
+    // an **append-only** undo journal and an append-only seen log, and three
+    // of those four are supposed to grow. So the assertion cannot be "memory is
+    // flat"; it has to be that growth is *bounded* — that the log compacts, and
+    // that nothing accumulates per keystroke without limit.
+    //
+    // `#[ignore]`d, and run by `just soak`. It drives thousands of keystrokes
+    // through a real child process, which is minutes rather than the seconds
+    // every other test here costs, and `CLAUDE.md`'s rule about measurements
+    // applies: a figure that moves with the machine has no business failing an
+    // ordinary build.
+
+    /// The child's resident set size in kilobytes, via `ps`.
+    ///
+    /// `ps` rather than anything cleverer because this needs one number from
+    /// another process on both macOS and Linux, and `rss=` is spelled the same
+    /// on both. Answers `None` if the process is gone, which the caller reads
+    /// as a failure worth naming rather than a zero worth comparing.
+    fn rss_kb(pid: u32) -> Option<u64> {
+        let out = Command::new("ps")
+            .args(["-o", "rss=", "-p", &pid.to_string()])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+    }
+
+    /// **A long session does not grow without bound.**
+    ///
+    /// Thousands of keystrokes of `xu` — delete a character, undo it — which
+    /// is the cycle that exercises the undo journal hardest: every iteration
+    /// appends records and every undo walks the tree.
+    ///
+    /// **Normal mode only, and no escape byte, which the first draft got
+    /// wrong.** It cycled `ix<esc>u`, written to the pty in one blob — and
+    /// `\x1b` immediately followed by `u` *is* the prefix of an escape
+    /// sequence, so the parser ate both. The editor stayed in insert and typed
+    /// four thousand characters onto line 1, which the final motion check
+    /// caught by finding `INSERT` and column 4201 on the statusline. A soak
+    /// that writes keys faster than a person does must not write any key whose
+    /// meaning depends on what follows it.
+    ///
+    /// **The assertion is a ratio, not a number of bytes.** A resident-set
+    /// figure is a wall clock in a costume: it moves with the allocator, the
+    /// machine, and whatever else the runner is doing. What does not move is
+    /// the shape — a session that accumulates per keystroke has a growth curve
+    /// that this ratio catches, and a session that compacts does not. Both
+    /// numbers are printed, because the number is the interesting part even
+    /// when the assertion passes.
+    ///
+    /// The editor is asked to draw at the end, and that is half the test: a
+    /// process that died at keystroke 3,000 would otherwise report a very
+    /// stable resident set.
+    /// One batch is written to the pty in a single call; the settle is per
+    /// batch. Two thousand `xu` cycles is four thousand keystrokes.
+    const CYCLES_PER_BATCH: usize = 100;
+    const BATCHES: usize = 20;
+
+    #[test]
+    #[ignore = "thousands of keystrokes through a real child — `just soak`"]
+    // The numbers are the deliverable. A measurement that only asserts a ratio
+    // and prints nothing tells you it passed and never what it measured, which
+    // is the half `just bench` exists to give — and `#[expect]` rather than
+    // `#[allow]` so deleting the print is a compile error rather than a quiet
+    // loss of the output.
+    #[expect(clippy::print_stdout, reason = "a measurement reports its numbers")]
+    fn a_soak_of_thousands_of_keystrokes_grows_within_a_bound() {
+        let scratch = Scratch::new("soak");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("soak.txt");
+        fs::write(&file, "alpha\nbravo\ncharlie\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let pid = editor.child.id();
+        editor.press_until(b"i", "INSERT");
+        editor.press_quietly(b"\x1b");
+
+        // **Written in batches, and settled between them rather than after
+        // every key.** `press_quietly` waits 250ms of quiet, which is right for
+        // a test asking what one keystroke did and catastrophic for one asking
+        // about five thousand: the first draft of this spent its whole runtime
+        // in that wait and never reached an assertion. A batch is written
+        // straight to the pty and the settle happens once per batch, which is
+        // also closer to what it is meant to imitate — somebody typing, not
+        // somebody pausing a quarter-second between characters.
+        let batch: Vec<u8> = b"xu".repeat(CYCLES_PER_BATCH);
+        let soak = |editor: &Editor| {
+            (&*editor.master)
+                .write_all(&batch)
+                .expect("the child takes the batch");
+            editor.settle();
+        };
+
+        // Warm up first: the early cycles pay for lazily-built caches, the
+        // syntax tree and the journal's first compaction, and charging those to
+        // the soak would report startup as a leak.
+        soak(&editor);
+        let warm = rss_kb(pid).expect("the child is alive after the warmup");
+
+        for _ in 0..BATCHES {
+            soak(&editor);
+        }
+        let after = rss_kb(pid).expect("the child is alive after the soak");
+
+        // Still drawing, which is the half a resident-set figure cannot say.
+        // `G` — the last line, which is the empty one after `charlie`'s newline.
+        // `landed_at` rather than a grid wait: `charlie` is already on screen,
+        // so waiting for it would return without the motion having happened.
+        drop(editor.landed_at(b"G", "4:1"));
+        editor.quit();
+
+        let cycles = CYCLES_PER_BATCH * BATCHES;
+        println!(
+            "soak: rss {warm} kB after warmup, {after} kB after {cycles} delete/undo cycles \
+             ({} keystrokes)",
+            cycles * 2
+        );
+        assert!(
+            after < warm * 3,
+            "resident set went {warm} kB -> {after} kB over {cycles} cycles. \
+             The journal is append-only and compacts, so growth is expected and \
+             unbounded growth is the defect — this is a ratio rather than a byte \
+             count for the reason the benchmarks give about figures that move \
+             with the machine"
+        );
+    }
+
     /// **The wheel scrolls, and the cursor stays where you left it.**
     ///
     /// `mouse_actions` answers a wheel with `View::Scroll` and nothing else,

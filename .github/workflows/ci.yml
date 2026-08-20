@@ -148,6 +148,43 @@ jobs:
         env:
           RUST_BACKTRACE: "1"
 
+  # **The other platform.** Every job above this one is `ubuntu-latest`, and
+  # phosphor is developed on macOS — so until this existed, neither authority
+  # ever saw what the other did.
+  #
+  # That is not a theoretical gap. It hid a real one: `Scratch` built its trees
+  # under `std::env::temp_dir()`, which is `/tmp` here and a 48-character
+  # `/var/folders/…/T` on macOS. A 110-character path in a 120-column statusline
+  # makes §11 shed the cursor position, so the same assertion passed on this
+  # runner and failed on a laptop — and the failure looked like a 30-second hang
+  # rather than a width problem. It was recorded as a product defect
+  # (`OPEN-QUESTIONS.md` §37) and stayed on the books for two windows.
+  #
+  # Unsharded, unlike the Linux legs: those are split four ways because a
+  # 2-vCPU runner made the suite the long pole, and this one runs beside them
+  # rather than in front of them — it only costs wall-clock if it is slower than
+  # the slowest Linux shard. Splitting it would spend four macOS runners to save
+  # nothing.
+  #
+  # Doctests are not repeated here. `cargo test --doc` is a second *compiler*
+  # invocation over the same sources, and rustdoc does not vary by platform in
+  # any way this repository depends on — shard 1 pays for it once.
+  test-macos:
+    name: nextest (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9.143
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - uses: Swatinem/rust-cache@v2
+      - run: just test-shard 1 1
+        env:
+          RUST_BACKTRACE: "1"
+
   # The name branch protection knows, kept.
   #
   # Sharding renames a job — a matrix always suffixes — and a required check
@@ -199,7 +236,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # The whole seam: every lint is one scripts/lint-*.sh script, and
       # `just lint` runs all of them. Nobody edits this workflow to add a lint —
-      # twenty exist now and not one of them changed a *step* here. (It said
+      # twenty-one exist now and not one of them changed a *step* here. (It said
       # "six" until the count was ten behind, which is the seam working and the
       # prose not: nothing recomputed a number written in a comment. Something
       # does now, and that is why the word above is the one thing a new lint

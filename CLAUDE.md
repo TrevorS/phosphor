@@ -22,12 +22,18 @@ Use the `just` recipes, not raw cargo — several of them differ from the obviou
 - `just fmt` (check) · `just fmt-fix` (in place) · `just build` · `just clippy` (warnings denied) ·
   `just deny` · `just vendor-diff` (bare, the full divergence — `gate` takes `--stat`) ·
   `just review` (`cargo insta review` for the golden frames)
-- **Measurements, deliberately not gates.** `just bench` (six benchmarks; asserts *shapes*, prints
-  numbers, because a figure that moves with the machine has no business failing a build — this
-  worktree saw absolute times swing 25× under concurrent load while every shape assertion held) ·
-  `just coverage` (per-file, worst first) · `just coverage-html` · `just unused-deps`. None of
-  these is in `gate` or CI, and a coverage floor should not be added: it reddens for reasons
-  unrelated to correctness and gets raised until it means nothing.
+- **Measurements, deliberately not gates.** `just bench` (nine bench targets; asserts *shapes*,
+  prints numbers, because a figure that moves with the machine has no business failing a build —
+  this worktree saw absolute times swing 25× under concurrent load while every shape assertion
+  held) · `just coverage` (per-file, worst first) · `just coverage-html` · `just unused-deps` ·
+  `just mutants` (cargo-mutants — the planted violation asked of every line at once; scope it with
+  `--file`, a whole run is hours) · `just soak` (thousands of keystrokes through a real child
+  editor; asserts growth is *bounded*, since the undo journal is append-only and is supposed to
+  grow). None of these is in `gate` or CI, and a coverage floor should not be added: it reddens for
+  reasons unrelated to correctness and gets raised until it means nothing.
+  **This said "six benchmarks" while nine `[[bench]]` targets were declared** — `doc_claims.py`
+  recomputes the task, capability, wave and lint counts and never this one, which is how it drifted
+  unseen through the audit that found it.
 - `just hack` — `cargo-hack --each-feature`. This one **does** gate, in its own CI job, because
   "feature set X does not compile" has exactly one right answer.
 - **The vendor helpers**, which the fork section below assumes: `just vendor-check` (each
@@ -123,7 +129,7 @@ Hygiene and truthfulness — each of these exists because the thing it catches a
 - **Fuzz targets** — the `fuzz/` crate's targets are checked against the parsers they claim.
 - **Counts nothing else recomputes** — the capability and parity counts (`209`/`627` went stale in
   six places at once), and the lint count in CI's own prose, which said "six" while sixteen
-  existed. **Twenty lints now** — and this paragraph itself said seventeen for a window after the
+  existed. **Twenty-one lints now** — and this paragraph itself said seventeen for a window after the
   eighteenth landed, because `doc_claims.py` section 6 globbed `.github/workflows/*.yml` and could
   not see the file every agent reads on entry. It reads this one too now, so the sentence you are
   reading is recomputed rather than remembered.
