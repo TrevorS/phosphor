@@ -2715,8 +2715,18 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   Placed at S6 because the transcript is the first surface that forces a second pane. If the
   files picker (`T046`) ever opens results into a *new* pane rather than replacing the current
   buffer, this moves to S5 — decide that when `T046` lands, and note the answer here.
-  *Done when:* two panes split, focus moves between them, and opening then closing a float
-  returns focus exactly where it was. *Needs:* T019, T015
+  *Done when:* two panes split, focus moves between them, opening then closing a float returns
+  focus exactly where it was, **and the four `[S6 / "T088"]` capabilities have arms** —
+  `split-pane`, `focus-pane`, `close-pane`, `resize-pane` (`action.rs:630-647`) — **plus the
+  `panes` query** (`query.rs:410`). *Needs:* T019, T015
+
+  > **The arms were added to this criterion on 2026-08-20, because the gate demands them and the
+  > sentence did not.** There are **zero** `Action::Pane` arms in `main.rs` today — the domain
+  > falls through to `NotYetImplemented`, which is why every pane verb already refuses by naming
+  > this task for free. The moment `T088` is ticked, `scripts/lint-action-arms.sh` requires an arm
+  > for every mutation a ticked task declares, so a `T088` that met the old *Done when* exactly
+  > would have ticked and immediately failed `just lint`. Found by the design workflow reading the
+  > declaration table against the binary.
 
 - [ ] **T089 · `TabBar`** 📌
   Chrome strip one of three (Design Language §5), untasked until now, and the plan already

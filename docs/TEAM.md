@@ -466,9 +466,21 @@ built on an unverified foundation.
 >   and a widget path that paints `BufferView` directly and floats a tree over it.
 >   `scripts/lint-node-kinds.sh` states the consequence — the buffer *"is not a node"*, and *"a
 >   tree-composed buffer is what a pane holds, which is `T088`"*.
-> * Closing it collapses the two paths into one, which also retires `Node::Prompt`'s scaffolding
->   ([OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) §13's recorded demolition date at `T058`) and the
->   `Buffer` and `Gutter` composition gaps.
+> * Closing it collapses the two paths into one, which retires the `Pane` and `Buffer`
+>   composition gaps.
+>
+>   **This sentence named `Gutter` and `Prompt` too, and was wrong about both — corrected
+>   2026-08-20 by the design workflow, against the tree.** A tree-composed buffer never composes
+>   a `Node::Gutter`: `interpret.rs:481-486` renders `BufferView` with its own
+>   `.state_column(resources.state_marks(*buffer))`, so the state column arrives inside the
+>   buffer arm and the standalone kind stays exactly as uncomposed as it was.
+>   `scripts/lint-node-kinds.sh` records `Gutter` with an **empty** blocking task and says so
+>   outright — *"it has no creditor… No task in the graph names such a surface"* — and a claim
+>   that `T088` closes it would have quietly given a creditor to an entry whose whole point is
+>   that it has none. And `Node::Prompt`'s demolition is `T058`'s, ruled at
+>   [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) §13 and recorded against `T058` in the same lint;
+>   `T088` removes the widget path that made a second draw path necessary, which is what makes
+>   the demolition possible rather than performing it.
 >
 > **So `T088` runs alone at the front**, and everything else is cheaper after it. Then `T050` and
 > `T089` in parallel — different crates entirely — and then the level-2 fan-out. `T060` runs last,
@@ -492,12 +504,27 @@ built on an unverified foundation.
 > **Risk, as flags rather than adjectives:** public API change **yes** (the pane and `Editing`
 > model) · data migration **no** · cross-module **yes** (`main.rs`, `phosphor-ui`,
 > `phosphor-agent`, `phosphor-core`, `runtime/`) · reversible **yes** · external blocker **yes**.
-> The blocker is named: `agent-client-protocol` 2.0.0 and `rmcp` 3.1.2 are in
-> [SPIKES.md](SPIKES.md)'s table and have **never been in this workspace's dependency graph**.
-> `tokio` already is, through `phosphor-buffer`'s LSP client, so `T050` adds two crates to an
-> existing async story rather than introducing one — but nothing has resolved or compiled either,
-> and `deny.toml`'s multiple-version ban on `ratatui-core` is the kind of thing that only speaks
-> up once they are in.
+> **~~The blocker is named…~~ Answered empirically, 2026-08-20 — and for `T088` the flag is `no`.**
+> `agent-client-protocol` 2.0.0 and `rmcp` 3.1.2 now **resolve, build, pass
+> `cargo clippy -D warnings`, and pass `cargo deny check` with `deny.toml` unmodified**, measured
+> by adding them to `phosphor-agent` in a full copy of the workspace against the committed
+> lockfile. `deny.toml`'s multiple-version ban on `ratatui-core` — *"the kind of thing that only
+> speaks up once they are in"* — spoke, and passed. The compiled graph grows **+45 crates**
+> (the lockfile grows +57; twelve are unselected optionals that never build), and the MSRV floor
+> is unchanged at 1.88 because that is exactly the highest `rust-version` among the newcomers.
+>
+> **What survives is a constraint on `T050`, not a blocker on the window.** `agent-client-protocol`
+> 2.0.0 **is not a tokio crate**: `async-io`, `async-process` and `blocking` are non-optional
+> dependencies and `tokio` appears only under `[dev-dependencies]`, with no feature to opt out.
+> That makes the root `Cargo.toml`'s *"the editor stays synchronous — this is the one place a
+> scheduler exists"* false the moment `T050` touches `AcpAgent` or the crate's `stdio` helper.
+> It stays true if `T050` spawns with `tokio::process` and connects through `ByteStreams` +
+> `tokio_util::compat` — upstream's own documented example, and the identical seam
+> `phosphor-buffer` already uses for `async-lsp`, which is why `tokio-util`'s `compat` feature is
+> already pinned. **Write that into `T050`'s acceptance criteria or it gets discovered the hard
+> way.** Two official-looking sibling crates are traps and are named in `T050`'s entry.
+>
+> And **`T088` needs neither transport**, which is the second reason it runs first.
 >
 > #### Two things the scout found that are not in any task
 >

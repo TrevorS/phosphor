@@ -48,6 +48,12 @@ Then:
   under-staffed, and the kickoff prompt. Each checkpoint splits what can be
   proven mechanically from what needs eyes on a real terminal, because most of this design
   language is perceptual and none of that half survives CI.
+- **[WINDOW-F-PLAN.md](WINDOW-F-PLAN.md)** — the implementation plan for `T088`, the pane
+  manager, which is the front of Window F and the largest refactor in the build. Twelve ordered
+  steps, each ending green, with the three rulings that come before any Rust. Produced by a
+  design workflow rather than by one reading, and it carries its own provenance note. **A plan,
+  not a specification**: `TASKS.md` and `TEAM.md` stay the authority, and where it and the tree
+  disagree the tree wins. Delete it when Window F closes — a stale plan is worse than none.
 - **[OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)** — what a checkpoint surfaced and nobody has ruled on
   yet, each with the evidence at `file:line`, the options, and a recommendation. It is a register,
   not a backlog: a ruling leaves this file for the decision log, `TASKS.md` or `TEAM.md`, and the
