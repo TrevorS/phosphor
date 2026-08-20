@@ -3531,11 +3531,20 @@ debt — but a reader looking for what this window did *not* close should find i
 - `scripts/lint-node-kinds.sh` reports *30 node kinds, 18 composed by the shipped configuration,
   12 recorded gaps (1 with no task that closes them)* — run 2026-08-14, after `S4` — and the one
   with no task is `Node::Gutter`: the state
+  > **Stale on both numbers, and this is the paragraph above's warning coming true.** Run
+  > 2026-08-20 in Window F's worktree: *30 node kinds, **21** composed, **9** recorded gaps (1
+  > with no task that closes them)*. Two of the three closures were `T088`'s collapse composing
+  > `Node::Pane` and `Node::Buffer`; the third moved before that and nobody noticed, which is the
+  > point. The one with no creditor is still `Node::Gutter` and the sentence below is still true
+  > of it.
+
   column **without** an editor around it, for a surface that wants it. `T031` built the column and
   `BufferView` ships it as its left column; no task in the graph names a surface that would
   compose the standalone kind. This is the same root as R3 in
   [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md), which asks how a terminal capability should reach that
-  kind's arm — a question about composing something nothing composes.
+  kind's arm — a question about composing something nothing composes. *(R3's capability half is
+  answered as of 2026-08-20: `Interpreter::fill` is the channel, and the `Node::Gutter` arm reads
+  it. The composition half is untouched.)*
 
 That lint is also why the window ran before `S4` rather than after: `Completion` and
 `Signature` were in its recorded gaps when it was written, against `T038` and `T039`. So the day

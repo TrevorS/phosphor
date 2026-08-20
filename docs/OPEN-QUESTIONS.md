@@ -2278,6 +2278,17 @@ only what is left cannot tell you whether the rest was done or forgotten.
   and this kind is that column **without** the editor, for a surface that wants it — and no task
   in the graph names such a surface. So R3 is asking how a composition should reach a capability
   for a node kind nothing composes. Whoever picks it up should decide the second question first.
+  > **The smaller half is CLOSED, 2026-08-20, by `T088`'s collapse — and it was closed for
+  > `Node::Buffer`'s sake rather than for this one's.** The frame loop composes the buffer now
+  > (`Node::Pane` holding `Node::Buffer`), and the arm that draws a composed buffer took
+  > `Fill::Block` by default, so collapsing the widget path would have un-degraded §8 silently.
+  > The fix is `Interpreter::fill` — a builder on the interpreter, **not** a prop on the node —
+  > and `Node::Gutter`'s arm reads it too, so the terminal capability reaches that arm now and its
+  > comment says where from. The answer this entry asked for is therefore *"a host-side builder,
+  > not a view-tree change"*, which is why it did not need `spine`. **The larger half stands**:
+  > nothing composes `Node::Gutter`, its RECORDED entry still has an empty creditor, and `T088`
+  > deliberately did not give it one — a tree-composed `Node::Buffer` draws the state column
+  > itself, so composing a gutter beside it would draw the column twice.
 - **R13 · PARTIAL.** Every *component* of `6d`'s sentences is now in the live keymap — `gs` as an
   operator, the four nouns as object rows, `]u`/`[u` as sequence rows, and `:c` over a range —
   and `help_narrows_to_the_agent_objects_topic` reads the four nouns off a real frame. What is

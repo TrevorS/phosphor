@@ -71,11 +71,13 @@
 #   * A kind composed from the REPL, or from a user's own `.scm`. This is about
 #     what we *ship*, the same way the Action lint is about what the binary
 #     applies. `view/picker` typed at `λ` is a feature, not a composition.
-#   * A kind reached some way other than a node — `Node::Buffer` and
-#     `Node::Gutter` are the live examples, where the buffer and its state column
-#     are on screen every frame because `draw` renders `BufferView` straight into
-#     the body area, outside the tree entirely. That is why every record below
-#     says what is *true* rather than just "not yet".
+#   * A kind reached some way other than a node — `Node::Gutter` is the live
+#     example, where the state column is on screen every frame because
+#     `BufferView` draws it as its own left column, outside the tree entirely.
+#     That is why every record below says what is *true* rather than just
+#     "not yet". `Node::Buffer` was the other one and stopped being: `T088`'s
+#     collapse deleted the widget path, so the buffer is a composition now and
+#     the column arrives inside it.
 #
 # TWO TRAPS THIS SHAPE INVITES, both hit while writing it.
 #
@@ -117,19 +119,16 @@ import sys
 # those are the entries worth reading twice.
 # ---------------------------------------------------------------------------
 RECORDED = {
-    "Pane": ("T088", "There is one pane and it is implicit: `draw` lays out a body area and a "
-                     "statusline row and renders into them. `T088` is the split/focus model "
-                     "itself — *\"two panes split, focus moves between them\"* — and it is the "
-                     "first thing that has to say which pane a node belongs to."),
+    # `Pane` and `Buffer` were recorded here against `T088` and are gone: the
+    # frame loop composes `Node::Pane { … child: Node::Buffer { … } }` and
+    # `draw` renders it, so the widget path that drew `BufferView` outside the
+    # tree no longer exists. Deleted in the commit that landed the composition,
+    # because this lint fails four ways on a stale row and one of them is
+    # "the shipped configuration composes it now".
     "TabBar": ("T089", "*\"Appears only at 2+ panes\"* (Design Language §5), and there is one "
                        "pane until `T088`. The interpreter defers this tag too, so nothing "
                        "would draw it if something composed it."),
-    "Buffer": ("T088", "The buffer is on screen every frame and is not a node: `draw` renders "
-                       "`BufferView` straight into the body area, outside the tree. A "
-                       "tree-composed buffer is what a pane holds, which is `T088`. This is the "
-                       "`set-soft-wrap` shape — reachable, working, and unreachable through the "
-                       "protocol that names it."),
-    "Gutter": ("", "Same as `Buffer`, and it has no creditor. The state column ships as "
+    "Gutter": ("", "Same as `Buffer` was, and it has no creditor. The state column ships as "
                    "`BufferView`'s left column — `T031` is ticked and built it — and this kind "
                    "is the column *without* the editor, for a surface that wants it. No task in "
                    "the graph names such a surface, so nothing closes this entry. The "
@@ -137,7 +136,11 @@ RECORDED = {
                    "composition alone. **`T045`'s picker preview was checked and is not it**: "
                    "`2a` draws that pane as diff lines, not as a buffer with a state column, so "
                    "the preview is `Node::Diff`'s shape (`T063`). Recorded by the pre-window "
-                   "scout because the guess is plausible and the drawing settles it."),
+                   "scout because the guess is plausible and the drawing settles it. **`T088`'s "
+                   "collapse was checked and is not it either**: a tree-composed `Node::Buffer` "
+                   "renders `BufferView` with its own `.state_column(…)`, so the pane got the "
+                   "column without composing this kind, and composing one beside it would draw "
+                   "the column twice."),
     "Spinner": ("T051", "Composed by nothing, and yet a spinner does turn: `Interpreter::session` "
                         "renders it inside `Node::Session`'s own arm, off that node's `since` and "
                         "the frame clock. The standalone kind is for a surface other than the "

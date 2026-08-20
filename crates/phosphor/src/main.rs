@@ -165,10 +165,10 @@ use phosphor_core::language::{self, Languages};
 use phosphor_core::query::{Answer, Answers, Query, QueryError, RegionQuery, Revision};
 use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
-    AcceptHow, Actor, AnchorId, Binding, CharRange as SignatureRange, Completion as WireCompletion,
-    EditMode, FoldState, KeySeq, LanguageId, Position, PromptKind, RegionFilter, RegionId,
-    RegisterName, Seek, SelectionKind, Sequence, Signature as WireSignature, SourceId, Span,
-    Target, TextObject,
+    AcceptHow, Actor, AnchorId, Binding, BufferId, CharRange as SignatureRange,
+    Completion as WireCompletion, EditMode, FoldState, KeySeq, LanguageId, PaneId, PaneKind,
+    Position, PromptKind, RegionFilter, RegionId, RegisterName, Seek, SelectionKind, Sequence,
+    Signature as WireSignature, SourceId, Span, Target, TextObject,
 };
 // `Scope` is already the input table's (`keymaps.scm`'s normal/insert/visual),
 // and a second one under the same name in a 9,000-line file is a trap rather
@@ -192,7 +192,7 @@ use phosphor_steel::runtime::Runtime;
 use phosphor_steel::source;
 use phosphor_steel::status::{self, ComposeError, StatusFile, StatusVm};
 use phosphor_term::{Frame, KeyboardProtocol, Term};
-use phosphor_ui::buffer_view::{self, BufferView, Editor, StateMark, editor_area};
+use phosphor_ui::buffer_view::{self, Editor, StateMark, editor_area};
 use phosphor_ui::diagnostics::{DiagnosticsVm, RowPolicy, RowScope};
 use phosphor_ui::float::{
     self, Anchor, CompletionItemVm, CompletionList, CompletionVm, Float, FloatBody, FloatFooter,
@@ -2517,7 +2517,14 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // `init.scm` sets `soft-wrap` at boot and `(set-option! …)` can change
         // it at the REPL, so it is read per frame rather than once: the option
         // is the editor layer's, and the flag is the override.
-        if cli.soft_wrap || host.flag("soft-wrap") == Some(true) {
+        //
+        // Bound rather than tested in place because the composition below
+        // needs the same answer: `Node::Buffer`'s `soft_wrap` prop is the
+        // request, and this is where the request is honoured. Two reads of
+        // `host.flag` could disagree inside one frame — the VM runs between
+        // them.
+        let soft_wrap = cli.soft_wrap || host.flag("soft-wrap") == Some(true);
+        if soft_wrap {
             // Free when the width has not changed, and it moves no viewport.
             soft_wrap::wrap_to(&mut editing.editor, geometry.body);
         }
@@ -2667,40 +2674,47 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             status_cache.invalidate();
         }
 
-        // What Steel composed, if this surface is composed rather than wired.
+        // What the interpreter draws this frame. **One tree, always** — the
+        // buffer is a `Node::Pane` holding a `Node::Buffer` now rather than a
+        // widget `draw` rendered outside the tree, so there is no frame
+        // without a composition and nothing left for a second draw path to do.
+        //
         // `T079`'s interpreter draws it; nothing here knows a colour.
-        let tree = match (&surface, &boot) {
-            (Surface::Repl, _) => Some(repl.frame()),
-            // Over the buffer rather than instead of it: the root is empty and
-            // the float dims what the widgets already painted (§9).
-            (Surface::Boot, Some(boot)) => Some(Tree::new(Node::Empty {}).with_float(boot.clone())),
-            // `6d`, the same way: an empty root is a float over what the
-            // widgets painted, so the buffer and the statusline stay behind it
-            // and §9 dims them.
-            (Surface::Help, _) => help_page
-                .as_ref()
-                .map(|float| Tree::new(Node::Empty {}).with_float(float.clone())),
-            // `T093`. Same shape as the three above and deliberately so: a
-            // surface the editor layer composed is drawn by the interpreter
-            // like any other tree, which is what lets `T048`'s `:arch` add
-            // zero lines to `phosphor-ui`.
-            (Surface::Float, _) => open_float
-                .as_ref()
-                .map(|float| Tree::new(Node::Empty {}).with_float(float.clone())),
-            // `T038`, `T039` — the completion list and signature help, as
-            // floats over the buffer you are still typing into. Same shape as
-            // the two above and for the same reason: `Mood::Passive` *"is not
-            // in front of anything"* (§9), so an empty root is what leaves the
-            // code at full strength behind it.
-            // `T045`, and the same empty-root shape as the four above: the
-            // picker is a float over the buffer, so §9 dims the code behind it
-            // and `2a`'s screen is what you get.
-            (Surface::Picker, _) => editing
-                .picker
-                .as_ref()
-                .map(|session| Tree::new(Node::Empty {}).with_float(picker_float(session))),
-            (Surface::Buffer, _) => passive_float(&editing),
-            _ => None,
+        let screen = if matches!(surface, Surface::Repl) {
+            // `6b` composes its own statusline, so it owns the whole frame —
+            // and it is the only surface that does.
+            Composed::Frame(repl.frame())
+        } else {
+            // Over the buffer rather than instead of it, which is what §9's
+            // dim means: these five hang off the pane the host composed, and
+            // each used to hang off an empty root standing in for the widgets
+            // that painted underneath.
+            let float = match (&surface, &boot) {
+                (Surface::Boot, Some(boot)) => Some(boot.clone()),
+                // `6d`, the same way: the buffer and the statusline stay
+                // behind it and §9 dims the first of the two.
+                (Surface::Help, _) => help_page.clone(),
+                // `T093`. Same shape as the two above and deliberately so: a
+                // surface the editor layer composed is drawn by the
+                // interpreter like any other tree, which is what lets `T048`'s
+                // `:arch` add zero lines to `phosphor-ui`.
+                (Surface::Float, _) => open_float.clone(),
+                // `T045`: the picker is a float over the buffer, so §9 dims
+                // the code behind it and `2a`'s screen is what you get.
+                (Surface::Picker, _) => editing.picker.as_ref().map(picker_float),
+                // `T038`, `T039` — the completion list and signature help, as
+                // floats over the buffer you are still typing into. Same shape
+                // as the three above and for a different reason:
+                // `Mood::Passive` *"is not in front of anything"* (§9), so the
+                // code stays at full strength behind this one.
+                (Surface::Buffer, _) => passive_float(&editing),
+                _ => None,
+            };
+            let tree = Tree::new(one_pane(THE_BUFFER, soft_wrap));
+            Composed::Pane(match float {
+                Some(float) => tree.with_float(float),
+                None => tree,
+            })
         };
         let mut floats = FloatSlot::empty();
         if let Surface::Fixture(mood) = surface {
@@ -2829,7 +2843,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 &theme,
                 &geometry,
                 &floats,
-                tree.as_ref(),
+                &screen,
                 &overlay,
             );
         })?;
@@ -3666,6 +3680,89 @@ fn session_buffer(repl: &Repl, theme: &Theme) -> Result<Editor, Box<dyn Error>> 
 // The frame
 // ---------------------------------------------------------------------------
 
+/// The one buffer, until `T088` makes a [`BufferId`] name a choice.
+///
+/// [`Painted::editor`] resolves every id to the buffer that is on screen, so
+/// the number here is arbitrary and the *naming* is not: a composition has to
+/// say which buffer it holds, and until there are two the honest answer is the
+/// only one there is. The literal moves into `Buffers` when the map lands.
+const THE_BUFFER: BufferId = BufferId(1);
+
+/// The one pane, on the same terms as [`THE_BUFFER`].
+///
+/// `PaneId`'s own declaration reads *"a pane in the split tree (`T088`)"*, and
+/// this is the first line in the binary to write one down. The split tree is
+/// still a constant.
+const THE_PANE: PaneId = PaneId(1);
+
+/// The host's frame: one pane, holding the buffer.
+///
+/// **The composition `scripts/lint-node-kinds.sh` recorded as owed** — two
+/// rows, `Pane` and `Buffer`, both against `T088`, both deleted in the commit
+/// that added this function. The buffer was on screen every frame and was not
+/// a node: `draw` rendered `BufferView` straight into the body area, outside
+/// the tree, which is the *"reachable, working, and unreachable through the
+/// protocol that names it"* shape the record described.
+///
+/// **`Node::Gutter` is deliberately not composed here**, and the record's
+/// empty creditor stays empty. A `Node::Buffer` draws the state column itself
+/// — `interpret.rs`'s arm calls `.state_column(resources.state_marks(…))` —
+/// so composing a gutter beside it would draw the column twice and would give
+/// a creditor to the one entry whose whole point is having none.
+///
+/// `soft_wrap` is what the option says this frame, not what the editor was
+/// last wrapped to. The prop is a **request**: `Resources`' own doc says it
+/// *"cannot be honoured from here"* because re-wrapping needs `&mut Editor`,
+/// so the loop applies it above and the node reports it. Saying `false` while
+/// the loop wraps would make the tree lie about the frame it composed.
+fn one_pane(buffer: BufferId, soft_wrap: bool) -> Node {
+    Node::Pane {
+        pane: THE_PANE,
+        holds: PaneKind::Buffer,
+        focused: true,
+        child: Child::new(Node::Buffer { buffer, soft_wrap }),
+    }
+}
+
+/// What the interpreter draws this frame, and how much of the frame it owns.
+///
+/// **The discriminator used to be the tree's own shape** — `draw` read an
+/// empty root as *"a float over what the widgets painted"* and anything else
+/// as *"this surface owns the frame"*. That reading died with the widget path:
+/// the host's frame has a [`Node::Pane`] at its root now, and a shape test
+/// would have read it as a whole-frame surface and drawn it over the
+/// statusline. Which is not a fact about the tree at all — it is a fact about
+/// who composed it — so it is spelled rather than sniffed.
+#[derive(Debug)]
+enum Composed {
+    /// A surface the editor layer composed as a whole frame — `6a`/`6b`'s
+    /// REPL, whose own doc calls [`Repl::frame`] *"the whole of `6b`: the
+    /// surface, and the statusline under it."* It draws its own chrome, so the
+    /// host draws none: no strips, no statusline, no cursor.
+    Frame(Tree),
+    /// The host's frame: [`one_pane`], with whatever float this surface hangs
+    /// over it. The two strips, the statusline and the cursor are the host's,
+    /// around it.
+    Pane(Tree),
+}
+
+/// §8's degradation, decided once per frame.
+///
+/// `crossterm` drops a background colour on a `NO_COLOR` terminal where it
+/// writes the escape, so a state bar — one cell of background and no glyph —
+/// comes out blank and the unseen markers disappear.
+/// `phosphor_ui::gutter::state_cell` has always known how to draw `▎` instead;
+/// nothing selected it, so §8's fallback was unreachable and `V009`'s degraded
+/// capture is what made that visible.
+///
+/// The capability question is `phosphor-term`'s: `phosphor-ui` takes
+/// `ratatui-core` only and reads no environment, deliberately. A function
+/// rather than two lines inside [`draw`] so the choice is testable without a
+/// terminal — the read itself is `phosphor_term::colour_available`'s.
+const fn state_fill(colour: bool) -> Fill {
+    if colour { Fill::Block } else { Fill::Marker }
+}
+
 /// Buffer area above, statusline on the last row — the layout every `CP-1`
 /// mockup has, and the same split `T018`'s golden frames use.
 fn split(area: Rect) -> (Rect, Rect) {
@@ -3725,8 +3822,8 @@ struct Geometry {
     /// The buffer's rows **before** the strips come off them. What the loop
     /// measures a wrap width, a scroll and a mouse hit test against.
     body: Rect,
-    /// The buffer's rows **after** them: what `BufferView` is drawn into, what
-    /// a float dims, and what the cursor is placed inside.
+    /// The buffer's rows **after** them: what [`one_pane`]'s tree is rendered
+    /// into, what a float dims, and what the cursor is placed inside.
     pane: Rect,
     /// `3c`'s leader grid, when a prefix is half-typed and its rows fit.
     leader: Option<Rect>,
@@ -4117,7 +4214,13 @@ fn signed(signature: phosphor_buffer::lsp::Signature) -> WireSignature {
 /// the same cell and §9 allows one float; the list is the one the next
 /// keystroke acts on, and a signature line hidden under it comes back when the
 /// list closes because nothing here discards it.
-fn passive_float(editing: &Editing) -> Option<Tree> {
+///
+/// **It returns the float and not a tree.** It used to hang one off an empty
+/// root, because an empty root was how a float said *"over what the widgets
+/// painted"*; the widgets are gone and the pane underneath is a composition,
+/// so the caller hangs this over [`one_pane`] instead. Four other surfaces
+/// took the same shape and changed the same way.
+fn passive_float(editing: &Editing) -> Option<ViewFloat> {
     let body = if editing.completion.is_some() {
         Node::Completion {}
     } else if editing.signature.is_some() {
@@ -4125,7 +4228,7 @@ fn passive_float(editing: &Editing) -> Option<Tree> {
     } else {
         return None;
     };
-    Some(Tree::new(Node::Empty {}).with_float(ViewFloat::new(Mood::Passive, body)))
+    Some(ViewFloat::new(Mood::Passive, body))
 }
 
 /// What the host lends the interpreter for one frame (`T038`, `T039`, `T040`).
@@ -4167,11 +4270,11 @@ impl Resources for Painted<'_> {
     /// than one and what makes a `BufferId` name anything; until then every id
     /// resolves to the buffer that is on screen, which is the honest answer to
     /// *"the editor behind this id"* in an editor with one.
-    fn editor(&self, _buffer: phosphor_core::request::BufferId) -> Option<&Editor> {
+    fn editor(&self, _buffer: BufferId) -> Option<&Editor> {
         Some(self.editor)
     }
 
-    fn state_marks(&self, _buffer: phosphor_core::request::BufferId) -> &[StateMark] {
+    fn state_marks(&self, _buffer: BufferId) -> &[StateMark] {
         self.marks
     }
 
@@ -4231,10 +4334,23 @@ struct Overlay<'a> {
     picker: Option<&'a PickerVm>,
 }
 
-/// One frame: buffer, the strips over it, then the statusline.
+/// One frame: the pane, the strips over it, then the statusline.
+///
+/// **There is one render of the surface and no widget.** The buffer arrives as
+/// [`Composed::Pane`]'s tree — a `Node::Pane` holding a `Node::Buffer` — and
+/// `draw` renders it into the rect [`Geometry`] gave it. It used to render
+/// `BufferView` straight into that rect and then float a second tree over the
+/// result, which is the *"a kind drawn by the interpreter and composed by
+/// nobody"* shape `scripts/lint-node-kinds.sh` recorded against `T088`.
+///
+/// What is left is not a second path: the two strips and the statusline are
+/// chrome the host lays out around whatever pane it is holding, and every one
+/// of them is already a composed tree. [`Composed::Frame`] is the one branch,
+/// and it is a branch about ownership rather than about drawing — a surface
+/// that composes its own statusline must not be given a second one.
 ///
 /// The order is `8d`'s — [`FloatSlot::render`] dims what is behind it, so it
-/// runs after the buffer and over the buffer's area only. The statusline never
+/// runs after the pane and over the pane's area only. The statusline never
 /// dims: §9's dim means "behind", and chrome is not behind anything.
 ///
 /// **The two strips take rows from the buffer rather than covering it**, which
@@ -4252,7 +4368,7 @@ fn draw(
     theme: &Theme,
     geometry: &Geometry,
     floats: &FloatSlot<'_>,
-    tree: Option<&Tree>,
+    composed: &Composed,
     overlay: &Overlay<'_>,
 ) {
     // **Against the buffer, not against the size the loop measured.** See
@@ -4269,12 +4385,25 @@ fn draw(
         picker: overlay.picker,
     };
 
-    // A surface composed as a view tree owns the whole frame — `6b` draws its
-    // own statusline, so the widgets below would be drawing it twice.
-    if let Some(tree) = tree.filter(|tree| !matches!(tree.root, Node::Empty { .. })) {
-        Interpreter::new(theme, &painted).render(tree, geometry.frame, frame.buffer_mut());
-        return;
-    }
+    // **§8's degradation, asked for once for the whole tree.** It reached
+    // `BufferView` directly while the host drew the widget; the arm that draws
+    // a composed `Node::Buffer` takes `Fill::Block` by default, so the
+    // collapse had to carry the capability across or put the blocks back —
+    // blank cells on a `NO_COLOR` terminal, with nothing on screen to say so.
+    // See [`Interpreter::fill`] for why it is a builder and not a prop.
+    let interpreter =
+        Interpreter::new(theme, &painted).fill(state_fill(phosphor_term::colour_available()));
+
+    let tree = match composed {
+        // A surface composed as a whole frame owns it — `6b` draws its own
+        // statusline, so the chrome below would be drawing it twice, and its
+        // own cursor, so the block at the end would be placing a second one.
+        Composed::Frame(tree) => {
+            interpreter.render(tree, geometry.frame, frame.buffer_mut());
+            return;
+        }
+        Composed::Pane(tree) => tree,
+    };
 
     // The strips, bottom-up: the leader grid sits directly above the
     // statusline, the hint between it and the code. Both rects were taken off
@@ -4282,29 +4411,17 @@ fn draw(
     // them.
     let hint_row = geometry.hint.zip(overlay.hint);
 
-    // The state column is empty on purpose: §3's marks are a store query
-    // (`T041`, S5) and there is no store. The column is still reserved, which
-    // is the half of the 3-column contract S1 can be held to.
-    // **§8's degradation, asked for.** `crossterm` drops a background colour on
-    // a `NO_COLOR` terminal where it writes the escape, so a state bar — one
-    // cell of background and no glyph — comes out blank and the unseen markers
-    // disappear. `phosphor_ui::gutter::state_cell` has always known how to draw
-    // `▎` instead; nothing selected it, so §8's fallback was unreachable and
-    // `V009`'s degraded capture is what made that visible.
+    // The pane, and whatever float this surface hangs over it — `T021`'s boot
+    // report, `T097`'s help page, `T045`'s picker, `T038`'s completion list.
+    // One call: the interpreter draws the root and then the float over the
+    // same rect, which is where the float has always gone. **Over
+    // `geometry.pane` and not `geometry.frame`**, so §9's dim reaches the code
+    // and not the statusline under it — panes are what a float is in front of.
     //
-    // The capability question is `phosphor-term`'s: `phosphor-ui` takes
-    // `ratatui-core` only and reads no environment, deliberately.
-    let fill = if phosphor_term::colour_available() {
-        Fill::Block
-    } else {
-        Fill::Marker
-    };
-    frame.render_widget(
-        BufferView::new(editor, theme)
-            .state_column(overlay.marks)
-            .fill(fill),
-        geometry.pane,
-    );
+    // The state column is empty on the frames where §3's marks have no source;
+    // the column is still reserved, which is the half of the 3-column contract
+    // that holds with no store behind it.
+    interpreter.render(tree, geometry.pane, frame.buffer_mut());
     if let Some((row, hint)) = hint_row {
         let strip = Tree::new(unknown_key::strip(
             hint.clone(),
@@ -4318,11 +4435,6 @@ fn draw(
             hints: overlay.leader.to_vec(),
         });
         Interpreter::new(theme, &NoResources).render(&strip, row, frame.buffer_mut());
-    }
-    // A tree with an empty root is a float over what the widgets painted —
-    // `T021`'s boot report, `T097`'s help page, and `T038`'s completion list.
-    if let Some(tree) = tree {
-        Interpreter::new(theme, &painted).render(tree, geometry.pane, frame.buffer_mut());
     }
     floats.render(geometry.pane, frame.buffer_mut(), theme);
     let chrome = overlay.chrome;
@@ -11839,5 +11951,64 @@ mod tests {
         // is what makes holding to the contract free.
         let same = crate::lay_out(measured);
         assert_eq!(same.clamped_to(measured), same);
+    }
+
+    /// **The two kinds `scripts/lint-node-kinds.sh` recorded as owed to
+    /// `T088`, in one node.** The lint checks that *something* composes them;
+    /// this checks the shape, because a `Node::Pane` around anything at all
+    /// would satisfy the lint and only a pane around the buffer is a frame.
+    ///
+    /// `soft_wrap` is asserted in both positions on purpose: it is a request
+    /// the interpreter reports rather than honours (`Resources`: *"cannot be
+    /// honoured from here"*), so a hardcoded `false` would compile, draw
+    /// correctly, and quietly make the tree lie about the frame it composed.
+    #[test]
+    fn the_host_frame_is_a_pane_around_the_buffer() {
+        for soft_wrap in [false, true] {
+            let phosphor_core::view::Node::Pane {
+                pane,
+                holds,
+                focused,
+                child,
+            } = crate::one_pane(crate::THE_BUFFER, soft_wrap)
+            else {
+                panic!("the host's frame is a pane");
+            };
+            assert_eq!(pane, crate::THE_PANE);
+            assert_eq!(holds, phosphor_core::request::PaneKind::Buffer);
+            assert!(focused, "one pane, and keystrokes go to it");
+            assert_eq!(
+                child.node(),
+                &phosphor_core::view::Node::Buffer {
+                    buffer: crate::THE_BUFFER,
+                    soft_wrap,
+                },
+                "the pane holds the buffer, and carries the wrap the loop applied"
+            );
+        }
+    }
+
+    /// §8's degradation, at the binary's end of it.
+    ///
+    /// The whole path is: `NO_COLOR` → `phosphor_term::colour_available` →
+    /// this → `Interpreter::fill` → the `Node::Buffer` arm →
+    /// `BufferView::fill` → `gutter::state_cell`. Three of those links are
+    /// covered by tests that name them — `the_fill_reaches_a_tree_composed_buffer`
+    /// in `phosphor-ui`'s interpreter and
+    /// `the_degraded_state_bar_carries_its_hue_in_a_glyph` in its widget — and
+    /// this is the one the collapse added: the frame loop had been passing the
+    /// answer straight to a widget it no longer draws.
+    ///
+    /// **`tapes/2a-degraded-nocolor.png` is the end-to-end proof and it is one
+    /// capture out of fifty** — measured 2026-08-20 by deleting the fill at
+    /// each link in turn and re-capturing: that screen mismatches by 515 px,
+    /// and `1a-degraded-nocolor` does not move at all, because that slice is
+    /// unseeded and its state column has nothing in it to degrade. A capture
+    /// also needs `vhs` and `ttyd` pinned and does not run in CI, so the
+    /// headless links are the ones a gate can hold.
+    #[test]
+    fn a_terminal_that_will_not_paint_a_background_asks_for_the_marker() {
+        assert_eq!(crate::state_fill(true), phosphor_ui::gutter::Fill::Block);
+        assert_eq!(crate::state_fill(false), phosphor_ui::gutter::Fill::Marker);
     }
 }

@@ -482,6 +482,18 @@ built on an unverified foundation.
 >   `T088` removes the widget path that made a second draw path necessary, which is what makes
 >   the demolition possible rather than performing it.
 >
+>   **LANDED, 2026-08-20 — step 3 of `WINDOW-F-PLAN.md`, and one word of the bullet above is
+>   now wrong.** The widget path is gone: the frame loop composes
+>   `Node::Pane { … child: Node::Buffer { … } }` and `draw` renders it into the rect `Geometry`
+>   gave it, so `BufferView` is not named in `main.rs` at all any more. `Pane` and `Buffer` are
+>   out of `scripts/lint-node-kinds.sh`'s RECORDED table, which now reports *21 composed, 9
+>   recorded gaps*. What did **not** collapse to one is `draw` itself: a surface the editor
+>   layer composed as a whole frame (`6a`/`6b`) still owns the frame and still returns before
+>   the chrome, because it draws its own statusline and its own cursor. The branch survives as
+>   a named `Composed::Frame`/`Composed::Pane` rather than as a test on the tree's root shape —
+>   which had to change, since the host's own root is a `Node::Pane` now and the old
+>   `Node::Empty` sniff would have read it as a whole-frame surface.
+>
 > **So `T088` runs alone at the front**, and everything else is cheaper after it. Then `T050` and
 > `T089` in parallel — different crates entirely — and then the level-2 fan-out. `T060` runs last,
 > after `T088` has settled whether the off-screen-buffer problem below is real.
@@ -494,7 +506,8 @@ built on an unverified foundation.
 >   `PromptLine`. The interpreter's deferred set is six kinds; F owns four, `T063` and `T076` own
 >   `diff` and `watch`.
 > * **Eight of eleven** recorded `Node` gaps: `Pane`, `TabBar`, `Buffer`, `Spinner`, `Elapsed`,
->   `Question`, `Transcript`, `Prompt`.
+>   `Question`, `Transcript`, `Prompt`. *(**Six of nine** as of 2026-08-20: `Pane` and `Buffer`
+>   are composed and their rows are deleted. The rest of the list is unchanged.)*
 > * **One of eight** recorded Action-arm gaps — `ApplyWorkspaceEdit`, owed to `T060`.
 > * **Eleven inert calls** in `fixtures/seed/plan.scm` become real, closing **`V006`**'s session
 >   half; **`V009`**'s last half (the static `✻`) closes at `T051`.

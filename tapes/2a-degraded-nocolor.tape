@@ -32,6 +32,26 @@
 # which terminal capability should select the fill, and where that detection
 # lives, is a design question and not a drive-by.
 #
+# FIXED, AND THIS CAPTURE IS NOW THE TRIPWIRE FOR IT. Two paragraphs above are
+# history: `BufferView::fill` made the marker askable, `phosphor_term::
+# colour_available` answers the capability question, and the frame loop
+# selects it. **The committed reference has shown `▎` since then** — measured
+# 2026-08-20 at pixel (0, 70), inside row 4's state cell: `#C4CCC5` here,
+# a glyph left in the terminal's default foreground because `NO_COLOR` dropped
+# its hue, against `#3BDB94` at the same pixel in `2a.png`, which is a solid
+# block of `actors.claude`.
+#
+# And it bites. `T088`'s collapse moved the buffer into the view tree, where
+# the `Node::Buffer` arm takes `Fill::Block` by default; a build that dropped
+# the fill on the way through — the naive collapse, and the exact regression
+# the plan named — mismatches this capture by **515 px beyond the 0.6%
+# tolerance**, measured against two separately-built binaries. `1a-degraded-
+# nocolor` does **not** bite: that slice is unseeded, so its state column has
+# nothing in it, and its own header already says the `▎` path is not one of
+# the three it exercises. So of the two degraded captures, this is the only
+# one holding §8's marker, and `the_fill_reaches_a_tree_composed_buffer` in
+# `phosphor-ui`'s interpreter is the headless half of the same proof.
+#
 # SENTINEL. The picker row, as `2a.tape` uses and for its reason: `retry.rs:4`
 # is in the float and nowhere else, so it says the store was read. A `/` cannot
 # appear in a `Wait+Screen` pattern — see that tape's header.

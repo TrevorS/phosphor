@@ -121,6 +121,7 @@ use crate::float::{
     Anchor, CompletionList, CompletionVm, Float as UiFloat, FloatBody, FloatFooter, FloatHeader,
     FloatSlot, FooterHint, Mood as UiMood, SignatureBody, SignatureVm,
 };
+use crate::gutter::Fill;
 use crate::picker::{Picker, PickerVm};
 use crate::status_line::{SessionState as UiSessionState, Spinner, format_elapsed};
 use crate::theme::Theme;
@@ -239,25 +240,30 @@ impl Report {
 /// Walks a [`Tree`] into a [`Buffer`].
 ///
 /// Built per frame — it borrows the theme and the host's resources and owns
-/// nothing. Cheap: three references and a `u64`.
+/// nothing. Cheap: three references, a `u64` and a two-value enum.
 #[derive(Debug, Clone, Copy)]
 pub struct Interpreter<'a> {
     theme: &'a Theme,
     resources: &'a dyn Resources,
     now: Millis,
+    fill: Fill,
 }
 
 impl<'a> Interpreter<'a> {
     /// An interpreter over `theme`, resolving buffers through `resources`.
     ///
     /// The clock starts at zero; a host that draws a spinner or an elapsed
-    /// counter sets it with [`at`](Interpreter::at) every frame.
+    /// counter sets it with [`at`](Interpreter::at) every frame. The state bar
+    /// starts at [`Fill::Block`], which is every mockup's form; a host on a
+    /// terminal that will not paint a background says so with
+    /// [`fill`](Interpreter::fill).
     #[must_use]
     pub const fn new(theme: &'a Theme, resources: &'a dyn Resources) -> Self {
         Self {
             theme,
             resources,
             now: Millis(0),
+            fill: Fill::Block,
         }
     }
 
@@ -269,6 +275,35 @@ impl<'a> Interpreter<'a> {
     #[must_use]
     pub const fn at(mut self, now: Millis) -> Self {
         self.now = now;
+        self
+    }
+
+    /// How the state bar draws a mark: §3's filled block, or §8's `▎` for a
+    /// terminal that will not render a background colour.
+    ///
+    /// **On the interpreter and not on [`Node::Buffer`], deliberately.** The
+    /// same degradation reaches the widget through
+    /// [`crate::buffer_view::BufferView::fill`], and the reason its doc gives
+    /// for putting the decision on the caller — *"deciding needs the
+    /// environment and this crate reads none"* — is the reason it cannot be a
+    /// prop: a view tree is composed by the editor layer over MCP-shaped
+    /// values, and terminal capability is not one of them. `Node::Gutter`'s arm
+    /// says the same thing in place (*"the tree carries no terminal capability,
+    /// and adding a prop is `spine`'s call"*). So the host answers it once, per
+    /// frame, for every buffer surface in the tree at once.
+    ///
+    /// **This exists because collapsing the buffer into the tree would
+    /// otherwise have un-degraded it silently.** The host used to draw
+    /// `BufferView` itself and pass `phosphor_term::colour_available()`'s
+    /// answer to `BufferView::fill`; the arms below take the default, so a
+    /// tree-composed buffer with no way to say otherwise would put §8's
+    /// markers back to blocks — blank cells under `NO_COLOR`. No golden frame
+    /// would have moved: every one of them renders with colour, where the two
+    /// fills are a green block and a green `▎` and both are drawn. See
+    /// `the_fill_reaches_a_tree_composed_buffer` for what does move.
+    #[must_use]
+    pub const fn fill(mut self, fill: Fill) -> Self {
+        self.fill = fill;
         self
     }
 
@@ -483,6 +518,7 @@ impl Ctx<'_> {
                 };
                 BufferView::new(editor, theme)
                     .state_column(self.interp.resources.state_marks(*buffer))
+                    .fill(self.interp.fill)
                     .render(area, buf);
             }
 
@@ -498,8 +534,10 @@ impl Ctx<'_> {
             // resolved, through the same `Resources` door `Node::Buffer` uses;
             // the editor is asked for nothing but its viewport, so a host that
             // has no editor behind the id still gets a column, from the top.
-            // §8's degraded form is not reachable from here — the tree carries
-            // no terminal capability, and adding a prop is `spine`'s call.
+            // §8's degraded form is still not a prop — the tree carries no
+            // terminal capability, and adding one is `spine`'s call. It
+            // arrives from the host instead, through [`Interpreter::fill`],
+            // which is the same answer for the same reason one layer out.
             Node::Gutter { buffer } => {
                 let top_row = self
                     .interp
@@ -508,6 +546,7 @@ impl Ctx<'_> {
                     .map_or(0, |editor| crate::buffer_view::viewport_of(editor).top_row);
                 crate::gutter::GutterBar::new(self.interp.resources.state_marks(*buffer), theme)
                     .top_row(top_row)
+                    .fill(self.interp.fill)
                     .render(area, buf);
             }
 
@@ -1314,7 +1353,8 @@ fn write(buf: &mut Buffer, area: Rect, x: u16, text: &str, style: Style) -> u16 
 
 #[cfg(test)]
 mod tests {
-    use super::{Interpreter, NoResources, Report};
+    use super::{Fill, Interpreter, NoResources, Report};
+    use crate::buffer_view::StateMark;
     use crate::float::{Anchor, CompletionVm, SignatureVm};
     use crate::frame::FrameCache;
     use crate::theme::Theme;
@@ -2085,6 +2125,109 @@ mod tests {
         let (buf, report) = draw(&tree);
         assert_eq!(row(&buf, 0), "");
         assert_eq!(report.soft_wrap_requested, vec![BufferId(7)]);
+    }
+
+    /// A host with one buffer and a state column — what a tree-composed
+    /// [`Node::Buffer`] needs from [`Resources`], and nothing else.
+    struct OneBuffer {
+        editor: crate::buffer_view::Editor,
+        marks: Vec<StateMark>,
+    }
+
+    // `Editor` implements no `Debug` — the same reason `Painted` writes one by
+    // hand in the binary.
+    impl std::fmt::Debug for OneBuffer {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("OneBuffer")
+                .field("marks", &self.marks.len())
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl super::Resources for OneBuffer {
+        fn editor(&self, _buffer: BufferId) -> Option<&crate::buffer_view::Editor> {
+            Some(&self.editor)
+        }
+
+        fn state_marks(&self, _buffer: BufferId) -> &[StateMark] {
+            &self.marks
+        }
+    }
+
+    fn one_buffer() -> OneBuffer {
+        let theme = Theme::phosphor_dark();
+        let mut editor = crate::buffer_view::Editor::new("rust", "fn main() {}\n", Vec::new())
+            .expect("rust editor");
+        crate::buffer_view::configure(&mut editor, &theme);
+        OneBuffer {
+            editor,
+            // Visual row 0. One mark is enough: the question is which *form*
+            // the cell takes, not which hue.
+            marks: vec![StateMark::ClaudeUnseen],
+        }
+    }
+
+    fn state_cell(fill: Option<Fill>) -> (String, ratatui_core::style::Color) {
+        let theme = Theme::phosphor_dark();
+        let resources = one_buffer();
+        let tree = Tree::new(Node::Buffer {
+            buffer: BufferId(1),
+            soft_wrap: false,
+        });
+        let mut buf = Buffer::empty(AREA);
+        let interpreter = Interpreter::new(&theme, &resources);
+        match fill {
+            Some(fill) => interpreter.fill(fill),
+            None => interpreter,
+        }
+        .render(&tree, AREA, &mut buf);
+        // Column 0 is the state bar — `BufferView`'s 3-column contract, and
+        // `gutter::state_cell` is the one place a mark becomes a drawable.
+        (buf[(0, 0)].symbol().to_owned(), buf[(0, 0)].fg)
+    }
+
+    /// **§8's degradation, through the composed buffer.**
+    ///
+    /// `BufferView::fill` made *"markers become `▎`"* askable and
+    /// `the_degraded_state_bar_carries_its_hue_in_a_glyph` covers the widget.
+    /// Nothing covered the arm below it: the host drew `BufferView` itself and
+    /// passed the answer straight in, and the moment the buffer became a
+    /// `Node::Buffer` that route was gone. The arm takes `Fill::Block` by
+    /// default, so a collapse with no builder to carry the capability puts the
+    /// blocks back — blank cells on a `NO_COLOR` terminal.
+    ///
+    /// **One capture does see that, and it was measured rather than assumed**
+    /// (2026-08-20, `T088`'s collapse): a build with this line deleted
+    /// mismatches `tapes/2a-degraded-nocolor.png` by 515 px. `1a-degraded-
+    /// nocolor` does not — that slice is unseeded, so its state column holds
+    /// nothing to degrade, which its own header says. So the end-to-end proof
+    /// exists and rests on **one** capture of the fifty, on a machine with
+    /// `vhs` and `ttyd` pinned; this is the headless half, and it is the half
+    /// that runs in CI.
+    ///
+    /// The assertion is the pair, for the reason the widget's own test gives:
+    /// the same mark drawn both ways has to differ in *where* the colour is.
+    #[test]
+    fn the_fill_reaches_a_tree_composed_buffer() {
+        let theme = Theme::phosphor_dark();
+        let (block, _) = state_cell(Some(Fill::Block));
+        let (marker, hue) = state_cell(Some(Fill::Marker));
+
+        assert_eq!(block, " ", "§3's state bar is a cell of background");
+        assert_eq!(marker, "▎", "§8's is a glyph");
+        assert_eq!(
+            hue, theme.actors.claude,
+            "the degraded cell carries the mark's hue in its foreground"
+        );
+    }
+
+    /// The default is the mockups' form, so a host that never asks draws what
+    /// every golden frame shows. `Interpreter::new` is called 35 times in this
+    /// workspace (counted 2026-08-20) and exactly one of them asks — `draw` in
+    /// the binary, which is the only caller that can read an environment.
+    #[test]
+    fn an_interpreter_that_was_not_told_fills_with_a_block() {
+        assert_eq!(state_cell(None), state_cell(Some(Fill::Block)));
     }
 
     #[test]
