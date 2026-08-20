@@ -2720,6 +2720,60 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   `split-pane`, `focus-pane`, `close-pane`, `resize-pane` (`action.rs:630-647`) — **plus the
   `panes` query** (`query.rs:410`). *Needs:* T019, T015
 
+  > ### Teej's three rulings, 2026-08-20: **follow nvim and telescope**
+  >
+  > `WINDOW-F-PLAN.md` opened three decisions the tree cannot make. All three are ruled the way
+  > neovim and telescope answer them, and the first two turn out to be **one** decision.
+  >
+  > **(1) and (3) — one `Editor` per `BufferId`, and the viewport is per *pane*.** This is
+  > neovim's buffer/window split exactly: a *buffer* is the text, the undo history, the marks and
+  > the language server attachment; a *window* is a view onto one, with its **own cursor and its
+  > own scroll offset**. `:sp` on an open file gives two views of one buffer — read the top while
+  > editing the bottom — and that is the thing people split *for*.
+  >
+  > **The plan ruled the first half right and the second half wrong**, and the two questions it
+  > filed separately are the same one. A shared viewport makes "the same file in two panes" a
+  > feature nobody wants: two halves scrolling in lockstep, which the plan's own note called
+  > *"reads as a bug on screen"*. So: **allowed, with independent viewports.** Refusing would be
+  > strange in a vim-shaped editor, and sharing would be worse than refusing.
+  >
+  > **What this does *not* cost.** `Node::Buffer`'s declaration says *"It carries no viewport —
+  > invariant 3 puts the viewport behind an Action, and a redraw may never move it"*
+  > (`view.rs:437-441`). Following nvim does not break that sentence; it makes it more true. The
+  > viewport still moves in exactly one place — `buffer_view::apply_scroll`, whose doc calls
+  > itself *"the single place a buffer's viewport moves"* and which
+  > `the_viewport_moves_from_exactly_one_place` enforces by reading the file. What changes is
+  > *whose* viewport moves, which is what `ViewAction::Scroll`'s `pane: PaneRef`
+  > (`action.rs:428-431`) has claimed all along. The contradiction the plan found is resolved in
+  > the `PaneRef`'s favour.
+  >
+  > **And it needs neither a fork patch nor a protocol change**, which is what made the plan rule
+  > the other way. The viewport lives in the vendored `Editor` (`editor.get_offset_y()` /
+  > `set_offset_y`), and splitting that into document and view would be permanent `VENDOR.md`
+  > debt against a fork pinned by SHA — correctly ruled out. The third path the plan did not
+  > consider: **the host owns each pane's viewport and hands it down through the door the
+  > `Resources` trait already is.** `Resources` gains `viewport(&self, pane: PaneId)`, beside
+  > `picker(&SourceId)` and `completion()` — same seam, same argument, still no `&mut`. And
+  > `BufferView` gains a `.viewport(…)` builder, the same shape as `.fill(…)` and for the
+  > identical reason that builder gives: *"the caller decides, because deciding needs the
+  > environment and this crate reads none."* `Node::Pane` already carries `pane: PaneId`, so the
+  > interpreter knows which pane it is drawing. The tree still carries no viewport — literally
+  > true, because a door is not a prop.
+  >
+  > *The cursor is the same shape and is the larger half*, since selections and operators read
+  > it; whoever builds this should expect the cursor to cost more than the offsets and should not
+  > assume one commit covers both.
+  >
+  > **(2) The picker replaces the focused pane; splits are explicit keys.** Telescope's defaults —
+  > `<CR>` opens in the current window, `<C-v>` vertical, `<C-x>` horizontal. The vocabulary
+  > already agrees: `AcceptHow::Open` is documented *"`↵ open` — open it in the focused pane"* and
+  > `AcceptHow::Split` is *"Open it in a new split"* (`request.rs:1392-1402`). So this ruling adds
+  > no vocabulary — it answers the question `T088`'s entry was asked to answer, and turns
+  > `accept_picker`'s `AcceptHow::Split => declined("one pane until T088 splits it")` into an arm
+  > plus two picker bindings. **Not a new pane by default**: a picker that split on every `↵`
+  > would make finding a file a window-management decision, which is the thing telescope's
+  > defaults exist to avoid.
+
   > **The arms were added to this criterion on 2026-08-20, because the gate demands them and the
   > sentence did not.** There are **zero** `Action::Pane` arms in `main.rs` today — the domain
   > falls through to `NotYetImplemented`, which is why every pane verb already refuses by naming

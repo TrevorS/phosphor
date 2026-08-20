@@ -14,7 +14,27 @@ Synthesised from three designs and nine judgements. **Spine: "state-first — id
 
 These are decisions the tree cannot make. They are written into `docs/TASKS.md` first because ruling (a) determines where `Editor` lives, and that is the one call in this plan that cannot be walked back cheaply.
 
-**(a) One `Editor` per `BufferId`. Panes share the viewport.** The tree contradicts itself and the contradiction is real: `ViewAction::Scroll { request, pane: PaneRef }` (`crates/phosphor-core/src/action.rs:428-431`) says a viewport is per-pane, while `Node::Buffer`'s own declaration says *"It carries no viewport"* (`crates/phosphor-core/src/view.rs:439-440`) and the interpreter resolves it through `Resources::editor(*buffer)` (`crates/phosphor-ui/src/interpret.rs:481-486`). Both alternatives are closed: one `Editor` per pane means two ropes over one file, and applying a per-pane viewport during the walk is impossible because `Resources` *"has no `&mut` in it and must never grow one"* (`crates/phosphor/src/main.rs:4025-4027`). A genuine per-pane viewport is a **vocabulary change** — a prop on `Node::Buffer` or `Node::Pane` — and belongs to `spine`, not to `T088`. Record the ruling at the field.
+**(a) One `Editor` per `BufferId`. Each pane owns its own viewport.**
+
+> **RULED BY TEEJ, 2026-08-20 — follow nvim. This reverses the second half of what the plan
+> proposed below, and the paragraph is kept because its reasoning is why the reversal needs a
+> mechanism rather than just a decision.** The plan proposed panes *sharing* one viewport on the
+> grounds that a per-pane viewport is a vocabulary change belonging to `spine`. It is not, and the
+> plan missed the third path: the host owns each pane's viewport and hands it down through the
+> door `Resources` already is — `viewport(&self, pane: PaneId)` beside `picker(&SourceId)` and
+> `completion()`, plus a `BufferView::viewport(…)` builder shaped exactly like `.fill(…)`.
+> `Node::Pane` already carries the `PaneId`. No fork patch, no `&mut` on `Resources`, and
+> `Node::Buffer` still carries no viewport — a door is not a prop. Full ruling at `T088`'s entry
+> in `docs/TASKS.md`; §6's questions 1 and 3 are answered there and are one question, not two.
+>
+> **Steps 4a, 6 and 11 change shape**: `Pane` gains `viewport` (and, in its own commit, `cursor`);
+> the `ViewAction::Scroll` arm resolves its `PaneRef` to a pane's viewport rather than to the
+> shared editor's; and step 11's *"two panes on one buffer means two `wrap_to` widths on one
+> `Editor`, the last one wins"* stops being a ruling-(a) consequence and becomes a real per-pane
+> value. The cursor is the larger half and should not be assumed to ride along in the same commit.
+
+The original reasoning, superseded:
+ The tree contradicts itself and the contradiction is real: `ViewAction::Scroll { request, pane: PaneRef }` (`crates/phosphor-core/src/action.rs:428-431`) says a viewport is per-pane, while `Node::Buffer`'s own declaration says *"It carries no viewport"* (`crates/phosphor-core/src/view.rs:439-440`) and the interpreter resolves it through `Resources::editor(*buffer)` (`crates/phosphor-ui/src/interpret.rs:481-486`). Both alternatives are closed: one `Editor` per pane means two ropes over one file, and applying a per-pane viewport during the walk is impossible because `Resources` *"has no `&mut` in it and must never grow one"* (`crates/phosphor/src/main.rs:4025-4027`). A genuine per-pane viewport is a **vocabulary change** — a prop on `Node::Buffer` or `Node::Pane` — and belongs to `spine`, not to `T088`. Record the ruling at the field.
 
 **(b) `collapsed: BTreeSet<RegionId>` is per buffer, and ruling (a) forces it.** `virtual_text::install(&mut editing.editor, &rows)` at `main.rs:2644` installs the row list into the *editor*. With one `Editor` per `BufferId`, a per-pane `collapsed` is not expressible without a fork patch. This is a ruling, not a preference — the two designs disagreed and the tree settles it.
 
@@ -192,7 +212,7 @@ Both confirmed against the tree. **This is why the collapse is promoted to step 
 - **`Node::Prompt`'s demolition — T058.** `OPEN-QUESTIONS.md:2523-2532` rules the ex line as *"scaffolding with a demolition date"* at T058, and `lint-node-kinds.sh:157-162` records it there. T088 makes the demolition possible; it does not perform it.
 - **The `SetPaneContent` arm — T054's.** Declared `[S6 / "T054"]` at `action.rs:649-653`, so ticking T088 does not demand it. T088 lands the `PaneTree` operation underneath it.
 - **`CreatePaneFromView` — v1.5** (`action.rs:655`).
-- **Patching the vendored fork to split `Editor` into document and view.** Ruling (a). It buys something the vocabulary cannot name, and it is permanent `VENDOR.md` debt against a fork pinned by SHA.
+- **Patching the vendored fork to split `Editor` into document and view.** Still out, and the reasoning survives ruling (a)'s reversal intact: it is permanent `VENDOR.md` debt against a fork pinned by SHA. What changed is that per-pane viewports no longer need it — the `Resources::viewport(pane)` door and the `BufferView::viewport(…)` builder get there without touching the fork.
 - **A `&mut` on `Resources`, or a "current pane" on `Painted`.** `main.rs:4025-4027` states the rule.
 - **A second `Machine`.** One machine, one mode, focus decides who receives. If T054's transcript wants its own modality it should argue it on T054's evidence.
 
@@ -273,6 +293,14 @@ It reads *"external blocker **yes**… `agent-client-protocol` 2.0.0 and `rmcp` 
 ---
 
 ## 6. Open decisions — Teej's, not the tree's
+
+> **Questions 1 and 2 are RULED, 2026-08-20 — Teej: follow nvim and telescope.** Question 1 is
+> answered *no* — telescope's `<CR>` opens in the current window and splits are `<C-v>`/`<C-x>`,
+> and `AcceptHow` already carries both. Question 2 is answered *allow, with independent
+> viewports*, and it is not a separate question from ruling (a): it is the same decision, because
+> a shared viewport makes two panes on one file scroll in lockstep and that is the "reads as a bug
+> on screen" outcome this list itself named. Both are recorded at `T088`'s entry in
+> `docs/TASKS.md`. Questions 3 and 4 below remain open.
 
 1. **Does the files picker (T046) open results into a new pane?** `TASKS.md:2716-2717` defers it here by name and asks for the answer in this entry. `accept_picker` currently declines `AcceptHow::Split` at `main.rs:6534`. The arm is trivial once splits exist; the question is whether that default is wanted.
 2. **Same file in two panes: refuse, or allow with a shared viewport?** Ruling (a) narrows it to those two. Allowing gives two halves that scroll together, which reads as a bug on screen. Refusing is honest but strange for a vim-shaped editor. No acceptance criterion needs it — T054's transcript is `PaneKind::Transcript` and holds no buffer. CP-6's manual half is where this gets settled by looking.
