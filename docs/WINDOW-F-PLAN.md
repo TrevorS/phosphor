@@ -2,7 +2,25 @@
 agents over the tree, one empirical transport de-risk, three independent designs,
 nine judges, one synthesis. Ranked 23/21/20 of 30. This is a *plan*, not a
 specification — docs/TASKS.md and docs/TEAM.md remain the authority, and where
-this document and the tree disagree the tree wins. -->
+this document and the tree disagree the tree wins.
+
+CITATION STYLE, learned the hard way on 2026-08-20: cite OTHER PROSE DOCUMENTS by
+heading or by a quoted phrase, never by line number. Two line citations in this
+file into TEAM.md and TASKS.md went stale within a day — one of them because
+executing this plan's own step 1 inserted 82 lines above its target, leaving the
+pointer aimed at prose that step had just written. `file:line` is right for CODE,
+where `lint-doc-claims.sh` checks the task references and a moved line is usually
+a moved fact; for prose it is a pointer with nothing holding it. A quoted phrase
+is greppable, survives every edit above it, and tells the reader what they are
+being sent to.
+
+Partially applied: the three citations that had ALREADY rotted are converted, and
+nine others into TEAM.md / TASKS.md / OPEN-QUESTIONS.md are not. They are correct
+today and were left rather than rewritten in bulk, because inventing nine quoted
+phrases in one pass is a good way to introduce a wrong one — convert each as its
+section is next touched. The durable answer is a lint under scripts/lint-*.sh
+that rejects `<doc>.md:<line>` inside docs/, which is this repo's own mechanism
+for a rule it wants kept rather than remembered. Not written yet. -->
 
 # Window F front — the plan for `T088`
 
@@ -25,7 +43,10 @@ These are decisions the tree cannot make. They are written into `docs/TASKS.md` 
 > `completion()`, plus a `BufferView::viewport(…)` builder shaped exactly like `.fill(…)`.
 > `Node::Pane` already carries the `PaneId`. No fork patch, no `&mut` on `Resources`, and
 > `Node::Buffer` still carries no viewport — a door is not a prop. Full ruling at `T088`'s entry
-> in `docs/TASKS.md`; §6's questions 1 and 3 are answered there and are one question, not two.
+> in `docs/TASKS.md`; §6's questions **1 and 2** are answered there and are one question, not
+> two. *(This read "1 and 3" until 2026-08-20: the ruling was written against the three
+> decisions as they were put to Teej, not against §6's own numbering, and the two lists
+> disagree. §6 is the one a reader of this file will count.)*
 >
 > **Steps 4a, 6 and 11 change shape**: `Pane` gains `viewport` (and, in its own commit, `cursor`);
 > the `ViewAction::Scroll` arm resolves its `PaneRef` to a pane's viewport rather than to the
@@ -44,7 +65,7 @@ The original reasoning, superseded:
 
 > **RECORDED at `T088`'s entry, 2026-08-20 — the plan is right, and the list is two fields, not one.** The swap block is `main.rs:3061-3121` (the plan cites `3062-3117`; the `else` arm opens at `:3061` and its `Ok` body is `:3063-3115`). It rewrites exactly what the plan claims, and resets neither `selection_from` (`:5035`) nor `selection_kind` (`:5029`). **`selection_kind` is the second field** and step 5 must reset it to `SelectionKind::Char` as well: it drives `Editing::selected`'s linewise widening and the yank's `linewise` flag, and is as much a fact about the departed rope as the anchor is.
 
-~~Left open for Teej, deliberately: the T046 picker-into-a-split question (`docs/TASKS.md:2716-2717` asks for the answer in this entry), whether the same file may open in two panes, and whether `Editing` gets renamed. Listed in §5 below.~~ **Two of the three are ruled and the pointer was wrong — corrected 2026-08-20.** The picker question and same-file-in-two-panes are answered at `T088`'s entry (Teej: follow nvim and telescope), leaving `Editing`'s rename and `SetRegister`'s domain. The list is **§6**, not §5; §5 is the doc-versus-tree corrections.
+~~Left open for Teej, deliberately: the T046 picker-into-a-split question (`T088`'s entry asks for the answer by name), whether the same file may open in two panes, and whether `Editing` gets renamed. Listed in §5 below.~~ **Two of the three are ruled and the pointer was wrong — corrected 2026-08-20.** The picker question and same-file-in-two-panes are answered at `T088`'s entry (Teej: follow nvim and telescope), leaving `Editing`'s rename and `SetRegister`'s domain. The list is **§6**, not §5; §5 is the doc-versus-tree corrections.
 
 ---
 
@@ -56,7 +77,7 @@ Every step ends with `just gate` green. Root is `/Users/trevor/Projects/phosphor
 
 **Files:** `docs/TASKS.md`, `docs/TEAM.md`, `docs/OPEN-QUESTIONS.md`
 
-Write rulings (a), (b), (c) into T088's entry with their citations. Answer the T046 question `TASKS.md:2716-2717` asks for by name. File the off-screen-buffer question (`TEAM.md:504-508`) as an OPEN-QUESTIONS entry with the recommendation in §3 below, not as an answer. Apply the document corrections in **§5** — there are **four**, and §4 is the transport verdict. *(Both numbers were wrong in the first draft of this line; corrected 2026-08-20 while executing it.)*
+Write rulings (a), (b), (c) into T088's entry with their citations. Answer the T046 question `T088`'s own entry asks for by name. File the off-screen-buffer question — `TEAM.md`'s *"`T060`'s second blocker may survive `T088`"* bullet — as an OPEN-QUESTIONS entry with the recommendation in §3 below, not as an answer. Apply the document corrections in **§5** — there are **four**, and §4 is the transport verdict. *(Both numbers were wrong in the first draft of this line; corrected 2026-08-20 while executing it.)*
 
 **Verification:** `just lint` — `lint-doc-claims.sh` checks every `T0xx` cited in prose is a task that exists. 21 lint scripts under `scripts/lint-*.sh` (counted).
 
@@ -222,7 +243,7 @@ Both confirmed against the tree. **This is why the collapse is promoted to step 
 
 ### The off-screen-buffer question — T060's second blocker
 
-`TEAM.md:504-508` flags this as a gap with no creditor, and `TASKS.md:2818-2823` says the RECORDED attribution to T088 is *"a reading rather than a citation"*. Both are correct, and this is the one item Window F must not leave to discovery at T060.
+`TEAM.md`'s *"`T060`'s second blocker may survive `T088`"* bullet flags this as a gap with no creditor, and `TASKS.md`'s `T060` entry says the RECORDED attribution to `T088` is *"a reading rather than a citation"*. Both are correct, and this is the one item Window F must not leave to discovery at T060.
 
 > **FILED, 2026-08-20, as `docs/OPEN-QUESTIONS.md` §47 — a question with a recommendation, not an answer.** The recommendation below is taken as option 3 of three. `scripts/lint-action-arms.sh`'s `ApplyWorkspaceEdit` row cites §47 now instead of naming `T088`, and `T060`'s entry and `TEAM.md`'s bullet both point at it. `T088` ruling the policy itself would be a second task answering on `T060`'s behalf, which is the exact thing the RECORDED entry complains about.
 
