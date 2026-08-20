@@ -4488,9 +4488,9 @@ fn draw(
             Interpreter::new(theme, &NoResources).render(&row, geometry.status, frame.buffer_mut());
         }
         None => {
-            if let Some(composed) = overlay.status {
+            if let Some(status) = overlay.status {
                 Interpreter::new(theme, &NoResources).render(
-                    composed,
+                    status,
                     geometry.status,
                     frame.buffer_mut(),
                 );

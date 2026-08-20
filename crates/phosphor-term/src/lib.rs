@@ -587,7 +587,26 @@ impl Drop for Term {
 /// able to see the change is worth more than one atomic load.
 #[must_use]
 pub fn colour_available() -> bool {
-    !std::env::var("NO_COLOR").is_ok_and(|value| !value.is_empty())
+    colour_from(std::env::var("NO_COLOR").ok().as_deref())
+}
+
+/// The rule alone, with the environment read taken out of it.
+///
+/// **Split out so it can be tested at all.** The workspace denies `unsafe_code`
+/// and `std::env::set_var` is unsafe in this edition, so a test that exercised
+/// [`colour_available`] by setting the variable could not be written — which is
+/// why, until `T088`'s step-3 verification walked §8's degradation chain and
+/// reported it, this rule was asserted by nothing. The doc above says the
+/// distinction *"only shows in a test that sets the variable"*; the way to have
+/// that test is to make the part worth testing not need one.
+///
+/// `None` is unset. `Some("")` is set-and-empty, which means colour is **fine**.
+#[must_use]
+const fn colour_from(no_colour: Option<&str>) -> bool {
+    match no_colour {
+        Some(value) => value.is_empty(),
+        None => true,
+    }
 }
 
 #[cfg(test)]
@@ -596,8 +615,36 @@ mod tests {
 
     use super::{
         ALT_SCREEN, Capabilities, ENTERED, KEYBOARD_ENV, KITTY, KeyboardProtocol, MOUSE, Ordering,
-        RAW_MODE, TermConfig, TermError, mark, restore_entered,
+        RAW_MODE, TermConfig, TermError, colour_from, mark, restore_entered,
     };
+
+    /// **`NO_COLOR` is set-and-non-empty, not merely set** — and until this
+    /// test nothing anywhere asserted it.
+    ///
+    /// Found by `T088`'s step-3 verification, which walked §8's degradation
+    /// chain link by link and reported this one covered by neither a test nor
+    /// anything that runs in CI.
+    ///
+    /// The empty case is the one worth having. `NO_COLOR=` means colour is
+    /// **fine**: `no-color.org`'s wording is set-and-non-empty and `crossterm`
+    /// implements exactly that, so a build that read an empty value as "no
+    /// colour" would paint `▎` markers on a terminal still receiving escapes —
+    /// degrading against a different rule from the one that drops them, which
+    /// is the failure this function exists to avoid.
+    #[test]
+    fn no_colour_is_set_and_non_empty_rather_than_merely_set() {
+        assert!(colour_from(None), "unset means colour");
+        assert!(
+            colour_from(Some("")),
+            "set but EMPTY still means colour — no-color.org's rule, and \
+             crossterm's, and the reason this is not a bare `is_ok`",
+        );
+        assert!(!colour_from(Some("1")), "set and non-empty means no colour");
+        assert!(
+            !colour_from(Some("anything at all")),
+            "the value is not parsed — any non-empty string is the signal",
+        );
+    }
 
     /// The restore bookkeeping, exercised without a terminal.
     ///
