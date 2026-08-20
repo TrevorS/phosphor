@@ -334,19 +334,25 @@ jobs:
   # keeping.** The argument for gating was sound and is still sound: a check
   # that can only go red for a real defect belongs in the required set, and
   # capture-or-not is such a check. So it was made to gate — and it went red,
-  # because **this runner cannot capture a frame**. `vhs` runs for six seconds
-  # and writes no PNG, silently.
+  # with `no capture at artifacts/9c.png` and no reason attached.
   #
-  # That is the check working. It is also a defect nobody can fix from a laptop,
-  # and a red required check on every push while it is open is worse than the
-  # tick — so `continue-on-error` is back and `OPEN-QUESTIONS.md` §44 carries
-  # the finding instead. **The tick is not the record; §44 is.**
+  # That was read as *"this runner cannot capture a frame"* and written up as
+  # `OPEN-QUESTIONS.md` §44 under that title. **The title was wrong.** Once the
+  # step called `vhs` directly instead of going through `diff-tapes.sh`, the
+  # same runner captured 372 kB in about thirteen seconds, first try. The
+  # machine was never the problem; the path through the script was.
   #
-  # What made it invisible for the whole life of this job: the step used to
-  # compare whatever was in `tapes/artifacts/` against git, and a capture that
-  # never ran leaves the *checked-out* file there — which matches git by
-  # definition. Deleting the PNG first is what turned "nothing happened" into a
-  # failure, and it is one line.
+  # And what the script was doing was `vhs "$tape" >/dev/null 2>&1`, followed by
+  # a failure message telling the reader to go and run vhs themselves — the
+  # explanation written to `/dev/null` one line above the note pointing at it.
+  # Fixed there too, so `just tapes-diff` is loud wherever it runs.
+  #
+  # What made the *original* failure invisible for the whole life of this job is
+  # a different mistake and still worth stating: the step used to compare
+  # whatever was in `tapes/artifacts/` against git, and a capture that never ran
+  # leaves the *checked-out* file there — which matches git by definition.
+  # Deleting the PNG first is what turned "nothing happened" into a failure, and
+  # it is one line.
   #
   # Deliberately its own job, not a step tacked onto `test`: a flaky renderer
   # failing mid-job must never take a passing Tier-1 run down with it
@@ -359,11 +365,12 @@ jobs:
   tapes-diff:
     name: Tier 2 — VHS capture health (non-blocking)
     runs-on: ubuntu-latest
-    # **Non-blocking again, and the reversal is the finding.** See §44: the
-    # check works and what it found is that this runner cannot capture. Until
-    # that is diagnosed, a red required check on every push is a worse outcome
-    # than a tick nobody trusts — but the step below is loud and §44 exists so
-    # the tick is not the only record.
+    # **Non-blocking, and gating is now defensible again** — the check works and
+    # the runner captures. It is deliberately not flipped in the same change
+    # that discovered that: this job has already gated, un-gated and re-gated
+    # inside one window, and a fourth flip on a single green observation is the
+    # churn that makes CI configuration stop being read. Flip it once it has
+    # been green across a few runs, and say so in §44 when you do.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7

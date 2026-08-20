@@ -1635,7 +1635,7 @@ in the place it actually lives.
 
 ---
 
-### 44 · The CI runner cannot capture a frame, and nothing noticed for the job's whole life
+### 44 · ~~The CI runner cannot capture a frame~~ — premise refuted, 2026-08-20; the runner captures and `diff-tapes.sh` was the thing that could not
 
 **Found by making §41's health check gate.** It went red on its second run with
 `no capture at artifacts/9c.png`: `vhs` runs for six seconds on the runner and
@@ -1682,6 +1682,49 @@ break without changing a pixel a person would notice.*
 how this was found; leaving a red required check on every push while the cause
 is unknown is worse than the tick that lies. The tick is not the record — this
 entry is.
+
+---
+
+**The recommendation was carried out, and it refuted this entry's own title.**
+The capture step now calls `vhs` directly instead of going through
+`diff-tapes.sh`, and on the first run of that change (`5768dc7`, run
+`32390647972`) the Ubuntu runner captured **`9c.png is 372563 bytes`** in about
+thirteen seconds. So the machine can capture a frame; what could not was the
+path through the script. The sentence at the top of this entry was wrong, and
+the tree is what says so.
+
+**What the script was hiding, and it is not what this entry guessed.** All three
+candidates above are dead or moot. The one that mattered was in
+`diff-tapes.sh` itself:
+
+    vhs "$tape" >/dev/null 2>&1
+
+followed, on failure, by *"see `vhs <tape>` directly for the reason"* — an
+instruction to a person standing at a terminal, and useless to the one place
+that cannot follow it. **The explanation was being written to `/dev/null` one
+line above the message telling somebody to go and look for it.** Fixed: the
+script keeps vhs's output and prints it, indented, when a capture fails.
+
+**What is still not known** is why that path produced *no PNG and exit 0* on the
+runner while a direct call to the same tape produces one. The reported symptom —
+`no capture at artifacts/9c.png` after vhs returned success — is exactly vhs's
+documented timeout behaviour, which CI's own step comment already describes: a
+`Wait+Screen` that times out skips the rest of the tape and **exits 0**. So the
+leading hypothesis is that `9c`'s ten-second sentinel was not met under that
+invocation, and the ordinary reason for that is boot time on a cold runner
+rather than anything about the script. *Not asserted*: nothing has watched it
+happen, and the two runs differ in more than one way.
+
+That is now a question the next failure will answer by itself, which is the
+actual repair here. The script is loud, the step deletes the PNG before
+capturing so a no-op cannot pass, and a red run will print vhs's own words.
+
+*On gating: it is defensible again — the check works and passes on the runner.
+It is deliberately **not** flipped in the same change that discovered this. This
+job has already gated, un-gated and re-gated inside one window, and a fourth
+flip on a single green observation is the churn that makes CI configuration
+stop being read. Flip it after it has been green across a few runs, and note
+here when.*
 
 ---
 
