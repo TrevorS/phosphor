@@ -1468,8 +1468,16 @@ repair. Three candidates, in the order I would defend them:*
    nothing to do with drawing, forever" *— and it is listed only so the ruling is a choice among
    three rather than between two.*
 
-**Left un-blessed deliberately.** The reference still holds the old numbers, so `just tapes-diff`
-goes on reporting it. Blessing it would make the run green and change nothing about the cause.
+**~~Left un-blessed deliberately.~~ Blessed with the library, 2026-08-19**, and the entry stands
+unchanged. The chrome-field fix regenerated all forty-eight references, this one among them, so it
+now carries `init.scm:151:21 · 206 of 207 forms ran` and `just tapes-diff` reports **48 matched, 0
+mismatched**.
+
+That is not a resolution and should not be read as one. The reference agrees with the layer *as it
+is today*; the next Scheme form anybody adds moves it again, which is precisely the property this
+entry is about. What blessing it costs is the standing reminder — the run is green now, so nothing
+will say the word "moving target" until somebody edits `runtime/**` and wonders why an unrelated
+screen went red. Left here instead.
 
 ---
 
