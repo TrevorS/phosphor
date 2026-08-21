@@ -2374,6 +2374,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // matcher be handed a way to say *"I have more"*, which it needs at
     // construction and which nothing could give it when the channel came later.
     let (queue, poster) = events::open();
+    // `T088`'s step 4a: the pane the buffer is shown in, beside the buffer
+    // rather than inside it. One, until step 4c gives the loop a map of them.
+    let mut pane = Pane::new();
     let mut editing = Editing::with_timeline(
         editor,
         path,
@@ -2513,7 +2516,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // ratatui answers with a `Resize` event and the next pass corrects.
         let size = term.size()?;
         let mut geometry = lay_out(Rect::new(0, 0, size.width, size.height));
-        editing.area = editor_area(geometry.body);
+        pane.area = editor_area(geometry.body);
         // `init.scm` sets `soft-wrap` at boot and `(set-option! …)` can change
         // it at the REPL, so it is read per frame rather than once: the option
         // is the editor layer's, and the flag is the override.
@@ -2820,7 +2823,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // The list gets the body minus the filter line, which is the height
         // the widget will actually draw into — asking for more would make the
         // matcher materialise rows nothing can show.
-        let list_rows = usize::from(editing.area.height.saturating_sub(1));
+        let list_rows = usize::from(pane.area.height.saturating_sub(1));
         let picker_vm = editing
             .picker
             .as_mut()
@@ -2935,19 +2938,21 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                             match picker_key(key, session) {
                                 PickerStep::Typing => {}
                                 PickerStep::Cycle(delta) => {
-                                    let outcome = editing.apply(&Action::Picker(
-                                        PickerAction::CyclePickerSource { delta },
-                                    ));
+                                    let outcome = editing.apply(
+                                        &mut pane,
+                                        &Action::Picker(PickerAction::CyclePickerSource { delta }),
+                                    );
                                     if let Outcome::Refused(why) = outcome {
                                         notice = Some(phosphor_steel::answer::why(&why));
                                     }
                                 }
                                 PickerStep::Accept => {
-                                    let outcome = editing.apply(&Action::Picker(
-                                        PickerAction::PickerAccept {
+                                    let outcome = editing.apply(
+                                        &mut pane,
+                                        &Action::Picker(PickerAction::PickerAccept {
                                             how: AcceptHow::Open,
-                                        },
-                                    ));
+                                        }),
+                                    );
                                     match outcome {
                                         Outcome::Refused(why) => {
                                             notice = Some(phosphor_steel::answer::why(&why));
@@ -2984,7 +2989,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                             ExStep::Cancel => surface = Surface::Buffer,
                             ExStep::Submit => {
                                 surface = Surface::Buffer;
-                                notice = submit_ex(&mut layer, &mut editing, &ex_line);
+                                notice = submit_ex(&mut layer, &mut editing, &mut pane, &ex_line);
                             }
                         }
                     }
@@ -3001,20 +3006,21 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 layer: &mut layer,
                                 seed: &mut seed,
                                 editing: &mut editing,
+                                pane: &mut pane,
                             }
                             .key(pressed);
                             typing = machine.mode() == EditMode::Insert && edits.get() != before;
                         }
                     }
                     Event::Mouse(mouse) => {
-                        for action in mouse_actions(&mut machine, &editing, mouse) {
+                        for action in mouse_actions(&mut machine, &editing, &pane, mouse) {
                             // `Input::SetMode` is the machine reporting a
                             // transition it has already made — `Machine::click`
                             // and `Machine::drag` mutate it directly, the way
                             // `feed` does — so there is nothing here to apply
                             // and `Editing` has no arm for one.
                             if !matches!(action, Action::Input(_)) {
-                                let _ = editing.apply(&action);
+                                let _ = editing.apply(&mut pane, &action);
                             }
                         }
                     }
@@ -3038,8 +3044,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     // `act` and not `apply`, for the reason `deliver` gives:
                     // a reveal is `View::Scroll`, and nothing that is not the
                     // user may move the viewport the user is looking at.
-                    drop(editing.act(&posted.action));
-                } else if let Some(note) = deliver(&mut editing, &posted) {
+                    drop(editing.act(&mut pane, &posted.action));
+                } else if let Some(note) = deliver(&mut editing, &mut pane, &posted) {
                     notice = Some(note);
                 }
             }
@@ -3080,10 +3086,13 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 // flag are all already this file's. `gd` is a motion here, and
                 // it is the user's own — `apply`, so the viewport follows.
                 if let Some(at) = editing.open_at.take() {
-                    drop(editing.apply(&Action::Motion(MotionAction::SetCursor {
-                        position: at,
-                        buffer: None,
-                    })));
+                    drop(editing.apply(
+                        &mut pane,
+                        &Action::Motion(MotionAction::SetCursor {
+                            position: at,
+                            buffer: None,
+                        }),
+                    ));
                 }
             } else {
                 match opening(&file) {
@@ -3111,7 +3120,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // above never swaps, and an alternate set there would
                         // make `CTRL-^` a no-op that points at the file you are
                         // already in.
-                        editing.alternate = editing.file.take();
+                        pane.alternate = editing.file.take();
                         editing.file = Some(file);
                         surface = Surface::Buffer;
                         // The server hears about the swap in both directions:
@@ -3134,10 +3143,13 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // goes through and the viewport follows it — `apply`
                         // rather than `act`, because this *is* the user's jump.
                         if let Some(at) = editing.open_at.take() {
-                            drop(editing.apply(&Action::Motion(MotionAction::SetCursor {
-                                position: at,
-                                buffer: None,
-                            })));
+                            drop(editing.apply(
+                                &mut pane,
+                                &Action::Motion(MotionAction::SetCursor {
+                                    position: at,
+                                    buffer: None,
+                                }),
+                            ));
                         }
                     }
                     Err(error) => {
@@ -3296,7 +3308,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         if let Some(lookup) = editing.lookup.take() {
             match (editing.language.clone(), synced.as_ref()) {
                 (Some(language), Some(document)) => {
-                    let at = editing.text().cursor();
+                    let at = editing.text(&pane).cursor();
                     outstanding.sent(lookup);
                     let path = document.path.clone();
                     // **The word being completed goes with the request**, and
@@ -3326,7 +3338,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         if let Some(question) = editing.question.take() {
             match (editing.language.clone(), synced.as_ref()) {
                 (Some(language), Some(document)) => {
-                    let at = editing.text().cursor();
+                    let at = editing.text(&pane).cursor();
                     let path = document.path.clone();
                     // `T036` answers in *places*, and what a place means
                     // depends on the question: a definition is one place and
@@ -5048,6 +5060,83 @@ fn journal_key(file: &Path) -> Result<PathBuf, String> {
     }
 }
 
+/// One pane of the split tree: where a buffer is *shown*, as opposed to what
+/// it is (`T088`, step 4a).
+///
+/// **The split is by lifetime, not by tidiness.** Every field here answers a
+/// question about a rectangle on screen and keeps its answer when the buffer
+/// inside it is swapped for another — which is exactly the set [`Editing`] had
+/// to stop owning before a second pane could exist. The reverse test is what
+/// decided each field: open a different file in this pane, and if the value
+/// should survive, it is a pane's.
+///
+/// **What is deliberately not here yet, and why.** `holds: PaneKind` and
+/// `buffer: Option<BufferId>` belong to a pane and are not in this struct,
+/// because nothing reads them until step 4c keys `Panes` and `Buffers` on
+/// those ids — and a field with no reader is one `dead_code` rejects, which is
+/// this build's usual answer and the right one. `viewport` is the same case
+/// one ruling further out: ruling (a) puts each pane's scroll offset here,
+/// lent to the widgets through the door `Resources` already is, and the reader
+/// arrives with `Resources::viewport` in step 11. The cursor is the larger
+/// half of that ruling and is deliberately not assumed to ride along with it.
+#[derive(Debug, Clone)]
+struct Pane {
+    /// The text area, for scrolls and reveals.
+    ///
+    /// Moved off `Editing` because it is the definition of a pane: the same
+    /// buffer shown in two panes has two areas, and a buffer swapped into this
+    /// pane inherits this one.
+    area: Rect,
+    /// The file that was open before this one — vim's alternate file, what
+    /// `CTRL-^` goes back to.
+    ///
+    /// Set by the loop when a *different* file takes the pane, never by the
+    /// arm that reads it: the swap is what creates an alternate, and the one
+    /// place that knows a swap happened is the one place that performs it.
+    ///
+    /// **A pane's, and its own doc always said so** — *"the file leaving the
+    /// pane becomes the alternate"*. `CTRL-^` in a split goes back to what that
+    /// split was showing, not to what some other split was.
+    alternate: Option<PathBuf>,
+    /// Where `<C-o>` and `<C-i>` walk (`T042`).
+    ///
+    /// **Anchors and not positions**, which is why the arm lands with that task
+    /// rather than with the motions: a jumplist entry has to survive the
+    /// rewrite that moves the code it points at, and surviving a rewrite is the
+    /// whole of what an anchor is. The entries are unlabelled, so they never
+    /// collide with `m{a-z}`'s marks.
+    ///
+    /// **A pane's, as it is in vim** (`:help jumplist`: *"Each window has a
+    /// separate jump list"*). An anchor carries its own path, so an entry
+    /// already knows which file it points into — the list was never per buffer
+    /// in anything except where it was stored.
+    jumplist: Vec<AnchorId>,
+    /// Where in [`Pane::jumplist`] `<C-o>` has walked back to. Pushing a new
+    /// jump from here truncates the forward half — a history, not a ring.
+    ///
+    /// **`jumplist.len()` means *the present*** — not walking, cursor wherever
+    /// the last jump left it. That one extra state is what makes `<C-o>` able to
+    /// reach the newest entry: it used to be set to `len - 1` by
+    /// [`Editing::push_jump`], pointing *at* the entry just recorded, so
+    /// `Seek::Prev` computed `0 - 1 = 0`, hit `jump`'s no-move guard and
+    /// answered *"already at the oldest jump"*. After a single jump you could
+    /// never get back — which is the rule `push_jump`'s own doc states, and
+    /// nothing pressed `<C-o>` until the key survey that found this.
+    jump_at: usize,
+}
+
+impl Pane {
+    /// The pane a single-pane session starts in, before any layout has run.
+    fn new() -> Self {
+        Self {
+            area: Rect::ZERO,
+            alternate: None,
+            jumplist: Vec::new(),
+            jump_at: 0,
+        }
+    }
+}
+
 /// The buffer, the registers, and **the only thing in this program that
 /// mutates either**.
 ///
@@ -5057,8 +5146,6 @@ fn journal_key(file: &Path) -> Result<PathBuf, String> {
 /// something.
 struct Editing {
     editor: Editor,
-    /// The text area, for scrolls and reveals.
-    area: Rect,
     /// Where `:write` puts it, and what `:write <path>` replaces.
     file: Option<PathBuf>,
     /// A file `open-file` asked for. The loop performs it: opening one needs
@@ -5198,13 +5285,6 @@ struct Editing {
     /// `T041`'s store, shared with [`AppHost`] so the gutter, the statusline
     /// and the `region` queries cannot disagree about a file.
     store: Arc<store::Shared>,
-    /// The file that was open before this one — vim's alternate file, what
-    /// `CTRL-^` goes back to.
-    ///
-    /// Set by the loop when a *different* file takes the pane, never by the
-    /// arm that reads it: the swap is what creates an alternate, and the one
-    /// place that knows a swap happened is the one place that performs it.
-    alternate: Option<PathBuf>,
     /// How a picker's matcher says it has results this frame did not show.
     ///
     /// Held here because a session is opened from three places — the loop's
@@ -5244,26 +5324,6 @@ struct Editing {
     /// An `open-picker` the loop has not put on screen yet, drained the way
     /// [`Editing::open`] and [`Editing::help`] are.
     open_picker: bool,
-    /// Where `<C-o>` and `<C-i>` walk (`T042`).
-    ///
-    /// **Anchors and not positions**, which is why the arm lands with this task
-    /// rather than with the motions: a jumplist entry has to survive the
-    /// rewrite that moves the code it points at, and surviving a rewrite is the
-    /// whole of what an anchor is. The entries are unlabelled, so they never
-    /// collide with `m{a-z}`'s marks.
-    jumplist: Vec<AnchorId>,
-    /// Where in [`Editing::jumplist`] `<C-o>` has walked back to. Pushing a new
-    /// jump from here truncates the forward half — a history, not a ring.
-    ///
-    /// **`jumplist.len()` means *the present*** — not walking, cursor wherever
-    /// the last jump left it. That one extra state is what makes `<C-o>` able to
-    /// reach the newest entry: it used to be set to `len - 1` by
-    /// [`Editing::push_jump`], pointing *at* the entry just recorded, so
-    /// `Seek::Prev` computed `0 - 1 = 0`, hit `jump`'s no-move guard and
-    /// answered *"already at the oldest jump"*. After a single jump you could
-    /// never get back — which is the rule `push_jump`'s own doc states, and
-    /// nothing pressed `<C-o>` until the key survey that found this.
-    jump_at: usize,
     /// The unnamed register is `"`; `"a` is `a` (`request::RegisterName`).
     registers: BTreeMap<String, Register>,
     /// What the last `SelectRange` said, so a yank knows whether it is linewise.
@@ -5341,7 +5401,6 @@ impl std::fmt::Debug for Editing {
     /// owns.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Editing")
-            .field("area", &self.area)
             .field("registers", &self.registers)
             .field("selection_kind", &self.selection_kind)
             .field("timeline", &self.timeline)
@@ -5378,7 +5437,6 @@ impl Editing {
     ) -> Self {
         Self {
             editor,
-            area: Rect::ZERO,
             file,
             open: None,
             open_at: None,
@@ -5406,15 +5464,12 @@ impl Editing {
             falling_through: false,
             signature: None,
             store,
-            alternate: None,
             wake,
             collapsed: BTreeSet::new(),
             picker: None,
             float: None,
             source_order: Vec::new(),
             open_picker: false,
-            jumplist: Vec::new(),
-            jump_at: 0,
             registers: BTreeMap::new(),
             selection_kind: SelectionKind::Char,
             selection_from: None,
@@ -5433,10 +5488,10 @@ impl Editing {
     }
 
     /// The buffer as the machine reads it.
-    fn text(&self) -> EditorText<'_> {
+    fn text(&self, pane: &Pane) -> EditorText<'_> {
         EditorText {
             editor: &self.editor,
-            height: self.area.height,
+            height: pane.area.height,
             regions: self
                 .file
                 .as_deref()
@@ -5449,10 +5504,10 @@ impl Editing {
     /// **The reveal is an Action too** ([`Editing::reveal`]), which is what
     /// keeps *"`View::Scroll` is the only thing that moves a viewport"* true
     /// with the cursor still following.
-    fn apply(&mut self, action: &Action) -> Outcome {
-        let outcome = self.act(action);
+    fn apply(&mut self, pane: &mut Pane, action: &Action) -> Outcome {
+        let outcome = self.act(pane, action);
         if moves_cursor(action) {
-            self.reveal();
+            self.reveal(pane);
         }
         outcome
     }
@@ -5462,20 +5517,23 @@ impl Editing {
     /// Measured in **visual** rows, which is why it happens here and not in the
     /// machine: a soft-wrapped line is several rows and only the widget layer
     /// knows how many (`T081`).
-    fn reveal(&mut self) {
+    fn reveal(&mut self, pane: &mut Pane) {
         let Some(row) = self.editor.visual_row_for_cursor() else {
             return;
         };
         let row = u32::try_from(row).unwrap_or(0) + 1;
-        let _ = self.act(&Action::View(ViewAction::Scroll {
-            request: phosphor_core::request::ScrollRequest::RevealRow { row, margin: 0 },
-            pane: phosphor_core::request::PaneRef::Focused {},
-        }));
+        let _ = self.act(
+            pane,
+            &Action::View(ViewAction::Scroll {
+                request: phosphor_core::request::ScrollRequest::RevealRow { row, margin: 0 },
+                pane: phosphor_core::request::PaneRef::Focused {},
+            }),
+        );
     }
 
     /// One Action. The `_` arm answers with the task that builds it, derived
     /// from the capability's own row rather than from a list here.
-    fn act(&mut self, action: &Action) -> Outcome {
+    fn act(&mut self, pane: &mut Pane, action: &Action) -> Outcome {
         let name = action.spec().name;
         let done = || {
             Outcome::Done(Receipt {
@@ -5505,7 +5563,7 @@ impl Editing {
             Action::Buffer(BufferAction::Paste {
                 register, before, ..
             }) => {
-                self.paste(register.as_ref(), *before);
+                self.paste(pane, register.as_ref(), *before);
                 done()
             }
             Action::Buffer(BufferAction::SetRegister { register, text }) => {
@@ -5527,11 +5585,16 @@ impl Editing {
                 done()
             }
             Action::Buffer(BufferAction::JoinLines { target }) => {
-                self.join(target);
+                self.join(pane, target);
                 done()
             }
             Action::Motion(MotionAction::MoveCursor { motion, count }) => {
-                let to = motion::cursor_after(&self.text(), self.text().cursor(), *motion, *count);
+                let to = motion::cursor_after(
+                    &self.text(pane),
+                    self.text(pane).cursor(),
+                    *motion,
+                    *count,
+                );
                 let offset = self.offset(to);
                 self.editor.set_cursor(offset);
                 done()
@@ -5594,7 +5657,12 @@ impl Editing {
             // anchor ([`Editing::selection_from`]) and re-stating the same
             // inclusive rule: `[min, max + 1)`.
             Action::Motion(MotionAction::ExtendSelection { motion, count }) => {
-                let to = motion::cursor_after(&self.text(), self.text().cursor(), *motion, *count);
+                let to = motion::cursor_after(
+                    &self.text(pane),
+                    self.text(pane).cursor(),
+                    *motion,
+                    *count,
+                );
                 let head = self.offset(to);
                 let anchor = *self.selection_from.get_or_insert(head);
                 self.editor.set_cursor(head);
@@ -5625,7 +5693,7 @@ impl Editing {
             // straight to the widget and the 1-based-to-0-based arithmetic lives
             // once, in `Viewport::scrolled`.
             Action::View(ViewAction::Scroll { request, .. }) => {
-                buffer_view::apply_scroll(&mut self.editor, *request, self.area);
+                buffer_view::apply_scroll(&mut self.editor, *request, pane.area);
                 done()
             }
             // `R19` — folds. `T016`'s whitespace half shipped with `8e`; this is
@@ -5728,7 +5796,7 @@ impl Editing {
             // and `lint-action-arms` exists to catch; the first file of a
             // session has no alternate and saying so is the honest answer.
             Action::File(FileAction::OpenAlternate { .. }) => {
-                let Some(alternate) = self.alternate.clone() else {
+                let Some(alternate) = pane.alternate.clone() else {
                     return declined("no alternate file — nothing else has been open yet");
                 };
                 self.open = Some(alternate);
@@ -5857,7 +5925,7 @@ impl Editing {
                 let Some(binding) = otherwise else {
                     return declined("no completion list is open");
                 };
-                self.fall_through(binding)
+                self.fall_through(pane, binding)
             }
             Action::Lsp(LspAction::AcceptCompletion {
                 index,
@@ -5879,13 +5947,13 @@ impl Editing {
             // the wrong place** — that is the declaration's own wording and the
             // whole reason `at` is on the wire.
             Action::Lsp(LspAction::IngestCompletions { items, at, .. }) => {
-                if self.text().cursor() == *at {
+                if self.text(pane).cursor() == *at {
                     // An **empty list closes the float**, which the declaration
                     // says out loud: the client answers exactly once on every
                     // path, so `Insight::Nothing` arrives here as an empty list
                     // and a float that suppressed it would leave a stale list
                     // beside the cursor forever.
-                    let next = (!items.is_empty()).then(|| self.completions(items));
+                    let next = (!items.is_empty()).then(|| self.completions(pane, items));
                     self.completion = next.map(|mut vm| {
                         // The session's identity is the **word** it is
                         // completing, and the anchor is that word's first cell:
@@ -5923,7 +5991,7 @@ impl Editing {
                 done()
             }
             Action::Lsp(LspAction::IngestSignatureHelp { signature, at, .. }) => {
-                if self.text().cursor() == *at {
+                if self.text(pane).cursor() == *at {
                     let next = signature.as_ref().map(|signature| SignatureVm {
                         label: Some(signature.label.clone()),
                         active: signature
@@ -5931,8 +5999,8 @@ impl Editing {
                             .map(|range| (range.start as usize, range.end as usize)),
                         // §11 is "nothing ever wraps", so the wrapping is here
                         // and the width is the float's own — see `wrapped`.
-                        prose: self.wrapped(&signature.documentation),
-                        anchor: self.anchor(0),
+                        prose: self.wrapped(pane, &signature.documentation),
+                        anchor: self.anchor(pane, 0),
                         width_floor: 0,
                     });
                     self.signature = next.map(|vm| self.held_to_widest(vm));
@@ -5940,15 +6008,15 @@ impl Editing {
                 done()
             }
             Action::Lsp(LspAction::IngestHover { prose, at, .. }) => {
-                if self.text().cursor() == *at {
+                if self.text(pane).cursor() == *at {
                     let next = (!prose.is_empty()).then(|| SignatureVm {
                         // Hover has no callable to name; the whole answer is
                         // prose. `SignatureVm` is one type for both features
                         // and this is the difference between them.
                         label: None,
                         active: None,
-                        prose: self.wrapped(prose),
-                        anchor: self.anchor(0),
+                        prose: self.wrapped(pane, prose),
+                        anchor: self.anchor(pane, 0),
                         width_floor: 0,
                     });
                     self.signature = next.map(|vm| self.held_to_widest(vm));
@@ -6001,15 +6069,15 @@ impl Editing {
             // rewrite, and `jump` is here rather than with the motions because
             // a jumplist entry *is* an anchor.
             Action::Region(RegionAction::PlaceAnchor { at, label }) => {
-                self.place_anchor(at, label.as_ref())
+                self.place_anchor(pane, at, label.as_ref())
             }
             Action::Region(RegionAction::Reanchor { path }) => self.reanchor(path),
             Action::Motion(MotionAction::GotoAnchor {
                 anchor,
                 label,
                 exact,
-            }) => self.goto_anchor(*anchor, label.as_deref(), *exact, true),
-            Action::Motion(MotionAction::Jump { seek }) => self.jump(*seek),
+            }) => self.goto_anchor(pane, *anchor, label.as_deref(), *exact, true),
+            Action::Motion(MotionAction::Jump { seek }) => self.jump(pane, *seek),
             // `T049` — `]u` / `[u` and `SPC u n`. The other seven sequences
             // decline by naming what builds them, which is the same rule the
             // agent nouns follow one layer down: a sequence with no store is a
@@ -6019,7 +6087,7 @@ impl Editing {
                 sequence,
                 seek,
                 filter,
-            }) => self.goto_sequence(*sequence, *seek, filter.as_ref()),
+            }) => self.goto_sequence(pane, *sequence, *seek, filter.as_ref()),
             // `T048` — the float verbs, from a *key*. `T093` applied these on
             // the door side; `:arch` is the first keystroke that opens a
             // registered surface, and an ex command's Actions come through
@@ -6636,6 +6704,7 @@ impl Editing {
     /// the same reason.
     fn goto_sequence(
         &mut self,
+        pane: &mut Pane,
         sequence: Sequence,
         seek: Seek,
         filter: Option<&RegionFilter>,
@@ -6650,7 +6719,7 @@ impl Editing {
             Sequence::SearchMatch => Some("T058"),
             // A jumplist entry is an anchor and `jump` already walks them, so
             // this arm would be a second spelling of one behaviour.
-            Sequence::Jump => return self.jump(seek),
+            Sequence::Jump => return self.jump(pane, seek),
         };
         if let Some(task) = task {
             return Outcome::Refused(Refusal::NotYetImplemented { task });
@@ -6680,7 +6749,7 @@ impl Editing {
         if lines.is_empty() {
             return declined("nothing unseen in this file");
         }
-        let here = self.text().cursor().line;
+        let here = self.text(pane).cursor().line;
         let to = match seek {
             Seek::First => lines[0],
             Seek::Last => lines[lines.len() - 1],
@@ -6696,7 +6765,7 @@ impl Editing {
                 .find(|line| *line < here)
                 .unwrap_or(lines[lines.len() - 1]),
         };
-        self.push_jump();
+        self.push_jump(pane);
         let offset = self
             .editor
             .code_ref()
@@ -6847,14 +6916,19 @@ impl Editing {
     /// mechanism, which is `place-anchor`'s own doc. Placing the same label
     /// twice in one file is one mark, not two — the rule lives in
     /// [`phosphor_core::store::Anchors::place`] so every door gets it.
-    fn place_anchor(&mut self, target: &Target, label: Option<&String>) -> Outcome {
+    fn place_anchor(
+        &mut self,
+        pane: &mut Pane,
+        target: &Target,
+        label: Option<&String>,
+    ) -> Outcome {
         let scope = match self.scope_of(target) {
             Ok(scope) => scope,
             Err(why) => return declined(&why),
         };
         let (path, span) = match scope {
             RegionScope::File(path) => {
-                let line = self.text().cursor().line;
+                let line = self.text(pane).cursor().line;
                 (path, self.line_span(line))
             }
             RegionScope::Span { path, span } => (path, span),
@@ -6912,6 +6986,7 @@ impl Editing {
     /// same one: moving along the jumplist does not add to it.
     fn goto_anchor(
         &mut self,
+        pane: &mut Pane,
         id: Option<AnchorId>,
         label: Option<&str>,
         exact: bool,
@@ -6943,7 +7018,7 @@ impl Editing {
             return declined("that anchor is in another file — T056 opens it");
         }
         if record {
-            self.push_jump();
+            self.push_jump(pane);
         }
         let line = usize::try_from(anchor.span.start.line.saturating_sub(1)).unwrap_or(0);
         // `'` is the line, `` ` `` is the column it was written at.
@@ -6999,37 +7074,37 @@ impl Editing {
     /// position the moment you first press `<C-o>`, and that is what the
     /// `at_present` branch does. Without it the walk is one-way, which is how
     /// this read before the key survey pressed it.
-    fn jump(&mut self, seek: Seek) -> Outcome {
-        if self.jumplist.is_empty() {
+    fn jump(&mut self, pane: &mut Pane, seek: Seek) -> Outcome {
+        if pane.jumplist.is_empty() {
             return declined("the jumplist is empty");
         }
         // At the present: not walking, so there is nowhere forward to go and a
         // step back has to leave a way home first.
-        let at_present = self.jump_at >= self.jumplist.len();
+        let at_present = pane.jump_at >= pane.jumplist.len();
         if at_present && matches!(seek, Seek::Next) {
             return declined("already at the newest jump");
         }
         if at_present && matches!(seek, Seek::Prev) {
-            self.push_here();
+            self.push_here(pane);
         }
-        let last = self.jumplist.len() - 1;
+        let last = pane.jumplist.len() - 1;
         let next = match seek {
-            Seek::Prev => self.jump_at.min(last).saturating_sub(1),
-            Seek::Next => (self.jump_at + 1).min(last),
+            Seek::Prev => pane.jump_at.min(last).saturating_sub(1),
+            Seek::Next => (pane.jump_at + 1).min(last),
             Seek::First => 0,
             Seek::Last => last,
         };
-        if next == self.jump_at && matches!(seek, Seek::Prev | Seek::Next) {
+        if next == pane.jump_at && matches!(seek, Seek::Prev | Seek::Next) {
             return declined(match seek {
                 Seek::Prev => "already at the oldest jump",
                 _ => "already at the newest jump",
             });
         }
-        self.jump_at = next;
-        let Some(id) = self.jumplist.get(next).copied() else {
+        pane.jump_at = next;
+        let Some(id) = pane.jumplist.get(next).copied() else {
             return declined("the jumplist moved under us");
         };
-        match self.goto_anchor(Some(id), None, true, false) {
+        match self.goto_anchor(pane, Some(id), None, true, false) {
             Outcome::Done(_) => Outcome::Done(Receipt {
                 capability: "jump",
                 value: Value::Int(i64::try_from(next).unwrap_or(0)),
@@ -7044,16 +7119,16 @@ impl Editing {
     /// Vim's rule: a jump remembers where you *came from*. Jumping after
     /// walking backwards truncates the forward half, which is what makes the
     /// list a history rather than a ring.
-    fn push_jump(&mut self) {
+    fn push_jump(&mut self, pane: &mut Pane) {
         // **Truncated at `jump_at`, not after it.** Everything from where the
         // walk currently stands is unreachable once a new jump happens, and the
         // entry *at* `jump_at` is the position `push_here` is about to record —
         // keeping it would leave the same line in the list twice. At the
         // present this is a no-op, which is the ordinary case.
-        self.jumplist
-            .truncate(self.jump_at.min(self.jumplist.len()));
-        self.push_here();
-        self.jump_at = self.jumplist.len();
+        pane.jumplist
+            .truncate(pane.jump_at.min(pane.jumplist.len()));
+        self.push_here(pane);
+        pane.jump_at = pane.jumplist.len();
     }
 
     /// Append the cursor's line to the jumplist, leaving `jump_at` alone.
@@ -7062,17 +7137,17 @@ impl Editing {
     /// recording where it came *from*, and [`Editing::jump`]'s first `<C-o>`,
     /// which is a walk recording where it is *leaving* so `<C-i>` has somewhere
     /// to return to.
-    fn push_here(&mut self) {
+    fn push_here(&mut self, pane: &mut Pane) {
         let Some(path) = self.file.clone() else {
             return;
         };
-        let line = self.text().cursor().line;
+        let line = self.text(pane).cursor().line;
         let span = self.line_span(line);
         let fingerprint = self.fingerprint(line);
         let id = self
             .store
             .place_anchor(store::key_for(&path), span, None, fingerprint);
-        self.jumplist.push(id);
+        pane.jumplist.push(id);
     }
 
     fn yank(&mut self, target: &Target, register: Option<&RegisterName>) {
@@ -7088,12 +7163,12 @@ impl Editing {
         self.registers.insert(name, Register { text, linewise });
     }
 
-    fn paste(&mut self, register: Option<&RegisterName>, before: bool) {
+    fn paste(&mut self, pane: &mut Pane, register: Option<&RegisterName>, before: bool) {
         let name = register.map_or_else(|| UNNAMED.to_owned(), |name| name.0.clone());
         let Some(register) = self.registers.get(&name).cloned() else {
             return;
         };
-        let cursor = self.text().cursor();
+        let cursor = self.text(pane).cursor();
         if register.linewise {
             let trimmed = register.text.trim_end_matches('\n').to_owned();
             if before {
@@ -7110,7 +7185,7 @@ impl Editing {
                 });
                 self.editor.set_cursor(start);
             } else {
-                let at = motion::end_of_line(&self.text(), cursor.line);
+                let at = motion::end_of_line(&self.text(pane), cursor.line);
                 self.insert(at, &format!("\n{trimmed}"));
                 let start = self.offset(Position {
                     line: cursor.line + 1,
@@ -7186,8 +7261,8 @@ impl Editing {
     /// `(0, 0)` when the cursor is scrolled off screen. A float at the top-left
     /// is wrong, but the request that produced it was made at a cursor nobody
     /// can see, and there is no cell to be right about.
-    fn anchor(&self, back: usize) -> Anchor {
-        let Some((x, y)) = self.editor.get_visible_cursor(&self.area) else {
+    fn anchor(&self, pane: &Pane, back: usize) -> Anchor {
+        let Some((x, y)) = self.editor.get_visible_cursor(&pane.area) else {
             return Anchor::new(0, 0);
         };
         let code = self.editor.code_ref();
@@ -7295,12 +7370,12 @@ impl Editing {
     /// beside the chrome so the host cannot wrap to a width the float disagrees
     /// with.
     ///
-    /// It is measured on [`Editing::area`] — the text area this buffer is drawn
+    /// It is measured on [`Pane::area`] — the text area this buffer is drawn
     /// in — because that is what the float is capped against. A zero-width area
     /// (a buffer that has never been laid out) wraps to nothing and hands the
     /// lines back whole, which truncates exactly as before rather than looping.
-    fn wrapped(&self, lines: &[String]) -> Vec<String> {
-        float::wrap_prose(lines, float::anchored_wrap_cols(self.area.width))
+    fn wrapped(&self, pane: &Pane, lines: &[String]) -> Vec<String> {
+        float::wrap_prose(lines, float::anchored_wrap_cols(pane.area.width))
     }
 
     /// Carries a signature/hover session's width across an answer.
@@ -7327,7 +7402,7 @@ impl Editing {
     ///
     /// The anchor is the **first cell of the word being completed**, which is
     /// where `7c` draws the list: under the word, not under the cursor.
-    fn completions(&self, items: &[WireCompletion]) -> CompletionVm {
+    fn completions(&self, pane: &Pane, items: &[WireCompletion]) -> CompletionVm {
         CompletionVm {
             items: items
                 .iter()
@@ -7346,12 +7421,13 @@ impl Editing {
             // a label is the text that gets inserted and a wrapped identifier is
             // not that identifier.
             documentation: self.wrapped(
+                pane,
                 &items
                     .first()
                     .map(|item| item.documentation.clone())
                     .unwrap_or_default(),
             ),
-            anchor: self.anchor(self.prefix_len()),
+            anchor: self.anchor(pane, self.prefix_len()),
             // Seeded by the caller, which is the only place that can see the
             // session this one replaces.
             width_floor: 0,
@@ -7377,7 +7453,7 @@ impl Editing {
     /// [`Binding`] and the VM resolves it — and routing a second path to the VM
     /// through here would put arbitrary evaluation inside an arm that is
     /// supposed to be a text edit.
-    fn fall_through(&mut self, binding: &Binding) -> Outcome {
+    fn fall_through(&mut self, pane: &mut Pane, binding: &Binding) -> Outcome {
         let (name, args) = match binding {
             Binding::Capability { name, args } => (name, args),
             Binding::Source { .. } => {
@@ -7395,7 +7471,7 @@ impl Editing {
             Err(error) => return declined(&error.to_string()),
         };
         self.falling_through = true;
-        let outcome = self.act(&action);
+        let outcome = self.act(pane, &action);
         self.falling_through = false;
         outcome
     }
@@ -7705,7 +7781,7 @@ impl Editing {
     }
 
     /// `J` — the newline and the next line's indent become one space.
-    fn join(&mut self, target: &Target) {
+    fn join(&mut self, pane: &mut Pane, target: &Target) {
         let (from, to) = self
             .target_range(target)
             .unwrap_or_else(|| (self.editor.get_cursor(), self.editor.get_cursor()));
@@ -7718,7 +7794,7 @@ impl Editing {
         // edits (the newline out, the space in).
         self.begin();
         for _ in first..last {
-            let text = self.text();
+            let text = self.text(pane);
             let Some(next) = text.line(u32::try_from(first).unwrap_or(0) + 2) else {
                 break;
             };
@@ -7833,6 +7909,10 @@ struct Session<'a> {
     layer: &'a mut Layer,
     seed: &'a mut Table,
     editing: &'a mut Editing,
+    /// The pane the key lands in. A fifth borrow for the reason the other four
+    /// are borrows: a keystroke moves a buffer *and* the rectangle it is shown
+    /// in, and after step 4a those are two owners.
+    pane: &'a mut Pane,
 }
 
 /// How many keys a `repeat-last` or `feed-keys` may put back into the loop
@@ -7856,7 +7936,7 @@ impl Session<'_> {
         let mut queue = std::collections::VecDeque::from([(pressed, 0_u8)]);
         while let Some((pressed, depth)) = queue.pop_front() {
             let emitted = {
-                let text = self.editing.text();
+                let text = self.editing.text(self.pane);
                 let mut layer = LayerKeymap { layer: self.layer };
                 let mut keymap = Layered::new(&mut layer, self.seed);
                 self.machine.feed(pressed, &mut keymap, &text)
@@ -7878,7 +7958,7 @@ impl Session<'_> {
                     // Found by hand at `CP-4`. [`submit_ex`] has always taken
                     // the first — it is a `find_map` — so `:wq` and `ZZ` are
                     // the same Action list and were answering differently.
-                    if let Outcome::Refused(refusal) = self.editing.apply(&action)
+                    if let Outcome::Refused(refusal) = self.editing.apply(self.pane, &action)
                         && !said
                     {
                         self.editing.refused = Some(refusal);
@@ -8030,9 +8110,9 @@ const fn moves_cursor(action: &Action) -> bool {
 /// buffer and leaves the viewport exactly where it was; the user scrolls to it
 /// or does not. Found by review, which also found that this function's own doc
 /// already named `act` while the code called `apply`.
-fn deliver(editing: &mut Editing, posted: &events::Posted) -> Option<String> {
+fn deliver(editing: &mut Editing, pane: &mut Pane, posted: &events::Posted) -> Option<String> {
     let outcome = match posted.action.spec().mcp {
-        McpPolicy::Allow => editing.act(&posted.action),
+        McpPolicy::Allow => editing.act(pane, &posted.action),
         // Not applied and not dropped: the ask queue is where this goes when it
         // exists, and until then a producer is told what it is waiting for.
         McpPolicy::Ask => declined("needs an ask first — T060 builds the queue"),
@@ -8132,13 +8212,21 @@ fn decode(event: KeyEvent) -> Option<Key> {
 /// unmovable by a motion, and invisible to an operator. The wheel stays here
 /// because scrolling is a request about a viewport and nothing to do with the
 /// grammar.
-fn mouse_actions(machine: &mut Machine, editing: &Editing, mouse: MouseEvent) -> Vec<Action> {
+fn mouse_actions(
+    machine: &mut Machine,
+    editing: &Editing,
+    pane: &Pane,
+    mouse: MouseEvent,
+) -> Vec<Action> {
     let editor = &editing.editor;
-    // **The area comes off `editing`, not beside it.** It was a fourth
-    // parameter, and the loop bound `let area = editing.area;` on the line above
-    // the call to feed it — two names for one `Copy` field across a seam, which
-    // is a place for the two to be different.
-    let area = editing.area;
+    // **The area is the pane's, and that is why it is a parameter again.**
+    // It was a fourth parameter once, fed by `let area = editing.area;` on the
+    // line above the call — two names for one `Copy` field across a seam, and
+    // folding it into `editing` closed that. Step 4a reopens it on the other
+    // side of the same argument: an area is a fact about the rectangle, not
+    // about the rope, so there is now exactly one owner to read it from and no
+    // second name to disagree with.
+    let area = pane.area;
     let at = || {
         editor
             .cursor_from_mouse(mouse.column, mouse.row, &area)
@@ -8154,9 +8242,9 @@ fn mouse_actions(machine: &mut Machine, editing: &Editing, mouse: MouseEvent) ->
         MouseEventKind::Down(MouseButton::Left) => {
             at().map_or_else(Vec::new, |position| machine.click(position))
         }
-        MouseEventKind::Drag(MouseButton::Left) => {
-            at().map_or_else(Vec::new, |position| machine.drag(position, &editing.text()))
-        }
+        MouseEventKind::Drag(MouseButton::Left) => at().map_or_else(Vec::new, |position| {
+            machine.drag(position, &editing.text(pane))
+        }),
         // Three rows a notch: the conventional wheel step, and the one number
         // here a `set-option!` will want to own (`T033`).
         MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
@@ -8378,12 +8466,17 @@ fn picker_key(key: KeyEvent, session: &mut PickerSession) -> PickerStep {
 /// do.** There is no second path from a command to the buffer — which is what
 /// makes `:write` and `SPC f s` the same thing said twice rather than two
 /// implementations of saving.
-fn submit_ex(layer: &mut Layer, editing: &mut Editing, line: &str) -> Option<String> {
+fn submit_ex(
+    layer: &mut Layer,
+    editing: &mut Editing,
+    pane: &mut Pane,
+    line: &str,
+) -> Option<String> {
     match layer.ex(line) {
         Ex::Ran => None,
         Ex::Run(actions) => actions
             .iter()
-            .find_map(|action| phosphor_steel::answer::trouble(&editing.apply(action))),
+            .find_map(|action| phosphor_steel::answer::trouble(&editing.apply(pane, action))),
         Ex::Ambiguous => Some(format!("ambiguous — :{line} names more than one command")),
         Ex::Unknown => Some(format!("no such command — :{line}")),
     }
@@ -8894,11 +8987,12 @@ mod tests {
 
     use super::{
         AppHost, COMPLETION_MIN_CHARS, COMPLETION_MIN_CHARS_DEFAULT, Caret, Cli,
-        CommandFactory as _, EXPAND_TAB, Editing, ExStep, FromArgMatches as _, IndentStyle, Intent,
-        Key, Layer, Lookup, Machine, NodeId, Outstanding, Repl, ReplStep, Session, StatusVm,
-        Surface, TAB_WIDTH, Table, UndoTree, Vm, WireCompletion, boot, buffer, closes_surface,
-        completion_floor, decode, deliver, door, ex_key, grammar_of, indent_style, is_press,
-        repl_key, restored, seeding, server_chip, split, submit_ex, vm, wire_undo,
+        CommandFactory as _, EXPAND_TAB, Editing, EditorText, ExStep, FromArgMatches as _,
+        IndentStyle, Intent, Key, Layer, Lookup, Machine, NodeId, Outstanding, Pane, Repl,
+        ReplStep, Session, StatusVm, Surface, TAB_WIDTH, Table, UndoTree, Vm, WireCompletion, boot,
+        buffer, closes_surface, completion_floor, decode, deliver, door, ex_key, grammar_of,
+        indent_style, is_press, repl_key, restored, seeding, server_chip, split, submit_ex, vm,
+        wire_undo,
     };
 
     fn event(code: KeyCode) -> KeyEvent {
@@ -9035,27 +9129,91 @@ mod tests {
         path
     }
 
+    /// One buffer in one pane, as the loop holds them — what the unit tests in
+    /// this module drive.
+    ///
+    /// **A harness rather than two locals, and step 4b is the reason.** The
+    /// context an Action is applied in is about to gain a `Shell` and then a
+    /// map of panes; a test that says `editing.apply(&action)` does not change
+    /// when that happens, and twenty-five that build the argument by hand all
+    /// do. These tests are about `Editing`'s arms, not about the shape of the
+    /// context those arms are handed.
+    ///
+    /// **It derefs to [`Editing`] on purpose**, so `editing.editor` and
+    /// `editing.registers` read the way they did and the diff that introduced
+    /// the pane stays about the pane. The other half is deliberately *not*
+    /// hidden: a test that means the rectangle says `editing.pane.area`, and
+    /// one that means the rope says `editing.editor`. Test-only scaffolding —
+    /// nothing on the shipping path derefs one type into another.
+    #[derive(Debug)]
+    struct Bench {
+        editing: Editing,
+        pane: Pane,
+    }
+
+    impl std::ops::Deref for Bench {
+        type Target = Editing;
+
+        fn deref(&self) -> &Editing {
+            &self.editing
+        }
+    }
+
+    impl std::ops::DerefMut for Bench {
+        fn deref_mut(&mut self) -> &mut Editing {
+            &mut self.editing
+        }
+    }
+
+    impl Bench {
+        /// One Action, applied to this buffer in this pane.
+        fn apply(&mut self, action: &Action) -> Outcome {
+            self.editing.apply(&mut self.pane, action)
+        }
+
+        /// One Action, applied without the reveal — see [`Editing::act`].
+        fn act(&mut self, action: &Action) -> Outcome {
+            self.editing.act(&mut self.pane, action)
+        }
+
+        /// The buffer as the machine reads it, in this pane.
+        fn text(&self) -> EditorText<'_> {
+            self.editing.text(&self.pane)
+        }
+
+        /// The two halves, borrowed apart — for the free functions that take
+        /// both. `deliver` and `submit_ex` are the loop's own path, so a test
+        /// of one calls it the way the loop does rather than through a wrapper
+        /// only tests would have.
+        fn split(&mut self) -> (&mut Editing, &mut Pane) {
+            (&mut self.editing, &mut self.pane)
+        }
+    }
+
     /// One `Editing` over `text` with the cursor at the end of it, laid out in
     /// a `width`-column area — the shape the completion and hover gates read.
-    fn typed(text: &str, width: u16) -> Editing {
-        let mut editing = editing(text);
-        editing.area = Rect::new(0, 0, width, 24);
-        editing.editor.set_cursor(text.chars().count());
-        editing
+    fn typed(text: &str, width: u16) -> Bench {
+        let mut bench = editing(text);
+        bench.pane.area = Rect::new(0, 0, width, 24);
+        bench.editor.set_cursor(text.chars().count());
+        bench
     }
 
     /// One `Editing` over `text`, with nothing to save to.
-    fn editing(text: &str) -> Editing {
-        Editing::new(
-            buffer(
-                "text",
-                text,
-                &super::builtin("phosphor-dark").expect("a shipped theme"),
-            )
-            .expect("a buffer"),
-            None,
-            std::rc::Rc::new(std::cell::Cell::new(false)),
-        )
+    fn editing(text: &str) -> Bench {
+        Bench {
+            editing: Editing::new(
+                buffer(
+                    "text",
+                    text,
+                    &super::builtin("phosphor-dark").expect("a shipped theme"),
+                )
+                .expect("a buffer"),
+                None,
+                std::rc::Rc::new(std::cell::Cell::new(false)),
+            ),
+            pane: Pane::new(),
+        }
     }
 
     /// **`u` leaves a selection painted on screen.** Reported by Teej at a real
@@ -9120,8 +9278,10 @@ mod tests {
         use phosphor_core::input::text::Text as _;
 
         let mut editing = editing("hello");
+        let (buffer, pane) = editing.split();
         let note = deliver(
-            &mut editing,
+            buffer,
+            pane,
             &super::events::Posted {
                 source: "lsp",
                 action: Action::Buffer(phosphor_core::action::BufferAction::Insert {
@@ -9145,7 +9305,7 @@ mod tests {
     fn a_posted_edit_does_not_scroll_the_viewport_the_user_is_looking_at() {
         let text: String = (1..=100).map(|line| format!("line {line}\n")).collect();
         let mut editing = editing(&text);
-        editing.area = Rect::new(0, 0, 80, 10);
+        editing.pane.area = Rect::new(0, 0, 80, 10);
         // The user's own turn at the one writer, so there is a viewport worth
         // not moving.
         let _ = editing.act(&Action::View(phosphor_core::action::ViewAction::Scroll {
@@ -9158,8 +9318,10 @@ mod tests {
             "this test is about a scrolled viewport and needs one"
         );
 
+        let (buffer, pane) = editing.split();
         let note = deliver(
-            &mut editing,
+            buffer,
+            pane,
             &super::events::Posted {
                 source: "lsp",
                 action: Action::Buffer(phosphor_core::action::BufferAction::Insert {
@@ -9186,8 +9348,10 @@ mod tests {
     #[test]
     fn a_posted_action_the_mcp_door_denies_is_refused_rather_than_applied() {
         let mut editing = editing("hello");
+        let (buffer, pane) = editing.split();
         let note = deliver(
-            &mut editing,
+            buffer,
+            pane,
             &super::events::Posted {
                 source: "lsp",
                 action: Action::App(phosphor_core::action::AppAction::Quit { force: true }),
@@ -9209,8 +9373,10 @@ mod tests {
         use phosphor_core::input::text::Text as _;
 
         let mut editing = editing("hello");
+        let (buffer, pane) = editing.split();
         let note = deliver(
-            &mut editing,
+            buffer,
+            pane,
             &super::events::Posted {
                 source: "lsp",
                 action: Action::Lsp(phosphor_core::action::LspAction::ApplyWorkspaceEdit {
@@ -9243,8 +9409,10 @@ mod tests {
         // the `_` arm — which is the case this test is about. It used to be
         // `ingest-diagnostics`; that one has an arm now (`T040`), and the test
         // below is what took its place.
+        let (buffer, pane) = editing.split();
         let note = deliver(
-            &mut editing,
+            buffer,
+            pane,
             &super::events::Posted {
                 source: "vcs",
                 action: Action::Vcs(phosphor_core::action::VcsAction::RefreshVcs {}),
@@ -9268,8 +9436,10 @@ mod tests {
     fn a_published_diagnostic_reaches_the_store_the_gutter_reads() {
         let mut editing = editing("fn main() {}\n");
         let path = PathBuf::from("/tmp/retry.rs");
+        let (buffer, pane) = editing.split();
         let note = deliver(
-            &mut editing,
+            buffer,
+            pane,
             &super::events::Posted {
                 source: "lsp",
                 action: Action::Lsp(phosphor_core::action::LspAction::IngestDiagnostics {
@@ -9299,8 +9469,10 @@ mod tests {
     #[test]
     fn a_producer_cannot_open_a_completion_float_nobody_asked_for() {
         let mut editing = editing("hello");
+        let (buffer, pane) = editing.split();
         let note = deliver(
-            &mut editing,
+            buffer,
+            pane,
             &super::events::Posted {
                 source: "lsp",
                 action: Action::Lsp(phosphor_core::action::LspAction::IngestCompletions {
@@ -9460,16 +9632,19 @@ mod tests {
         // protected. `q` is a buffer key and `esc` is the mode key;
         // `runtime/keymaps.scm` binds `ZQ` and `<C-c>`, and this applies
         // `App::Quit` like any other Action.
-        let mut editing = Editing::new(
-            buffer(
-                "text",
-                "text",
-                &super::builtin("phosphor-dark").expect("a shipped theme"),
-            )
-            .expect("a buffer"),
-            None,
-            std::rc::Rc::new(std::cell::Cell::new(false)),
-        );
+        let mut editing = Bench {
+            editing: Editing::new(
+                buffer(
+                    "text",
+                    "text",
+                    &super::builtin("phosphor-dark").expect("a shipped theme"),
+                )
+                .expect("a buffer"),
+                None,
+                std::rc::Rc::new(std::cell::Cell::new(false)),
+            ),
+            pane: Pane::new(),
+        };
         assert!(!editing.quit);
         let outcome = editing.apply(&Action::App(phosphor_core::action::AppAction::Quit {
             force: true,
@@ -9481,16 +9656,19 @@ mod tests {
     #[test]
     fn a_quit_that_would_lose_work_is_refused_unless_forced() {
         let dirty = std::rc::Rc::new(std::cell::Cell::new(true));
-        let mut editing = Editing::new(
-            buffer(
-                "text",
-                "text",
-                &super::builtin("phosphor-dark").expect("a shipped theme"),
-            )
-            .expect("a buffer"),
-            None,
-            std::rc::Rc::clone(&dirty),
-        );
+        let mut editing = Bench {
+            editing: Editing::new(
+                buffer(
+                    "text",
+                    "text",
+                    &super::builtin("phosphor-dark").expect("a shipped theme"),
+                )
+                .expect("a buffer"),
+                None,
+                std::rc::Rc::clone(&dirty),
+            ),
+            pane: Pane::new(),
+        };
         let outcome = editing.apply(&Action::App(phosphor_core::action::AppAction::Quit {
             force: false,
         }));
@@ -9548,12 +9726,15 @@ mod tests {
         // editor, through `Session`, with the shipped editor layer answering
         // first on every key.
         let theme = super::builtin("phosphor-dark").expect("a shipped theme");
-        let mut editing = Editing::new(
-            buffer("text", "one\ntwo\nthree\nfour\nfive", &theme).expect("a buffer"),
-            None,
-            std::rc::Rc::new(std::cell::Cell::new(false)),
-        );
-        editing.area = Rect::new(0, 0, 80, 24);
+        let mut editing = Bench {
+            editing: Editing::new(
+                buffer("text", "one\ntwo\nthree\nfour\nfive", &theme).expect("a buffer"),
+                None,
+                std::rc::Rc::new(std::cell::Cell::new(false)),
+            ),
+            pane: Pane::new(),
+        };
+        editing.pane.area = Rect::new(0, 0, 80, 24);
         let mut machine = Machine::new();
         let mut seed = Table::new();
         let (mut layer, _host) = booted();
@@ -9564,11 +9745,13 @@ mod tests {
             KeyCode::Char('d'),
             KeyCode::Char('d'),
         ] {
+            let (buffer, pane) = editing.split();
             Session {
                 machine: &mut machine,
                 layer: &mut layer,
                 seed: &mut seed,
-                editing: &mut editing,
+                editing: buffer,
+                pane,
             }
             .key(pressed(code));
         }
@@ -9589,22 +9772,27 @@ mod tests {
     #[test]
     fn insert_mode_types_into_the_real_buffer_and_esc_leaves_it() {
         let theme = super::builtin("phosphor-dark").expect("a shipped theme");
-        let mut editing = Editing::new(
-            buffer("text", "bc", &theme).expect("a buffer"),
-            None,
-            std::rc::Rc::new(std::cell::Cell::new(false)),
-        );
-        editing.area = Rect::new(0, 0, 80, 24);
+        let mut editing = Bench {
+            editing: Editing::new(
+                buffer("text", "bc", &theme).expect("a buffer"),
+                None,
+                std::rc::Rc::new(std::cell::Cell::new(false)),
+            ),
+            pane: Pane::new(),
+        };
+        editing.pane.area = Rect::new(0, 0, 80, 24);
         let mut machine = Machine::new();
         let mut seed = Table::new();
         let (mut layer, _host) = booted();
 
         for code in [KeyCode::Char('i'), KeyCode::Char('a'), KeyCode::Esc] {
+            let (buffer, pane) = editing.split();
             Session {
                 machine: &mut machine,
                 layer: &mut layer,
                 seed: &mut seed,
-                editing: &mut editing,
+                editing: buffer,
+                pane,
             }
             .key(pressed(code));
         }
@@ -9616,7 +9804,7 @@ mod tests {
     /// what it did. Everything here is the shipping path: the shipped keymap
     /// answers first on every key, and `Editing` applies what comes out.
     struct Typed {
-        editing: Editing,
+        editing: Bench,
         machine: Machine,
         seed: Table,
         layer: Layer,
@@ -9637,12 +9825,15 @@ mod tests {
 
         fn with_dirty(text: &str, dirty: bool) -> Self {
             let theme = super::builtin("phosphor-dark").expect("a shipped theme");
-            let mut editing = Editing::new(
-                buffer("text", text, &theme).expect("a buffer"),
-                None,
-                std::rc::Rc::new(std::cell::Cell::new(dirty)),
-            );
-            editing.area = Rect::new(0, 0, 80, 24);
+            let mut editing = Bench {
+                editing: Editing::new(
+                    buffer("text", text, &theme).expect("a buffer"),
+                    None,
+                    std::rc::Rc::new(std::cell::Cell::new(dirty)),
+                ),
+                pane: Pane::new(),
+            };
+            editing.pane.area = Rect::new(0, 0, 80, 24);
             let (layer, _host) = booted();
             Self {
                 editing,
@@ -9656,11 +9847,13 @@ mod tests {
         /// in, through the same decode-and-feed the loop does.
         fn keys(&mut self, spelled: &str) -> &mut Self {
             for key in parse_seq(spelled).expect("a spelling these tests wrote") {
+                let (buffer, pane) = self.editing.split();
                 Session {
                     machine: &mut self.machine,
                     layer: &mut self.layer,
                     seed: &mut self.seed,
-                    editing: &mut self.editing,
+                    editing: buffer,
+                    pane,
                 }
                 .key(key);
             }
@@ -9774,17 +9967,20 @@ mod tests {
         // `fold_query` — so an empty range list here is a grammar problem and
         // not a wiring one, which is why the assertion says so.
         let theme = super::builtin("phosphor-dark").expect("a shipped theme");
-        let mut editing = Editing::new(
-            buffer(
-                "rust",
-                "fn outer() {\n    let a = 1;\n    let b = 2;\n}\n",
-                &theme,
-            )
-            .expect("a buffer"),
-            None,
-            std::rc::Rc::new(std::cell::Cell::new(false)),
-        );
-        editing.area = Rect::new(0, 0, 80, 24);
+        let mut editing = Bench {
+            editing: Editing::new(
+                buffer(
+                    "rust",
+                    "fn outer() {\n    let a = 1;\n    let b = 2;\n}\n",
+                    &theme,
+                )
+                .expect("a buffer"),
+                None,
+                std::rc::Rc::new(std::cell::Cell::new(false)),
+            ),
+            pane: Pane::new(),
+        };
+        editing.pane.area = Rect::new(0, 0, 80, 24);
         assert!(
             !editing.editor.code_ref().fold_ranges().is_empty(),
             "the bundled rust grammar produces fold ranges"
@@ -10463,7 +10659,7 @@ mod tests {
 
         let text: String = (1..=100).map(|line| format!("line {line}\n")).collect();
         let mut editing = editing(&text);
-        editing.area = Rect::new(0, 0, 80, 10);
+        editing.pane.area = Rect::new(0, 0, 80, 10);
         editing.mode = phosphor_core::request::EditMode::Insert;
         editing.editor.set_cursor(0);
 
@@ -10490,8 +10686,8 @@ mod tests {
         assert!(
             editing
                 .editor
-                .get_visible_cursor(&editing.area)
-                .is_some_and(|(_, y)| u32::from(y) < u32::from(editing.area.height)),
+                .get_visible_cursor(&editing.pane.area)
+                .is_some_and(|(_, y)| u32::from(y) < u32::from(editing.pane.area.height)),
             "and the cursor is on screen rather than below it"
         );
     }
@@ -10522,7 +10718,7 @@ mod tests {
         // fifth line is the last row that fits.
         let text: String = std::iter::repeat_n("abcdefgh\n", 6).collect();
         let mut editing = editing(&text);
-        editing.area = Rect::new(0, 0, 20, 5);
+        editing.pane.area = Rect::new(0, 0, 20, 5);
         editing.editor.set_soft_wrap(Some(10));
         editing.mode = phosphor_core::request::EditMode::Insert;
         // End of the fifth line — visual row 4, the bottom of the window. Nine
@@ -10548,8 +10744,8 @@ mod tests {
         assert!(
             editing
                 .editor
-                .get_visible_cursor(&editing.area)
-                .is_some_and(|(_, y)| u32::from(y) < u32::from(editing.area.height)),
+                .get_visible_cursor(&editing.pane.area)
+                .is_some_and(|(_, y)| u32::from(y) < u32::from(editing.pane.area.height)),
             "and the cursor is on screen rather than below it"
         );
     }
@@ -10577,7 +10773,7 @@ mod tests {
         });
         let at = |mode, text: &str, cursor| {
             let mut editing = editing(text);
-            editing.area = Rect::new(0, 0, 80, 24);
+            editing.pane.area = Rect::new(0, 0, 80, 24);
             editing.mode = mode;
             editing.editor.set_cursor(cursor);
             drop(editing.apply(&space));
@@ -11397,11 +11593,14 @@ mod tests {
         // the half of that binding this file owns: the Action lands, the loop
         // reads the ask. The other two prompt kinds are `T058`'s and say so.
         let theme = super::builtin("phosphor-dark").expect("a shipped theme");
-        let mut editing = Editing::new(
-            buffer("text", "", &theme).expect("a buffer"),
-            None,
-            std::rc::Rc::new(std::cell::Cell::new(false)),
-        );
+        let mut editing = Bench {
+            editing: Editing::new(
+                buffer("text", "", &theme).expect("a buffer"),
+                None,
+                std::rc::Rc::new(std::cell::Cell::new(false)),
+            ),
+            pane: Pane::new(),
+        };
         let open = |kind| {
             Action::Prompt(phosphor_core::action::PromptAction::OpenPrompt {
                 kind,
@@ -11426,31 +11625,111 @@ mod tests {
         assert!(reason.contains("T058"), "{reason}");
     }
 
+    /// **Two panes over one buffer keep two jumplists**, which is the whole of
+    /// what step 4a moved and the one thing a rename would not have bought.
+    ///
+    /// Vim's rule, and the reason the field could not stay on `Editing`:
+    /// *"Each window has a separate jump list"* (`:help jumplist`). `<C-o>` in
+    /// a split walks back through where **that split** has been. With the list
+    /// on the buffer, opening the same file twice gave you one history shared
+    /// between two cursors, and jumping in either would move the other's idea
+    /// of where it had come from.
+    ///
+    /// This is testable before any UI exists because `Pane` is a plain struct:
+    /// the binary makes one and a test can make two. That is what step 4c's
+    /// maps are for, a step early.
+    #[test]
+    fn two_panes_over_one_buffer_keep_two_jumplists() {
+        let theme = super::builtin("phosphor-dark").expect("a shipped theme");
+        let file = scratch("jumplists").join("split.txt");
+        std::fs::write(&file, "one\ntwo\nthree\n").expect("a file to anchor into");
+        let mut editing = Editing::new(
+            buffer("text", "one\ntwo\nthree\n", &theme).expect("a buffer"),
+            Some(file),
+            std::rc::Rc::new(std::cell::Cell::new(false)),
+        );
+
+        let mut left = Pane::new();
+        let right = Pane::new();
+
+        editing.push_jump(&mut left);
+        editing.push_jump(&mut left);
+
+        assert_eq!(
+            left.jumplist.len(),
+            2,
+            "the pane the jumps were made in records them"
+        );
+        assert_eq!(left.jump_at, 2, "and stands at the present, which is `len`");
+        assert!(
+            right.jumplist.is_empty(),
+            "the other pane showing the same buffer has been nowhere — this is \
+             the assertion that fails the moment the list goes back on `Editing`"
+        );
+        assert_eq!(right.jump_at, 0);
+    }
+
+    /// **The same buffer in two panes wraps to two widths.** `Editing::wrapped`
+    /// used to measure a hover float against `self.area`, so which width it
+    /// got depended on which pane had most recently been laid out. It measures
+    /// the pane it is handed now, and a test can hand it two.
+    ///
+    /// The numbers are not the point and are not asserted: what is asserted is
+    /// that the narrow pane produces *more* lines from the same prose, which is
+    /// only true if the width came from the pane rather than from the buffer.
+    #[test]
+    fn the_same_prose_wraps_to_more_lines_in_a_narrower_pane() {
+        let editing = editing("").editing;
+        let prose = vec![
+            "A hover answer long enough that a narrow pane has to break it and \
+             a wide one does not."
+                .to_owned(),
+        ];
+
+        let narrow = Pane {
+            area: Rect::new(0, 0, 24, 10),
+            ..Pane::new()
+        };
+        let wide = Pane {
+            area: Rect::new(0, 0, 200, 10),
+            ..Pane::new()
+        };
+
+        assert!(
+            editing.wrapped(&narrow, &prose).len() > editing.wrapped(&wide, &prose).len(),
+            "the width is the pane's, not the buffer's"
+        );
+    }
+
     #[test]
     fn the_ex_line_types_and_runs_through_the_same_path_a_key_does() {
         // `T033`'s ex half: `:w` is `:write` by the abbreviation rule, and the
         // Actions it names are applied by `Editing`, not by a second path.
         let theme = super::builtin("phosphor-dark").expect("a shipped theme");
         let file = scratch("ex").join("written.txt");
-        let mut editing = Editing::new(
-            buffer("text", "one\ntwo", &theme).expect("a buffer"),
-            Some(file.clone()),
-            std::rc::Rc::new(std::cell::Cell::new(true)),
-        );
+        let mut editing = Bench {
+            editing: Editing::new(
+                buffer("text", "one\ntwo", &theme).expect("a buffer"),
+                Some(file.clone()),
+                std::rc::Rc::new(std::cell::Cell::new(true)),
+            ),
+            pane: Pane::new(),
+        };
         let (mut layer, _host) = booted();
+        let (buffer, pane) = editing.split();
 
         let mut line = String::new();
         assert_eq!(ex_key(event(KeyCode::Char('w')), &mut line), ExStep::Typing);
         assert_eq!(ex_key(event(KeyCode::Enter), &mut line), ExStep::Submit);
         assert_eq!(line, "w");
-        assert_eq!(submit_ex(&mut layer, &mut editing, &line), None);
+        assert_eq!(submit_ex(&mut layer, buffer, pane, &line), None);
         assert_eq!(
             std::fs::read_to_string(&file).expect("the file was written"),
             "one\ntwo"
         );
 
         // A command nobody defined says so rather than doing nothing.
-        assert!(submit_ex(&mut layer, &mut editing, "nosuchthing").is_some());
+        assert!(submit_ex(&mut layer, buffer, pane, "nosuchthing").is_some());
         // Backspacing off an empty line leaves, so `:` is never a trap.
         let mut empty = String::new();
         assert_eq!(

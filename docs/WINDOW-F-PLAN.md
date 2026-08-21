@@ -117,13 +117,28 @@ Three obstacles, each found by reading, each with a fix that does not touch the 
 
 The load-bearing step, split three ways because as a single commit it is unbisectable.
 
-- **4a — `Pane`.** `struct Pane { holds: PaneKind, buffer: Option<BufferId>, area: Rect, jumplist, jump_at, alternate }`. Move `area` (`main.rs:4820`), `alternate` (`:4966`), `jumplist` (`:5013`), `jump_at` (`:5025`) off `Editing`. `alternate`'s own doc already says *"The file leaving the pane becomes the alternate"* (`:3079-3086`) and the jumplist holds `AnchorId`s carrying a path, so neither is per-buffer. 17 `editing.area` sites, all compiler-caught.
+- **4a — `Pane`. DONE, and narrower than this bullet asked for.** `struct Pane { area: Rect, alternate, jumplist, jump_at }`, and the four moved off `Editing` exactly as argued: `alternate`'s own doc already said *"the file leaving the pane becomes the alternate"*, and the jumplist holds `AnchorId`s that each carry a path, so neither was ever per-buffer. Vim agrees about the second one in as many words — `:help jumplist` is *"Each window has a separate jump list"*.
+
+  **`holds: PaneKind` and `buffer: Option<BufferId>` are not in it, and that is not a shortcut.** Nothing reads either until step 4c keys `Panes` and `Buffers` on those ids, and a field with no reader is one `dead_code` rejects under `-D warnings`. The same bar is what keeps ruling (a)'s `viewport` out until step 11 gives it `Resources::viewport` to be read through — which is worth noticing, because it means the ruling's *"steps 4a, 6 and 11 change shape"* is really steps 6 and 11: there is nothing for 4a to add that anything can yet look at. The rule this build already runs on — a ticked task may not ship something no keystroke can reach — turns out to apply one layer down, to a struct field, and the compiler enforces it for free.
+
+  **The line citations in the first draft of this bullet were stale on arrival** — `area` was at `main.rs:5061`, not `:4820`; steps 2 and 3 grew the file by roughly 240 lines between the plan being written and being executed. Code citations are still the right form (two lints check the references and a moved line usually means a moved fact), and this is a reminder that *usually* is doing work in that sentence.
+
+- **The 4a/4b boundary moved, and the reason is the same one.** This plan put `Cx` in 4b, with 4a moving the fields — but `self.area` is read by `Editing::text`, `anchor` and `wrapped`, which are `&self` helpers called from inside `act`'s arms, so the fields cannot move without a vehicle to carry the pane in. 4a therefore threads a plain `pane: &mut Pane` through the twelve methods that need one. **`Cx` lands in 4b**, when it has two fields and beats a parameter; a one-field `Cx { view: &mut Pane }` is a wrapper with nothing in it, and this build does not ship those either. Converting the parameter to a `Cx` at 4b is one mechanical pass the compiler drives end to end.
+
+  Counted rather than estimated: 17 `editing.area` sites, 12 signatures, 9 production call sites of `act`/`apply` and 25 in tests — the plan's 34, confirmed by making them fail to compile.
 - **4b — `Shell` and `Cx`.** `Cx<'a> { pane: PaneId, view: &'a mut Pane, tree: &'a PaneTree, shell: &'a mut Shell }` threaded through `Editing::act` and `Editing::apply`. `Shell` holds only `store` and `wake` at this point so the signature settles once. **34 call sites: 9 production (above the `#[cfg(test)]` boundary at `main.rs:8630`) and 25 in the test module** — counted, and this is why the winning design's "no test changed" verification line was false.
 - **4c — the maps.** `Buffers { map: BTreeMap<BufferId, Editing>, next }` and `Panes { tree: PaneTree, map: BTreeMap<PaneId, Pane>, focus, next }`, both with one entry. `PaneTree` is split from the `BTreeMap<PaneId, Pane>` deliberately so `&PaneTree` and `&mut Pane` borrow at once. **Index by id from the first line, never by position** — `BufferId` and `PaneId` are already declared (`crates/phosphor-core/src/request.rs:52-55`, and `PaneId`'s doc already reads *"A pane in the split tree (`T088`)"*), and `close-pane` invalidates positions the first time it runs.
 
 Behaviour is provably identical because there is still one of everything.
 
 **Verification:** `just gate` green after each of 4a/4b/4c. `Buffers`/`Panes` are plain structs, so unit tests can construct two entries while the binary makes one — that is what makes steps 6-9 testable before any UI exists.
+
+**4a's verification, as run.** `just gate` green, 1,391 tests. The 1,389 that existed all passed unchanged, which is the whole of the claim that behaviour is identical while there is one of everything. Two were added, because a refactor that only moves fields is a rename and should have to prove it did more:
+
+- `two_panes_over_one_buffer_keep_two_jumplists` — the same `Editing`, two `Pane`s, and a jump pushed through one does not appear in the other. This is the test that could not be written before 4a and fails the moment the list goes back on the buffer.
+- `the_same_prose_wraps_to_more_lines_in_a_narrower_pane` — `wrapped` measured a hover float against `self.area`, so which width it got depended on which pane had most recently been laid out. It measures the pane it is handed now, and the test hands it two. The numbers are not asserted, only that narrow yields more lines than wide, which is only true if the width came from the pane.
+
+**A test harness landed with it, for step 4b's benefit.** `Bench { editing, pane }` in the test module, deref'ing to `Editing`, so twenty-five tests say `editing.apply(&action)` and do not care what the context is made of. Without it, 4b and 4c each rewrite those twenty-five call sites; with it they change two methods. Test-only scaffolding, said so at the type.
 
 ### Step 5 — The buffer-swap reset list, and a real bug fix
 
