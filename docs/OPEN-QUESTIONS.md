@@ -2237,6 +2237,70 @@ arm exists — the same self-enforcing shape `T060`'s entry already praises.
 
 ---
 
+## Raised by Window F's build
+
+### 50 · §5's tab bar asks for two rules a one-row strip cannot draw, and §8 is what fixes it at one row
+
+**Found while building `T089`**, and verified against both design documents on
+2026-08-21. This is a disagreement *inside* the design rather than between the
+design and the build, which is why it is filed rather than folded in either
+direction.
+
+`docs/design/Design Language.dc.html` §5 draws the strip as HTML, and two of its
+lines are **CSS borders**:
+
+* the strip itself carries `border-bottom: 1px solid #1d241d` — the colour the
+  theme calls `chrome.tab_bar_rule` and whose doc comment reads *"the rule under
+  the tab bar (§5)"*;
+* the active tab carries `border-top: 2px solid #3ddc97`, which §5's prose
+  spells *"active tab carries a 2px actor-colored top rule and bright text"*.
+
+§8 of the same document fixes the budget: *"Three strips of chrome: tab bar 1
+row (only with 2+ panes), statusline 1 row, tmux bar 1 row."*
+
+**A terminal cell has no top edge and no bottom edge**, so a rule is a row or it
+is nothing, and §8 has already spent the only row there is. The two statements
+cannot both be literal. `T089` holds §8 — a numeric row count is a claim a
+terminal can honour, and `2px` is a unit a cell does not have — and draws the
+strip in one row.
+
+**What the borders carried survives; what is lost is one colour.** Which tab is
+active is `neutrals.bright_text` on `chrome.statusline` against
+`neutrals.meta` on `chrome.tab_bar`, which is §5's own second clause and the
+mockup's own two colours. The per-tab `●n` counters are unaffected. What has
+nowhere to go is the **actor colour** the top rule carried — and with it the
+only drawable consequence of `view::Tab::kind`, whose doc says *"the tab's
+actor colour follows it"*. The interpreter's `Node::TabBar` arm records `kind`
+as deliberately unread, the way `Node::Picker`'s `columns` is.
+
+**It costs less than it looks.** §7 rules that *"Your own edits never create
+regions: the machine tracks claude only"*, so a tab's `●n` is claude's whatever
+the pane holds; and all three `PaneKind`s are claude's work — a buffer he wrote
+in, the transcript, a pane he emitted as a view tree. A `PaneKind`-to-actor map
+would be one colour written three ways, which is why no arbitrary mapping was
+invented to keep the rule alive.
+
+**No mockup screen draws the tab bar.** Checked: `TUI Mockups.dc.html` mentions
+`panes` only in float footers (*"X remove pane"*), so §5's figure is the only
+drawing of this strip anywhere in the design set, and there is no terminal-grid
+rendering to read the answer off. That is why this is a question rather than a
+lookup.
+
+**Two shapes if Teej wants the rule back**, neither taken:
+
+1. **Two rows** — tabs on the first, `chrome.tab_bar_rule` across the second
+   with the active tab's segment in its actor colour. Draws both borders'
+   information and uses `kind`; costs a row of every pane and contradicts §8's
+   count.
+2. **Amend §5** to say what a one-row strip does, the way `§15`'s ruling amended
+   `6d`. The design docs are imported verbatim and Teej amends them at
+   claude.ai; this is the cheaper of the two if the drawing was always a web
+   idiom rather than a terminal requirement.
+
+Until then `chrome.tab_bar_rule` is a theme colour nothing draws with. It stays
+in the theme — deleting a §5 colour to match a build is the wrong direction, and
+`T011`'s validator and the frame-grid test both name it.
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

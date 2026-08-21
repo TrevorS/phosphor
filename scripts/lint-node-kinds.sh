@@ -125,9 +125,6 @@ RECORDED = {
     # tree no longer exists. Deleted in the commit that landed the composition,
     # because this lint fails four ways on a stale row and one of them is
     # "the shipped configuration composes it now".
-    "TabBar": ("T089", "*\"Appears only at 2+ panes\"* (Design Language §5), and there is one "
-                       "pane until `T088`. The interpreter defers this tag too, so nothing "
-                       "would draw it if something composed it."),
     "Gutter": ("", "Same as `Buffer` was, and it has no creditor. The state column ships as "
                    "`BufferView`'s left column — `T031` is ticked and built it — and this kind "
                    "is the column *without* the editor, for a surface that wants it. No task in "

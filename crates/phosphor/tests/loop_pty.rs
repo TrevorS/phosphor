@@ -3203,6 +3203,128 @@ mod driven {
         );
     }
 
+    /// **`T089`: the tab bar appears on the second pane and never on the
+    /// first, and its counts are the store's.**
+    ///
+    /// Both halves of the task's *Done when*, in the running binary, because
+    /// both are claims a unit test cannot make. `crate::tab_bar`'s own tests
+    /// prove the strip reads the way §5 draws it; what only a terminal can
+    /// answer is whether the strip is *there* — the condition lives in
+    /// `Geometry::take_tab_bar` and in `compose_tabs`, one of which spends a
+    /// row and the other of which fills it, and a widget test can see neither.
+    ///
+    /// **The absence check is about the top *row*, not about the text**, and
+    /// the first draft of this test got that wrong. It asked only whether the
+    /// word `panes` was anywhere on screen, so a `Geometry::take_tab_bar` that
+    /// spent the row at one pane **passed it** — `compose_tabs` answers
+    /// `Node::Empty` there, so nothing draws into the row and the strip is
+    /// invisible while the buffer is silently a line shorter. Planted and
+    /// measured; the guard is in two places because it does two things, and a
+    /// test that watches only the ink can see only one of them.
+    ///
+    /// So the assertion is that row zero *is* the buffer at one pane and *is*
+    /// the strip at two. `contains` and not `shows`: `shows` is a two-thirds
+    /// fuzzy match, so `!shows(frame, …)` is nearly always false — the trap
+    /// `the_window_keys_split_focus_resize_and_close` paid for first.
+    ///
+    /// `●2` is the needle for the counts because nothing else on this frame
+    /// draws it: the state column's marker is `▎` (`gutter::MARKER`) and the
+    /// statusline spells its own count `2 unseen` at this width, contracting to
+    /// `●2` only after §11's ladder has taken the word — which needs a much
+    /// narrower terminal than this one.
+    #[test]
+    fn the_tab_bar_appears_on_the_second_pane_and_never_on_the_first() {
+        let scratch = Scratch::new("tab-bar");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\nbravo\ncharlie\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // Two regions claude declared, so every tab of this file has a count to
+        // carry and the store has somewhere to be tracked from.
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(declare(&file, &[(1, 1), (3, 3)]).as_bytes(), "landed=2");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // **One pane: no strip at all**, and the row it would have taken is
+        // still the buffer's. `0` is a harmless key — the cursor is already at
+        // the start of the line — pressed only to have a frame to read.
+        let alone = editor.after(b"0");
+        let top = alone.line(0);
+        let alone = grid_of(&alone);
+        assert!(
+            top.contains("alpha"),
+            "the top row is not the buffer's first line, so §5's strip took it \
+             at one pane; row was: {top:?}"
+        );
+        assert!(
+            !alone.contains("panes"),
+            "§5's strip appeared at one pane; grid was: {alone}"
+        );
+
+        // **Two panes: the strip, one tab each, both carrying the store's
+        // count.** `<C-w> v` is one notation and both bytes go in one literal —
+        // `key_coverage.py` spells it `\x17v`.
+        let split = editor.after(b"\x17v");
+        let top = split.line(0);
+        let split = grid_of(&split);
+        assert!(
+            top.contains("2 panes"),
+            "the strip is not on the top row of the second pane's frame; row \
+             was: {top:?}"
+        );
+        assert!(
+            twice(&split, "sample.txt ●2"),
+            "each pane did not get a tab carrying the store's two unseen \
+             regions; grid was: {split}"
+        );
+
+        // **The count tracks the store rather than the frame it first drew
+        // on.** `gs` is the mark-seen operator (`s` is vim's substitute and
+        // `CP-3` asks that it stay so); `gsj` marks the region under the cursor
+        // seen, and both tabs have to say so — one store, two readers.
+        //
+        // Polled rather than read once, for `gs_marks_a_region_seen`'s reason:
+        // the counter dropping is a *removal*, so there is no new text to
+        // settle on and the frame that drops it can land just after a read.
+        editor.press_quietly(b"gsj");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut after = grid_of(&editor.screen());
+        while twice(&after, "●2") {
+            assert!(
+                Instant::now() < deadline,
+                "the tabs never followed the store; grid was: {after}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+            after = grid_of(&editor.screen());
+        }
+        assert!(
+            twice(&after, "sample.txt ●1"),
+            "and the count they settled on is the one that is left; grid was: \
+             {after}"
+        );
+
+        // **Closing back to one pane takes the strip away again**, which is the
+        // half of *"never on the first"* that a session which never split
+        // cannot test: the row has to come *back*.
+        let closed = editor.after(b"\x17c");
+        let top = closed.line(0);
+        let closed = grid_of(&closed);
+        // `leave_by`, not `quit`: `gs` opened a which-key group on the way, so
+        // frames arrived that no press asked for and `quit`'s per-key frame
+        // accounting would trip on them.
+        editor.leave_by(b"ZQ");
+
+        assert!(
+            !closed.contains("panes"),
+            "the strip outlived the second pane; grid was: {closed}"
+        );
+        assert!(
+            top.contains("alpha"),
+            "and the row went back to the buffer; row was: {top:?}"
+        );
+    }
+
     /// **`:close-buffer` on the only buffer says what to type instead.**
     ///
     /// It used to answer *"one buffer, one pane — :quit leaves; T088 gives a

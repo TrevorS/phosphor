@@ -24,6 +24,7 @@ pub mod key_hints;
 pub mod picker;
 pub mod soft_wrap;
 pub mod status_line;
+pub mod tab_bar;
 pub mod theme;
 pub mod tints;
 pub mod unknown_key;

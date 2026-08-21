@@ -182,7 +182,7 @@ use phosphor_core::store::{
 use phosphor_core::value::{Args, Value, Wire as _};
 use phosphor_core::view::{
     Axis as ViewAxis, Child, Constraint, Density, Emphasis, Float as ViewFloat, KeyHint, Mood,
-    Node, SessionState, Slot, Tone, Tree,
+    Node, SessionState, Slot, Tab, Tone, Tree,
 };
 use phosphor_steel::boot::{BootFault, BootReport, BootUnit};
 use phosphor_steel::float::ExLine;
@@ -2726,6 +2726,14 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // ratatui answers with a `Resize` event and the next pass corrects.
         let size = term.size()?;
         let mut geometry = lay_out(Rect::new(0, 0, size.width, size.height));
+        // **§5's top strip, taken before the panes are measured.** Unlike the
+        // two bottom strips this one's condition is knowable here — it is
+        // *"are there two panes"* and not *"did the VM say a prefix is
+        // half-typed"* — so it comes off `body` as well as `pane` and the wrap
+        // width below is measured against rows the strip has already taken.
+        // See [`Geometry::tabs`] for why that difference is the whole reason
+        // there are two calls instead of one.
+        geometry.take_tab_bar(panes.tree.leaves().len());
         // `init.scm` sets `soft-wrap` at boot and `(set-option! …)` can change
         // it at the REPL, so it is read per frame rather than once: the option
         // is the editor layer's, and the flag is the override.
@@ -2842,6 +2850,14 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // two counts are the statusline's and are wanted for one, so the
         // focused buffer's are the ones kept.
         let mut columns: BTreeMap<BufferId, Vec<StateMark>> = BTreeMap::new();
+        // **`T089` — the count per buffer, which this loop already had.** It
+        // computed `decorated.unseen` for every buffer and kept one, because
+        // the statusline asks about the file on screen. A tab bar asks about
+        // every pane, so the answers are kept instead of dropped; nothing here
+        // computes anything it did not compute before, which is what makes
+        // *"per-tab unseen counts track the store"* a matter of not throwing
+        // the answer away.
+        let mut unseen_per_buffer: BTreeMap<BufferId, u32> = BTreeMap::new();
         let mut tally = Tally::default();
         let mut unseen = 0;
         for (id, buffer) in &mut buffers.map {
@@ -2850,6 +2866,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 tally = decorated.tally;
                 unseen = decorated.unseen;
             }
+            unseen_per_buffer.insert(*id, u32::try_from(decorated.unseen).unwrap_or(u32::MAX));
             columns.insert(*id, decorated.marks);
         }
         let editing = buffers.at_mut(held);
@@ -3033,6 +3050,11 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             .map(|(id, buffer)| (*id, &buffer.editor))
             .collect();
         let editing = buffers.at(held);
+        // `T089`. Composed every frame and empty on most of them — a session
+        // with one pane composes `Node::Empty` here and `Geometry` gave the
+        // strip no row to be drawn into, so the two halves of §5's *"only with
+        // 2+ panes"* agree by both asking the same tree the same question.
+        let tab_bar = Tree::new(compose_tabs(&panes, &buffers, &unseen_per_buffer));
         let overlay = Overlay {
             chrome,
             status: status_tree,
@@ -3043,6 +3065,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             completion: editing.completion.as_ref(),
             signature: editing.signature.as_ref(),
             picker: picker_vm.as_ref(),
+            tabs: &tab_bar,
         };
         term.draw(|frame| {
             draw(
@@ -4127,6 +4150,94 @@ fn session_buffer(repl: &Repl, theme: &Theme) -> Result<Editor, Box<dyn Error>> 
 /// A pane whose buffer this host does not have composes `Node::Empty`, which
 /// draws nothing: `query.rs`'s *"an absent thing answers empty"*, and the state
 /// a transcript pane will be in until `T054` fills it.
+/// §5's tab bar, one tab per pane, in the order the tree lays them out.
+///
+/// **Empty below two panes**, which is §5's *"appears only with 2+ panes"* said
+/// on the composition side. [`Geometry::take_tab_bar`] says it on the layout
+/// side, because that is the half that can decline to spend the row; this half
+/// is what makes the strip a composition rather than a widget the host decides
+/// to call, and it is the half `scripts/lint-node-kinds.sh` is asking about.
+///
+/// **The order is [`PaneTree::leaves`]'** — first-then-second, which is left to
+/// right and top to bottom — and not [`Panes`]'s `BTreeMap`, whose order is
+/// mint order. Split the left pane twice and the ids interleave; the strip has
+/// to read the way the screen does.
+///
+/// `unseen` is the per-buffer count the `decorate` pass already computes for
+/// every buffer and used to keep for one. That is what makes *"per-tab unseen
+/// counts track the store"* true by construction rather than by a second query:
+/// there is one count, computed once, and the statusline and the tab bar are
+/// two readers of it.
+fn compose_tabs(panes: &Panes, buffers: &Buffers, unseen: &BTreeMap<BufferId, u32>) -> Node {
+    let leaves = panes.tree.leaves();
+    if leaves.len() < 2 {
+        return Node::Empty {};
+    }
+    // One `getcwd` for the strip rather than one per tab, and only on the
+    // frames the strip exists. The workspace is the directory the editor was
+    // started in — `Timeline::open_at`'s rule, and the honest root until `T071`
+    // makes it the repository's.
+    let root = std::env::current_dir().unwrap_or_default();
+    let tabs = leaves
+        .into_iter()
+        .map(|id| {
+            let pane = panes.at(id);
+            Tab {
+                title: tab_title(pane, buffers, &root),
+                kind: pane.holds(),
+                unseen: pane
+                    .buffer
+                    .and_then(|held| unseen.get(&held).copied())
+                    .unwrap_or(0),
+                active: id == panes.focus,
+            }
+        })
+        .collect();
+    Node::TabBar { tabs }
+}
+
+/// What one tab says.
+///
+/// §5 draws `src/retry.rs` and `transcript` — a path spelled the way the
+/// workspace spells it, and a surface spelled by name.
+///
+/// **A file outside the workspace is its basename**, which is vim's own rule
+/// for a tab label and is the only one that keeps the strip usable: an absolute
+/// path out of `/var/folders/…` is fifty cells before it says anything, so two
+/// of them would push §11's second rung on an 80-column terminal and leave one
+/// tab on screen. Under the workspace the relative path is short *and*
+/// unambiguous, which is why it is preferred where it applies; outside it, the
+/// basename can collide and the absolute form cannot be read anyway.
+///
+/// **The title is composition's and not the widget's**, which is why the
+/// contraction question does not arise here: §11's ladder shortens a *line*
+/// that does not fit, and `T089`'s strip drops whole tabs instead (the widget's
+/// module docs argue why). A tab is as long as its file is.
+fn tab_title(pane: &Pane, buffers: &Buffers, root: &Path) -> String {
+    match pane.holds() {
+        PaneKind::Transcript => "transcript".to_owned(),
+        // v1.5, and `split-pane` refuses it by naming the task — so this arm is
+        // reachable only from a tree the loop did not build.
+        PaneKind::Custom => "pane".to_owned(),
+        PaneKind::Buffer => pane
+            .buffer
+            .and_then(|held| buffers.at(held).file.clone())
+            .map_or_else(
+                // §6's voice: lowercase and factual. vim's `[No Name]`, said
+                // the way this editor says things.
+                || "[no name]".to_owned(),
+                |path| {
+                    path.strip_prefix(root)
+                        .ok()
+                        .or_else(|| path.file_name().map(Path::new))
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .into_owned()
+                },
+            ),
+    }
+}
+
 fn compose_panes(tree: &PaneTree, panes: &Panes, focus: PaneId, soft_wrap: bool) -> Node {
     match tree {
         PaneTree::Leaf(id) => {
@@ -4248,6 +4359,26 @@ fn take_rows(body: &mut Rect, rows: u16) -> Option<Rect> {
     })
 }
 
+/// Takes `rows` off the **top** of `body` for a strip, or [`None`] if they will
+/// not fit.
+///
+/// [`take_rows`]'s mirror, and §5 is why there are two: *"Three strips of
+/// chrome, ever: tab bar (top …), statusline (bottom …), and tmux below it"*.
+/// The same §11 rule holds in both directions — a strip that cannot have its
+/// rows without leaving the buffer at least one is not drawn at all.
+fn take_top_rows(body: &mut Rect, rows: u16) -> Option<Rect> {
+    if rows == 0 || body.height <= rows {
+        return None;
+    }
+    let taken = Rect {
+        height: rows,
+        ..*body
+    };
+    body.y += rows;
+    body.height -= rows;
+    Some(taken)
+}
+
 /// Where every part of the frame goes, computed once per pass.
 ///
 /// **It was computed twice**, and the two answers were not the same one. The
@@ -4283,6 +4414,17 @@ struct Geometry {
     hint: Option<Rect>,
     /// The statusline's row — the ex line and a notice borrow it.
     status: Rect,
+    /// §5's tab bar, when there are two or more panes to name (`T089`).
+    ///
+    /// **Taken off [`Geometry::body`] as well as [`Geometry::pane`], which the
+    /// two bottom strips are not.** That divergence is recorded on this type
+    /// and it is a divergence about *timing*: whether the leader grid is up is
+    /// the VM's answer and arrives in the middle of the pass, by which point
+    /// the wrap width has been measured. Whether there is a second pane is the
+    /// tree's answer and is knowable at the top, so this strip can come off
+    /// before anything measures anything — and it has to, because the row it
+    /// takes is a row of the panes, every frame there is more than one of them.
+    tabs: Option<Rect>,
 }
 
 /// The frame's layout, from the size the next frame will be drawn at.
@@ -4305,6 +4447,7 @@ fn lay_out(area: Rect) -> Geometry {
         leader: None,
         hint: None,
         status,
+        tabs: None,
     }
 }
 
@@ -4339,6 +4482,7 @@ impl Geometry {
             leader: self.leader.map(|rect| rect.intersection(area)),
             hint: self.hint.map(|rect| rect.intersection(area)),
             status: self.status.intersection(area),
+            tabs: self.tabs.map(|rect| rect.intersection(area)),
         }
     }
 
@@ -4348,6 +4492,28 @@ impl Geometry {
     /// directly above the statusline and the hint row between it and the code,
     /// so the grid comes off first. Both are [`take_rows`], so a terminal too
     /// short drops a strip rather than squeezing it (§11).
+    /// Takes §5's tab-bar row off the top, when `panes` is two or more.
+    ///
+    /// **This is where *"appears only with 2+ panes"* lives**, and it lives
+    /// here rather than in the widget for a reason the widget's own module docs
+    /// state: a strip that decides whether it exists has already been given a
+    /// row, and a row given to a strip that draws nothing is a row the buffer
+    /// lost. Composition answers `Node::Empty` on the same condition, so the
+    /// rule is stated twice and both statements are tested — but only one of
+    /// them can give the row back.
+    ///
+    /// Off `body` too, unlike [`Geometry::take_strips`] — see
+    /// [`Geometry::tabs`].
+    fn take_tab_bar(&mut self, panes: usize) {
+        if panes < 2 {
+            return;
+        }
+        self.tabs = take_top_rows(&mut self.pane, 1);
+        if self.tabs.is_some() {
+            take_top_rows(&mut self.body, 1);
+        }
+    }
+
     fn take_strips(&mut self, leader: &[KeyHint], hint: bool, theme: &Theme) {
         self.leader = (!leader.is_empty())
             .then(|| {
@@ -4857,6 +5023,10 @@ struct Overlay<'a> {
     /// needs `&mut` to tick and `Resources` has no `&mut` in it and must never
     /// grow one, so the loop ticks once per frame and lends the answer.
     picker: Option<&'a PickerVm>,
+    /// `T089`'s tab bar, composed by [`compose_tabs`] and drawn into
+    /// [`Geometry::tabs`]. `Node::Empty` below two panes, which is the frame
+    /// where [`Geometry::tabs`] is [`None`] and nothing asks for this at all.
+    tabs: &'a Tree,
 }
 
 /// One frame: the pane, the strips over it, then the statusline.
@@ -4947,6 +5117,14 @@ fn draw(
     // the column is still reserved, which is the half of the 3-column contract
     // that holds with no store behind it.
     interpreter.render(tree, geometry.pane, frame.buffer_mut());
+    // `T089`, and the third of §5's *"three strips of chrome, ever"*. Above the
+    // pane rather than over it — [`Geometry::take_tab_bar`] took the row from
+    // the panes before anything measured one, so this draws into rows nothing
+    // else is drawing into. `NoResources` because a tab is a title, a count and
+    // a flag: the strip asks the store nothing, since the loop asked for it.
+    if let Some(row) = geometry.tabs {
+        Interpreter::new(theme, &NoResources).render(overlay.tabs, row, frame.buffer_mut());
+    }
     if let Some((row, hint)) = hint_row {
         let strip = Tree::new(unknown_key::strip(
             hint.clone(),
@@ -10576,6 +10754,7 @@ mod tests {
     use phosphor_core::language::Languages;
     use phosphor_core::request::LanguageId;
 
+    use super::compose_tabs;
     use super::{
         AppHost, Asking, Buffers, COMPLETION_MIN_CHARS, COMPLETION_MIN_CHARS_DEFAULT, Caret, Cli,
         CommandFactory as _, Cx, EXPAND_TAB, Editing, EditorText, ExStep, FromArgMatches as _,
@@ -13617,6 +13796,107 @@ mod tests {
             Some(&Value::Int(0)),
             "and which buffer is in it — the half the tree cannot say"
         );
+    }
+
+    /// **`T089`: the strip is composed at two panes and is `Node::Empty` at
+    /// one**, in the tree's own left-to-right order.
+    ///
+    /// The composition half of §5's *"only with 2+ panes"*.
+    /// [`Geometry::take_tab_bar`] is the other half and is tested beside it;
+    /// the pty test presses the keys and proves both together. This one exists
+    /// because the two halves fail differently — a composition that named two
+    /// tabs at one pane would draw nothing (the geometry gives it no row) while
+    /// telling every future reader of the tree that there were two panes.
+    #[test]
+    fn the_tab_bar_is_composed_at_two_panes_and_empty_at_one() {
+        let theme = super::builtin("phosphor-dark").expect("a shipped theme");
+        let directory = scratch("tabs");
+        let make = |name: &str, text: &str| {
+            Editing::new(
+                buffer("text", text, &theme).expect("a buffer"),
+                Some(directory.join(name)),
+                std::rc::Rc::new(std::cell::Cell::new(false)),
+            )
+        };
+        let (mut buffers, first) = Buffers::new(make("left.txt", "one\n"));
+        let second = buffers.open(make("right.txt", "two\n"));
+
+        let (mut panes, left) = Panes::new(Pane::new(first));
+        let unseen = BTreeMap::from([(first, 3), (second, 0)]);
+
+        assert_eq!(
+            compose_tabs(&panes, &buffers, &unseen),
+            super::Node::Empty {},
+            "one pane is no strip — §5's condition, said where the tree is built"
+        );
+
+        let mut right = Pane::new(second);
+        right.buffer = Some(second);
+        let right = panes
+            .split(left, right, Direction::Right)
+            .expect("the pane splits");
+        panes.focus = right;
+
+        let super::Node::TabBar { tabs } = compose_tabs(&panes, &buffers, &unseen) else {
+            panic!("two panes are a strip");
+        };
+        assert_eq!(tabs.len(), 2, "one tab per pane, in the tree's order");
+        assert_eq!(tabs[0].unseen, 3, "the store's count for the left buffer");
+        assert!(!tabs[0].active, "and focus is on the right");
+        assert_eq!(tabs[1].unseen, 0);
+        assert!(tabs[1].active);
+        assert_eq!(tabs[0].kind, phosphor_core::request::PaneKind::Buffer);
+        // The titles are the paths as the workspace spells them — these are
+        // under a scratch directory rather than the cwd, so the rule that
+        // applies is the basename fallback.
+        assert_eq!(tabs[0].title, "left.txt");
+        assert_eq!(tabs[1].title, "right.txt");
+    }
+
+    /// **The row the strip takes is the panes', and it is only ever taken when
+    /// there is a second pane to name.**
+    ///
+    /// The other half of the condition, and the half that costs something: a
+    /// row spent on a strip that draws nothing is a line of the buffer gone
+    /// with nothing on screen to say so. **Measured** — the first draft of the
+    /// pty test watched only for the word `panes`, and a `take_tab_bar` that
+    /// spent the row at one pane passed it.
+    ///
+    /// It comes off `body` as well as `pane`, which the two bottom strips do
+    /// not — see [`Geometry::tabs`] for why that difference is about *when* the
+    /// condition is knowable rather than about the strip.
+    #[test]
+    fn the_tab_bar_row_comes_off_the_panes_and_only_at_two_panes() {
+        let full = crate::lay_out(Rect::new(0, 0, 80, 24));
+
+        let mut alone = full;
+        alone.take_tab_bar(1);
+        assert_eq!(alone.tabs, None, "no strip, and no row spent");
+        assert_eq!(alone.pane, full.pane);
+        assert_eq!(alone.body, full.body);
+
+        let mut split = full;
+        split.take_tab_bar(2);
+        let strip = split.tabs.expect("two panes are a strip");
+        assert_eq!(strip.height, 1, "§8: the tab bar is one row");
+        assert_eq!(strip.y, full.pane.y, "off the top, not the bottom");
+        assert_eq!(split.pane.y, full.pane.y + 1);
+        assert_eq!(split.pane.height, full.pane.height - 1);
+        assert_eq!(
+            (split.body.y, split.body.height),
+            (full.body.y + 1, full.body.height - 1),
+            "and off `body` too, so the wrap width is measured against rows the \
+             strip has already taken"
+        );
+        assert_eq!(split.status, full.status, "the statusline is untouched");
+
+        // §11 in the other direction: a terminal with no room for the strip
+        // keeps its buffer rather than drawing a strip over the last line.
+        let mut cramped = crate::lay_out(Rect::new(0, 0, 80, 2));
+        let before = cramped;
+        cramped.take_tab_bar(2);
+        assert_eq!(cramped.tabs, None);
+        assert_eq!(cramped.pane, before.pane, "and gives nothing away");
     }
 
     /// **The panes tile the frame exactly, at any width.**

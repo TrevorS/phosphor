@@ -44,7 +44,6 @@
 //!
 //! | still deferred | widget | task |
 //! |---|---|---|
-//! | `tab-bar` | `TabBar` | `T089` |
 //! | `diff` | `DiffBody` | `T063` |
 //! | `question` | `QuestionBody` | `T059` |
 //! | `transcript` | `TranscriptPane` | `T054` |
@@ -658,10 +657,23 @@ impl Ctx<'_> {
                 Picker::new(vm, theme, filter, *preview).render(area, buf);
             }
 
+            // `T089`, drawn by `crate::tab_bar`. **`kind` is deliberately
+            // unread** — the one thing it was to colour is §5's actor-coloured
+            // top rule, and §8 fixes the strip at one row, which leaves a
+            // terminal cell no top edge to paint. Recorded here the way
+            // `Node::Picker`'s `columns` is, and argued in the widget's module
+            // docs and in `docs/OPEN-QUESTIONS.md`.
+            //
+            // Whether the strip exists at all is composition's — §5's *"only
+            // with 2+ panes"* is a question about how many panes there are, and
+            // this arm cannot see a second one.
+            Node::TabBar { tabs } => {
+                crate::tab_bar::TabBar::new(tabs, theme).render(area, buf);
+            }
+
             // Deferred past Window D. Grouped, and split one kind at a time the
             // way the five above were, as each phase arrives.
-            Node::TabBar { .. }
-            | Node::Diff { .. }
+            Node::Diff { .. }
             | Node::Question { .. }
             | Node::Transcript { .. }
             | Node::Prompt { .. }
@@ -2026,7 +2038,6 @@ mod tests {
         // Payloads are the emptiest legal ones — this test is about which arm
         // runs, and every one of these arms ignores its props entirely.
         let deferred = [
-            Node::TabBar { tabs: Vec::new() },
             Node::Diff {
                 source: DiffSource::Disk {
                     buffer: BufferId(1),
@@ -2061,6 +2072,10 @@ mod tests {
         // strip and an empty list — which is drawing, and is what `deferred`
         // distinguishes from it.
         let drawn = [
+            // `T089`. An empty tab list draws the strip's ground and nothing
+            // else, which is drawing — the same distinction the four below
+            // stand for.
+            Node::TabBar { tabs: Vec::new() },
             Node::Gutter {
                 buffer: BufferId(1),
             },

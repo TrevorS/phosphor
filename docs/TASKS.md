@@ -2887,13 +2887,57 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   > would have ticked and immediately failed `just lint`. Found by the design workflow reading the
   > declaration table against the binary.
 
-- [ ] **T089 · `TabBar`** 📌
+- [x] **T089 · `TabBar`** 📌
   Chrome strip one of three (Design Language §5), untasked until now, and the plan already
   decided to **build rather than buy** it (`ratatui-comfy-tabs`, 600 downloads). Appears only at
   2+ panes. Flat vim-style: active tab = 2px actor-coloured top rule + bright text, inactive =
   meta-gray, **per-tab unseen counts (`●n`)**. Input is `Vec<TabVM { title, kind, unseen }>`.
   *Done when:* it appears on the second pane and never on the first, and per-tab unseen counts
   track the store. *Needs:* T088, T010, T041
+
+  > **Built 2026-08-21.** `crates/phosphor-ui/src/tab_bar.rs` draws the strip, `compose_tabs` in
+  > `crates/phosphor/src/main.rs` builds it, and `Geometry::take_tab_bar` spends the row. The
+  > `TabBar` row is gone from `scripts/lint-node-kinds.sh`'s RECORDED table and from
+  > `interpret.rs`'s deferred set, both of which fail four ways on a stale entry.
+  >
+  > **The condition is in two places because it does two things, and only one of them is
+  > visible.** `compose_tabs` answers `Node::Empty` below two panes — that is what keeps a tab
+  > off the screen. `Geometry::take_tab_bar` declines the row below two panes — that is what
+  > keeps the row for the *buffer*. **Measured**: the first pty test asked only whether the word
+  > `panes` appeared anywhere, and a `take_tab_bar` planted to spend the row at one pane
+  > **passed it**, because the composition still drew nothing into the row and the only symptom
+  > was a buffer silently one line shorter. The test now asserts what row zero *is*.
+  >
+  > **The `2px` top rule has no terminal form and is recorded rather than approximated** —
+  > [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) §50. §5 asks for a 2px actor-coloured top rule on the
+  > active tab and a 1px rule under the strip; §8 fixes the strip at one row; a cell has no top
+  > edge. §8 wins, because a row count is a claim a terminal can honour and `2px` is a unit a
+  > cell does not have. What the rule carried survives except for the actor colour — bright text
+  > on `chrome.statusline` marks the active tab, `●n` keeps its claude green — and with that
+  > colour goes the only drawable consequence of `Tab::kind`, which the interpreter's arm records
+  > as deliberately unread. §7's *"the machine tracks claude only"* is why it costs one colour
+  > and not a distinction: all three `PaneKind`s are claude's work, so the map would be one
+  > colour written three ways. Two shapes for getting the rule back are written down there;
+  > neither was taken, and `chrome.tab_bar_rule` is for now a §5 colour nothing draws with.
+  >
+  > **The pane count is derived, and the title rule is the workspace's.** §5's strip ends in
+  > `3 panes`; `Node::TabBar` carries no such prop and the Component Breakdown's input spec has
+  > no room for one, so the widget counts the tabs — composition's contract is one tab per pane.
+  > A title is the path relative to the workspace when it is under it (§5 draws `src/retry.rs`)
+  > and the **basename** otherwise, which is vim's own rule and the only one that keeps the strip
+  > usable: an absolute path out of a temp directory is fifty cells before it says anything, and
+  > two of them push §11's second rung on an 80-column terminal.
+  >
+  > **Shedding is two rungs and the active tab is below both.** The pane count goes first — its
+  > whole content is recoverable by counting the tabs — then the run drops tabs from the *left*
+  > until the active one's right edge fits. An active tab wider than the strip is clipped, since
+  > there is no rung below *"show the tab you are looking at"*.
+  >
+  > **Four planted defects, four caught**: a `take_tab_bar` that never takes a row and one that
+  > takes it at one pane (both pty), a count that is a constant rather than the store's (pty,
+  > through `gs` marking a region seen while both tabs watch), and a `compose_tabs` that composes
+  > at one pane (unit — the composition half draws nothing, so only a test of the tree sees it).
+  > `just gate` green at 1,432 tests.
 
 - [ ] **T054 · TranscriptPane**
   **A pane, not a float** — splits, holds focus, survives float churn. Turn list, prompt lines
