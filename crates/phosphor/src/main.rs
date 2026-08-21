@@ -152,8 +152,8 @@ use phosphor_buffer::lsp::{
 use phosphor_buffer::undo::{Caret, CharRange, Edit as TreeEdit, NodeId, Step, UndoTree};
 use phosphor_core::action::{
     Action, AppAction, BufferAction, FileAction, FloatAction, HistoryAction, InputAction,
-    LspAction, MotionAction, Outcome, PickerAction, PromptAction, Receipt, Refusal, RegionAction,
-    Request, RuntimeAction, ViewAction,
+    LspAction, MotionAction, Outcome, PaneAction, PickerAction, PromptAction, Receipt, Refusal,
+    RegionAction, Request, RuntimeAction, ViewAction,
 };
 use phosphor_core::config;
 use phosphor_core::input::key::{Code, Key, Mods, Named};
@@ -166,9 +166,9 @@ use phosphor_core::query::{Answer, Answers, Query, QueryError, RegionQuery, Revi
 use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
     AcceptHow, Actor, AnchorId, Binding, BufferId, CharRange as SignatureRange,
-    Completion as WireCompletion, EditMode, FoldState, KeySeq, LanguageId, PaneId, PaneKind,
-    PaneRef, Position, PromptKind, RegionFilter, RegionId, RegisterName, Seek, SelectionKind,
-    Sequence, Signature as WireSignature, SourceId, Span, Target, TextObject,
+    Completion as WireCompletion, Direction, EditMode, FoldState, KeySeq, LanguageId, PaneId,
+    PaneKind, PaneRef, Position, PromptKind, RegionFilter, RegionId, RegisterName, Seek,
+    SelectionKind, Sequence, Signature as WireSignature, SourceId, Span, Target, TextObject,
 };
 // `Scope` is already the input table's (`keymaps.scm`'s normal/insert/visual),
 // and a second one under the same name in a 9,000-line file is a trap rather
@@ -5605,17 +5605,253 @@ impl Buffers {
     }
 }
 
+/// The split tree — which panes there are and how they divide the frame
+/// (`T088`, step 10).
+///
+/// **A pure data structure, deliberately.** No terminal, no `Editor`, no theme
+/// and no `Rect`: every operation here is about *arrangement*, and turning an
+/// arrangement into rectangles is step 11's separate job. That is what lets
+/// `T088`'s acceptance criterion — split, focus, close and resize behaving like
+/// vim's windows — be proven before a pixel exists.
+///
+/// It is split from `Panes`' `BTreeMap<PaneId, Pane>` on purpose, so
+/// `&PaneTree` and `&mut Pane` can be borrowed at once. A tree that owned the
+/// panes would make *"resolve a direction, then write to the pane it names"*
+/// two borrows of one thing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PaneTree {
+    /// One pane.
+    Leaf(PaneId),
+    /// Two subtrees, and how the space between them divides.
+    Split {
+        /// Whether the children sit side by side or one above the other.
+        axis: Axis,
+        /// The left or upper child.
+        first: Box<PaneTree>,
+        /// The right or lower child.
+        second: Box<PaneTree>,
+        /// What share of the space `first` takes, in percent.
+        ///
+        /// **Percent rather than cells, and an integer rather than a float.**
+        /// A tree that stored cells would be wrong the moment the terminal is
+        /// resized, and this structure is deliberately the one that does not
+        /// know how big anything is. An integer because a ratio that a test
+        /// cannot compare exactly is a ratio a test cannot assert on.
+        first_share: u16,
+    },
+}
+
+/// Which way a [`PaneTree::Split`] divides its space.
+///
+/// Not `Direction`: a direction has four values and an axis has two, and
+/// `Up`/`Down` describe the same division. The conversion is
+/// [`Axis::of`], and it is the one place the four collapse into the two.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Axis {
+    /// Children side by side; a vertical line between them.
+    Columns,
+    /// Children stacked; a horizontal line between them.
+    Rows,
+}
+
+impl Axis {
+    /// The axis a split in this direction divides along.
+    const fn of(direction: Direction) -> Self {
+        match direction {
+            Direction::Left | Direction::Right => Self::Columns,
+            Direction::Up | Direction::Down => Self::Rows,
+        }
+    }
+}
+
+/// An even split, which is what every new one is.
+const EVEN: u16 = 50;
+
+/// The narrowest share a split may be squeezed to, in percent.
+///
+/// **A resize that can reach zero can make a pane unreachable**: it would still
+/// be in the tree, still be focusable, and draw nothing — a state a user can
+/// get into with one keystroke and cannot get out of by looking at the screen.
+/// vim clamps for the same reason.
+const LEAST: u16 = 10;
+
+impl PaneTree {
+    /// The panes, left to right and top to bottom.
+    ///
+    /// **This is cycle order**, and it is the tree's rather than the id map's:
+    /// `<C-w>w` walks the windows as they are arranged, not as they were
+    /// opened. `Panes::resolve` used the map's key order until this existed,
+    /// which is the same answer for one pane and diverges at two.
+    fn leaves(&self) -> Vec<PaneId> {
+        match self {
+            Self::Leaf(id) => vec![*id],
+            Self::Split { first, second, .. } => {
+                let mut found = first.leaves();
+                found.extend(second.leaves());
+                found
+            }
+        }
+    }
+
+    /// Puts `new` beside `at`, splitting the space they share.
+    ///
+    /// Answers whether `at` was found. `direction` decides both the axis and
+    /// **which side the new pane lands on** — `:vsplit` in vim puts the new
+    /// window left, `:split` puts it above, and a `Right`/`Down` split is the
+    /// mirror. Getting that backwards is not a crash; it is an editor whose
+    /// splits open on the wrong side, which is exactly the kind of thing a data
+    /// structure with no rectangles can be made to prove.
+    fn split(&mut self, at: PaneId, new: PaneId, direction: Direction) -> bool {
+        match self {
+            Self::Leaf(id) if *id == at => {
+                let existing = Self::Leaf(*id);
+                let fresh = Self::Leaf(new);
+                let (first, second) = match direction {
+                    Direction::Left | Direction::Up => (fresh, existing),
+                    Direction::Right | Direction::Down => (existing, fresh),
+                };
+                *self = Self::Split {
+                    axis: Axis::of(direction),
+                    first: Box::new(first),
+                    second: Box::new(second),
+                    first_share: EVEN,
+                };
+                true
+            }
+            Self::Leaf(_) => false,
+            Self::Split { first, second, .. } => {
+                first.split(at, new, direction) || second.split(at, new, direction)
+            }
+        }
+    }
+
+    /// Removes `at`, collapsing the split it was half of into its sibling.
+    ///
+    /// Answers whether it was removed. **The last pane cannot be closed** — a
+    /// tree with no leaves is not a state this structure can represent, and it
+    /// is not one an editor should reach either: closing the only window is
+    /// what `:quit` means, and that is a different verb.
+    fn close(&mut self, at: PaneId) -> bool {
+        let kept = match self {
+            // The whole tree is one pane; there is nothing to collapse into.
+            Self::Leaf(_) => return false,
+            Self::Split { first, second, .. } => {
+                if matches!(&**first, Self::Leaf(id) if *id == at) {
+                    Some((**second).clone())
+                } else if matches!(&**second, Self::Leaf(id) if *id == at) {
+                    Some((**first).clone())
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(kept) = kept {
+            *self = kept;
+            return true;
+        }
+        match self {
+            Self::Leaf(_) => false,
+            Self::Split { first, second, .. } => first.close(at) || second.close(at),
+        }
+    }
+
+    /// Moves the divider `at` sits against, in percentage points.
+    ///
+    /// Answers whether anything moved. Positive grows the pane; the clamp is
+    /// [`LEAST`] at both ends, so a divider cannot be pushed far enough to make
+    /// either side unreachable.
+    fn resize(&mut self, at: PaneId, delta: i16) -> bool {
+        let Self::Split {
+            first,
+            second,
+            first_share,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        // Deeper first: the divider a pane sits *against* is the innermost one
+        // that has it on a side, which is what makes a resize in a nested split
+        // move the wall next to it rather than the outer frame.
+        if first.resize(at, delta) || second.resize(at, delta) {
+            return true;
+        }
+        let step = if first.leaves().contains(&at) {
+            delta
+        } else if second.leaves().contains(&at) {
+            -delta
+        } else {
+            return false;
+        };
+        let moved = i32::from(*first_share) + i32::from(step);
+        let clamped = moved.clamp(i32::from(LEAST), i32::from(100 - LEAST));
+        let clamped = u16::try_from(clamped).unwrap_or(EVEN);
+        if clamped == *first_share {
+            return false;
+        }
+        *first_share = clamped;
+        true
+    }
+
+    /// The pane in a compass direction from `from`, or [`None`] at the edge.
+    ///
+    /// Walks up to the nearest ancestor that divides along the matching axis
+    /// and takes the neighbouring subtree — which is what makes `<C-w>l` in a
+    /// nested layout land in the pane actually to the right, rather than in
+    /// whichever one happens to be next in some list.
+    fn toward(&self, from: PaneId, direction: Direction) -> Option<PaneId> {
+        let axis = Axis::of(direction);
+        let forward = matches!(direction, Direction::Right | Direction::Down);
+        let Self::Split {
+            axis: mine,
+            first,
+            second,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        // Deeper first, so the *nearest* ancestor answers.
+        if let Some(found) = first.toward(from, direction) {
+            return Some(found);
+        }
+        if let Some(found) = second.toward(from, direction) {
+            return Some(found);
+        }
+        if *mine != axis {
+            return None;
+        }
+        let (here, there) = if forward {
+            (&**first, &**second)
+        } else {
+            (&**second, &**first)
+        };
+        if !here.leaves().contains(&from) {
+            return None;
+        }
+        // **The nearest leaf, not the first one.** Going right lands on the
+        // left edge of the subtree to the right; going left lands on its
+        // *right* edge. Taking `first()` both ways is the kind of thing two
+        // panes cannot tell you is wrong and three can.
+        let neighbours = there.leaves();
+        if forward {
+            neighbours.first().copied()
+        } else {
+            neighbours.last().copied()
+        }
+    }
+}
+
 /// Every pane, by id, and which one has focus (`T088`, step 4c).
 ///
-/// **No `PaneTree` yet, and that is deliberate.** The plan pairs this map with
-/// one, split apart so `&PaneTree` and `&mut Pane` can be borrowed at once —
-/// which is the right shape and stays the plan. But a tree over one pane is a
-/// `Leaf` and a `Split` variant nothing constructs, and this build does not
-/// ship an arm no code can reach. It lands in step 11, with the split verbs
-/// that give it something to describe.
+/// The [`PaneTree`] is beside the map rather than owning it, so `&PaneTree` and
+/// `&mut Pane` can be borrowed at once — *"resolve a direction, then write to
+/// the pane it names"* would otherwise be two borrows of one thing.
 #[derive(Debug)]
 struct Panes {
     map: BTreeMap<PaneId, Pane>,
+    /// How the panes divide the frame (`T088`, step 10).
+    tree: PaneTree,
     /// Which pane a `PaneRef::Focused` means.
     focus: PaneId,
     /// The next id to hand out, on [`Buffers::next`]'s rule.
@@ -5627,22 +5863,71 @@ impl Panes {
     fn new(first: Pane) -> (Self, PaneId) {
         let mut panes = Self {
             map: BTreeMap::new(),
+            tree: PaneTree::Leaf(PaneId(0)),
             focus: PaneId(0),
             next: 0,
         };
-        let id = panes.open(first);
+        let id = panes.mint(first);
+        panes.tree = PaneTree::Leaf(id);
         panes.focus = id;
         (panes, id)
     }
 
-    /// Takes a pane and answers the id it was given, on [`Buffers::open`]'s
-    /// rule. Focus is *not* moved: opening a pane and looking at it are two
-    /// things, and `split-pane` in vim does not always do both.
-    fn open(&mut self, pane: Pane) -> PaneId {
+    /// Takes a pane into the map and answers the id it was given, on
+    /// [`Buffers::open`]'s rule.
+    ///
+    /// **Private, and it does not touch the tree.** A pane in the map and not
+    /// in the tree is a pane nothing can reach and nothing will draw, so the
+    /// two go together — [`Panes::split`] is the way in, and this is the half
+    /// of it that hands out an id.
+    fn mint(&mut self, pane: Pane) -> PaneId {
         let id = PaneId(self.next);
         self.next += 1;
         self.map.insert(id, pane);
         id
+    }
+
+    /// Puts a new pane beside `at`, and answers its id.
+    ///
+    /// [`None`] if `at` names no pane. **Focus does not move** — opening a pane
+    /// and looking at it are two things, and vim's `:split` moves focus while
+    /// `:sbuffer` does not; which of the two a keystroke means is the keymap's
+    /// to say, so this does the half that is not in dispute.
+    fn split(&mut self, at: PaneId, pane: Pane, direction: Direction) -> Option<PaneId> {
+        if !self.map.contains_key(&at) {
+            return None;
+        }
+        let id = self.mint(pane);
+        if self.tree.split(at, id, direction) {
+            Some(id)
+        } else {
+            // The tree and the map disagreed, which is this struct failing to
+            // keep its own invariant. Undo the mint rather than leave a pane
+            // nothing can reach.
+            self.map.remove(&id);
+            None
+        }
+    }
+
+    /// Closes `at`, and answers whether it went.
+    ///
+    /// **Focus moves if it has to**, to the pane the tree puts first after the
+    /// collapse — leaving `focus` pointed at a closed pane is the one way this
+    /// struct can break the invariant every `at`/`at_mut` depends on.
+    /// Moves the divider  sits against, in percentage points.
+    fn resize(&mut self, at: PaneId, delta: i16) -> bool {
+        self.tree.resize(at, delta)
+    }
+
+    fn close(&mut self, at: PaneId) -> bool {
+        if !self.tree.close(at) {
+            return false;
+        }
+        self.map.remove(&at);
+        if self.focus == at {
+            self.focus = self.tree.leaves().first().copied().unwrap_or(self.focus);
+        }
+        true
     }
 
     /// The pane `id` names, or [`None`] if it names none.
@@ -5676,26 +5961,25 @@ impl Panes {
     /// distinction — which it did, until `a_reveal_scrolls_the_pane_the_cursor_is_in`
     /// was written and failed to fail.
     ///
-    /// **`Next` and `Prev` walk the map's own order**, which is id order, which
-    /// is the order panes were opened. That is not vim's — vim cycles in the
-    /// split tree's layout order — and it is the right answer until there *is*
-    /// a tree to walk, because the alternative is inventing a second ordering
-    /// that step 11 would then have to reconcile. With one pane both answer
-    /// that pane, which is also vim's answer.
+    /// **`Next` and `Prev` walk the tree's order, not the map's.** `<C-w>w`
+    /// cycles the windows as they are *arranged*, not as they were opened, and
+    /// the two agree for one pane and diverge at two. This read the map's key
+    /// order until step 10 gave it a tree to walk.
     ///
-    /// **`Direction` is refused, not guessed.** A compass direction is a fact
-    /// about where the rectangles are, and answering it from one pane's
-    /// rectangle would be answering it from no information at all. Step 11
-    /// resolves it against the tree.
+    /// **`Direction` is answered by the tree** — the nearest ancestor split on
+    /// the matching axis, then that neighbour's nearest leaf. It refused before
+    /// this step, and refusing was right then: a compass direction is a fact
+    /// about arrangement, and answering it from one pane's rectangle would be
+    /// answering from no information at all.
     fn resolve(&self, reference: &PaneRef) -> Option<PaneId> {
-        let order: Vec<PaneId> = self.map.keys().copied().collect();
+        let order = self.tree.leaves();
         let at = order.iter().position(|id| *id == self.focus)?;
         match reference {
             PaneRef::Focused {} => Some(self.focus),
             PaneRef::Id { id } => self.map.contains_key(id).then_some(*id),
             PaneRef::Next {} => order.get((at + 1) % order.len()).copied(),
             PaneRef::Prev {} => order.get((at + order.len() - 1) % order.len()).copied(),
-            PaneRef::Direction { .. } => None,
+            PaneRef::Direction { direction } => self.tree.toward(self.focus, *direction),
         }
     }
 }
@@ -6438,6 +6722,84 @@ impl Editing {
                 }
                 cx.shell.closing = Some(cx.buffer);
                 done()
+            }
+            // ---------------------------------------------------------------
+            // `T088`'s pane verbs. **Arms, and the plan said they could not be.**
+            //
+            // Its reasoning was that they *"mutate the tree an `Editing` was
+            // borrowed out of"*, which was true when it was written and stopped
+            // being true at step 4c: an `Editing` is borrowed out of `Buffers`
+            // and the tree is in `Panes`, which are two structs. Step 6b then
+            // put `&mut Panes` in the context so a resolved `PaneRef` could
+            // name a pane that is not the Action's own — and that is exactly
+            // what these four need. So they are ordinary arms, and the ask/drain
+            // indirection the plan reached for is not needed.
+            //
+            // Every one resolves its `PaneRef` first and refuses `NoSuchTarget`
+            // when it names nothing, which is the rule step 6b set for `scroll`.
+            Action::Pane(PaneAction::SplitPane {
+                pane,
+                direction,
+                kind,
+            }) => {
+                let Some(at) = cx.panes.resolve(pane) else {
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                };
+                if !matches!(kind, PaneKind::Buffer) {
+                    // `Transcript` is `T054`'s and `Custom` is v1.5's. Naming
+                    // the task is what this build does instead of pretending.
+                    return Outcome::Refused(Refusal::NotYetImplemented { task: "T054" });
+                }
+                // **The new pane shows the same buffer**, which is what vim's
+                // `:split` does. Opening a *different* file into it is
+                // `open-file` with a `PaneRef`, and that is a second Action
+                // rather than an argument here.
+                let fresh = Pane::new(cx.buffer);
+                match cx.panes.split(at, fresh, *direction) {
+                    Some(id) => Outcome::Done(Receipt {
+                        capability: "split-pane",
+                        value: Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)),
+                        note: None,
+                    }),
+                    None => Outcome::Refused(Refusal::NoSuchTarget),
+                }
+            }
+            Action::Pane(PaneAction::FocusPane { pane }) => {
+                let Some(at) = cx.panes.resolve(pane) else {
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                };
+                cx.panes.focus = at;
+                done()
+            }
+            Action::Pane(PaneAction::ClosePane { pane }) => {
+                let Some(at) = cx.panes.resolve(pane) else {
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                };
+                if cx.panes.close(at) {
+                    done()
+                } else {
+                    // The tree refuses to become empty, and that is the honest
+                    // answer rather than an error: closing the only window is
+                    // what `:quit` means, and it is a different verb.
+                    declined("the only pane — :quit leaves")
+                }
+            }
+            Action::Pane(PaneAction::ResizePane { pane, delta }) => {
+                let Some(at) = cx.panes.resolve(pane) else {
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                };
+                // **Percentage points, not cells**, and the vocabulary says
+                // cells — see [`PaneTree::Split::first_share`] for why the tree
+                // does not know how big anything is. Step 11 draws the rects
+                // and is where a cell can be counted; until then the honest
+                // conversion is one point per cell, which is what a `<C-w>+`
+                // bound to `delta: 1` means on an 80-column frame anyway.
+                let step = i16::try_from(*delta).unwrap_or(0);
+                if cx.panes.resize(at, step) {
+                    done()
+                } else {
+                    declined("nothing to resize — one pane, or already at the edge")
+                }
             }
             // The ex line. `T058` builds the message and search prompts and the
             // anchor chip that rides with them; the ex half is `T033`'s, because
@@ -9667,7 +10029,9 @@ mod tests {
 
     use phosphor_core::action::{Action, Outcome, Refusal, Request, RuntimeAction};
     use phosphor_core::registry::Door;
-    use phosphor_core::request::{Actor, BufferId, PaneId, PaneRef, Position, Severity, Span};
+    use phosphor_core::request::{
+        Actor, BufferId, Direction, PaneId, PaneRef, Position, Severity, Span,
+    };
     use phosphor_core::value::Value;
     use phosphor_steel::answer;
     use phosphor_steel::host::Host;
@@ -9686,11 +10050,11 @@ mod tests {
     use super::{
         AppHost, Asking, Buffers, COMPLETION_MIN_CHARS, COMPLETION_MIN_CHARS_DEFAULT, Caret, Cli,
         CommandFactory as _, Cx, EXPAND_TAB, Editing, EditorText, ExStep, FromArgMatches as _,
-        IndentStyle, Intent, Key, Layer, Lookup, Machine, NodeId, Outstanding, Pane, Panes, Repl,
-        ReplStep, Session, Shell, StatusVm, Surface, TAB_WIDTH, Table, Timeline, UndoTree, Vm,
-        WireCompletion, boot, buffer, closes_surface, completion_floor, decode, deliver, door,
-        ex_key, grammar_of, indent_style, is_press, repl_key, restored, seeding, server_chip,
-        split, submit_ex, vm, wire_undo,
+        IndentStyle, Intent, Key, Layer, Lookup, Machine, NodeId, Outstanding, Pane, PaneTree,
+        Panes, Repl, ReplStep, Session, Shell, StatusVm, Surface, TAB_WIDTH, Table, Timeline,
+        UndoTree, Vm, WireCompletion, boot, buffer, closes_surface, completion_floor, decode,
+        deliver, door, ex_key, grammar_of, indent_style, is_press, repl_key, restored, seeding,
+        server_chip, split, submit_ex, vm, wire_undo,
     };
 
     fn event(code: KeyCode) -> KeyEvent {
@@ -12452,7 +12816,9 @@ mod tests {
 
         let mut shell = shell();
         let (mut panes, left) = Panes::new(Pane::new(BufferId(0)));
-        let right = panes.open(Pane::new(BufferId(0)));
+        let right = panes
+            .split(left, Pane::new(BufferId(0)), Direction::Right)
+            .expect("the left pane splits");
 
         editing.push_jump(&mut Cx::new(BufferId(0), left, &mut panes, &mut shell));
         editing.push_jump(&mut Cx::new(BufferId(0), left, &mut panes, &mut shell));
@@ -12473,6 +12839,211 @@ mod tests {
              the assertion that fails the moment the list goes back on `Editing`"
         );
         assert_eq!(panes.at(right).jump_at, 0);
+    }
+
+    /// A tree of `n` panes in a row, and their ids left to right.
+    fn row(n: usize) -> (PaneTree, Vec<PaneId>) {
+        let mut tree = PaneTree::Leaf(PaneId(0));
+        let mut ids = vec![PaneId(0)];
+        for step in 1..n {
+            let fresh = PaneId(u64::try_from(step).expect("a small count"));
+            assert!(
+                tree.split(ids[step - 1], fresh, Direction::Right),
+                "the tree splits at a leaf it contains"
+            );
+            ids.push(fresh);
+        }
+        (tree, ids)
+    }
+
+    /// **A split puts the new pane on the side the direction names.**
+    ///
+    /// `:vsplit` in vim opens the new window to the *left* and `:split` above;
+    /// `Right` and `Down` are the mirrors. Getting this backwards is not a
+    /// crash — it is an editor whose splits open on the wrong side, which is
+    /// exactly what a structure with no rectangles in it can be made to prove.
+    #[test]
+    fn a_split_puts_the_new_pane_on_the_side_it_was_told() {
+        for (direction, expected) in [
+            (Direction::Right, vec![PaneId(0), PaneId(1)]),
+            (Direction::Down, vec![PaneId(0), PaneId(1)]),
+            (Direction::Left, vec![PaneId(1), PaneId(0)]),
+            (Direction::Up, vec![PaneId(1), PaneId(0)]),
+        ] {
+            let mut tree = PaneTree::Leaf(PaneId(0));
+            assert!(tree.split(PaneId(0), PaneId(1), direction));
+            assert_eq!(
+                tree.leaves(),
+                expected,
+                "{direction:?} decides which side the new pane lands on, and \
+                 `leaves` is left-to-right and top-to-bottom"
+            );
+        }
+
+        let mut tree = PaneTree::Leaf(PaneId(0));
+        assert!(
+            !tree.split(PaneId(9), PaneId(1), Direction::Right),
+            "splitting a pane that is not in the tree does nothing"
+        );
+    }
+
+    /// **Closing collapses the split into the sibling, and the last pane
+    /// cannot be closed.**
+    ///
+    /// A tree with no leaves is not a state this structure can represent, and
+    /// it is not one an editor should reach: closing the only window is what
+    /// `:quit` means, and that is a different verb.
+    #[test]
+    fn closing_a_pane_collapses_its_split_and_the_last_one_stays() {
+        let (mut tree, ids) = row(3);
+        assert_eq!(tree.leaves(), ids);
+
+        assert!(tree.close(ids[1]));
+        assert_eq!(
+            tree.leaves(),
+            vec![ids[0], ids[2]],
+            "the middle pane went and the two beside it are still in order"
+        );
+
+        assert!(tree.close(ids[2]));
+        assert_eq!(tree.leaves(), vec![ids[0]]);
+
+        assert!(
+            !tree.close(ids[0]),
+            "the last pane stays — :quit is the verb for leaving"
+        );
+        assert_eq!(tree.leaves(), vec![ids[0]]);
+    }
+
+    /// **A resize moves the divider the pane sits against, and stops short of
+    /// hiding either side.**
+    ///
+    /// A share that can reach zero makes a pane unreachable: still in the tree,
+    /// still focusable, drawing nothing — a state one keystroke gets you into
+    /// and no amount of looking at the screen gets you out of.
+    #[test]
+    fn a_resize_moves_the_nearest_divider_and_clamps() {
+        let (mut tree, ids) = row(2);
+
+        assert!(tree.resize(ids[0], 10), "the divider moves");
+        let PaneTree::Split { first_share, .. } = &tree else {
+            panic!("two panes are a split");
+        };
+        assert_eq!(*first_share, 60, "growing the first pane grows its share");
+
+        assert!(
+            tree.resize(ids[1], 10),
+            "and the second grows the other way"
+        );
+        let PaneTree::Split { first_share, .. } = &tree else {
+            panic!("two panes are a split");
+        };
+        assert_eq!(*first_share, 50);
+
+        // Push it as far as it will go, from both ends.
+        assert!(tree.resize(ids[0], 500));
+        let PaneTree::Split { first_share, .. } = &tree else {
+            panic!("two panes are a split");
+        };
+        assert_eq!(
+            *first_share, 90,
+            "clamped, so the other side is still there"
+        );
+        assert!(
+            !tree.resize(ids[0], 500),
+            "and once clamped it reports that nothing moved, rather than \
+             claiming a resize that did not happen"
+        );
+
+        assert!(
+            !tree.resize(PaneId(9), 10),
+            "a pane that is not in the tree resizes nothing"
+        );
+    }
+
+    /// **A direction lands in the pane actually that way**, which is the
+    /// assertion two panes cannot make and three can.
+    ///
+    /// `toward` walks up to the nearest ancestor dividing along the matching
+    /// axis and takes the neighbouring subtree's *nearest* leaf — its right
+    /// edge going left, its left edge going right. Taking the first leaf both
+    /// ways looks correct until there is a nested split to get wrong.
+    #[test]
+    fn a_direction_lands_in_the_pane_that_way_and_stops_at_the_edge() {
+        let (tree, ids) = row(3);
+
+        assert_eq!(tree.toward(ids[0], Direction::Right), Some(ids[1]));
+        assert_eq!(tree.toward(ids[1], Direction::Right), Some(ids[2]));
+        assert_eq!(
+            tree.toward(ids[2], Direction::Right),
+            None,
+            "the rightmost pane has nothing to its right — an edge, not a wrap"
+        );
+        assert_eq!(
+            tree.toward(ids[2], Direction::Left),
+            Some(ids[1]),
+            "and going back lands on the *nearest* pane, not the first one"
+        );
+        assert_eq!(tree.toward(ids[0], Direction::Left), None);
+        assert_eq!(
+            tree.toward(ids[0], Direction::Down),
+            None,
+            "a row has no pane below any of it"
+        );
+
+        // **The case that tells `first()` from `last()`.** Splitting the
+        // *left* pane nests a subtree on the far side of the divider, so
+        // "the pane to the left of the rightmost" has two candidates and only
+        // the nearer one is right. `row(3)` nests on the other side, where a
+        // single-leaf neighbour makes the two spellings agree — which is why
+        // this test passed with the defect planted until this block existed.
+        let mut left_nested = PaneTree::Leaf(PaneId(0));
+        assert!(left_nested.split(PaneId(0), PaneId(1), Direction::Right));
+        assert!(left_nested.split(PaneId(0), PaneId(2), Direction::Right));
+        assert_eq!(left_nested.leaves(), vec![PaneId(0), PaneId(2), PaneId(1)]);
+        assert_eq!(
+            left_nested.toward(PaneId(1), Direction::Left),
+            Some(PaneId(2)),
+            "the pane immediately left, not the leftmost one in that subtree"
+        );
+
+        // A column below a row: `Down` from the top-left must find it, and
+        // `Right` from it must still cross the outer divider.
+        let mut nested = tree;
+        assert!(nested.split(ids[0], PaneId(9), Direction::Down));
+        assert_eq!(nested.toward(ids[0], Direction::Down), Some(PaneId(9)));
+        assert_eq!(
+            nested.toward(PaneId(9), Direction::Right),
+            Some(ids[1]),
+            "the nearest ancestor on the matching axis is the outer split, so \
+             a pane in a nested column still has the next column to its right"
+        );
+    }
+
+    /// **`Panes` keeps the tree and the map in step**, which is the invariant
+    /// every `at`/`at_mut` depends on.
+    #[test]
+    fn closing_the_focused_pane_moves_focus_somewhere_that_exists() {
+        let (mut panes, first) = Panes::new(Pane::new(BufferId(0)));
+        let second = panes
+            .split(first, Pane::new(BufferId(0)), Direction::Right)
+            .expect("the first pane splits");
+        panes.focus = second;
+
+        assert!(panes.close(second));
+
+        assert_eq!(
+            panes.focus, first,
+            "focus left the pane that closed — a `focus` pointing at a removed \
+             pane is the one way this struct can break `at`'s expect"
+        );
+        assert!(panes.get(second).is_none(), "and the map lost it too");
+        assert_eq!(panes.tree.leaves(), vec![first]);
+
+        assert!(
+            !panes.close(first),
+            "the last pane stays, so the map is never empty either"
+        );
     }
 
     /// **An answer tagged for B lands in B, while A is focused.**
@@ -12820,10 +13391,16 @@ mod tests {
             area: Rect::new(0, 0, 80, 100),
             ..Pane::new(BufferId(0))
         });
-        let elsewhere = panes.open(Pane {
-            area: Rect::new(0, 0, 80, 5),
-            ..Pane::new(BufferId(0))
-        });
+        let elsewhere = panes
+            .split(
+                focused,
+                Pane {
+                    area: Rect::new(0, 0, 80, 5),
+                    ..Pane::new(BufferId(0))
+                },
+                Direction::Down,
+            )
+            .expect("the focused pane splits");
         panes.focus = focused;
 
         editing.editor.set_cursor(180);
@@ -12855,9 +13432,11 @@ mod tests {
             (PaneRef::Id { id: PaneId(99) }, "an id that names no pane"),
             (
                 PaneRef::Direction {
-                    direction: phosphor_core::request::Direction::Right,
+                    direction: Direction::Right,
                 },
-                "a compass direction, which needs a tree to answer",
+                "a compass direction with one pane, which has no neighbour \
+                 that way — step 10 gave this a tree to walk and the tree \
+                 answers None at the edge, which is still a refusal",
             ),
         ] {
             let outcome = editing.act(&Action::View(super::ViewAction::Scroll {
@@ -12888,7 +13467,9 @@ mod tests {
         assert_eq!(panes.resolve(&PaneRef::Next {}), Some(first));
         assert_eq!(panes.resolve(&PaneRef::Prev {}), Some(first));
 
-        let second = panes.open(Pane::new(BufferId(0)));
+        let second = panes
+            .split(first, Pane::new(BufferId(0)), Direction::Right)
+            .expect("the first pane splits");
 
         assert_eq!(panes.resolve(&PaneRef::Next {}), Some(second));
         assert_eq!(
@@ -13186,10 +13767,16 @@ mod tests {
             area: Rect::new(0, 0, 24, 10),
             ..Pane::new(BufferId(0))
         });
-        let wide = panes.open(Pane {
-            area: Rect::new(0, 0, 200, 10),
-            ..Pane::new(BufferId(0))
-        });
+        let wide = panes
+            .split(
+                narrow,
+                Pane {
+                    area: Rect::new(0, 0, 200, 10),
+                    ..Pane::new(BufferId(0))
+                },
+                Direction::Right,
+            )
+            .expect("the narrow pane splits");
 
         let in_narrow = editing
             .wrapped(

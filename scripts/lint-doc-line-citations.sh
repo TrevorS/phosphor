@@ -61,7 +61,7 @@ RECORDED = {
     "crates/phosphor-core/src/journal.rs": 3,
     "docs/OPEN-QUESTIONS.md": 3,
     "docs/TASKS.md": 1,
-    "docs/WINDOW-F-PLAN.md": 15,
+    "docs/WINDOW-F-PLAN.md": 14,
     "scripts/doc_claims.py": 4,
     "scripts/lint-no-literal-colours.sh": 1,
     "scripts/lint-no-store-mutation.sh": 1,

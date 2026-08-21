@@ -298,7 +298,19 @@ Then the pane verbs land as `Asks` variants the loop drains — **not as arms on
 
 `PaneTree` gains `split`, `close`, `resize`, `focus`, `resolve(&PaneRef, focus)`, and a focus-return stack so *"opening then closing a float returns focus exactly where it was"* is state rather than luck. `Query::Ui::Panes` (`crates/phosphor-core/src/query.rs:410`, declared `[S6 / "T088"]`) is answered off the same tree.
 
-**Verification:** `PaneTree` is a pure data structure — no terminal, no `Editor`, no theme. Split/focus/close/resize/resolve unit-tested directly. **This is where `TASKS.md:2718`'s acceptance criterion is proven, before a pixel exists.**
+**Verification:** `PaneTree` is a pure data structure — no terminal, no `Editor`, no theme. Split/focus/close/resize/resolve unit-tested directly. **This is where `T088`'s acceptance criterion is proven, before a pixel exists.**
+
+> **PARTLY DONE — the tree and the verbs. The `Asks` hoist is not, and is not needed for them.**
+>
+> `PaneTree` is as specified: no terminal, no `Editor`, no theme, and **no `Rect`** either — shares are percent, and an integer, because a tree that stored cells would be wrong the moment the terminal resized and a ratio a test cannot compare exactly is a ratio a test cannot assert on.
+>
+> **The four verbs are arms, and this plan said they could not be.** Its reasoning was that they *"mutate the tree an `Editing` was borrowed out of"*, which was true when it was written and stopped being true at step 4c: an `Editing` is borrowed out of `Buffers` and the tree is in `Panes`, which are two structs. Step 6b then put `&mut Panes` in the context so a resolved `PaneRef` could name a pane that is not the Action's own — which is exactly what these need. The ask/drain indirection is therefore not required, and **hoisting the eleven drain-once fields into `Shell::asks` is left undone**: it is tidying with no correctness behind it, and this step's justification for it was the pane verbs, which turn out not to need it.
+>
+> `resolve` walks the tree rather than the map's key order, and `Direction` — which refused in 6b for want of a tree — is answered by one.
+>
+> **A test failed to fail, again.** The direction test passed with `toward` planted to take `first()` both ways, because `row(3)` nests its subtree on the *right*: "the pane to the left" always had a single-leaf neighbour, so the two spellings agreed. A left-nested tree gives it two leaves and only the nearer is right. Going left must land on the right *edge* of the subtree to the left — two panes cannot tell you that is wrong, and three arranged the right way can.
+>
+> **As run:** `just gate` green, 1,413 tests. Five added, all against the tree directly. `Query::Ui::Panes` is not answered yet — it needs the rectangles, so it goes with step 11.
 
 ### Step 11 — N panes: layout and the prep pass split in two
 
