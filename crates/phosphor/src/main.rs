@@ -2380,6 +2380,15 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     let mut shell = Shell {
         store: Arc::clone(&host.store),
         wake: picker::waking(poster.clone()),
+        registers: BTreeMap::new(),
+        picker: None,
+        source_order: Vec::new(),
+        mode: EditMode::Normal,
+        quit: false,
+        discard: false,
+        falling_through: false,
+        wall: false,
+        closing: None,
     };
     // `T088`'s step 4c: every buffer by id, every pane by id, one of each.
     // The maps are the wrong shape for one entry and that is what they are
@@ -2747,7 +2756,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 (Surface::Float, _) => open_float.clone(),
                 // `T045`: the picker is a float over the buffer, so §9 dims
                 // the code behind it and `2a`'s screen is what you get.
-                (Surface::Picker, _) => editing.picker.as_ref().map(picker_float),
+                (Surface::Picker, _) => shell.picker.as_ref().map(picker_float),
                 // `T038`, `T039` — the completion list and signature help, as
                 // floats over the buffer you are still typing into. Same shape
                 // as the three above and for a different reason:
@@ -2867,7 +2876,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // the widget will actually draw into — asking for more would make the
         // matcher materialise rows nothing can show.
         let list_rows = usize::from(panes.at(focus).area.height.saturating_sub(1));
-        let picker_vm = editing
+        let picker_vm = shell
             .picker
             .as_mut()
             .map(|session| session.matcher.tick(list_rows));
@@ -2985,7 +2994,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     // a line editor with a list under it, not a mode of the
                     // machine. `esc` is handled by `closes_surface` below.
                     Event::Key(key) if matches!(surface, Surface::Picker) => {
-                        if let Some(session) = editing.picker.as_mut() {
+                        if let Some(session) = shell.picker.as_mut() {
                             match picker_key(key, session) {
                                 PickerStep::Typing => {}
                                 PickerStep::Cycle(delta) => {
@@ -3015,7 +3024,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                     }
                                 }
                                 PickerStep::Close => {
-                                    editing.picker = None;
+                                    shell.picker = None;
                                     // Or `picker-rows` answers a list nothing
                                     // is drawing, which is the staleness a
                                     // published snapshot trades for and the
@@ -3134,6 +3143,59 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 ) {
                     notice = Some(note);
                 }
+            }
+        }
+
+        // **`:wall` — every dirty buffer, not the one on screen.** The arm
+        // recorded the ask because it holds one buffer; this holds them all.
+        // `Editing::write` is still the only thing that writes.
+        //
+        // A buffer with no file name refuses, and that refusal is the whole
+        // point of writing them one at a time rather than stopping at the
+        // first: `:wall` on four buffers where the second is unnamed should
+        // still write the other three and say what it could not do.
+        if std::mem::take(&mut shell.wall) {
+            let mut trouble = Vec::new();
+            for buffer in buffers.map.values_mut() {
+                if !buffer.dirty.get() {
+                    continue;
+                }
+                if let Err(reason) = buffer.write(None) {
+                    trouble.push(reason);
+                }
+            }
+            if !trouble.is_empty() {
+                notice = Some(trouble.join("; "));
+            }
+        }
+
+        // **`:close-buffer` — and whether there is anywhere to go is the
+        // question only this can answer.** The arm already refused a dirty
+        // buffer without a `force`; what is left is the pane.
+        if let Some(closing) = shell.closing.take() {
+            let successor = buffers
+                .map
+                .keys()
+                .copied()
+                .find(|id| *id != closing)
+                .or_else(|| {
+                    // Nothing else is open. `:quit` is the verb for leaving,
+                    // and it is a different question — this one asked to close
+                    // *a buffer*, and closing the only one would leave a pane
+                    // with nothing in it.
+                    notice = Some("the only buffer — :quit leaves".to_owned());
+                    None
+                });
+            if let Some(successor) = successor {
+                buffers.map.remove(&closing);
+                for pane in panes.map.values_mut() {
+                    if pane.buffer == Some(closing) {
+                        pane.buffer = Some(successor);
+                    }
+                }
+                // The loop's own two bindings are stale the moment the map
+                // changed, so this pass ends here and the next resolves fresh.
+                continue;
             }
         }
 
@@ -3524,7 +3586,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     }
                 }
                 Intent::OpenPicker(id, query) => {
-                    editing.picker = Some(PickerSession::open(SourceId(id), query, &shell.wake));
+                    shell.picker = Some(PickerSession::open(SourceId(id), query, &shell.wake));
                     editing.open_picker = true;
                 }
                 // **Dropping the rows is the whole of invalidation**, because
@@ -3534,7 +3596,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 // it"* asks for. So this re-derives an open picker over that
                 // source and does nothing to a closed one.
                 Intent::InvalidateSource(id) => {
-                    if editing
+                    if shell
                         .picker
                         .as_ref()
                         .is_some_and(|session| session.source.0 == id)
@@ -3583,7 +3645,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // re-derives from it"* — which is what makes a redefinition at the REPL
         // land with no restart.
         if std::mem::take(&mut editing.open_picker)
-            && let Some(session) = editing.picker.as_mut()
+            && let Some(session) = shell.picker.as_mut()
         {
             {
                 let id = session.source.0.clone();
@@ -3678,7 +3740,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         surface = Surface::Picker;
                         // Read on every open, so a layer that grows a source
                         // is one `open-picker` away from tab reaching it.
-                        editing.source_order = order;
+                        shell.source_order = order;
                     }
                     // A source that does not exist or raised does **not** open
                     // an empty picker: `T045`'s `0/0` is the honest drawing of
@@ -3686,7 +3748,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     // fact. Said on the notice row and nothing opens, which is
                     // `Intent::OpenSurface`'s rule for a float that raised.
                     Err(why) => {
-                        editing.picker = None;
+                        shell.picker = None;
                         host.publish_picker(None);
                         notice = Some(why.to_string());
                     }
@@ -3694,8 +3756,34 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             }
         }
 
-        if editing.quit {
-            break;
+        // **`:quit` on a session with unsaved work anywhere.** The arm
+        // refused if *this* buffer was dirty, which is what it can see; a
+        // second buffer edited and switched away from is what it cannot. Two
+        // checks, each where the information is — and this one arrives as a
+        // notice rather than an `Outcome`, the same shape `open-file`'s
+        // `WouldLoseWork` already takes in the swap block above.
+        if shell.quit {
+            // **The forced spelling counts nothing**, rather than skipping the
+            // check — which is the shape that leaves no `break` at all on the
+            // forced path, and an editor you cannot leave. Caught by
+            // `a_bare_phosphor_with_unsaved_work_is_still_quittable`, twice.
+            let unsaved = if shell.discard {
+                0
+            } else {
+                buffers
+                    .map
+                    .values()
+                    .filter(|buffer| buffer.dirty.get())
+                    .count()
+            };
+            if unsaved == 0 {
+                break;
+            }
+            shell.quit = false;
+            notice = Some(format!(
+                "{unsaved} buffer{} with unsaved work — :wall, or :quit! to discard",
+                if unsaved == 1 { "" } else { "s" }
+            ));
         }
     }
 
@@ -5253,6 +5341,79 @@ struct Shell {
     /// notify at construction. One handed down is the only version of this that
     /// cannot be forgotten at one of the three.
     wake: picker::Wake,
+    /// The unnamed register is `"`; `"a` is `a` (`request::RegisterName`).
+    registers: BTreeMap<String, Register>,
+    /// The open picker, or [`None`] (`T045`).
+    ///
+    /// On `Editing` rather than beside the other surfaces because the matcher
+    /// is per-session state that outlives a frame and a `Node` does not — the
+    /// same reason `CompletionVm` lives here. `open-picker` fills it,
+    /// `set-picker-query` and `toggle-picker-preview` act on it, and `esc`
+    /// drops it.
+    picker: Option<PickerSession>,
+    /// The order `cycle-picker-source` walks, refreshed by the loop from the
+    /// layer's `phosphor/picker-sources` (`T047`).
+    ///
+    /// Cached on this side because the arm runs during event handling and
+    /// `Layer` is `&mut` there — the same reason `Editing` holds a keymap
+    /// snapshot rather than asking the VM per keystroke.
+    source_order: Vec<String>,
+    /// What mode the machine says it is in — **the machine's report, kept so
+    /// that a host-side edit can type the way a keystroke would**.
+    ///
+    /// One writer, and it is the `Input::SetMode` arm of [`Session::key`]:
+    /// `Action::Input` is the one family that never reaches [`Editing::act`]
+    /// (the loop answers it, so the machine and the host stay in step through
+    /// one path), and `Machine::set_mode` emits exactly this Action on every
+    /// change. Read by [`Editing::accept`] and by nothing else.
+    ///
+    /// **`CP-4`'s `R` defect is why it exists.** `Scope::of` folds `Replace`
+    /// into the insert scope — vim's `:imap` does the same — so binding
+    /// `<space>` and `<cr>` there bound them in `R` too, where no completion
+    /// float can ever be open and the fall-through therefore always fires. It
+    /// spliced text in, so `R` stopped overwriting: `abcdef` with `RXY Z` read
+    /// `XY Zdef` instead of vim's `XY Zef`.
+    mode: EditMode,
+    /// Set by `App::Quit`; the loop reads it once per turn.
+    quit: bool,
+    /// Whether a keystroke's `otherwise` capability is running right now.
+    ///
+    /// **A depth stop, and one level is all any binding needs.** A fall-through
+    /// runs an Action, and that Action may be another `move-completion` with an
+    /// `otherwise` of its own — the data is finite so it terminates, but the
+    /// depth is whatever a `runtime/keymaps.scm` wrote and the recursion is on
+    /// the stack. One level is the whole of what a key means by *"and if there
+    /// is no list, do the ordinary thing"*; a second level is a keymap asking
+    /// for something this argument does not offer, and it gets a sentence
+    /// rather than a stack.
+    falling_through: bool,
+    /// `:wall` asked for every dirty buffer to be written. Drained by the loop
+    /// (`T088`, step 8).
+    ///
+    /// **An intent rather than the arm doing it**, for the reason [`Intent`]
+    /// exists: an arm holds one buffer and this is a question about all of
+    /// them. `Editing::write` is still the one thing that writes — the loop
+    /// calls it per buffer rather than a second implementation existing.
+    wall: bool,
+    /// Whether the `:quit` that set [`Shell::quit`] was forced.
+    ///
+    /// **The arm's refusal and the loop's are two checks, and only one of them
+    /// can see the `force`.** `App::Quit`'s arm answers `WouldLoseWork` for the
+    /// buffer it holds; the loop answers for every *other* buffer, which the
+    /// arm cannot see. Without this, the loop's half would refuse a `ZQ` the
+    /// arm had already been told to discard — and `ZQ` at a scratch buffer is
+    /// the one exit a bare `phosphor` has, because there is no file to
+    /// `:write` to. An editor you cannot leave is the worst version of this
+    /// feature, which is what `a_bare_phosphor_with_unsaved_work_is_still_quittable`
+    /// exists to say, and it is what caught this.
+    discard: bool,
+    /// A buffer `:close-buffer` asked to close, drained the same way.
+    ///
+    /// The arm answers what it can see — a dirty buffer refuses
+    /// `WouldLoseWork` without a `force`, exactly as `:quit` does — and the
+    /// loop answers what only it can: whether there is another buffer for the
+    /// pane to show afterwards.
+    closing: Option<BufferId>,
 }
 
 impl std::fmt::Debug for Shell {
@@ -5262,6 +5423,9 @@ impl std::fmt::Debug for Shell {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Shell")
             .field("store", &self.store)
+            .field("registers", &self.registers)
+            .field("mode", &self.mode)
+            .field("quit", &self.quit)
             .finish_non_exhaustive()
     }
 }
@@ -5664,17 +5828,6 @@ struct Editing {
     /// steered in**, because dropping a session and replacing one are the only
     /// two exits and both clear it.
     chosen: bool,
-    /// Whether a keystroke's `otherwise` capability is running right now.
-    ///
-    /// **A depth stop, and one level is all any binding needs.** A fall-through
-    /// runs an Action, and that Action may be another `move-completion` with an
-    /// `otherwise` of its own — the data is finite so it terminates, but the
-    /// depth is whatever a `runtime/keymaps.scm` wrote and the recursion is on
-    /// the stack. One level is the whole of what a key means by *"and if there
-    /// is no list, do the ordinary thing"*; a second level is a keymap asking
-    /// for something this argument does not offer, and it gets a sentence
-    /// rather than a stack.
-    falling_through: bool,
     /// The live signature-help or hover answer (`T039`). One field for two
     /// features because they are one surface — see `float::SignatureVm`.
     signature: Option<SignatureVm>,
@@ -5682,14 +5835,6 @@ struct Editing {
     /// with `on: false`. See [`Editing::collapse`] for why the set lives here
     /// rather than in the fork.
     collapsed: BTreeSet<RegionId>,
-    /// The open picker, or [`None`] (`T045`).
-    ///
-    /// On `Editing` rather than beside the other surfaces because the matcher
-    /// is per-session state that outlives a frame and a `Node` does not — the
-    /// same reason `CompletionVm` lives here. `open-picker` fills it,
-    /// `set-picker-query` and `toggle-picker-preview` act on it, and `esc`
-    /// drops it.
-    picker: Option<PickerSession>,
     /// An `open-float` a **keystroke** asked for (`T048`), drained the way
     /// [`Editing::help`] is.
     ///
@@ -5700,18 +5845,9 @@ struct Editing {
     /// verbs: two dispatchers, one store, and the difference is only what each
     /// side can resolve.
     float: Option<(String, Value)>,
-    /// The order `cycle-picker-source` walks, refreshed by the loop from the
-    /// layer's `phosphor/picker-sources` (`T047`).
-    ///
-    /// Cached on this side because the arm runs during event handling and
-    /// `Layer` is `&mut` there — the same reason `Editing` holds a keymap
-    /// snapshot rather than asking the VM per keystroke.
-    source_order: Vec<String>,
     /// An `open-picker` the loop has not put on screen yet, drained the way
     /// [`Editing::open`] and [`Editing::help`] are.
     open_picker: bool,
-    /// The unnamed register is `"`; `"a` is `a` (`request::RegisterName`).
-    registers: BTreeMap<String, Register>,
     /// What the last `SelectRange` said, so a yank knows whether it is linewise.
     selection_kind: SelectionKind,
     /// The offset of the character a live selection is anchored at — the end
@@ -5752,24 +5888,6 @@ struct Editing {
     /// The gate is `edits != sent`, and both halves have to be this buffer's or
     /// the comparison is between two different files.
     sent: u64,
-    /// Set by `App::Quit`; the loop reads it once per turn.
-    quit: bool,
-    /// What mode the machine says it is in — **the machine's report, kept so
-    /// that a host-side edit can type the way a keystroke would**.
-    ///
-    /// One writer, and it is the `Input::SetMode` arm of [`Session::key`]:
-    /// `Action::Input` is the one family that never reaches [`Editing::act`]
-    /// (the loop answers it, so the machine and the host stay in step through
-    /// one path), and `Machine::set_mode` emits exactly this Action on every
-    /// change. Read by [`Editing::accept`] and by nothing else.
-    ///
-    /// **`CP-4`'s `R` defect is why it exists.** `Scope::of` folds `Replace`
-    /// into the insert scope — vim's `:imap` does the same — so binding
-    /// `<space>` and `<cr>` there bound them in `R` too, where no completion
-    /// float can ever be open and the fall-through therefore always fires. It
-    /// spliced text in, so `R` stopped overwriting: `abcdef` with `RXY Z` read
-    /// `XY Zdef` instead of vim's `XY Zef`.
-    mode: EditMode,
 }
 
 /// The unnamed register, as vim spells it.
@@ -5812,10 +5930,8 @@ impl std::fmt::Debug for Editing {
     /// owns.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Editing")
-            .field("registers", &self.registers)
             .field("selection_kind", &self.selection_kind)
             .field("timeline", &self.timeline)
-            .field("quit", &self.quit)
             .finish_non_exhaustive()
     }
 }
@@ -5869,14 +5985,10 @@ impl Editing {
             completion: None,
             offered: Vec::new(),
             chosen: false,
-            falling_through: false,
             signature: None,
             collapsed: BTreeSet::new(),
-            picker: None,
             float: None,
-            source_order: Vec::new(),
             open_picker: false,
-            registers: BTreeMap::new(),
             selection_kind: SelectionKind::Char,
             selection_from: None,
             timeline,
@@ -5885,8 +5997,6 @@ impl Editing {
             edits,
             synced: None,
             sent: 0,
-            quit: false,
-            mode: EditMode::Normal,
         };
         // **Every buffer counts its own edits from birth.** The change callback
         // used to be installed by whoever built the [`Editor`], which the loop did
@@ -5998,7 +6108,7 @@ impl Editing {
                 done()
             }
             Action::Buffer(BufferAction::Yank { target, register }) => {
-                self.yank(target, register.as_ref());
+                self.yank(cx, target, register.as_ref());
                 done()
             }
             Action::Buffer(BufferAction::Paste {
@@ -6008,7 +6118,7 @@ impl Editing {
                 done()
             }
             Action::Buffer(BufferAction::SetRegister { register, text }) => {
-                self.registers.insert(
+                cx.shell.registers.insert(
                     register.0.clone(),
                     Register {
                         text: text.clone(),
@@ -6022,7 +6132,7 @@ impl Editing {
                 done()
             }
             Action::Buffer(BufferAction::InsertIndent {}) => {
-                self.insert_indent();
+                self.insert_indent(cx);
                 done()
             }
             Action::Buffer(BufferAction::JoinLines { target }) => {
@@ -6220,10 +6330,19 @@ impl Editing {
             // One buffer, so this is `save-buffer` under its other name. It is
             // still the honest implementation of *"writes every dirty buffer"*
             // — there is exactly one, and `T088` is what makes there be more.
-            Action::File(FileAction::SaveAll {}) => match self.write(None) {
-                Ok(()) => done(),
-                Err(reason) => declined(&reason),
-            },
+            // **`:wall` writes every dirty buffer, and the loop is what does
+            // it.** This arm called `self.write(None)` under a comment saying
+            // *"there is exactly one, and `T088` is what makes there be more"*.
+            // There are more now, and an arm holds one — so it records the ask
+            // and the loop performs it, which is the seam [`Intent`] already
+            // establishes for *"the thing that decides is not the thing that
+            // owns"*. `Editing::write` is still the only thing that writes;
+            // the loop calls it per buffer rather than a second implementation
+            // existing.
+            Action::File(FileAction::SaveAll {}) => {
+                cx.shell.wall = true;
+                done()
+            }
             // **`at` is honoured now, and that is `T036`'s doing.** The arm
             // recorded the path and dropped the position, which nothing had
             // noticed because every caller so far was `:edit <path>` — and
@@ -6263,13 +6382,20 @@ impl Editing {
             // Not `NotYetImplemented`: the capability is built and the limit is
             // real. One pane holds one buffer until `T088`, so closing it is
             // leaving, and `:quit` is how you say that.
+            // **It closes now.** This declined with *"one buffer, one pane —
+            // :quit leaves; T088 gives a buffer somewhere to close to"*, which
+            // was true and is not any more.
+            //
+            // The arm answers what it can see: a dirty buffer refuses without a
+            // `force`, exactly as `:quit` does. Whether there is anywhere for
+            // the pane to go afterwards is a question about every buffer, so
+            // the loop answers that one.
             Action::File(FileAction::CloseBuffer { force, .. }) => {
                 if !*force && self.dirty.get() {
                     return Outcome::Refused(Refusal::WouldLoseWork);
                 }
-                declined(
-                    "one buffer, one pane — :quit leaves; T088 gives a buffer somewhere to close to",
-                )
+                cx.shell.closing = Some(cx.buffer);
+                done()
             }
             // The ex line. `T058` builds the message and search prompts and the
             // anchor chip that rides with them; the ex half is `T033`'s, because
@@ -6287,7 +6413,8 @@ impl Editing {
                 if !*force && self.dirty.get() {
                     return Outcome::Refused(Refusal::WouldLoseWork);
                 }
-                self.quit = true;
+                cx.shell.quit = true;
+                cx.shell.discard = *force;
                 done()
             }
             // `T037`'s locale hook, and the reason a language declaration
@@ -6383,7 +6510,7 @@ impl Editing {
                 index,
                 then,
                 otherwise,
-            }) => match self.accept(*index, then.as_deref(), otherwise.as_deref()) {
+            }) => match self.accept(cx, *index, then.as_deref(), otherwise.as_deref()) {
                 Ok(()) => done(),
                 Err(reason) => declined(&reason),
             },
@@ -6570,7 +6697,7 @@ impl Editing {
             // *rows* are what `T046` actually owes. An open picker over a
             // source nobody has defined draws `0/0`, which is honest.
             Action::Picker(PickerAction::OpenPicker { source, query }) => {
-                self.picker = Some(PickerSession::open(
+                cx.shell.picker = Some(PickerSession::open(
                     source.clone(),
                     query.clone(),
                     &cx.shell.wake,
@@ -6579,7 +6706,7 @@ impl Editing {
                 done()
             }
             Action::Picker(PickerAction::SetPickerQuery { text }) => {
-                let Some(session) = self.picker.as_mut() else {
+                let Some(session) = cx.shell.picker.as_mut() else {
                     return declined("no picker open");
                 };
                 session.filter.clone_from(text);
@@ -6602,14 +6729,14 @@ impl Editing {
             // is `T038`'s own session and a `6d` help grid has no selection at
             // all. A float without rows declines by name.
             Action::Float(FloatAction::FloatSelect { delta }) => {
-                let Some(session) = self.picker.as_mut() else {
+                let Some(session) = cx.shell.picker.as_mut() else {
                     return declined("no float with rows is focused");
                 };
                 session.matcher.select(*delta);
                 done()
             }
             Action::Float(FloatAction::FloatSelectRow { row }) => {
-                let Some(session) = self.picker.as_mut() else {
+                let Some(session) = cx.shell.picker.as_mut() else {
                     return declined("no float with rows is focused");
                 };
                 // 1-based on the wire, and the delta is against wherever the
@@ -6623,21 +6750,21 @@ impl Editing {
             // rows is accepting one — so this is `picker-accept` under the
             // float's name, and it delegates rather than duplicating.
             Action::Float(FloatAction::FloatAccept {}) => {
-                if self.picker.is_none() {
+                if cx.shell.picker.is_none() {
                     return declined("no float with a primary verb is focused");
                 }
-                self.accept_picker(AcceptHow::Open)
+                self.accept_picker(cx, AcceptHow::Open)
             }
-            Action::Picker(PickerAction::PickerAccept { how }) => self.accept_picker(*how),
+            Action::Picker(PickerAction::PickerAccept { how }) => self.accept_picker(cx, *how),
             // `T047` — tab. The *order* is the layer's, so this arm knows how
             // to walk a list and not what is in it. A picker over a source the
             // order does not name starts from the first, which is what makes
             // tab work on a picker opened by id from a door.
             Action::Picker(PickerAction::CyclePickerSource { delta }) => {
-                let Some(session) = self.picker.as_ref() else {
+                let Some(session) = cx.shell.picker.as_ref() else {
                     return declined("no picker open");
                 };
-                let order = std::mem::take(&mut self.source_order);
+                let order = std::mem::take(&mut cx.shell.source_order);
                 if order.is_empty() {
                     return declined("no source order — (define phosphor/picker-sources …)");
                 }
@@ -6648,11 +6775,11 @@ impl Editing {
                 let len = i64::try_from(order.len()).unwrap_or(1);
                 let next = (i64::try_from(at).unwrap_or(0) + delta).rem_euclid(len);
                 let id = order[usize::try_from(next).unwrap_or(0)].clone();
-                self.source_order = order;
+                cx.shell.source_order = order;
                 // Re-opened rather than mutated: a source change is a new
                 // corpus, and `open-picker` is the one path that fills one.
-                let filter = self.picker.as_ref().map(|s| s.filter.clone());
-                self.picker = Some(PickerSession::open(
+                let filter = cx.shell.picker.as_ref().map(|s| s.filter.clone());
+                cx.shell.picker = Some(PickerSession::open(
                     SourceId(id.clone()),
                     filter,
                     &cx.shell.wake,
@@ -6665,7 +6792,7 @@ impl Editing {
                 })
             }
             Action::Picker(PickerAction::TogglePickerPreview {}) => {
-                let Some(session) = self.picker.as_mut() else {
+                let Some(session) = cx.shell.picker.as_mut() else {
                     return declined("no picker open");
                 };
                 session.preview = !session.preview;
@@ -7292,8 +7419,8 @@ impl Editing {
     /// tasks. A split needs `T088` and there is one pane; the quickfix list is
     /// *"drawn once and named in no task"* (`request.rs`) and building it here
     /// would be inventing a surface nobody has asked for.
-    fn accept_picker(&mut self, how: AcceptHow) -> Outcome {
-        let Some(session) = self.picker.as_ref() else {
+    fn accept_picker(&mut self, cx: &mut Cx<'_>, how: AcceptHow) -> Outcome {
+        let Some(session) = cx.shell.picker.as_ref() else {
             return declined("no picker open");
         };
         match how {
@@ -7323,7 +7450,7 @@ impl Editing {
             Ok(Target::Explicit { path, span }) => (path, Some(span.start)),
             Ok(_) | Err(_) => (PathBuf::from(head), None),
         };
-        self.picker = None;
+        cx.shell.picker = None;
         self.open = Some(path);
         self.open_at = at;
         Outcome::Done(Receipt {
@@ -7611,7 +7738,7 @@ impl Editing {
         cx.view_mut().jumplist.push(id);
     }
 
-    fn yank(&mut self, target: &Target, register: Option<&RegisterName>) {
+    fn yank(&mut self, cx: &mut Cx<'_>, target: &Target, register: Option<&RegisterName>) {
         let Some((from, to)) = self.target_range(target) else {
             return;
         };
@@ -7621,12 +7748,12 @@ impl Editing {
             .slice(from, to.min(self.editor.code_ref().len_chars()));
         let linewise = self.selection_kind == SelectionKind::Line;
         let name = register.map_or_else(|| UNNAMED.to_owned(), |name| name.0.clone());
-        self.registers.insert(name, Register { text, linewise });
+        cx.shell.registers.insert(name, Register { text, linewise });
     }
 
     fn paste(&mut self, cx: &mut Cx<'_>, register: Option<&RegisterName>, before: bool) {
         let name = register.map_or_else(|| UNNAMED.to_owned(), |name| name.0.clone());
-        let Some(register) = self.registers.get(&name).cloned() else {
+        let Some(register) = cx.shell.registers.get(&name).cloned() else {
             return;
         };
         let cursor = self.text(cx).cursor();
@@ -7924,16 +8051,16 @@ impl Editing {
                 );
             }
         };
-        if self.falling_through {
+        if cx.shell.falling_through {
             return declined("a fall-through may not fall through again");
         }
         let action = match Action::from_call(name, args) {
             Ok(action) => action,
             Err(error) => return declined(&error.to_string()),
         };
-        self.falling_through = true;
+        cx.shell.falling_through = true;
         let outcome = self.act(cx, &action);
-        self.falling_through = false;
+        cx.shell.falling_through = false;
         outcome
     }
 
@@ -8062,6 +8189,7 @@ impl Editing {
     /// instead, or when `index` names no row.
     fn accept(
         &mut self,
+        cx: &mut Cx<'_>,
         index: u32,
         then: Option<&str>,
         otherwise: Option<&str>,
@@ -8073,7 +8201,7 @@ impl Editing {
             && !(self.chosen && self.completion.is_some())
         {
             let cursor = self.editor.get_cursor();
-            let over = if self.mode == EditMode::Replace {
+            let over = if cx.shell.mode == EditMode::Replace {
                 self.line_end(cursor).min(cursor + 1)
             } else {
                 cursor
@@ -8140,13 +8268,13 @@ impl Editing {
     /// `nvim -u NONE` with `set expandtab tabstop=4 softtabstop=0` this
     /// session, which is where the earlier claim that vim inserts here came
     /// from and did not survive being run.
-    fn insert_indent(&mut self) {
+    fn insert_indent(&mut self, cx: &mut Cx<'_>) {
         let cursor = self.editor.get_cursor();
         let code = self.editor.code_ref();
         let line = code.char_to_line(cursor);
         let column = code.char_col_to_visual(line, cursor - code.line_to_char(line));
         let typed = self.indent_style.typed_at(column);
-        let over = if self.mode == EditMode::Replace {
+        let over = if cx.shell.mode == EditMode::Replace {
             self.line_end(cursor).min(cursor + 1)
         } else {
             cursor
@@ -8511,7 +8639,7 @@ impl Session<'_> {
                     // **The one writer of [`Editing::mode`]**, and it is here
                     // rather than in `Editing::act` because `Action::Input` is
                     // the family that never reaches it. See the field.
-                    InputAction::SetMode { mode } => self.editing.mode = *mode,
+                    InputAction::SetMode { mode } => self.cx.shell.mode = *mode,
                     InputAction::SetCount { .. } | InputAction::SelectRegister { .. } => {}
                     // `T099`, and the one arm in this match that answers rather
                     // than keeps state. [`Machine::apply`]'s own arm is
@@ -9668,7 +9796,7 @@ mod tests {
     /// context those arms are handed.
     ///
     /// **It derefs to [`Editing`] on purpose**, so `editing.editor` and
-    /// `editing.registers` read the way they did and the diff that introduced
+    /// `editing.shell.registers` read the way they did and the diff that introduced
     /// the pane stays about the pane. The other half is deliberately *not*
     /// hidden: a test that means the rectangle says `editing.pane().area`, and
     /// one that means the rope says `editing.editor`. Test-only scaffolding —
@@ -9802,6 +9930,15 @@ mod tests {
         Shell {
             store: Arc::new(store::Shared::default()),
             wake: Arc::new(|| {}),
+            registers: std::collections::BTreeMap::new(),
+            picker: None,
+            source_order: Vec::new(),
+            mode: phosphor_core::request::EditMode::Normal,
+            quit: false,
+            discard: false,
+            falling_through: false,
+            wall: false,
+            closing: None,
         }
     }
 
@@ -9950,7 +10087,10 @@ mod tests {
             note.as_deref(),
             Some("lsp: denied to a producer — only the keyboard asks for this"),
         );
-        assert!(!editing.quit, "a producer did not get to end the session");
+        assert!(
+            !editing.shell.quit,
+            "a producer did not get to end the session"
+        );
     }
 
     /// The middle rating, and the one an LSP client meets first: `T036`'s
@@ -10236,12 +10376,12 @@ mod tests {
             focus: PaneId(0),
             shell: shell(),
         };
-        assert!(!editing.quit);
+        assert!(!editing.shell.quit);
         let outcome = editing.apply(&Action::App(phosphor_core::action::AppAction::Quit {
             force: true,
         }));
         assert!(matches!(outcome, Outcome::Done(_)));
-        assert!(editing.quit, "the loop reads this once per turn");
+        assert!(editing.shell.quit, "the loop reads this once per turn");
     }
 
     #[test]
@@ -10273,7 +10413,7 @@ mod tests {
             force: false,
         }));
         assert!(matches!(outcome, Outcome::Refused(Refusal::WouldLoseWork)));
-        assert!(!editing.quit);
+        assert!(!editing.shell.quit);
     }
 
     #[test]
@@ -10361,6 +10501,7 @@ mod tests {
         assert_eq!(editing.editor.get_content(), "one\nfive");
         assert_eq!(
             editing
+                .shell
                 .registers
                 .get("\"")
                 .map(|register| register.text.as_str()),
@@ -10501,7 +10642,10 @@ mod tests {
             Some("no file name — :write <path>"),
             "the cause, not the consequence"
         );
-        assert!(!typed.editing.quit, "and it is still open to be saved in");
+        assert!(
+            !typed.editing.shell.quit,
+            "and it is still open to be saved in"
+        );
     }
 
     #[test]
@@ -11273,7 +11417,7 @@ mod tests {
         let text: String = (1..=100).map(|line| format!("line {line}\n")).collect();
         let mut editing = editing(&text);
         editing.pane_mut().area = Rect::new(0, 0, 80, 10);
-        editing.mode = phosphor_core::request::EditMode::Insert;
+        editing.shell.mode = phosphor_core::request::EditMode::Insert;
         editing.editor.set_cursor(0);
 
         // Thirty newlines, exactly as `<cr>` sends them with no float open.
@@ -11333,7 +11477,7 @@ mod tests {
         let mut editing = editing(&text);
         editing.pane_mut().area = Rect::new(0, 0, 20, 5);
         editing.editor.set_soft_wrap(Some(10));
-        editing.mode = phosphor_core::request::EditMode::Insert;
+        editing.shell.mode = phosphor_core::request::EditMode::Insert;
         // End of the fifth line — visual row 4, the bottom of the window. Nine
         // chars a line, eight of them text.
         editing.editor.set_cursor(4 * 9 + 8);
@@ -11387,7 +11531,7 @@ mod tests {
         let at = |mode, text: &str, cursor| {
             let mut editing = editing(text);
             editing.pane_mut().area = Rect::new(0, 0, 80, 24);
-            editing.mode = mode;
+            editing.shell.mode = mode;
             editing.editor.set_cursor(cursor);
             drop(editing.apply(&space));
             editing.contents()
@@ -12287,6 +12431,148 @@ mod tests {
              the assertion that fails the moment the list goes back on `Editing`"
         );
         assert_eq!(panes.at(right).jump_at, 0);
+    }
+
+    /// **`:wall` writes every dirty buffer, and says what it could not write.**
+    ///
+    /// The arm called `self.write(None)` under a comment reading *"there is
+    /// exactly one, and `T088` is what makes there be more"*. There are more,
+    /// and an arm holds one — so it records the ask and the loop performs it.
+    ///
+    /// The assertion that matters is the **third** buffer. Writing them one at
+    /// a time rather than stopping at the first failure is the difference
+    /// between `:wall` on a session with one unnamed scratch buffer writing
+    /// everything else, and writing nothing after it.
+    #[test]
+    fn wall_writes_past_a_buffer_it_cannot_write() {
+        let theme = super::builtin("phosphor-dark").expect("a shipped theme");
+        let directory = scratch("wall-all");
+        let mut written = Vec::new();
+
+        let mut make = |name: Option<&str>, text: &str| {
+            let file = name.map(|name| directory.join(name));
+            if let Some(file) = file.as_ref() {
+                written.push(file.clone());
+            }
+            let editing = Editing::new(
+                buffer("text", text, &theme).expect("a buffer"),
+                file,
+                std::rc::Rc::new(std::cell::Cell::new(false)),
+            );
+            editing.dirty.set(true);
+            editing
+        };
+
+        let (mut buffers, _) = Buffers::new(make(Some("first.txt"), "one\n"));
+        buffers.open(make(None, "scratch\n"));
+        buffers.open(make(Some("third.txt"), "three\n"));
+
+        // What the loop's `:wall` block does, over the same map.
+        let mut trouble = Vec::new();
+        for buffer in buffers.map.values_mut() {
+            if !buffer.dirty.get() {
+                continue;
+            }
+            if let Err(reason) = buffer.write(None) {
+                trouble.push(reason);
+            }
+        }
+
+        assert_eq!(
+            trouble,
+            vec!["no file name — :write <path>".to_owned()],
+            "the unnamed buffer refuses in the editor's own voice"
+        );
+        for file in &written {
+            assert!(
+                file.exists(),
+                "{} was written — including the one *after* the failure, which \
+                 is the whole reason the loop does not stop at the first",
+                file.display()
+            );
+        }
+    }
+
+    /// **`:quit` counts unsaved work in every buffer**, and `ZQ` counts none.
+    ///
+    /// Two checks, each where the information is: the arm refuses
+    /// `WouldLoseWork` for the buffer it holds, and the loop — which holds them
+    /// all — answers for the rest. The forced spelling must count *nothing*
+    /// rather than skip the check, because skipping it is the shape that leaves
+    /// no way out of the loop at all. `ZQ` at a scratch buffer is the one exit
+    /// a bare `phosphor` has, there being no file to `:write` to.
+    #[test]
+    fn quitting_counts_unsaved_work_in_buffers_that_are_not_on_screen() {
+        let (mut buffers, first) = Buffers::new(editing("alpha").editing);
+        let second = buffers.open(editing("bravo").editing);
+
+        let unsaved = |buffers: &Buffers| {
+            buffers
+                .map
+                .values()
+                .filter(|buffer| buffer.dirty.get())
+                .count()
+        };
+
+        assert_eq!(unsaved(&buffers), 0, "nothing has been edited");
+
+        buffers.at_mut(second).dirty.set(true);
+
+        assert_eq!(
+            unsaved(&buffers),
+            1,
+            "the buffer nobody is looking at counts — the assertion the arm \
+             cannot make, because it holds one buffer"
+        );
+        assert!(
+            !buffers.at_mut(first).dirty.get(),
+            "and the focused one is still clean, so its own arm would have said \
+             yes to `:quit`"
+        );
+    }
+
+    /// **`:close-buffer` closes, and the pane it was in shows another.**
+    ///
+    /// It declined with *"one buffer, one pane — :quit leaves; T088 gives a
+    /// buffer somewhere to close to"*, which was true and is not any more. The
+    /// loop's half is the question the arm cannot answer: whether there is
+    /// anywhere for the pane to go.
+    #[test]
+    fn closing_a_buffer_points_its_pane_at_another() {
+        let (mut buffers, first) = Buffers::new(editing("alpha").editing);
+        let second = buffers.open(editing("bravo").editing);
+        let (mut panes, only) = Panes::new(Pane::new(first));
+
+        // What the loop's `close-buffer` block does.
+        let successor = buffers.map.keys().copied().find(|id| *id != first);
+        assert_eq!(successor, Some(second));
+        buffers.map.remove(&first);
+        for pane in panes.map.values_mut() {
+            if pane.buffer == Some(first) {
+                pane.buffer = successor;
+            }
+        }
+
+        assert_eq!(
+            panes.at(only).buffer,
+            Some(second),
+            "the pane shows the buffer that is left"
+        );
+        assert_eq!(
+            buffers.at_mut(second).editor.get_content(),
+            "bravo",
+            "and it is the one it was pointed at, by id"
+        );
+        assert!(
+            buffers
+                .map
+                .keys()
+                .copied()
+                .find(|id| *id != second)
+                .is_none(),
+            "with one buffer left there is no successor, which is what makes \
+             `:close-buffer` on the last one say `:quit` leaves instead"
+        );
     }
 
     /// **Editing A does not move B's edit counter**, which is the whole of what

@@ -2953,8 +2953,14 @@ mod driven {
         );
     }
 
-    /// `:wall` — save every buffer. One buffer until `T088`, so what this can
-    /// hold is that it writes *this* one and does not leave.
+    /// `:wall` — save every buffer, and do not leave.
+    ///
+    /// **This drives the shipping binary, which opens one buffer**, so what it
+    /// can hold is that the one on screen is written and the editor stays. The
+    /// *every* half is a question about `Buffers` and is asserted where two of
+    /// them can be built — `wall_writes_past_a_buffer_it_cannot_write` in
+    /// `main.rs`, which is also where the case that matters lives: a buffer
+    /// that cannot be written does not stop the ones after it.
     #[test]
     fn wall_writes_without_leaving() {
         let scratch = Scratch::new("wall");
@@ -2981,17 +2987,51 @@ mod driven {
         );
     }
 
+    /// **`:close-buffer` on the only buffer says what to type instead.**
+    ///
+    /// It used to answer *"one buffer, one pane — :quit leaves; T088 gives a
+    /// buffer somewhere to close to"* and sat in the deferred table above,
+    /// naming its task. `T088`'s step 8 built it, so the row went red and left
+    /// — and this is what took its place, because the lint that noticed
+    /// `:close-buffer` was suddenly unpressed is right to: a command nothing
+    /// types is a command nothing checks.
+    ///
+    /// The answer is no longer about a task. Closing the only buffer would
+    /// leave a pane with nothing in it, and `:quit` is the verb for leaving, so
+    /// the refusal names the command that does what you meant.
+    #[test]
+    fn close_buffer_on_the_only_buffer_names_quit_instead() {
+        let scratch = Scratch::new("close-only");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("only.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let said = editor.press_until(b":close-buffer\r", "the only buffer");
+        editor.quit();
+
+        assert!(
+            shows(&said, "the only buffer — :quit leaves"),
+            "closing the last buffer names the command that leaves; frame was: {said}"
+        );
+        assert!(
+            !shows(&said, "T088"),
+            "and it no longer names a task, because the task landed; frame was: {said}"
+        );
+    }
+
     /// **Every deferred ex command names the task that builds it** — the ex
     /// line's half of `a_deferred_binding_names_the_task_that_builds_it`.
     ///
-    /// Six of the eighteen answer a refusal rather than doing something, and
+    /// Five of the eighteen answer a refusal rather than doing something, and
     /// none of them was typed by anything. The same table shape, for the same
     /// reason: when a task lands its command stops refusing and the row that
     /// named it goes red, so this can only shrink.
     ///
-    /// `close-buffer` is the odd one and belongs here anyway. It is not
-    /// deferred — the arm exists — but it declines while there is one pane, and
-    /// naming `T088` is the whole of what it can honestly say.
+    /// **`close-buffer` left this table at `T088`'s step 8**, which is the
+    /// table doing its job: it declined while there was one buffer and named
+    /// the task, the task landed, and the row went red. It closes now, so
+    /// there is no refusal here to name anything.
     #[test]
     fn a_deferred_ex_command_names_the_task_that_builds_it() {
         let scratch = Scratch::new("ex-deferred");
@@ -3008,7 +3048,6 @@ mod driven {
             ("diff-disk", "T070"),
             ("reattach", "T057"),
             ("comment", "T068"),
-            ("close-buffer", "T088"),
         ];
         for (command, task) in deferred {
             let said = editor.press_until(format!(":{command}\r").as_bytes(), task);

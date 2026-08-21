@@ -254,7 +254,21 @@ Then three refusals become real, and each becomes a question about `Buffers` rat
 - `AppAction::Quit` (`:5525`) → refuse on *any* dirty buffer.
 - `FileAction::CloseBuffer` (`:5505-5511`) → stop declining with *"one buffer, one pane — :quit leaves; T088 gives a buffer somewhere to close to"*.
 
-**Verification:** `loop_pty.rs:2930-2955` (`wall_writes_without_leaving`, whose doc says *"One buffer until `T088`"*) gets a second buffer and a real assertion. `loop_pty.rs:2985` drops its `("close-buffer", "T088")` row from the `deferred` table — that table asserts each refusal *names its task*, so leaving the row fails loudly.
+**Verification:** `wall_writes_without_leaving`, whose doc said *"One buffer until `T088`"*, gets a real assertion. The `deferred` table drops its `("close-buffer", "T088")` row — that table asserts each refusal *names its task*, so leaving the row fails loudly.
+
+> **DONE.** Six fields moved (`store` and `wake` went in 4b), and the three refusals are real.
+>
+> **`:wall` and `:close-buffer` record an intent; the loop performs it.** An arm holds one buffer and both are questions about all of them, so this is the seam `Intent` already establishes. `Editing::write` is still the only thing that writes — the loop calls it per buffer rather than a second implementation existing — and it writes them one at a time rather than stopping at the first failure, which is the case the unit test pins.
+>
+> **`:quit` is two checks, each where the information is.** The arm refuses `WouldLoseWork` for the buffer it holds; the loop answers for the rest, as a notice. `Shell::discard` carries the `force`, and **the forced spelling counts nothing rather than skipping the check** — skipping it leaves no `break` on the forced path at all, which is what I wrote and what `a_bare_phosphor_with_unsaved_work_is_still_quittable` caught, twice. Its doc is the reason it exists: *"An editor you cannot leave is the worst version of this feature."*
+>
+> **`:close-buffer` closes.** Closing the *last* one still refuses, but for a product reason rather than a task one — it would leave a pane with nothing in it, and `:quit` is the verb for leaving.
+>
+> **The plan predicted one lint and a second one turned up.** The deferred row did fail loudly, by hanging the suite waiting for a frame that would never come. Removing it then left `:close-buffer` typed by nothing, and `lint-key-coverage` caught that in one run: a command nothing types is a command nothing checks. `close_buffer_on_the_only_buffer_names_quit_instead` took the row's place and asserts both halves — the new sentence, and that it no longer names a task.
+>
+> **As run:** `just gate` green, 1,406 tests. Four added.
+>
+> `wall_writes_without_leaving` did **not** get a second buffer, and the reason is worth recording rather than quietly skipping: it drives the shipping binary, which opens one. The *every* half is a question about `Buffers`, and `Buffers` is a plain struct — so it is asserted in `main.rs` where two can be built, which is also where the case that matters lives. Its doc says so now instead of saying *"One buffer until `T088`"*.
 
 ### Step 9 — Completion and signature per buffer; `Outstanding` keyed
 
