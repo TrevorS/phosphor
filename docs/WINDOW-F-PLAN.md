@@ -205,7 +205,19 @@ The reachability argument is worth keeping, because it is what makes this a bug 
 
 Six arms drop a pane or buffer selector with `..`, each confirmed: `MotionAction::SetCursor { position, .. }` (`:5298`), `ViewAction::Scroll { request, .. }` (`:5386`), `FileAction::SaveBuffer { path, .. }` (`:5453`), `FileAction::OpenFile { path, at, .. }` (`:5470`), and `LspAction::IngestCompletions` / `IngestSignatureHelp` / `IngestHover` (`:5640`, `:5684`, `:5701`). Each `..` becomes a real read through `cx.tree.resolve` or a `Buffers` lookup.
 
-Separately: `Editing::reveal` (`:5224-5235`) hardcodes `PaneRef::Focused {}` at `:5231` and calls `self.act`. It must name `cx.pane` — the moment the `Scroll` arm honours its selector, an unfocused pane's reveal scrolls the focused one. No existing test can see this, because today both halves ignore the ref and are self-consistent by accident.
+Separately: `Editing::reveal` hardcodes `PaneRef::Focused {}` and calls `self.act`. It must name `cx.pane` — the moment the `Scroll` arm honours its selector, an unfocused pane's reveal scrolls the focused one. No existing test can see this, because today both halves ignore the ref and are self-consistent by accident.
+
+> **6b — the two pane selectors, and the reveal. DONE.**
+>
+> `Cx` carries `pane: PaneId` and `&mut Panes` instead of one `&mut Pane`, so a resolved reference can name a pane that is not the Action's own; `Cx::view()` is the lookup. `Panes::resolve` answers all five `PaneRef` variants — `Next`/`Prev` cycle the map's id order, which is open order, and **`Direction` refuses rather than guessing**: a compass direction is a fact about where the rectangles are, and answering it from one rectangle would be answering from no information. Step 11 resolves it against the tree.
+>
+> **`Scroll` reads its selector**, and refuses `NoSuchTarget` when it resolves to nothing. The branch where the resolved pane shows a *different* buffer is deliberately not written: `apply_scroll` moves `self.editor`'s viewport and `self` is the buffer this Action was routed to, so reaching another buffer's is 6a's aliasing wall — and the answer there was routing at the door, not a branch in the arm. Step 11 is where a second pane makes it reachable.
+>
+> **A test that failed to fail found a real bug — mine.** `a_reveal_scrolls_the_pane_the_cursor_is_in` passed with the defect planted, which meant the test proved nothing. The cause was in the implementation: `resolve` took a `focus` argument and the `Scroll` arm passed `cx.pane`, so `Focused {}` meant *the Action's own pane* rather than the pane the user is looking at. That collapses the one distinction the selector exists to express. `resolve` reads `Panes::focus` now and takes no such argument, so the trap cannot be re-set by a caller.
+>
+> **Verification:** `just gate` green, 1,400 tests. Three added: the reveal (two panes, different heights, one unfocused — **pressed with `Focused {}` restored, where it fails**), `a_scroll_naming_no_pane_refuses_rather_than_moving_the_focused_one` (an unknown id and a `Direction`, both refused, viewport unmoved), and `the_pane_cycle_wraps_at_both_ends`.
+>
+> **Not in 6b, and recorded rather than forgotten:** `OpenFile`'s `PaneRef` still goes unread — the open is recorded as an intent and performed by the loop, so honouring it means the intent carrying a `PaneId`, which is worth doing when there is a second pane to open into (step 11). `mouse_actions` likewise still hit-tests one rect; the plan's `(machine, &Panes, &Buffers, mouse) -> (PaneId, Vec<Action>)` signature has nothing to choose between until there are two rects.
 
 `mouse_actions` (`:7894-7900`) reads `let area = editing.area;` to hit-test, which inverts the resolution order — the pane must come *from* the click point. Signature becomes `(machine, &Panes, &Buffers, mouse) -> (PaneId, Vec<Action>)`, and its wheel arm (`:7927`) emits `PaneRef::Id` for the pane under the pointer.
 

@@ -167,8 +167,8 @@ use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
     AcceptHow, Actor, AnchorId, Binding, BufferId, CharRange as SignatureRange,
     Completion as WireCompletion, EditMode, FoldState, KeySeq, LanguageId, PaneId, PaneKind,
-    Position, PromptKind, RegionFilter, RegionId, RegisterName, Seek, SelectionKind, Sequence,
-    Signature as WireSignature, SourceId, Span, Target, TextObject,
+    PaneRef, Position, PromptKind, RegionFilter, RegionId, RegisterName, Seek, SelectionKind,
+    Sequence, Signature as WireSignature, SourceId, Span, Target, TextObject,
 };
 // `Scope` is already the input table's (`keymaps.scm`'s normal/insert/visual),
 // and a second one under the same name in a 9,000-line file is a trap rather
@@ -2518,8 +2518,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // it buys is that the *shape* of the resolution is already the one N
         // panes need, and nothing below this line can reach a buffer except
         // through the pane that shows it.
-        let pane = panes.focused_mut();
-        let held = pane
+        let focus = panes.focus;
+        let held = panes
+            .at(focus)
             .buffer
             .expect("the focused pane holds a buffer until step 11 gives it anything else to hold");
         let editing = buffers.at_mut(held);
@@ -2537,7 +2538,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // ratatui answers with a `Resize` event and the next pass corrects.
         let size = term.size()?;
         let mut geometry = lay_out(Rect::new(0, 0, size.width, size.height));
-        pane.area = editor_area(geometry.body);
+        panes.at_mut(focus).area = editor_area(geometry.body);
         // `init.scm` sets `soft-wrap` at boot and `(set-option! …)` can change
         // it at the REPL, so it is read per frame rather than once: the option
         // is the editor layer's, and the flag is the override.
@@ -2844,7 +2845,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // The list gets the body minus the filter line, which is the height
         // the widget will actually draw into — asking for more would make the
         // matcher materialise rows nothing can show.
-        let list_rows = usize::from(pane.area.height.saturating_sub(1));
+        let list_rows = usize::from(panes.at(focus).area.height.saturating_sub(1));
         let picker_vm = editing
             .picker
             .as_mut()
@@ -2968,7 +2969,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 PickerStep::Typing => {}
                                 PickerStep::Cycle(delta) => {
                                     let outcome = editing.apply(
-                                        &mut Cx::new(held, pane, &mut shell),
+                                        &mut Cx::new(held, focus, &mut panes, &mut shell),
                                         &Action::Picker(PickerAction::CyclePickerSource { delta }),
                                     );
                                     if let Outcome::Refused(why) = outcome {
@@ -2977,7 +2978,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 }
                                 PickerStep::Accept => {
                                     let outcome = editing.apply(
-                                        &mut Cx::new(held, pane, &mut shell),
+                                        &mut Cx::new(held, focus, &mut panes, &mut shell),
                                         &Action::Picker(PickerAction::PickerAccept {
                                             how: AcceptHow::Open,
                                         }),
@@ -3021,7 +3022,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 notice = submit_ex(
                                     &mut layer,
                                     editing,
-                                    &mut Cx::new(held, pane, &mut shell),
+                                    &mut Cx::new(held, focus, &mut panes, &mut shell),
                                     &ex_line,
                                 );
                             }
@@ -3040,7 +3041,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 layer: &mut layer,
                                 seed: &mut seed,
                                 editing,
-                                cx: Cx::new(held, pane, &mut shell),
+                                cx: Cx::new(held, focus, &mut panes, &mut shell),
                             }
                             .key(pressed);
                             typing = machine.mode() == EditMode::Insert && edits.get() != before;
@@ -3050,7 +3051,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         for action in mouse_actions(
                             &mut machine,
                             editing,
-                            &Cx::new(held, pane, &mut shell),
+                            &Cx::new(held, focus, &mut panes, &mut shell),
                             mouse,
                         ) {
                             // `Input::SetMode` is the machine reporting a
@@ -3059,8 +3060,10 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                             // `feed` does — so there is nothing here to apply
                             // and `Editing` has no arm for one.
                             if !matches!(action, Action::Input(_)) {
-                                let _ =
-                                    editing.apply(&mut Cx::new(held, pane, &mut shell), &action);
+                                let _ = editing.apply(
+                                    &mut Cx::new(held, focus, &mut panes, &mut shell),
+                                    &action,
+                                );
                             }
                         }
                     }
@@ -3099,10 +3102,15 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     // `act` and not `apply`, for the reason `deliver` gives:
                     // a reveal is `View::Scroll`, and nothing that is not the
                     // user may move the viewport the user is looking at.
-                    drop(target.act(&mut Cx::new(named, pane, &mut shell), &posted.action));
-                } else if let Some(note) =
-                    deliver(target, &mut Cx::new(named, pane, &mut shell), &posted)
-                {
+                    drop(target.act(
+                        &mut Cx::new(named, focus, &mut panes, &mut shell),
+                        &posted.action,
+                    ));
+                } else if let Some(note) = deliver(
+                    target,
+                    &mut Cx::new(named, focus, &mut panes, &mut shell),
+                    &posted,
+                ) {
                     notice = Some(note);
                 }
             }
@@ -3151,7 +3159,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 // it is the user's own — `apply`, so the viewport follows.
                 if let Some(at) = editing.open_at.take() {
                     drop(editing.apply(
-                        &mut Cx::new(held, pane, &mut shell),
+                        &mut Cx::new(held, focus, &mut panes, &mut shell),
                         &Action::Motion(MotionAction::SetCursor {
                             position: at,
                             buffer: None,
@@ -3189,7 +3197,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // arrived: the `same` case above never swaps, and an
                         // alternate set there would make `CTRL-^` a no-op
                         // pointing at the file you are already in.
-                        pane.alternate = editing.opens(rope, file, timeline);
+                        let leaving = editing.opens(rope, file, timeline);
+                        panes.at_mut(focus).alternate = leaving;
                         surface = Surface::Buffer;
                         // The server hears about the swap in both directions:
                         // `didClose` for what it was holding — after which it falls
@@ -3208,7 +3217,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // rather than `act`, because this *is* the user's jump.
                         if let Some(at) = editing.open_at.take() {
                             drop(editing.apply(
-                                &mut Cx::new(held, pane, &mut shell),
+                                &mut Cx::new(held, focus, &mut panes, &mut shell),
                                 &Action::Motion(MotionAction::SetCursor {
                                     position: at,
                                     buffer: None,
@@ -3372,7 +3381,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         if let Some(lookup) = editing.lookup.take() {
             match (editing.language.clone(), synced.as_ref()) {
                 (Some(language), Some(document)) => {
-                    let at = editing.text(&Cx::new(held, pane, &mut shell)).cursor();
+                    let at = editing
+                        .text(&Cx::new(held, focus, &mut panes, &mut shell))
+                        .cursor();
                     outstanding.sent(lookup);
                     let path = document.path.clone();
                     // **The word being completed goes with the request**, and
@@ -3402,7 +3413,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         if let Some(question) = editing.question.take() {
             match (editing.language.clone(), synced.as_ref()) {
                 (Some(language), Some(document)) => {
-                    let at = editing.text(&Cx::new(held, pane, &mut shell)).cursor();
+                    let at = editing
+                        .text(&Cx::new(held, focus, &mut panes, &mut shell))
+                        .cursor();
                     let path = document.path.clone();
                     // `T036` answers in *places*, and what a place means
                     // depends on the question: a definition is one place and
@@ -4151,7 +4164,7 @@ fn jumping(post: &Post) -> phosphor_buffer::lsp::Locations {
         post(Action::File(FileAction::OpenFile {
             path: place.path,
             at: place.span.map(|span| span.start),
-            pane: phosphor_core::request::PaneRef::Focused {},
+            pane: PaneRef::Focused {},
         }));
     })
 }
@@ -5257,8 +5270,16 @@ struct Cx<'a> {
     /// refusing is the honest answer, and this is what the refusal compares
     /// against.
     buffer: BufferId,
-    /// The pane the Action lands in, borrowed for its length.
-    view: &'a mut Pane,
+    /// Which pane the Action lands in.
+    ///
+    /// **An id rather than the pane itself**, because an arm that resolves a
+    /// [`PaneRef`] has to be able to name a pane that is not this one —
+    /// `scroll` carries one, and a reveal in an unfocused pane must not move
+    /// the focused pane's viewport. [`Cx::view`] is the lookup.
+    pane: PaneId,
+    /// Every pane, so a resolved reference can reach one that is not the
+    /// Action's own.
+    panes: &'a mut Panes,
     /// What the session owns.
     shell: &'a mut Shell,
 }
@@ -5366,6 +5387,7 @@ impl Buffers {
 /// `Leaf` and a `Split` variant nothing constructs, and this build does not
 /// ship an arm no code can reach. It lands in step 11, with the split verbs
 /// that give it something to describe.
+#[derive(Debug)]
 struct Panes {
     map: BTreeMap<PaneId, Pane>,
     /// Which pane a `PaneRef::Focused` means.
@@ -5397,16 +5419,58 @@ impl Panes {
         id
     }
 
-    /// The pane that has focus.
+    /// The pane `id` names, or [`None`] if it names none.
+    fn get(&self, id: PaneId) -> Option<&Pane> {
+        self.map.get(&id)
+    }
+
+    /// The pane `id` names.
     ///
-    /// Panics if `focus` names no pane, which would be this struct failing to
-    /// keep its own invariant — the one thing step 10's `close-pane` will have
-    /// to preserve, and the reason `focus` lives here rather than beside the
-    /// map.
-    fn focused_mut(&mut self) -> &mut Pane {
-        self.map
-            .get_mut(&self.focus)
-            .expect("the focused pane is one of the panes")
+    /// Panics on the same terms as [`Buffers::at_mut`]: a `PaneId` that names
+    /// no pane is a bug in whoever held it, and until step 10's `close-pane`
+    /// there is nothing that can remove one.
+    fn at(&self, id: PaneId) -> &Pane {
+        self.get(id).expect("a PaneId names an open pane")
+    }
+
+    /// The pane `id` names, mutably.
+    fn at_mut(&mut self, id: PaneId) -> &mut Pane {
+        self.map.get_mut(&id).expect("a PaneId names an open pane")
+    }
+
+    /// Which pane a [`PaneRef`] means, or [`None`] if it names none.
+    ///
+    /// **All five are relative to [`Panes::focus`], not to the pane the Action
+    /// is being applied to**, and the difference is the whole of what this
+    /// method is for. `Focused {}` means the pane the user is looking at; an
+    /// Action applied to some *other* pane and naming `Focused` means that
+    /// other pane's Action reaching across to the focused one, which is exactly
+    /// what a reveal must not do. Passing the Action's own pane in as "focus"
+    /// would collapse the two and make the selector unable to express the
+    /// distinction — which it did, until `a_reveal_scrolls_the_pane_the_cursor_is_in`
+    /// was written and failed to fail.
+    ///
+    /// **`Next` and `Prev` walk the map's own order**, which is id order, which
+    /// is the order panes were opened. That is not vim's — vim cycles in the
+    /// split tree's layout order — and it is the right answer until there *is*
+    /// a tree to walk, because the alternative is inventing a second ordering
+    /// that step 11 would then have to reconcile. With one pane both answer
+    /// that pane, which is also vim's answer.
+    ///
+    /// **`Direction` is refused, not guessed.** A compass direction is a fact
+    /// about where the rectangles are, and answering it from one pane's
+    /// rectangle would be answering it from no information at all. Step 11
+    /// resolves it against the tree.
+    fn resolve(&self, reference: &PaneRef) -> Option<PaneId> {
+        let order: Vec<PaneId> = self.map.keys().copied().collect();
+        let at = order.iter().position(|id| *id == self.focus)?;
+        match reference {
+            PaneRef::Focused {} => Some(self.focus),
+            PaneRef::Id { id } => self.map.contains_key(id).then_some(*id),
+            PaneRef::Next {} => order.get((at + 1) % order.len()).copied(),
+            PaneRef::Prev {} => order.get((at + order.len() - 1) % order.len()).copied(),
+            PaneRef::Direction { .. } => None,
+        }
     }
 }
 
@@ -5416,12 +5480,23 @@ impl<'a> Cx<'a> {
     /// Named rather than written as a literal at each call, because step 4c
     /// changes what it takes — the pane and the tree both come out of `Panes`
     /// by then — and a constructor is one place to change rather than thirty.
-    fn new(buffer: BufferId, view: &'a mut Pane, shell: &'a mut Shell) -> Self {
+    fn new(buffer: BufferId, pane: PaneId, panes: &'a mut Panes, shell: &'a mut Shell) -> Self {
         Self {
             buffer,
-            view,
+            pane,
+            panes,
             shell,
         }
+    }
+
+    /// The pane this Action lands in.
+    fn view(&self) -> &Pane {
+        self.panes.at(self.pane)
+    }
+
+    /// The pane this Action lands in, mutably.
+    fn view_mut(&mut self) -> &mut Pane {
+        self.panes.at_mut(self.pane)
     }
 }
 
@@ -5770,7 +5845,7 @@ impl Editing {
     fn text<'a>(&'a self, cx: &'a Cx<'_>) -> EditorText<'a> {
         EditorText {
             editor: &self.editor,
-            height: cx.view.area.height,
+            height: cx.view().area.height,
             regions: self
                 .file
                 .as_deref()
@@ -5801,11 +5876,19 @@ impl Editing {
             return;
         };
         let row = u32::try_from(row).unwrap_or(0) + 1;
+        // **`Id`, not `Focused`** — a reveal moves the viewport of the pane
+        // the cursor moved in, which is not always the pane the user is looking
+        // at. It said `Focused` and was right by accident: the `Scroll` arm
+        // dropped the selector too, so both halves ignored it and agreed. The
+        // moment that arm started reading it, a reveal in an unfocused pane
+        // would have scrolled the focused one — a defect no existing test could
+        // see, because it needs two panes and the mistake is in the *pair*.
+        let pane = cx.pane;
         let _ = self.act(
             cx,
             &Action::View(ViewAction::Scroll {
                 request: phosphor_core::request::ScrollRequest::RevealRow { row, margin: 0 },
-                pane: phosphor_core::request::PaneRef::Focused {},
+                pane: PaneRef::Id { id: pane },
             }),
         );
     }
@@ -5979,8 +6062,27 @@ impl Editing {
             // re-export of this very type now, so the vocabulary's request goes
             // straight to the widget and the 1-based-to-0-based arithmetic lives
             // once, in `Viewport::scrolled`.
-            Action::View(ViewAction::Scroll { request, .. }) => {
-                buffer_view::apply_scroll(&mut self.editor, *request, cx.view.area);
+            // **The selector is read, not dropped.** This arm wrote `..` and
+            // measured against whatever pane it was called on, so a `scroll`
+            // naming a pane that does not exist moved the one in front of the
+            // user. The area is a pane's — the page size and a `RevealRow`
+            // margin are both counted in its rows — so which pane is named
+            // changes the answer.
+            //
+            // **With one pane a resolved reference is always this pane**, and
+            // that is deliberate: the branch where the resolved pane shows a
+            // *different* buffer is not written, because it cannot be reached.
+            // `apply_scroll` moves `self.editor`'s viewport and `self` is the
+            // buffer this Action was routed to; reaching another buffer's is
+            // the aliasing wall step 6a hit, and the answer there was routing
+            // at the door rather than a branch here. Step 11 is where a second
+            // pane makes it reachable, and it needs the routing, not an arm.
+            Action::View(ViewAction::Scroll { request, pane }) => {
+                let Some(target) = cx.panes.resolve(pane) else {
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                };
+                let area = cx.panes.at(target).area;
+                buffer_view::apply_scroll(&mut self.editor, *request, area);
                 done()
             }
             // `R19` — folds. `T016`'s whitespace half shipped with `8e`; this is
@@ -6083,7 +6185,7 @@ impl Editing {
             // and `lint-action-arms` exists to catch; the first file of a
             // session has no alternate and saying so is the honest answer.
             Action::File(FileAction::OpenAlternate { .. }) => {
-                let Some(alternate) = cx.view.alternate.clone() else {
+                let Some(alternate) = cx.view().alternate.clone() else {
                     return declined("no alternate file — nothing else has been open yet");
                 };
                 self.open = Some(alternate);
@@ -7369,33 +7471,33 @@ impl Editing {
     /// `at_present` branch does. Without it the walk is one-way, which is how
     /// this read before the key survey pressed it.
     fn jump(&mut self, cx: &mut Cx<'_>, seek: Seek) -> Outcome {
-        if cx.view.jumplist.is_empty() {
+        if cx.view().jumplist.is_empty() {
             return declined("the jumplist is empty");
         }
         // At the present: not walking, so there is nowhere forward to go and a
         // step back has to leave a way home first.
-        let at_present = cx.view.jump_at >= cx.view.jumplist.len();
+        let at_present = cx.view().jump_at >= cx.view().jumplist.len();
         if at_present && matches!(seek, Seek::Next) {
             return declined("already at the newest jump");
         }
         if at_present && matches!(seek, Seek::Prev) {
             self.push_here(cx);
         }
-        let last = cx.view.jumplist.len() - 1;
+        let last = cx.view().jumplist.len() - 1;
         let next = match seek {
-            Seek::Prev => cx.view.jump_at.min(last).saturating_sub(1),
-            Seek::Next => (cx.view.jump_at + 1).min(last),
+            Seek::Prev => cx.view().jump_at.min(last).saturating_sub(1),
+            Seek::Next => (cx.view().jump_at + 1).min(last),
             Seek::First => 0,
             Seek::Last => last,
         };
-        if next == cx.view.jump_at && matches!(seek, Seek::Prev | Seek::Next) {
+        if next == cx.view().jump_at && matches!(seek, Seek::Prev | Seek::Next) {
             return declined(match seek {
                 Seek::Prev => "already at the oldest jump",
                 _ => "already at the newest jump",
             });
         }
-        cx.view.jump_at = next;
-        let Some(id) = cx.view.jumplist.get(next).copied() else {
+        cx.view_mut().jump_at = next;
+        let Some(id) = cx.view().jumplist.get(next).copied() else {
             return declined("the jumplist moved under us");
         };
         match self.goto_anchor(cx, Some(id), None, true, false) {
@@ -7419,11 +7521,11 @@ impl Editing {
         // entry *at* `jump_at` is the position `push_here` is about to record —
         // keeping it would leave the same line in the list twice. At the
         // present this is a no-op, which is the ordinary case.
-        cx.view
-            .jumplist
-            .truncate(cx.view.jump_at.min(cx.view.jumplist.len()));
+        let stop = cx.view().jump_at.min(cx.view().jumplist.len());
+        cx.view_mut().jumplist.truncate(stop);
         self.push_here(cx);
-        cx.view.jump_at = cx.view.jumplist.len();
+        let present = cx.view().jumplist.len();
+        cx.view_mut().jump_at = present;
     }
 
     /// Append the cursor's line to the jumplist, leaving `jump_at` alone.
@@ -7443,7 +7545,7 @@ impl Editing {
             .shell
             .store
             .place_anchor(store::key_for(&path), span, None, fingerprint);
-        cx.view.jumplist.push(id);
+        cx.view_mut().jumplist.push(id);
     }
 
     fn yank(&mut self, target: &Target, register: Option<&RegisterName>) {
@@ -7558,7 +7660,7 @@ impl Editing {
     /// is wrong, but the request that produced it was made at a cursor nobody
     /// can see, and there is no cell to be right about.
     fn anchor(&self, cx: &Cx<'_>, back: usize) -> Anchor {
-        let Some((x, y)) = self.editor.get_visible_cursor(&cx.view.area) else {
+        let Some((x, y)) = self.editor.get_visible_cursor(&cx.view().area) else {
             return Anchor::new(0, 0);
         };
         let code = self.editor.code_ref();
@@ -7671,7 +7773,7 @@ impl Editing {
     /// (a buffer that has never been laid out) wraps to nothing and hands the
     /// lines back whole, which truncates exactly as before rather than looping.
     fn wrapped(&self, cx: &Cx<'_>, lines: &[String]) -> Vec<String> {
-        float::wrap_prose(lines, float::anchored_wrap_cols(cx.view.area.width))
+        float::wrap_prose(lines, float::anchored_wrap_cols(cx.view().area.width))
     }
 
     /// Carries a signature/hover session's width across an answer.
@@ -8572,7 +8674,7 @@ fn mouse_actions(
     // side of the same argument: an area is a fact about the rectangle, not
     // about the rope, so there is now exactly one owner to read it from and no
     // second name to disagree with.
-    let area = cx.view.area;
+    let area = cx.view().area;
     let at = || {
         editor
             .cursor_from_mouse(mouse.column, mouse.row, &area)
@@ -8601,7 +8703,7 @@ fn mouse_actions(
             };
             vec![Action::View(ViewAction::Scroll {
                 request: phosphor_core::request::ScrollRequest::Rows { rows },
-                pane: phosphor_core::request::PaneRef::Focused {},
+                pane: PaneRef::Focused {},
             })]
         }
         _ => Vec::new(),
@@ -9316,7 +9418,7 @@ mod tests {
 
     use phosphor_core::action::{Action, Outcome, Refusal, Request, RuntimeAction};
     use phosphor_core::registry::Door;
-    use phosphor_core::request::{Actor, BufferId, Position, Severity, Span};
+    use phosphor_core::request::{Actor, BufferId, PaneId, PaneRef, Position, Severity, Span};
     use phosphor_core::value::Value;
     use phosphor_steel::answer;
     use phosphor_steel::host::Host;
@@ -9489,13 +9591,16 @@ mod tests {
     /// **It derefs to [`Editing`] on purpose**, so `editing.editor` and
     /// `editing.registers` read the way they did and the diff that introduced
     /// the pane stays about the pane. The other half is deliberately *not*
-    /// hidden: a test that means the rectangle says `editing.pane.area`, and
+    /// hidden: a test that means the rectangle says `editing.pane().area`, and
     /// one that means the rope says `editing.editor`. Test-only scaffolding —
     /// nothing on the shipping path derefs one type into another.
     #[derive(Debug)]
     struct Bench {
         editing: Editing,
-        pane: Pane,
+        /// The panes, not *a* pane — step 6b put the map behind the context so
+        /// a resolved `PaneRef` can name one that is not the Action's own.
+        panes: Panes,
+        focus: PaneId,
         shell: Shell,
     }
 
@@ -9516,15 +9621,31 @@ mod tests {
     impl Bench {
         /// One Action, applied to this buffer in this pane.
         fn apply(&mut self, action: &Action) -> Outcome {
-            let buffer = self.pane.buffer.expect("a bench's pane holds its buffer");
-            let mut cx = Cx::new(buffer, &mut self.pane, &mut self.shell);
+            let mut cx = Cx::new(self.buffer(), self.focus, &mut self.panes, &mut self.shell);
             self.editing.apply(&mut cx, action)
+        }
+
+        /// Which buffer this bench's pane holds.
+        fn buffer(&self) -> BufferId {
+            self.panes
+                .at(self.focus)
+                .buffer
+                .expect("a bench's pane holds its buffer")
+        }
+
+        /// The focused pane, for a test that wants to read its area.
+        fn pane(&self) -> &Pane {
+            self.panes.at(self.focus)
+        }
+
+        /// The focused pane, for a test that wants to lay it out.
+        fn pane_mut(&mut self) -> &mut Pane {
+            self.panes.at_mut(self.focus)
         }
 
         /// One Action, applied without the reveal — see [`Editing::act`].
         fn act(&mut self, action: &Action) -> Outcome {
-            let buffer = self.pane.buffer.expect("a bench's pane holds its buffer");
-            let mut cx = Cx::new(buffer, &mut self.pane, &mut self.shell);
+            let mut cx = Cx::new(self.buffer(), self.focus, &mut self.panes, &mut self.shell);
             self.editing.act(&mut cx, action)
         }
 
@@ -9538,7 +9659,7 @@ mod tests {
         fn text(&self) -> EditorText<'_> {
             EditorText {
                 editor: &self.editing.editor,
-                height: self.pane.area.height,
+                height: self.panes.at(self.focus).area.height,
                 regions: self
                     .editing
                     .file
@@ -9552,10 +9673,11 @@ mod tests {
         /// so a test of one calls it the way the loop does rather than through
         /// a wrapper only tests would have.
         fn split(&mut self) -> (&mut Editing, Cx<'_>) {
-            let buffer = self.pane.buffer.expect("a bench's pane holds its buffer");
+            let buffer = self.buffer();
+            let focus = self.focus;
             (
                 &mut self.editing,
-                Cx::new(buffer, &mut self.pane, &mut self.shell),
+                Cx::new(buffer, focus, &mut self.panes, &mut self.shell),
             )
         }
     }
@@ -9564,7 +9686,7 @@ mod tests {
     /// a `width`-column area — the shape the completion and hover gates read.
     fn typed(text: &str, width: u16) -> Bench {
         let mut bench = editing(text);
-        bench.pane.area = Rect::new(0, 0, width, 24);
+        bench.pane_mut().area = Rect::new(0, 0, width, 24);
         bench.editor.set_cursor(text.chars().count());
         bench
     }
@@ -9582,9 +9704,16 @@ mod tests {
                 None,
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             ),
-            pane: Pane::new(BufferId(0)),
+            panes: one_pane(),
+            focus: PaneId(0),
             shell: shell(),
         }
+    }
+
+    /// One pane over `BufferId(0)`, which is what the bench's buffer is.
+    fn one_pane() -> Panes {
+        let (panes, _) = Panes::new(Pane::new(BufferId(0)));
+        panes
     }
 
     /// A session's own state, for a test that only needs somewhere for the
@@ -9686,12 +9815,12 @@ mod tests {
     fn a_posted_edit_does_not_scroll_the_viewport_the_user_is_looking_at() {
         let text: String = (1..=100).map(|line| format!("line {line}\n")).collect();
         let mut editing = editing(&text);
-        editing.pane.area = Rect::new(0, 0, 80, 10);
+        editing.pane_mut().area = Rect::new(0, 0, 80, 10);
         // The user's own turn at the one writer, so there is a viewport worth
         // not moving.
         let _ = editing.act(&Action::View(phosphor_core::action::ViewAction::Scroll {
             request: phosphor_core::request::ScrollRequest::RevealRow { row: 80, margin: 0 },
-            pane: phosphor_core::request::PaneRef::Focused {},
+            pane: PaneRef::Focused {},
         }));
         let looking_at = editing.editor.get_offset_y();
         assert!(
@@ -10024,7 +10153,8 @@ mod tests {
                 None,
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             ),
-            pane: Pane::new(BufferId(0)),
+            panes: one_pane(),
+            focus: PaneId(0),
             shell: shell(),
         };
         assert!(!editing.quit);
@@ -10049,7 +10179,8 @@ mod tests {
                 None,
                 std::rc::Rc::clone(&dirty),
             ),
-            pane: Pane::new(BufferId(0)),
+            panes: one_pane(),
+            focus: PaneId(0),
             shell: shell(),
         };
         let outcome = editing.apply(&Action::App(phosphor_core::action::AppAction::Quit {
@@ -10115,10 +10246,11 @@ mod tests {
                 None,
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             ),
-            pane: Pane::new(BufferId(0)),
+            panes: one_pane(),
+            focus: PaneId(0),
             shell: shell(),
         };
-        editing.pane.area = Rect::new(0, 0, 80, 24);
+        editing.pane_mut().area = Rect::new(0, 0, 80, 24);
         let mut machine = Machine::new();
         let mut seed = Table::new();
         let (mut layer, _host) = booted();
@@ -10162,10 +10294,11 @@ mod tests {
                 None,
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             ),
-            pane: Pane::new(BufferId(0)),
+            panes: one_pane(),
+            focus: PaneId(0),
             shell: shell(),
         };
-        editing.pane.area = Rect::new(0, 0, 80, 24);
+        editing.pane_mut().area = Rect::new(0, 0, 80, 24);
         let mut machine = Machine::new();
         let mut seed = Table::new();
         let (mut layer, _host) = booted();
@@ -10217,9 +10350,10 @@ mod tests {
                     None,
                     std::rc::Rc::new(std::cell::Cell::new(dirty)),
                 ),
-                pane: Pane::new(BufferId(0)),
+                panes: one_pane(),
+                focus: PaneId(0),
             };
-            editing.pane.area = Rect::new(0, 0, 80, 24);
+            editing.pane_mut().area = Rect::new(0, 0, 80, 24);
             let (layer, _host) = booted();
             Self {
                 editing,
@@ -10364,10 +10498,11 @@ mod tests {
                 None,
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             ),
-            pane: Pane::new(BufferId(0)),
+            panes: one_pane(),
+            focus: PaneId(0),
             shell: shell(),
         };
-        editing.pane.area = Rect::new(0, 0, 80, 24);
+        editing.pane_mut().area = Rect::new(0, 0, 80, 24);
         assert!(
             !editing.editor.code_ref().fold_ranges().is_empty(),
             "the bundled rust grammar produces fold ranges"
@@ -11046,7 +11181,7 @@ mod tests {
 
         let text: String = (1..=100).map(|line| format!("line {line}\n")).collect();
         let mut editing = editing(&text);
-        editing.pane.area = Rect::new(0, 0, 80, 10);
+        editing.pane_mut().area = Rect::new(0, 0, 80, 10);
         editing.mode = phosphor_core::request::EditMode::Insert;
         editing.editor.set_cursor(0);
 
@@ -11073,8 +11208,8 @@ mod tests {
         assert!(
             editing
                 .editor
-                .get_visible_cursor(&editing.pane.area)
-                .is_some_and(|(_, y)| u32::from(y) < u32::from(editing.pane.area.height)),
+                .get_visible_cursor(&editing.pane().area)
+                .is_some_and(|(_, y)| u32::from(y) < u32::from(editing.pane().area.height)),
             "and the cursor is on screen rather than below it"
         );
     }
@@ -11105,7 +11240,7 @@ mod tests {
         // fifth line is the last row that fits.
         let text: String = std::iter::repeat_n("abcdefgh\n", 6).collect();
         let mut editing = editing(&text);
-        editing.pane.area = Rect::new(0, 0, 20, 5);
+        editing.pane_mut().area = Rect::new(0, 0, 20, 5);
         editing.editor.set_soft_wrap(Some(10));
         editing.mode = phosphor_core::request::EditMode::Insert;
         // End of the fifth line — visual row 4, the bottom of the window. Nine
@@ -11131,8 +11266,8 @@ mod tests {
         assert!(
             editing
                 .editor
-                .get_visible_cursor(&editing.pane.area)
-                .is_some_and(|(_, y)| u32::from(y) < u32::from(editing.pane.area.height)),
+                .get_visible_cursor(&editing.pane().area)
+                .is_some_and(|(_, y)| u32::from(y) < u32::from(editing.pane().area.height)),
             "and the cursor is on screen rather than below it"
         );
     }
@@ -11160,7 +11295,7 @@ mod tests {
         });
         let at = |mode, text: &str, cursor| {
             let mut editing = editing(text);
-            editing.pane.area = Rect::new(0, 0, 80, 24);
+            editing.pane_mut().area = Rect::new(0, 0, 80, 24);
             editing.mode = mode;
             editing.editor.set_cursor(cursor);
             drop(editing.apply(&space));
@@ -11986,7 +12121,8 @@ mod tests {
                 None,
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             ),
-            pane: Pane::new(BufferId(0)),
+            panes: one_pane(),
+            focus: PaneId(0),
             shell: shell(),
         };
         let open = |kind| {
@@ -12038,24 +12174,144 @@ mod tests {
         );
 
         let mut shell = shell();
-        let mut left = Pane::new(BufferId(0));
-        let right = Pane::new(BufferId(0));
+        let (mut panes, left) = Panes::new(Pane::new(BufferId(0)));
+        let right = panes.open(Pane::new(BufferId(0)));
 
-        editing.push_jump(&mut Cx::new(BufferId(0), &mut left, &mut shell));
-        editing.push_jump(&mut Cx::new(BufferId(0), &mut left, &mut shell));
+        editing.push_jump(&mut Cx::new(BufferId(0), left, &mut panes, &mut shell));
+        editing.push_jump(&mut Cx::new(BufferId(0), left, &mut panes, &mut shell));
 
         assert_eq!(
-            left.jumplist.len(),
+            panes.at(left).jumplist.len(),
             2,
             "the pane the jumps were made in records them"
         );
-        assert_eq!(left.jump_at, 2, "and stands at the present, which is `len`");
+        assert_eq!(
+            panes.at(left).jump_at,
+            2,
+            "and stands at the present, which is `len`"
+        );
         assert!(
-            right.jumplist.is_empty(),
+            panes.at(right).jumplist.is_empty(),
             "the other pane showing the same buffer has been nowhere — this is \
              the assertion that fails the moment the list goes back on `Editing`"
         );
-        assert_eq!(right.jump_at, 0);
+        assert_eq!(panes.at(right).jump_at, 0);
+    }
+
+    /// **A reveal moves the pane the cursor moved in, not the focused one.**
+    ///
+    /// `Editing::reveal` said `PaneRef::Focused {}` and was right by accident:
+    /// the `Scroll` arm dropped the selector too, so both halves ignored it and
+    /// agreed with each other. The moment that arm started reading it — which
+    /// is this step — a reveal in an unfocused pane would have scrolled the
+    /// focused one.
+    ///
+    /// **No existing test could see this**, because the mistake is in the
+    /// *pair*: it needs two panes with different areas, and one of them not
+    /// focused. This is what step 4c's map is for.
+    #[test]
+    fn a_reveal_scrolls_the_pane_the_cursor_is_in() {
+        let mut editing = editing("x\n".repeat(200).as_str());
+        let mut shell = shell();
+
+        // Two panes on the same buffer: a tall one with focus, and a short one
+        // where the reveal happens.
+        let (mut panes, focused) = Panes::new(Pane {
+            area: Rect::new(0, 0, 80, 100),
+            ..Pane::new(BufferId(0))
+        });
+        let elsewhere = panes.open(Pane {
+            area: Rect::new(0, 0, 80, 5),
+            ..Pane::new(BufferId(0))
+        });
+        panes.focus = focused;
+
+        editing.editor.set_cursor(180);
+        editing
+            .editing
+            .reveal(&mut Cx::new(BufferId(0), elsewhere, &mut panes, &mut shell));
+
+        assert!(
+            editing.editor.get_offset_y() > 0,
+            "the reveal was measured against the five-row pane the cursor is \
+             in, which cannot show row 90 without scrolling — measured against \
+             the hundred-row focused pane it would not have moved at all"
+        );
+    }
+
+    /// **A `scroll` naming a pane that does not exist refuses**, rather than
+    /// moving the one in front of the user.
+    ///
+    /// `Direction` refuses for a different reason and it is worth keeping
+    /// separate: a compass direction is a fact about where the rectangles are,
+    /// and answering it from one pane's rectangle would be answering from no
+    /// information. Step 11 resolves it against the tree.
+    #[test]
+    fn a_scroll_naming_no_pane_refuses_rather_than_moving_the_focused_one() {
+        let mut editing = editing("x\n".repeat(200).as_str());
+        editing.pane_mut().area = Rect::new(0, 0, 80, 10);
+
+        for (reference, why) in [
+            (PaneRef::Id { id: PaneId(99) }, "an id that names no pane"),
+            (
+                PaneRef::Direction {
+                    direction: phosphor_core::request::Direction::Right,
+                },
+                "a compass direction, which needs a tree to answer",
+            ),
+        ] {
+            let outcome = editing.act(&Action::View(super::ViewAction::Scroll {
+                request: phosphor_core::request::ScrollRequest::RevealRow {
+                    row: 150,
+                    margin: 0,
+                },
+                pane: reference,
+            }));
+            assert!(
+                matches!(outcome, Outcome::Refused(Refusal::NoSuchTarget)),
+                "{why}: {outcome:?}"
+            );
+            assert_eq!(
+                editing.editor.get_offset_y(),
+                0,
+                "{why}: and the viewport in front of the user did not move"
+            );
+        }
+    }
+
+    /// **`Next` and `Prev` cycle, and with one pane both answer that pane** —
+    /// which is vim's answer too.
+    #[test]
+    fn the_pane_cycle_wraps_at_both_ends() {
+        let (mut panes, first) = Panes::new(Pane::new(BufferId(0)));
+
+        assert_eq!(panes.resolve(&PaneRef::Next {}), Some(first));
+        assert_eq!(panes.resolve(&PaneRef::Prev {}), Some(first));
+
+        let second = panes.open(Pane::new(BufferId(0)));
+
+        assert_eq!(panes.resolve(&PaneRef::Next {}), Some(second));
+        assert_eq!(
+            panes.resolve(&PaneRef::Prev {}),
+            Some(second),
+            "and backward, which with two panes is the same neighbour"
+        );
+
+        // **Every reference is relative to focus**, so cycling from the other
+        // pane means moving focus — not passing a different pane in. That is
+        // the distinction `a_reveal_scrolls_the_pane_the_cursor_is_in` exists
+        // to protect: an Action applied to one pane and naming `Focused` means
+        // the pane the *user* is looking at.
+        panes.focus = second;
+
+        assert_eq!(
+            panes.resolve(&PaneRef::Next {}),
+            Some(first),
+            "the cycle wraps forward"
+        );
+        assert_eq!(panes.resolve(&PaneRef::Focused {}), Some(second));
+        assert_eq!(panes.resolve(&PaneRef::Id { id: first }), Some(first));
+        assert_eq!(panes.resolve(&PaneRef::Id { id: PaneId(99) }), None);
     }
 
     /// **`set-cursor` naming a buffer goes to that buffer**, which is the
@@ -12094,11 +12350,12 @@ mod tests {
         );
 
         let mut shell = shell();
-        let mut pane = Pane::new(second);
+        let (mut panes, only) = Panes::new(Pane::new(second));
         let target = Buffers::named(&elsewhere, first);
-        buffers
-            .at_mut(target)
-            .apply(&mut Cx::new(target, &mut pane, &mut shell), &elsewhere);
+        buffers.at_mut(target).apply(
+            &mut Cx::new(target, only, &mut panes, &mut shell),
+            &elsewhere,
+        );
 
         assert_eq!(
             buffers.at_mut(second).editor.get_cursor(),
@@ -12254,7 +12511,7 @@ mod tests {
         let second = buffers.open(editing("bravo").editing);
         let (mut panes, only) = Panes::new(Pane::new(first));
 
-        panes.focused_mut().buffer = Some(second);
+        panes.at_mut(only).buffer = Some(second);
 
         assert_eq!(panes.focus, only, "the pane is the same pane");
         assert_eq!(
@@ -12264,7 +12521,7 @@ mod tests {
         );
         assert_eq!(
             buffers
-                .at_mut(panes.focused_mut().buffer.expect("the pane holds one"))
+                .at_mut(panes.at(only).buffer.expect("the pane holds one"))
                 .editor
                 .get_content(),
             "bravo"
@@ -12286,7 +12543,7 @@ mod tests {
         let theme = super::builtin("phosphor-dark").expect("a shipped theme");
         let directory = scratch("one-store");
         let mut shell = shell();
-        let mut pane = Pane::new(BufferId(0));
+        let (mut panes, only) = Panes::new(Pane::new(BufferId(0)));
 
         for name in ["alpha.txt", "beta.txt"] {
             let file = directory.join(name);
@@ -12296,7 +12553,7 @@ mod tests {
                 Some(file),
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             );
-            editing.push_jump(&mut Cx::new(BufferId(0), &mut pane, &mut shell));
+            editing.push_jump(&mut Cx::new(BufferId(0), only, &mut panes, &mut shell));
         }
 
         assert_eq!(
@@ -12325,20 +12582,23 @@ mod tests {
         ];
 
         let mut shell = shell();
-        let mut narrow = Pane {
+        let (mut panes, narrow) = Panes::new(Pane {
             area: Rect::new(0, 0, 24, 10),
             ..Pane::new(BufferId(0))
-        };
-        let mut wide = Pane {
+        });
+        let wide = panes.open(Pane {
             area: Rect::new(0, 0, 200, 10),
             ..Pane::new(BufferId(0))
-        };
+        });
 
         let in_narrow = editing
-            .wrapped(&Cx::new(BufferId(0), &mut narrow, &mut shell), &prose)
+            .wrapped(
+                &Cx::new(BufferId(0), narrow, &mut panes, &mut shell),
+                &prose,
+            )
             .len();
         let in_wide = editing
-            .wrapped(&Cx::new(BufferId(0), &mut wide, &mut shell), &prose)
+            .wrapped(&Cx::new(BufferId(0), wide, &mut panes, &mut shell), &prose)
             .len();
         assert!(
             in_narrow > in_wide,
@@ -12358,7 +12618,8 @@ mod tests {
                 Some(file.clone()),
                 std::rc::Rc::new(std::cell::Cell::new(true)),
             ),
-            pane: Pane::new(BufferId(0)),
+            panes: one_pane(),
+            focus: PaneId(0),
             shell: shell(),
         };
         let (mut layer, _host) = booted();
