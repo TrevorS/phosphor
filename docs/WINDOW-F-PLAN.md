@@ -126,7 +126,13 @@ The load-bearing step, split three ways because as a single commit it is unbisec
 - **The 4a/4b boundary moved, and the reason is the same one.** This plan put `Cx` in 4b, with 4a moving the fields — but `self.area` is read by `Editing::text`, `anchor` and `wrapped`, which are `&self` helpers called from inside `act`'s arms, so the fields cannot move without a vehicle to carry the pane in. 4a therefore threads a plain `pane: &mut Pane` through the twelve methods that need one. **`Cx` lands in 4b**, when it has two fields and beats a parameter; a one-field `Cx { view: &mut Pane }` is a wrapper with nothing in it, and this build does not ship those either. Converting the parameter to a `Cx` at 4b is one mechanical pass the compiler drives end to end.
 
   Counted rather than estimated: 17 `editing.area` sites, 12 signatures, 9 production call sites of `act`/`apply` and 25 in tests — the plan's 34, confirmed by making them fail to compile.
-- **4b — `Shell` and `Cx`.** `Cx<'a> { pane: PaneId, view: &'a mut Pane, tree: &'a PaneTree, shell: &'a mut Shell }` threaded through `Editing::act` and `Editing::apply`. `Shell` holds only `store` and `wake` at this point so the signature settles once. **34 call sites: 9 production (above the `#[cfg(test)]` boundary at `main.rs:8630`) and 25 in the test module** — counted, and this is why the winning design's "no test changed" verification line was false.
+- **4b — `Shell` and `Cx`. DONE.** `Shell { store, wake }` and `Cx<'a> { view: &'a mut Pane, shell: &'a mut Shell }`, threaded through `Editing::act`, `Editing::apply` and the sixteen helpers they reach. Both of `Shell`'s fields were on `Editing`, where each new buffer would have taken its own clone of a handle to the same object — not wrong, since both are shared handles, but a clone per buffer is a thing a constructor can forget to make, and step 8 builds `Editing`s from a place that has no business knowing either exists.
+
+  **`pane: PaneId` and `tree: &PaneTree` are not in it, for step 4a's reason.** Nothing resolves a `PaneRef` until step 6 and nothing walks a tree until 4c, so both are fields `dead_code` would reject. `Cx::new` is a named constructor rather than a struct literal at each call precisely so 4c can widen it in one place.
+
+  **`Editing::text` needed an explicit lifetime**, which is the one thing here that was not mechanical: it returns an `EditorText<'_>` borrowing the editor *and* the store, and once the store moved to the shell those are two different owners. `fn text<'a>(&'a self, cx: &'a Cx<'_>) -> EditorText<'a>` ties them to the shorter.
+
+  **34 call sites: 9 production and 25 in the test module** — the plan's count, and it held. The 25 cost one edit rather than 25, because step 4a landed `Bench` for exactly this.
 - **4c — the maps.** `Buffers { map: BTreeMap<BufferId, Editing>, next }` and `Panes { tree: PaneTree, map: BTreeMap<PaneId, Pane>, focus, next }`, both with one entry. `PaneTree` is split from the `BTreeMap<PaneId, Pane>` deliberately so `&PaneTree` and `&mut Pane` borrow at once. **Index by id from the first line, never by position** — `BufferId` and `PaneId` are already declared (`crates/phosphor-core/src/request.rs:52-55`, and `PaneId`'s doc already reads *"A pane in the split tree (`T088`)"*), and `close-pane` invalidates positions the first time it runs.
 
 Behaviour is provably identical because there is still one of everything.
@@ -139,6 +145,12 @@ Behaviour is provably identical because there is still one of everything.
 - `the_same_prose_wraps_to_more_lines_in_a_narrower_pane` — `wrapped` measured a hover float against `self.area`, so which width it got depended on which pane had most recently been laid out. It measures the pane it is handed now, and the test hands it two. The numbers are not asserted, only that narrow yields more lines than wide, which is only true if the width came from the pane.
 
 **A test harness landed with it, for step 4b's benefit.** `Bench { editing, pane }` in the test module, deref'ing to `Editing`, so twenty-five tests say `editing.apply(&action)` and do not care what the context is made of. Without it, 4b and 4c each rewrite those twenty-five call sites; with it they change two methods. Test-only scaffolding, said so at the type.
+
+**4b's verification, as run.** `just gate` green, 1,392 tests — the 1,391 before it unchanged, plus one:
+
+- `two_buffers_place_their_anchors_in_one_store` — two buffers, two files, one anchor each, and the count is asserted on the *session's* store. This is what `Shell` makes structural: an arm cannot reach anything except the session's, so a constructor cannot hand a buffer the wrong one.
+
+The harness paid for itself exactly as predicted. `Bench` gained a third field and its two methods build the `Cx`; the twenty-five call sites did not move. The one wrinkle was `Bench::text`, which forwarded to `Editing::text` and so demanded the whole context — two `&mut` borrows for a read, which turned `editing.act(.. editing.text() ..)` into a double borrow. It builds the `EditorText` from its own three fields now and takes `&self`, which is what a read should have asked for.
 
 ### Step 5 — The buffer-swap reset list, and a real bug fix
 
