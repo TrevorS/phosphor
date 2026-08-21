@@ -51,7 +51,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::{ProtocolVersion, v1::InitializeRequest};
-use agent_client_protocol::{AcpAgent, AcpAgentConfig, Client, SessionMessage};
+use agent_client_protocol::{ByteStreams, Client, SessionMessage};
 use phosphor_core::action::{Action, SessionAction};
 use phosphor_core::request::TurnId;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -393,10 +393,58 @@ async fn serve(
     shared: &Arc<Shared>,
     asks: &mut UnboundedReceiver<Ask>,
 ) -> Option<Ask> {
-    let mut config = AcpAgentConfig::new(&spec.command).args(spec.args.clone());
-    for (name, value) in &spec.env {
-        config = config.env(name.clone(), value.clone());
-    }
+    // **The child is ours, and that is the whole reason this is not
+    // `AcpAgent`.** The SDK's own component spawns the process and keeps the
+    // handle, which is convenient right up until the agent dies: the session's
+    // update channel holds its own sender, so `read_update` waits forever on a
+    // channel that will never close, and a session whose agent had exited went
+    // on reporting `Attached`. Measured — `an_agent_that_dies_mid_session_is_a_drop`
+    // timed out at thirty seconds against `AcpAgent`.
+    //
+    // Holding the `Child` makes *"the agent is gone"* an event this loop can
+    // select on. It also makes a spawn failure a `Result` instead of a string
+    // to classify, which is what [`classify`] used to do and no longer has to.
+    //
+    // `tokio::process` for the spawn and `tokio_util::compat` for the seam,
+    // which is the same pair `phosphor-buffer`'s LSP client uses and for the
+    // same reason: the SDK reads `futures::io`, tokio hands out `tokio::io`.
+    let mut child = match tokio::process::Command::new(&spec.command)
+        .args(&spec.args)
+        .envs(&spec.env)
+        .current_dir(&cwd)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        // **The agent's stderr goes nowhere on purpose.** This process owns a
+        // terminal in raw mode; a child writing to the inherited stderr would
+        // paint over the frame.
+        .stderr(std::process::Stdio::null())
+        // The editor leaving must not leave an agent behind.
+        .kill_on_drop(true)
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            shared.record(Life::Lost(Failure::Spawn(error.to_string())));
+            return asks.recv().await;
+        }
+    };
+    let (Some(to_agent), Some(from_agent)) = (child.stdin.take(), child.stdout.take()) else {
+        shared.record(Life::Lost(Failure::Spawn(
+            "the agent has no stdin or stdout".to_owned(),
+        )));
+        return asks.recv().await;
+    };
+    let transport = ByteStreams::new(
+        tokio_util::compat::TokioAsyncWriteCompatExt::compat_write(to_agent),
+        tokio_util::compat::TokioAsyncReadCompatExt::compat(from_agent),
+    );
+
+    // *The agent exited*, as a future this loop can wait on beside the others.
+    let (gone, mut went) = tokio::sync::oneshot::channel();
+    let watching = tokio::spawn(async move {
+        let status = child.wait().await;
+        drop(gone.send(status));
+    });
 
     // **What the session loop wants to hand back**, filled in before it
     // returns. A closure that returned it directly would have to name it in
@@ -407,7 +455,7 @@ async fn serve(
     let outcome = Client
         .builder()
         .name(CLIENT_NAME)
-        .connect_with(AcpAgent::new(config), async |cx| {
+        .connect_with(transport, async |cx| {
             cx.send_request(InitializeRequest::new(ProtocolVersion::V1))
                 .block_task()
                 .await?;
@@ -457,8 +505,19 @@ async fn serve(
                 let step = tokio::select! {
                     ask = asks.recv() => Step::Asked(ask),
                     update = session.read_update() => Step::Heard(Box::new(update)),
+                    // **The third branch, and the one the SDK cannot give.**
+                    // A dead agent produces no update and closes no channel;
+                    // it just stops answering. Without this the session stays
+                    // `Attached` forever and §5's *"always truthful"* is a
+                    // sentence about a strip that has stopped being one.
+                    _ = &mut went => Step::Gone,
                 };
                 match step {
+                    Step::Gone => {
+                        return Err(
+                            agent_client_protocol::Error::internal_error().data("the agent exited")
+                        );
+                    }
                     Step::Asked(None | Some(Ask::Stop)) => return Ok(()),
                     Step::Asked(Some(attach @ Ask::Attach { .. })) => {
                         carried = Some(attach);
@@ -489,9 +548,14 @@ async fn serve(
         })
         .await;
 
+    watching.abort();
     match outcome {
         Ok(()) => shared.record(Life::None),
-        Err(error) => shared.record(Life::Lost(classify(&error.to_string()))),
+        // **Every failure past the spawn is a drop.** The spawn is answered
+        // above, off the `Result` the OS gave rather than off a string, so
+        // there is nothing left here to classify: an agent that started and
+        // then stopped talking is `7b`'s seam whatever the transport called it.
+        Err(error) => shared.record(Life::Lost(Failure::Dropped(error.to_string()))),
     }
     // A carried `Attach` outranks the channel: it is already off it.
     match carried {
@@ -504,28 +568,10 @@ async fn serve(
 /// the `select!` that made it.
 enum Step {
     Asked(Option<Ask>),
+    /// The child process exited.
+    Gone,
     /// Boxed because a `SessionMessage` carries a whole `Dispatch` and the
     /// other variant is a pointer — clippy's `large_enum_variant`, and it is
     /// right: this value is built once per protocol message.
     Heard(Box<Result<SessionMessage, agent_client_protocol::Error>>),
-}
-
-/// Which [`Failure`] a transport error is.
-///
-/// **Three states the statusline says differently**, and the transport hands
-/// back one error type for all of them, so the string is what there is to read.
-/// A spawn failure is the one worth separating: *"session would not start"* and
-/// *"session lost"* have different remedies, and `:reattach` is only the second
-/// one's.
-fn classify(why: &str) -> Failure {
-    let lowered = why.to_lowercase();
-    if lowered.contains("no such file")
-        || lowered.contains("not found")
-        || lowered.contains("permission denied")
-        || lowered.contains("cannot find")
-    {
-        Failure::Spawn(why.to_owned())
-    } else {
-        Failure::Dropped(why.to_owned())
-    }
 }

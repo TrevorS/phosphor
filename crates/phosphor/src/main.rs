@@ -851,6 +851,15 @@ struct HostState {
     /// thread, and a query that borrowed the live tree would be the re-entrant
     /// routing that pattern exists to avoid.
     panes: Option<Value>,
+    /// The session, as the loop last saw it (`T051`).
+    ///
+    /// Published for [`HostState::panes`]' reason: the session client belongs
+    /// to the loop and a query answers on another thread. **The same value the
+    /// statusline was composed from**, which is what makes *"rendered
+    /// identically everywhere it appears"* a property of the arrangement — the
+    /// `session` query and §5's chrome cannot disagree, because there is one
+    /// derivation and it happens once per frame.
+    session: Option<Value>,
 }
 
 /// The boot file's name, and it names two different files.
@@ -1394,6 +1403,13 @@ impl AppHost {
         }
     }
 
+    /// Publish the session, so `session` has an answer (`T051`).
+    fn publish_session(&self, session: Value) {
+        if let Ok(mut state) = self.state.lock() {
+            state.session = Some(session);
+        }
+    }
+
     /// Publish what the loop derived, so `picker-rows` has an answer
     /// (`T046`).
     fn publish_picker(&self, rows: Option<(String, Vec<phosphor_core::view::SpanRow>)>) {
@@ -1446,6 +1462,24 @@ impl Answers for AppHost {
                     .lock()
                     .ok()
                     .and_then(|state| state.panes.clone())
+                    .unwrap_or(Value::Null),
+                revision: Revision::INITIAL,
+            }),
+            // `T051` — *"the session's state — what the statusline's ✻ and
+            // elapsed timer render"*, and it is **the same value they render**
+            // rather than a second derivation of it: the loop composes
+            // `StatusVm` once per frame and publishes the answer here, so a
+            // surface that asks and the strip that draws cannot disagree.
+            //
+            // `Value::Null` before the first frame, which is `query.rs`'s
+            // *"an absent thing answers empty"* — there is genuinely no session
+            // and no frame yet.
+            Query::Session(phosphor_core::query::SessionQuery::Session {}) => Ok(Answer {
+                value: self
+                    .state
+                    .lock()
+                    .ok()
+                    .and_then(|state| state.session.clone())
                     .unwrap_or(Value::Null),
                 revision: Revision::INITIAL,
             }),
@@ -2729,6 +2763,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         ),
         turn: None,
         agent: None,
+        life: phosphor_agent::session::Life::None,
     };
     // `T088`'s step 4c: every buffer by id, every pane by id, one of each.
     // The maps are the wrong shape for one entry and that is what they are
@@ -3054,6 +3089,23 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             columns.insert(*id, decorated.marks);
         }
         let editing = buffers.at_mut(held);
+
+        // **`T051` — the session, published for the `session` query**, and
+        // the transition said out loud.
+        //
+        // §5 asks for *"always present and truthful"*, and the two halves land
+        // in two places: the statusline carries the *state*, and the notice row
+        // carries the *change*. A session that dropped while you were reading
+        // would otherwise announce itself only by a word quietly changing on a
+        // strip you were not looking at.
+        let life = shell.session.life();
+        if life != shell.life {
+            if let Some(said) = session_notice(&life) {
+                notice = Some(said);
+            }
+            shell.life = life.clone();
+        }
+        host.publish_session(session_value(&life, shell.turn.as_ref()));
 
         // **The screen's shape, published for the `panes` query** (`T088`).
         // Once per frame, on `picker-rows`' terms: the panes are the loop's
@@ -4245,6 +4297,58 @@ fn session_state(life: &SessionLife, turn: Option<&(TurnId, Instant)>) -> Sessio
         SessionLife::Lost(_) => SessionState::Lost,
         SessionLife::Attached { .. } if turn.is_some() => SessionState::Working,
         SessionLife::Attached { .. } => SessionState::Idle,
+    }
+}
+
+/// The session, as plain data for the `session` query (`T051`).
+///
+/// **The same `SessionState` the statusline draws**, so the two cannot drift —
+/// see [`HostState::session`]. `since` rides along because §5's `Working` is
+/// *"working+elapsed"*: a caller that has the state and not the mark can render
+/// five of the six and not the sixth.
+fn session_value(life: &SessionLife, turn: Option<&(TurnId, Instant)>) -> Value {
+    let mut fields = Args::new();
+    fields.set("state", session_state(life, turn).to_value());
+    fields.set(
+        "turn",
+        turn.map_or(Value::Null, |(turn, _)| {
+            Value::Int(i64::try_from(turn.0).unwrap_or(i64::MAX))
+        }),
+    );
+    // What a session *is*, as distinct from what it is doing — the agent's own
+    // id when there is one. `5d`'s adoption picker is the reader this is for,
+    // and `T057` is where it lands.
+    fields.set(
+        "attached",
+        match life {
+            SessionLife::Attached { session } => Value::Text(session.clone()),
+            _ => Value::Null,
+        },
+    );
+    Value::Record(fields)
+}
+
+/// What the editor says out loud when the session changes (`T051`).
+///
+/// [`None`] for a transition with nothing to announce. **Only losses and
+/// arrivals**, because §6's voice is *state, then the remedy* and the two states
+/// with a remedy are the two a person can do something about; a session going
+/// idle between turns is not news.
+///
+/// **`Starting` is the transition this cannot name, and that is
+/// `docs/OPEN-QUESTIONS.md` §52.** §5 lists five states and a none, and a
+/// session that is spawning is none of them — so the *statusline* says `None`,
+/// which is defensible for the second a local agent takes and misleading for
+/// the thirty a `npx` first run takes. Saying it here instead keeps §5's list
+/// intact: the strip carries the state, and the row below carries the fact that
+/// something is happening.
+fn session_notice(life: &SessionLife) -> Option<String> {
+    match life {
+        // §6: lowercase, telegraphic, factual.
+        SessionLife::Starting => Some("starting claude".to_owned()),
+        SessionLife::Lost(failure) => Some(failure.to_string()),
+        SessionLife::Attached { .. } => Some("claude attached".to_owned()),
+        SessionLife::None => None,
     }
 }
 
@@ -6205,6 +6309,14 @@ struct Shell {
     /// so *"claude is working"* is the client's report rather than the
     /// editor's guess.
     turn: Option<(TurnId, Instant)>,
+    /// The session's state as of the last frame (`T051`).
+    ///
+    /// **Kept so a transition can be told from a state.** §5 wants the
+    /// statusline truthful, which the state alone gives; §6 wants the editor to
+    /// *say* things — *"session lost — :reattach"* is written as an event, not
+    /// as a status — and an event is a difference between two frames. One
+    /// `PartialEq` is the whole mechanism.
+    life: phosphor_agent::session::Life,
     /// The `agent-command` the session is currently attached to.
     ///
     /// Kept so the loop can tell *"the option changed"* from *"the option is
@@ -11428,6 +11540,7 @@ mod tests {
             ),
             turn: None,
             agent: None,
+            life: phosphor_agent::session::Life::None,
         }
     }
 

@@ -28,6 +28,11 @@ survive:
               inside one frame and could assert none of them.
   `deaf`      exits immediately after `initialize`. The connection drops
               mid-session, which is `7b`'s seam and `Failure::Dropped`.
+  `linger`    answers the handshake, then exits `SLOW_SECONDS` later. The mode
+              a *staleness* test needs: `deaf` dies inside the keystrokes that
+              set it up, so the editor has already redrawn by the time such a
+              test stops typing, and it passes with the wake removed. Measured
+              — the planted defect went green.
   `gibberish` answers `initialize` with a line that is not JSON at all.
 
 Nothing here imports the ACP SDK on purpose: a fixture built from the same
@@ -36,7 +41,9 @@ with the protocol.
 """
 
 import json
+import os
 import sys
+import threading
 import time
 
 SESSION = "toy-session-1"
@@ -94,6 +101,12 @@ def main() -> int:
             )
             if mode == "deaf":
                 return 0
+            if mode == "linger":
+                # Answer `session/new` first if it is already queued, then go.
+                # A thread, so the read loop keeps serving until the moment it
+                # exits — the point is that the drop lands while nobody is
+                # typing, not that nothing was answered.
+                threading.Timer(SLOW_SECONDS, lambda: os._exit(0)).start()
             continue
 
         if method == "session/new":

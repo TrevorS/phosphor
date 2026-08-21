@@ -2753,10 +2753,63 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   > clears, a `session_state` that never reports a session, and a
   > `lint-nextest-group` row removed. `just gate` green.
 
-- [ ] **T051 · `SessionState` + statusline**
+- [x] **T051 · `SessionState` + statusline**
   One enum — Idle, Working{elapsed}, Waiting, Paused, Lost, None — **rendered identically
   everywhere it appears**. Always present, always truthful.
   *Done when:* every state renders and the statusline is never stale. *Needs:* T050, T017
+
+  > **Built 2026-08-21.** `T017` shipped this strip with a note reading
+  > *"`SessionState` (renders `None` for now)"*; `T050` made four of the six
+  > real, and this closes the rest.
+  >
+  > **"Never stale" is the half only a terminal can answer, and it found a
+  > defect.** The editor draws when something tells it to, and a session dying
+  > tells nobody — so the test attaches an agent and then **presses nothing**,
+  > polling the screen while the agent exits on its own schedule. The first
+  > version used the `deaf` fixture, which exits the instant it has answered
+  > `initialize` — inside the keystrokes that set it up — so the editor had
+  > already redrawn before the quiet phase began and the test **passed with the
+  > wake removed**. `linger` exits two seconds later, which is the only
+  > arrangement in which the poll is evidence.
+  >
+  > **What that then exposed: the client could not tell a dead agent from a
+  > quiet one.** `AcpAgent` spawns the process and keeps the handle, and
+  > `ActiveSession` holds its own update sender — so when the agent exited,
+  > `read_update` waited forever on a channel that would never close and the
+  > session went on reporting `Attached`. Measured:
+  > `an_agent_that_dies_mid_session_is_a_drop` timed out at thirty seconds.
+  > The client spawns the child itself now (`tokio::process` +
+  > `tokio_util::compat`, the pair `phosphor-buffer`'s LSP client already uses)
+  > and selects on its exit, so *"the agent is gone"* is an event. A spawn
+  > failure is a `Result` from the OS rather than a string to classify —
+  > `classify` is deleted, and `Failure::Spawn` versus `Failure::Dropped` is
+  > now a fact rather than a guess about a message.
+  >
+  > **The `session` query answers the value the strip drew**, not a second
+  > derivation of it: the loop composes the state once per frame and publishes
+  > *that*, the way `T088`'s `panes` does. §5's *"one enum rendered identically
+  > everywhere it appears"* is structural under that arrangement — there is
+  > nothing for a surface and the strip to disagree with.
+  >
+  > **Every state renders, through both paths.** `status_line`'s proptest
+  > already walked all six through the widget; a new test walks them through the
+  > **tree** — `Node::Session`, the interpreter, the composition `T025` replaced
+  > the widget with — and asserts the six rows are *distinct*, because six
+  > states drawing one row would satisfy every other assertion and tell a reader
+  > nothing.
+  >
+  > **`Life::Starting` is answered without inventing a state** —
+  > [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) §52. §5 lists five states and a none
+  > and a spawning session is none of them; rather than amend the design, the
+  > strip keeps §5's list and the **notice row** carries the change (`starting
+  > claude`, `claude attached`, and the failure's own sentence). §6 already puts
+  > events there. Two shapes for putting it on the strip instead are written
+  > down; both are Teej's call, since §5 is imported verbatim.
+  >
+  > **Verification.** Two pty tests (the staleness poll, the query), one new
+  > `phosphor-ui` tree test, one new client test. Planted and caught: a `Woke`
+  > that does nothing — which fails the staleness poll by name, and which passed
+  > before the fixture was fixed.
 
 - [x] **T052 · MCP server from the registry**
   `rmcp`, generated from T020 so the vocabulary cannot drift.

@@ -138,15 +138,22 @@ RECORDED = {
                    "renders `BufferView` with its own `.state_column(…)`, so the pane got the "
                    "column without composing this kind, and composing one beside it would draw "
                    "the column twice."),
-    "Spinner": ("T051", "Composed by nothing, and yet a spinner does turn: `Interpreter::session` "
-                        "renders it inside `Node::Session`'s own arm, off that node's `since` and "
-                        "the frame clock. The standalone kind is for a surface other than the "
-                        "statusline, and nothing reports `Working` until there is a session — "
-                        "`docs/TASKS.md`'s `V009` note already records *\"the spinner needs "
-                        "`T051`\"* as why a degradation capture is a no-op today."),
-    "Elapsed": ("T051", "The other half of `Interpreter::session`: the elapsed counter is "
+    "Spinner": ("T054", "Composed by nothing, and yet a spinner does turn — it turns on the "
+                        "shipped statusline as of `T051`, measured at "
+                        "`\u26cb claude working \u00b7 0:00`. `Interpreter::session` renders it inside "
+                        "`Node::Session`'s own arm, off that node's `since` and the frame clock, "
+                        "so the statusline reaches it the way `Node::Buffer` reaches `Gutter`: "
+                        "through a bigger kind, not by composing this one. **This row was "
+                        "recorded against `T051` and that was the wrong creditor** — ticking "
+                        "`T051` made the lint demand a composition that would draw a *second* "
+                        "spinner beside the session segment. What the standalone kind wants is a "
+                        "surface that shows progress without a session segment, and `T054`'s "
+                        "transcript is the one the graph names: *\"streams during Working\"* is a "
+                        "turn row that has to say it is still going."),
+    "Elapsed": ("T054", "The other half of `Interpreter::session`: the elapsed counter is "
                         "rendered from `Node::Session`'s `since`, not from a node of its own. "
-                        "Same blocker and the same reason."),
+                        "Same reader, same re-recording, same creditor — a streaming turn row "
+                        "wants both."),
     "Diff": ("T063", "`DiffBody`. Deferred in the interpreter."),
     "Question": ("T059", "`QuestionBody`. Deferred in the interpreter. Q9's queued asks are a "
                          "store query, and an ask that nothing has room for renders as the "

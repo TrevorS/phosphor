@@ -2348,6 +2348,42 @@ un-ask a dependency for a feature — and there is no reason to want to. Inserti
 order is at least as good a wire order as alphabetical, and the defect was never
 the ordering.
 
+### 52 · §5 has no state for a session that is starting, and `npx` makes that a thirty-second lie
+
+**Raised by `T050`, answered as far as a build can answer it by `T051`.** The
+decision is Teej's because it is a Design Language amendment.
+
+§5 lists the session's states: *"idle, working+elapsed, waiting, paused,
+lost"*, plus the absence of a session. A session that is **spawning** is none of
+them. It is not working — no turn has begun. It is not lost. And it is not
+*none*, because something is happening.
+
+`session_state` maps `Life::Starting` to `SessionState::None`, which is the
+least wrong of the six and is still wrong. The window is short for a local agent
+and long for the one this editor is actually pointed at: `npx
+@zed-industries/claude-code-acp` downloads its package on a first run, so the
+statusline says **there is no session** for as long as that takes.
+
+**What `T051` did instead of inventing a state.** §5's list stays intact and the
+transient fact moved to the row below it: `session_notice` puts `starting
+claude` on the notice line when the session begins spawning, `claude attached`
+when it arrives, and the failure's own sentence when it does not. §6's voice is
+*state, then remedy*, and a notice is where this build already says things that
+are events rather than statuses. The strip carries the state; the row carries
+the change.
+
+That is a defensible reading and not obviously the right one, which is why it is
+filed. **Two shapes if Teej wants it on the strip:**
+
+1. **A sixth `SessionState`** — `Starting`, with a glyph of its own. Cheap in
+   code (a `wire_choice!` arm, an `interpret` arm, a `status_line` arm, a word
+   in `runtime/statusline.scm`) and an amendment to §5, which is imported
+   verbatim from claude.ai and is Teej's to change.
+2. **Draw it as `Working` with no elapsed.** Needs no vocabulary at all and is
+   the smaller change, but it says *claude is working* about an agent that has
+   not been asked anything, which is the kind of almost-true this build spends
+   its lints avoiding.
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

@@ -3203,6 +3203,115 @@ mod driven {
         );
     }
 
+    /// **`T051`: the statusline is never stale — it changes with no keystroke.**
+    ///
+    /// The half of *"always present and truthful"* (§5) that a keystroke-driven
+    /// test cannot reach. The editor draws when something tells it to, and a
+    /// session dropping tells nobody: without `Session`'s wake, the strip would
+    /// go on saying `claude idle` for a session that had died, until the user
+    /// happened to press a key. That is *correct and stale*, which is exactly
+    /// what §5 forbids.
+    ///
+    /// **Nothing is pressed after the session attaches**, and the fixture mode
+    /// is what makes that mean something. The first version used `deaf`, which
+    /// exits the instant it has answered `initialize` — inside the keystrokes
+    /// that set it up. The editor had therefore already redrawn before the
+    /// quiet phase began, and the test **passed with the wake removed**.
+    /// `linger` answers the handshake and exits two seconds later, so the drop
+    /// lands while nobody is typing, which is the only arrangement in which the
+    /// poll below is evidence.
+    #[test]
+    fn the_statusline_follows_a_session_that_dies_with_no_keystroke() {
+        let scratch = Scratch::new("stale");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let form = format!(
+            "(set-option! \"agent-command\" \"python3 {} linger\")\r",
+            agent.display()
+        );
+        editor.press_until(form.as_bytes(), "()");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+        // Attached first, so what the poll below waits for is the *drop* and
+        // not the attach.
+        shown(&editor, "claude idle");
+
+        // From here on, **no key is pressed**. The screen has to move anyway.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let seen = grid_of(&editor.screen());
+            if seen.contains("session lost") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the editor never noticed the session go, with no keystroke to \
+                 make it look; grid was: {seen}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **`T051`: the `session` query answers what the statusline drew.**
+    ///
+    /// §5's *"one enum rendered identically everywhere it appears"* is only
+    /// true if there is one derivation, so the loop composes the state once per
+    /// frame and publishes **that value** — the query and the strip cannot
+    /// disagree, because there is nothing for them to disagree with.
+    #[test]
+    fn the_session_query_answers_the_state_the_strip_drew() {
+        let scratch = Scratch::new("session-query");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+
+        // Before any session: the query answers, and answers `none`.
+        let quiet = editor.press_until(b"(session)\r", "none");
+        assert!(
+            shows(&quiet, "none"),
+            "a session query with no session answers `none` rather than \
+             raising; session was: {quiet}"
+        );
+
+        let form = format!(
+            "(set-option! \"agent-command\" \"python3 {} turn\")\r",
+            agent.display()
+        );
+        editor.press_until(form.as_bytes(), "()");
+
+        // Attached: the query says `idle` and names the agent's own session.
+        let attached = editor.press_until(b"(session)\r", "idle");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+        assert!(
+            shows(&attached, "toy-session-1"),
+            "the query carries the agent's own session id — `5d`'s adoption \
+             picker is what that is for; session was: {attached}"
+        );
+
+        // And it is the same word the strip drew.
+        let strip = shown(&editor, "claude idle");
+        editor.leave_by(b"ZQ");
+        assert!(
+            shows(&strip, "claude idle"),
+            "the strip and the query disagree; session was: {strip}"
+        );
+    }
+
     /// **`T052`: `apply-edits` is a batch, and one `u` is all of it.**
     ///
     /// The clause `T052`'s *Done when* singles out — *"a batch applied as one

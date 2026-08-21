@@ -188,6 +188,38 @@ fn an_agent_that_goes_away_is_a_drop() {
     );
 }
 
+/// **An agent that dies *after* the session is established is still a drop.**
+///
+/// `an_agent_that_goes_away_is_a_drop` covers the other half — an agent that
+/// leaves before `session/new` — and the two fail differently: that one never
+/// gets a session at all, so `start_session` errors. This one has a live
+/// session and loses it, which is `7b`'s seam and the case §5's *"always
+/// truthful"* is really about. A client that recorded `Life::None` here would
+/// leave the statusline saying *there is no session* for one that was working a
+/// moment ago.
+#[test]
+fn an_agent_that_dies_mid_session_is_a_drop() {
+    let heard = Heard::default();
+    let session = Session::start(heard.post(), phosphor_agent::session::unwatched());
+    session.attach(spec("linger"), std::env::current_dir().expect("a cwd"));
+    until("the session to attach", || {
+        matches!(session.life(), Life::Attached { .. }).then_some(())
+    });
+
+    let failure = until("the drop to be noticed", || match session.life() {
+        Life::Lost(failure) => Some(failure),
+        // `None` is the wrong answer, not a slow one — it is the client
+        // deciding the session ended cleanly. Named here so the failure reads
+        // as *"it said no session"* rather than as a timeout.
+        Life::None => panic!("a lost session was recorded as no session at all"),
+        _ => None,
+    });
+    assert!(
+        matches!(failure, Failure::Dropped(_)),
+        "an agent that left mid-session is a drop: {failure:?}"
+    );
+}
+
 /// **A turn that never ends is not a hang.** The client stays attached, posts
 /// its `turn-began` and nothing else, and — the part that matters — a second
 /// `attach` still lands, so the editor is never stuck with a session it cannot

@@ -1753,6 +1753,61 @@ mod tests {
         assert_eq!(row(&buf, 0), "✻");
     }
 
+    /// **`T051`: every one of §5's states renders through the shipped path.**
+    ///
+    /// `status_line`'s proptest already walks all six through the *widget*.
+    /// This walks them through the **tree** — `Node::Session`, the interpreter,
+    /// the composed statusline `runtime/statusline.scm` actually builds — which
+    /// is the path a frame takes since `T025` replaced the widget with a
+    /// composition. §5's *"rendered identically everywhere it appears"* is only
+    /// true if both paths reach the same words, and the two arriving at the
+    /// same enum is what makes that structural rather than remembered.
+    ///
+    /// `None` renders nothing, which is the state being truthful rather than
+    /// the state failing to render: §5 wants the truth, and the truth is that
+    /// there is no session.
+    #[test]
+    fn every_session_state_renders_through_the_tree() {
+        let states = [
+            (SessionState::None, ""),
+            (SessionState::Idle, "claude idle"),
+            (SessionState::Working, "claude working"),
+            (SessionState::Waiting, "claude waiting"),
+            (SessionState::Paused, "claude paused"),
+            (SessionState::Lost, "session lost"),
+        ];
+        let mut seen: Vec<String> = Vec::new();
+        for (state, wanted) in states {
+            let tree = Tree::new(Node::Session {
+                state,
+                since: Some(Millis(0)),
+                prose: true,
+            });
+            let (buf, report) = draw(&tree);
+            assert!(
+                report.deferred.is_empty(),
+                "`session` draws every state: {state:?} deferred"
+            );
+            let drawn = row(&buf, 0);
+            assert!(
+                drawn.contains(wanted),
+                "{state:?} drew {drawn:?}, which does not contain {wanted:?}"
+            );
+            seen.push(drawn);
+        }
+        // **Distinct, not merely non-empty.** Five states that all drew the
+        // same words would satisfy every assertion above and tell a reader
+        // nothing about which one the session is in.
+        let mut distinct = seen.clone();
+        distinct.sort();
+        distinct.dedup();
+        assert_eq!(
+            distinct.len(),
+            seen.len(),
+            "two states drew the same row: {seen:?}"
+        );
+    }
+
     #[test]
     fn a_working_session_counts_up_without_a_recomposition() {
         let tree = Tree::new(Node::Session {
