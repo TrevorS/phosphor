@@ -2376,13 +2376,21 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     let (queue, poster) = events::open();
     // `T088`'s step 4a: the pane the buffer is shown in, beside the buffer
     // rather than inside it. One, until step 4c gives the loop a map of them.
-    let mut pane = Pane::new();
     // Step 4b: what the session owns, once rather than once per buffer.
     let mut shell = Shell {
         store: Arc::clone(&host.store),
         wake: picker::waking(poster.clone()),
     };
-    let mut editing = Editing::with_timeline(editor, path, Rc::clone(&dirty), timeline);
+    // `T088`'s step 4c: every buffer by id, every pane by id, one of each.
+    // The maps are the wrong shape for one entry and that is what they are
+    // for — see [`Buffers`] on why position is never the key.
+    let (mut buffers, first) = Buffers::new(Editing::with_timeline(
+        editor,
+        path,
+        Rc::clone(&dirty),
+        timeline,
+    ));
+    let (mut panes, _) = Panes::new(Pane::new(first));
 
     // `T033`'s ex line, and the one line of chrome that answers it. Both live
     // here rather than in a widget: `view::Node::Prompt` is the vocabulary's
@@ -2420,7 +2428,10 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         .clone()
         .or(restore_note)
         .or_else(|| fresh.as_deref().map(new_file))
-        .or_else(|| (editing.file.is_none() && matches!(surface, Surface::Buffer)).then(no_file));
+        .or_else(|| {
+            (buffers.at_mut(first).file.is_none() && matches!(surface, Surface::Buffer))
+                .then(no_file)
+        });
 
     // `T035`'s latch, and the row it produced. The latch is per *session*,
     // which is what makes it the loop's and not the buffer's; the row lives
@@ -2497,10 +2508,22 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // accepting a completion — is one change as far as a server is concerned,
     // and telling it three times would have it answering about text the user
     // never saw.
-    let mut synced: Option<Document> = adopt(&mut editing, &host.languages(), &servers);
+    let mut synced: Option<Document> = adopt(buffers.at_mut(first), &host.languages(), &servers);
     let mut sent = edits.get();
 
     loop {
+        // **Focus, then the pane, then the buffer it holds** — by id, every
+        // pass, rather than by a binding held across the loop. There is one of
+        // each today, so this resolves to the same two things every time; what
+        // it buys is that the *shape* of the resolution is already the one N
+        // panes need, and nothing below this line can reach a buffer except
+        // through the pane that shows it.
+        let pane = panes.focused_mut();
+        let held = pane
+            .buffer
+            .expect("the focused pane holds a buffer until step 11 gives it anything else to hold");
+        let editing = buffers.at_mut(held);
+
         // The size the *next* frame will be laid out at, and the layout itself.
         // **`draw` used to re-split `frame.area()`**, so the wrap width and the
         // rect a scroll is measured against were one answer and the rects that
@@ -2708,7 +2731,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 // as the three above and for a different reason:
                 // `Mood::Passive` *"is not in front of anything"* (§9), so the
                 // code stays at full strength behind this one.
-                (Surface::Buffer, _) => passive_float(&editing),
+                (Surface::Buffer, _) => passive_float(editing),
                 _ => None,
             };
             let tree = Tree::new(one_pane(THE_BUFFER, soft_wrap));
@@ -2937,7 +2960,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 PickerStep::Typing => {}
                                 PickerStep::Cycle(delta) => {
                                     let outcome = editing.apply(
-                                        &mut Cx::new(&mut pane, &mut shell),
+                                        &mut Cx::new(pane, &mut shell),
                                         &Action::Picker(PickerAction::CyclePickerSource { delta }),
                                     );
                                     if let Outcome::Refused(why) = outcome {
@@ -2946,7 +2969,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 }
                                 PickerStep::Accept => {
                                     let outcome = editing.apply(
-                                        &mut Cx::new(&mut pane, &mut shell),
+                                        &mut Cx::new(pane, &mut shell),
                                         &Action::Picker(PickerAction::PickerAccept {
                                             how: AcceptHow::Open,
                                         }),
@@ -2989,8 +3012,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 surface = Surface::Buffer;
                                 notice = submit_ex(
                                     &mut layer,
-                                    &mut editing,
-                                    &mut Cx::new(&mut pane, &mut shell),
+                                    editing,
+                                    &mut Cx::new(pane, &mut shell),
                                     &ex_line,
                                 );
                             }
@@ -3008,27 +3031,24 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 machine: &mut machine,
                                 layer: &mut layer,
                                 seed: &mut seed,
-                                editing: &mut editing,
-                                cx: Cx::new(&mut pane, &mut shell),
+                                editing,
+                                cx: Cx::new(pane, &mut shell),
                             }
                             .key(pressed);
                             typing = machine.mode() == EditMode::Insert && edits.get() != before;
                         }
                     }
                     Event::Mouse(mouse) => {
-                        for action in mouse_actions(
-                            &mut machine,
-                            &editing,
-                            &Cx::new(&mut pane, &mut shell),
-                            mouse,
-                        ) {
+                        for action in
+                            mouse_actions(&mut machine, editing, &Cx::new(pane, &mut shell), mouse)
+                        {
                             // `Input::SetMode` is the machine reporting a
                             // transition it has already made — `Machine::click`
                             // and `Machine::drag` mutate it directly, the way
                             // `feed` does — so there is nothing here to apply
                             // and `Editing` has no arm for one.
                             if !matches!(action, Action::Input(_)) {
-                                let _ = editing.apply(&mut Cx::new(&mut pane, &mut shell), &action);
+                                let _ = editing.apply(&mut Cx::new(pane, &mut shell), &action);
                             }
                         }
                     }
@@ -3052,9 +3072,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     // `act` and not `apply`, for the reason `deliver` gives:
                     // a reveal is `View::Scroll`, and nothing that is not the
                     // user may move the viewport the user is looking at.
-                    drop(editing.act(&mut Cx::new(&mut pane, &mut shell), &posted.action));
-                } else if let Some(note) =
-                    deliver(&mut editing, &mut Cx::new(&mut pane, &mut shell), &posted)
+                    drop(editing.act(&mut Cx::new(pane, &mut shell), &posted.action));
+                } else if let Some(note) = deliver(editing, &mut Cx::new(pane, &mut shell), &posted)
                 {
                     notice = Some(note);
                 }
@@ -3097,7 +3116,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 // it is the user's own — `apply`, so the viewport follows.
                 if let Some(at) = editing.open_at.take() {
                     drop(editing.apply(
-                        &mut Cx::new(&mut pane, &mut shell),
+                        &mut Cx::new(pane, &mut shell),
                         &Action::Motion(MotionAction::SetCursor {
                             position: at,
                             buffer: None,
@@ -3142,7 +3161,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         {
                             servers.close(&language, &document.path);
                         }
-                        synced = adopt(&mut editing, &host.languages(), &servers);
+                        synced = adopt(editing, &host.languages(), &servers);
                         sent = edits.get();
                         // A new buffer is a new place; a list anchored in the old
                         // one would be drawn over code it knows nothing about.
@@ -3154,7 +3173,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // rather than `act`, because this *is* the user's jump.
                         if let Some(at) = editing.open_at.take() {
                             drop(editing.apply(
-                                &mut Cx::new(&mut pane, &mut shell),
+                                &mut Cx::new(pane, &mut shell),
                                 &Action::Motion(MotionAction::SetCursor {
                                     position: at,
                                     buffer: None,
@@ -3318,7 +3337,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         if let Some(lookup) = editing.lookup.take() {
             match (editing.language.clone(), synced.as_ref()) {
                 (Some(language), Some(document)) => {
-                    let at = editing.text(&Cx::new(&mut pane, &mut shell)).cursor();
+                    let at = editing.text(&Cx::new(pane, &mut shell)).cursor();
                     outstanding.sent(lookup);
                     let path = document.path.clone();
                     // **The word being completed goes with the request**, and
@@ -3348,7 +3367,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         if let Some(question) = editing.question.take() {
             match (editing.language.clone(), synced.as_ref()) {
                 (Some(language), Some(document)) => {
-                    let at = editing.text(&Cx::new(&mut pane, &mut shell)).cursor();
+                    let at = editing.text(&Cx::new(pane, &mut shell)).cursor();
                     let path = document.path.clone();
                     // `T036` answers in *places*, and what a place means
                     // depends on the question: a definition is one place and
@@ -5091,6 +5110,16 @@ fn journal_key(file: &Path) -> Result<PathBuf, String> {
 /// half of that ruling and is deliberately not assumed to ride along with it.
 #[derive(Debug, Clone)]
 struct Pane {
+    /// Which buffer is in it, or [`None`] for a pane holding something that is
+    /// not one — the transcript, or a view tree claude emitted.
+    ///
+    /// **This is the indirection the whole step is for.** A pane names a
+    /// buffer; it does not contain one. Swapping a file into a pane is a write
+    /// to this field, and the buffer that left is still in [`Buffers`] with its
+    /// undo history and its LSP document intact — which is what `:bnext` and a
+    /// second split showing the same file both need and neither could have
+    /// while `Editing` *was* the pane.
+    buffer: Option<BufferId>,
     /// The text area, for scrolls and reveals.
     ///
     /// Moved off `Editing` because it is the definition of a pane: the same
@@ -5189,6 +5218,118 @@ struct Cx<'a> {
     shell: &'a mut Shell,
 }
 
+/// Every open buffer, by id (`T088`, step 4c).
+///
+/// **Keyed from the first line, and never indexed by position.** There is one
+/// entry today, and a map is the wrong shape for one entry — which is the
+/// point. A `Vec` with a `usize` cursor is the shape that works right up until
+/// `close-buffer` runs once, and then every index held anywhere else is off by
+/// one, silently and with no type error. `BufferId` is already in the
+/// vocabulary and already means *"not a path: the same file can be open once
+/// and renamed"*, so paying for the id now costs one `BTreeMap` and buys the
+/// class of bug that would otherwise be found by a user.
+struct Buffers {
+    map: BTreeMap<BufferId, Editing>,
+    /// The next id to hand out.
+    ///
+    /// **Ids are never reused.** A closed buffer's id stays closed, so a stale
+    /// `BufferId` — one an agent held across a `close-buffer` — refuses rather
+    /// than resolving to whatever took its place. That is the same rule
+    /// `store::Shared` already keeps for `RegionId`, and for the same reason:
+    /// silently answering about the wrong thing is worse than refusing.
+    next: u64,
+}
+
+impl Buffers {
+    /// The buffer a session starts with, and its id.
+    fn new(first: Editing) -> (Self, BufferId) {
+        let mut buffers = Self {
+            map: BTreeMap::new(),
+            next: 0,
+        };
+        let id = buffers.open(first);
+        (buffers, id)
+    }
+
+    /// Takes a buffer and answers the id it was given.
+    ///
+    /// **The one place a `BufferId` is minted**, and it comes off the counter
+    /// rather than off `map.len()`. Those two agree exactly until the first
+    /// `close-buffer`, after which `len()` starts handing out an id that is
+    /// already taken — the failure being designed against, written as the
+    /// obvious line somebody reaches for.
+    fn open(&mut self, editing: Editing) -> BufferId {
+        let id = BufferId(self.next);
+        self.next += 1;
+        self.map.insert(id, editing);
+        id
+    }
+
+    /// The buffer `id` names.
+    ///
+    /// Panics if it names none, which is a bug in whoever held the id rather
+    /// than a state a user can reach: nothing removes an entry until step 10's
+    /// `close-buffer`, and that step is where a caller starts having to say
+    /// what a stale id means.
+    fn at_mut(&mut self, id: BufferId) -> &mut Editing {
+        self.map
+            .get_mut(&id)
+            .expect("a BufferId names an open buffer")
+    }
+}
+
+/// Every pane, by id, and which one has focus (`T088`, step 4c).
+///
+/// **No `PaneTree` yet, and that is deliberate.** The plan pairs this map with
+/// one, split apart so `&PaneTree` and `&mut Pane` can be borrowed at once —
+/// which is the right shape and stays the plan. But a tree over one pane is a
+/// `Leaf` and a `Split` variant nothing constructs, and this build does not
+/// ship an arm no code can reach. It lands in step 11, with the split verbs
+/// that give it something to describe.
+struct Panes {
+    map: BTreeMap<PaneId, Pane>,
+    /// Which pane a `PaneRef::Focused` means.
+    focus: PaneId,
+    /// The next id to hand out, on [`Buffers::next`]'s rule.
+    next: u64,
+}
+
+impl Panes {
+    /// The pane a session starts in, and its id.
+    fn new(first: Pane) -> (Self, PaneId) {
+        let mut panes = Self {
+            map: BTreeMap::new(),
+            focus: PaneId(0),
+            next: 0,
+        };
+        let id = panes.open(first);
+        panes.focus = id;
+        (panes, id)
+    }
+
+    /// Takes a pane and answers the id it was given, on [`Buffers::open`]'s
+    /// rule. Focus is *not* moved: opening a pane and looking at it are two
+    /// things, and `split-pane` in vim does not always do both.
+    fn open(&mut self, pane: Pane) -> PaneId {
+        let id = PaneId(self.next);
+        self.next += 1;
+        self.map.insert(id, pane);
+        id
+    }
+
+    /// The pane that has focus.
+    ///
+    /// Panics if `focus` names no pane, which would be this struct failing to
+    /// keep its own invariant — the one thing step 10's `close-pane` will have
+    /// to preserve, and the reason `focus` lives here rather than beside the
+    /// map.
+    fn focused_mut(&mut self) -> &mut Pane {
+        self.map
+            .get_mut(&self.focus)
+            .expect("the focused pane is one of the panes")
+    }
+}
+
 impl<'a> Cx<'a> {
     /// The context one Action lands in.
     ///
@@ -5202,8 +5343,9 @@ impl<'a> Cx<'a> {
 
 impl Pane {
     /// The pane a single-pane session starts in, before any layout has run.
-    fn new() -> Self {
+    fn new(buffer: BufferId) -> Self {
         Self {
+            buffer: Some(buffer),
             area: Rect::ZERO,
             alternate: None,
             jumplist: Vec::new(),
@@ -9025,7 +9167,7 @@ mod tests {
 
     use phosphor_core::action::{Action, Outcome, Refusal, Request, RuntimeAction};
     use phosphor_core::registry::Door;
-    use phosphor_core::request::{Actor, Position, Severity, Span};
+    use phosphor_core::request::{Actor, BufferId, Position, Severity, Span};
     use phosphor_core::value::Value;
     use phosphor_steel::answer;
     use phosphor_steel::host::Host;
@@ -9042,9 +9184,9 @@ mod tests {
     use phosphor_core::request::LanguageId;
 
     use super::{
-        AppHost, COMPLETION_MIN_CHARS, COMPLETION_MIN_CHARS_DEFAULT, Caret, Cli,
+        AppHost, Buffers, COMPLETION_MIN_CHARS, COMPLETION_MIN_CHARS_DEFAULT, Caret, Cli,
         CommandFactory as _, Cx, EXPAND_TAB, Editing, EditorText, ExStep, FromArgMatches as _,
-        IndentStyle, Intent, Key, Layer, Lookup, Machine, NodeId, Outstanding, Pane, Repl,
+        IndentStyle, Intent, Key, Layer, Lookup, Machine, NodeId, Outstanding, Pane, Panes, Repl,
         ReplStep, Session, Shell, StatusVm, Surface, TAB_WIDTH, Table, UndoTree, Vm,
         WireCompletion, boot, buffer, closes_surface, completion_floor, decode, deliver, door,
         ex_key, grammar_of, indent_style, is_press, repl_key, restored, seeding, server_chip,
@@ -9285,7 +9427,7 @@ mod tests {
                 None,
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             ),
-            pane: Pane::new(),
+            pane: Pane::new(BufferId(0)),
             shell: shell(),
         }
     }
@@ -9727,7 +9869,7 @@ mod tests {
                 None,
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             ),
-            pane: Pane::new(),
+            pane: Pane::new(BufferId(0)),
             shell: shell(),
         };
         assert!(!editing.quit);
@@ -9752,7 +9894,7 @@ mod tests {
                 None,
                 std::rc::Rc::clone(&dirty),
             ),
-            pane: Pane::new(),
+            pane: Pane::new(BufferId(0)),
             shell: shell(),
         };
         let outcome = editing.apply(&Action::App(phosphor_core::action::AppAction::Quit {
@@ -9818,7 +9960,7 @@ mod tests {
                 None,
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             ),
-            pane: Pane::new(),
+            pane: Pane::new(BufferId(0)),
             shell: shell(),
         };
         editing.pane.area = Rect::new(0, 0, 80, 24);
@@ -9865,7 +10007,7 @@ mod tests {
                 None,
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             ),
-            pane: Pane::new(),
+            pane: Pane::new(BufferId(0)),
             shell: shell(),
         };
         editing.pane.area = Rect::new(0, 0, 80, 24);
@@ -9920,7 +10062,7 @@ mod tests {
                     None,
                     std::rc::Rc::new(std::cell::Cell::new(dirty)),
                 ),
-                pane: Pane::new(),
+                pane: Pane::new(BufferId(0)),
             };
             editing.pane.area = Rect::new(0, 0, 80, 24);
             let (layer, _host) = booted();
@@ -10067,7 +10209,7 @@ mod tests {
                 None,
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             ),
-            pane: Pane::new(),
+            pane: Pane::new(BufferId(0)),
             shell: shell(),
         };
         editing.pane.area = Rect::new(0, 0, 80, 24);
@@ -11689,7 +11831,7 @@ mod tests {
                 None,
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             ),
-            pane: Pane::new(),
+            pane: Pane::new(BufferId(0)),
             shell: shell(),
         };
         let open = |kind| {
@@ -11741,8 +11883,8 @@ mod tests {
         );
 
         let mut shell = shell();
-        let mut left = Pane::new();
-        let right = Pane::new();
+        let mut left = Pane::new(BufferId(0));
+        let right = Pane::new(BufferId(0));
 
         editing.push_jump(&mut Cx::new(&mut left, &mut shell));
         editing.push_jump(&mut Cx::new(&mut left, &mut shell));
@@ -11761,6 +11903,74 @@ mod tests {
         assert_eq!(right.jump_at, 0);
     }
 
+    /// **Two panes, two buffers, and every lookup by id** — step 4c's whole
+    /// claim, made while the binary still opens one of each.
+    ///
+    /// The two assertions are the two failures the maps exist to prevent. The
+    /// first is that an id survives its neighbour closing: `close-buffer` on
+    /// the first entry leaves the second's id naming the second buffer, which
+    /// is exactly what a `Vec` and a `usize` would get wrong — every held
+    /// index shifts by one, silently and with no type error. The second is that
+    /// a reopened buffer is a *new* buffer: the id is minted off the counter,
+    /// so the closed one stays closed and a stale `BufferId` refuses rather
+    /// than resolving to whatever took its place.
+    #[test]
+    fn a_closed_buffer_does_not_hand_its_id_to_the_next_one() {
+        let (mut buffers, first) = Buffers::new(editing("alpha").editing);
+        let second = buffers.open(editing("bravo").editing);
+
+        assert_ne!(first, second, "two buffers, two ids");
+        assert_eq!(
+            buffers.at_mut(second).editor.get_content(),
+            "bravo",
+            "an id names a buffer, not a position in a list"
+        );
+
+        buffers.map.remove(&first);
+
+        assert_eq!(
+            buffers.at_mut(second).editor.get_content(),
+            "bravo",
+            "and it still names the same one after its neighbour closed — the \
+             assertion a Vec and a usize fail"
+        );
+
+        let third = buffers.open(editing("charlie").editing);
+        assert_ne!(
+            third, first,
+            "a reopened buffer is a new buffer: ids come off the counter, so a \
+             stale one refuses rather than resolving to whatever took its place"
+        );
+    }
+
+    /// **A pane names a buffer; it does not contain one.** Swapping a file into
+    /// a pane is a write to one field, and the buffer that left is still in
+    /// `Buffers` with its history intact — which is what `:bnext` and a second
+    /// split showing the same file both need, and neither could have while
+    /// `Editing` *was* the pane.
+    #[test]
+    fn swapping_a_buffer_into_a_pane_leaves_the_one_that_left_open() {
+        let (mut buffers, first) = Buffers::new(editing("alpha").editing);
+        let second = buffers.open(editing("bravo").editing);
+        let (mut panes, only) = Panes::new(Pane::new(first));
+
+        panes.focused_mut().buffer = Some(second);
+
+        assert_eq!(panes.focus, only, "the pane is the same pane");
+        assert_eq!(
+            buffers.at_mut(first).editor.get_content(),
+            "alpha",
+            "the buffer that left the pane is still open, with its rope"
+        );
+        assert_eq!(
+            buffers
+                .at_mut(panes.focused_mut().buffer.expect("the pane holds one"))
+                .editor
+                .get_content(),
+            "bravo"
+        );
+    }
+
     /// **Two buffers, one store**, which is what step 4b's `Shell` makes
     /// structural rather than remembered.
     ///
@@ -11776,7 +11986,7 @@ mod tests {
         let theme = super::builtin("phosphor-dark").expect("a shipped theme");
         let directory = scratch("one-store");
         let mut shell = shell();
-        let mut pane = Pane::new();
+        let mut pane = Pane::new(BufferId(0));
 
         for name in ["alpha.txt", "beta.txt"] {
             let file = directory.join(name);
@@ -11817,11 +12027,11 @@ mod tests {
         let mut shell = shell();
         let mut narrow = Pane {
             area: Rect::new(0, 0, 24, 10),
-            ..Pane::new()
+            ..Pane::new(BufferId(0))
         };
         let mut wide = Pane {
             area: Rect::new(0, 0, 200, 10),
-            ..Pane::new()
+            ..Pane::new(BufferId(0))
         };
 
         let in_narrow = editing
@@ -11848,7 +12058,7 @@ mod tests {
                 Some(file.clone()),
                 std::rc::Rc::new(std::cell::Cell::new(true)),
             ),
-            pane: Pane::new(),
+            pane: Pane::new(BufferId(0)),
             shell: shell(),
         };
         let (mut layer, _host) = booted();

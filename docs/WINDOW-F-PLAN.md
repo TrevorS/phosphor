@@ -133,9 +133,17 @@ The load-bearing step, split three ways because as a single commit it is unbisec
   **`Editing::text` needed an explicit lifetime**, which is the one thing here that was not mechanical: it returns an `EditorText<'_>` borrowing the editor *and* the store, and once the store moved to the shell those are two different owners. `fn text<'a>(&'a self, cx: &'a Cx<'_>) -> EditorText<'a>` ties them to the shorter.
 
   **34 call sites: 9 production and 25 in the test module** — the plan's count, and it held. The 25 cost one edit rather than 25, because step 4a landed `Bench` for exactly this.
-- **4c — the maps.** `Buffers { map: BTreeMap<BufferId, Editing>, next }` and `Panes { tree: PaneTree, map: BTreeMap<PaneId, Pane>, focus, next }`, both with one entry. `PaneTree` is split from the `BTreeMap<PaneId, Pane>` deliberately so `&PaneTree` and `&mut Pane` borrow at once. **Index by id from the first line, never by position** — `BufferId` and `PaneId` are already declared (`crates/phosphor-core/src/request.rs:52-55`, and `PaneId`'s doc already reads *"A pane in the split tree (`T088`)"*), and `close-pane` invalidates positions the first time it runs.
+- **4c — the maps. DONE.** `Buffers { map: BTreeMap<BufferId, Editing>, next }` and `Panes { map: BTreeMap<PaneId, Pane>, focus, next }`, both with one entry, and `Pane` gains the `buffer: Option<BufferId>` that 4a could not give it. **Index by id from the first line, never by position** — `BufferId` and `PaneId` were already declared, and `PaneId`'s doc already read *"A pane in the split tree (`T088`)"*.
+
+  **`PaneTree` is not in it.** The plan splits the tree from the map deliberately, so `&PaneTree` and `&mut Pane` borrow at once — that is the right shape and stays the plan. But a tree over one pane is a `Leaf` plus a `Split` variant nothing constructs, which is the third time in this step that a field or an arm had no reader yet. It lands in step 11, with the split verbs that give it something to describe.
+
+  **The loop resolves focus → pane → buffer by id, once per pass**, rather than holding a binding across the loop. There is one of each, so it resolves to the same two things every time; what it buys is that the shape of the resolution is already the one N panes need, and nothing below that line can reach a buffer except through the pane showing it. 101 production `editing.` sites did not move, because the local is now `&mut Editing` from the map rather than an owned value.
+
+  **Both `next` counters had to earn their reader**, and the way they earned it is the design that matters: `Buffers::open` and `Panes::open` are the one place an id is minted, off the counter and never off `map.len()`. Those two agree exactly until the first `close-buffer`, after which `len()` hands out an id that is already taken — the failure being designed against, written as the obvious line somebody reaches for.
 
 Behaviour is provably identical because there is still one of everything.
+
+**One `expect` is knowingly left, and step 11 removes it.** The loop reads `pane.buffer` and expects a buffer to be there. `Option<BufferId>` is `None` for a pane holding the transcript or a claude-authored view tree, and there is no such pane until step 11 — so the `None` arm is a question this step cannot answer rather than one it ducked. The message says so at the call.
 
 **Verification:** `just gate` green after each of 4a/4b/4c. `Buffers`/`Panes` are plain structs, so unit tests can construct two entries while the binary makes one — that is what makes steps 6-9 testable before any UI exists.
 
@@ -151,6 +159,13 @@ Behaviour is provably identical because there is still one of everything.
 - `two_buffers_place_their_anchors_in_one_store` — two buffers, two files, one anchor each, and the count is asserted on the *session's* store. This is what `Shell` makes structural: an arm cannot reach anything except the session's, so a constructor cannot hand a buffer the wrong one.
 
 The harness paid for itself exactly as predicted. `Bench` gained a third field and its two methods build the `Cx`; the twenty-five call sites did not move. The one wrinkle was `Bench::text`, which forwarded to `Editing::text` and so demanded the whole context — two `&mut` borrows for a read, which turned `editing.act(.. editing.text() ..)` into a double borrow. It builds the `EditorText` from its own three fields now and takes `&self`, which is what a read should have asked for.
+
+**4c's verification, as run.** `just gate` green, 1,394 tests — the 1,392 before it unchanged, plus two that construct two entries while the binary makes one, which is what the whole step is for:
+
+- `a_closed_buffer_does_not_hand_its_id_to_the_next_one` — two buffers, remove the first, and the second's id still names the second buffer. That is the assertion a `Vec` and a `usize` fail: every held index shifts by one, silently and with no type error. Then a third is opened and does not reuse the first's id.
+- `swapping_a_buffer_into_a_pane_leaves_the_one_that_left_open` — a pane names a buffer and does not contain one, so the swap is a write to one field and the departing buffer keeps its rope. This is what `:bnext` and a second split on one file both need, and neither could have while `Editing` was the pane.
+
+**Step 4 is complete: `e2ce0db` (4a), `dbd87ce` (4b), and this one.**
 
 ### Step 5 — The buffer-swap reset list, and a real bug fix
 
