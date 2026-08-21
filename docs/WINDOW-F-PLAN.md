@@ -327,6 +327,14 @@ Two panes on one buffer means two `wrap_to` widths on one `Editor`; the last one
 
 **Verification:** unit tests on `PaneTree::layout` for one, two and three panes including odd widths. Golden frames and tapes unchanged at one pane.
 
+> **11a DONE — the layout half.** `PaneTree::layout(area) -> Vec<(PaneId, Rect)>`, and the loop writes it into every `Pane::area` rather than only the focused one. A pane that was never focused held `Rect::ZERO`, and a scroll measured against zero pages by no rows at all.
+>
+> **The halves tile exactly**: the far side takes what the near side left, rather than both rounding their own share, because two halves that each compute `width * share / 100` leave a one-column gap at odd widths — and a gap is a column nothing owns, nothing draws and nothing clears. Pressed with that defect planted; it fails at width 81.
+>
+> **No separator column.** A divider between panes is a drawing decision and Design Language's to make; `layout` answers where the panes *are*, and inventing a gutter in the one place that cannot see a theme would put the decision in the wrong hands.
+>
+> **11b is the draw half and is not done**: splitting the prep block per-pane/per-buffer, `Painted` holding the buffer map, and `Resources::editor`/`state_marks` becoming real lookups. That is the change that lets two panes *draw*, and it is the one ruling (a)'s `viewport` rides in on — the door gains `viewport(PaneId)` there, which is where its reader finally exists.
+
 ### Step 12 — Retire the refusals and the prose that names them, then tick
 
 **Files:** `crates/phosphor/src/main.rs`, `crates/phosphor/tests/loop_pty.rs`, `crates/phosphor-ui/tests/golden_frames.rs`, `scripts/lint-action-arms.sh`, `docs/TASKS.md`, `docs/TEAM.md`

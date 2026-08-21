@@ -2548,7 +2548,14 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // ratatui answers with a `Resize` event and the next pass corrects.
         let size = term.size()?;
         let mut geometry = lay_out(Rect::new(0, 0, size.width, size.height));
-        panes.at_mut(focus).area = editor_area(geometry.body);
+        // **Every pane, from the tree.** This laid out the focused one and
+        // left the rest holding whatever area they were last given — which is
+        // the frame before a resize, or `Rect::ZERO` for a pane that has never
+        // been focused. A scroll measured against a stale rect pages by the
+        // wrong number of rows, and one measured against zero pages by none.
+        for (id, area) in panes.tree.layout(editor_area(geometry.body)) {
+            panes.at_mut(id).area = area;
+        }
         // `init.scm` sets `soft-wrap` at boot and `(set-option! …)` can change
         // it at the REPL, so it is read per frame rather than once: the option
         // is the editor layer's, and the flag is the override.
@@ -5664,6 +5671,43 @@ impl Axis {
     }
 }
 
+/// Cuts `area` in two along `axis`, giving the near side `share` percent.
+///
+/// The far side takes the remainder rather than computing its own share, which
+/// is what makes the two tile exactly at any width.
+fn divide(area: Rect, axis: Axis, share: u16) -> (Rect, Rect) {
+    let total = match axis {
+        Axis::Columns => area.width,
+        Axis::Rows => area.height,
+    };
+    let near = u16::try_from(u32::from(total) * u32::from(share) / 100).unwrap_or(total);
+    let far = total.saturating_sub(near);
+    match axis {
+        Axis::Columns => (
+            Rect {
+                width: near,
+                ..area
+            },
+            Rect {
+                x: area.x.saturating_add(near),
+                width: far,
+                ..area
+            },
+        ),
+        Axis::Rows => (
+            Rect {
+                height: near,
+                ..area
+            },
+            Rect {
+                y: area.y.saturating_add(near),
+                height: far,
+                ..area
+            },
+        ),
+    }
+}
+
 /// An even split, which is what every new one is.
 const EVEN: u16 = 50;
 
@@ -5689,6 +5733,40 @@ impl PaneTree {
                 let mut found = first.leaves();
                 found.extend(second.leaves());
                 found
+            }
+        }
+    }
+
+    /// Where each pane goes, given the space they all share.
+    ///
+    /// **The one place this structure meets a rectangle**, and it takes one
+    /// rather than storing one: the tree is about arrangement, and a tree that
+    /// remembered cells would be wrong the moment the terminal resized. Every
+    /// other method here is testable with no geometry at all because of that,
+    /// and this one is testable with nothing but geometry.
+    ///
+    /// **The halves tile exactly** — the second takes what the first left,
+    /// rather than both rounding the share independently. Two panes that each
+    /// computed `width * share / 100` would leave a one-column gap at odd
+    /// widths, and a gap is a column nothing owns and nothing clears.
+    ///
+    /// There is no separator column. A divider between panes is a drawing
+    /// decision and Design Language's to make; this answers where the panes
+    /// *are*, and inventing a gutter here would put that decision in the one
+    /// place that cannot see a theme.
+    fn layout(&self, area: Rect) -> Vec<(PaneId, Rect)> {
+        match self {
+            Self::Leaf(id) => vec![(*id, area)],
+            Self::Split {
+                axis,
+                first,
+                second,
+                first_share,
+            } => {
+                let (near, far) = divide(area, *axis, *first_share);
+                let mut placed = first.layout(near);
+                placed.extend(second.layout(far));
+                placed
             }
         }
     }
@@ -12854,6 +12932,74 @@ mod tests {
             ids.push(fresh);
         }
         (tree, ids)
+    }
+
+    /// **The panes tile the frame exactly, at any width.**
+    ///
+    /// The far side of a divider takes what the near side left, rather than
+    /// both rounding their own share. Two halves that each computed
+    /// `width * share / 100` would leave a one-column gap at odd widths — and a
+    /// gap is a column nothing owns, nothing draws and nothing clears.
+    #[test]
+    fn a_layout_tiles_the_frame_with_no_gap_and_no_overlap() {
+        let frame = |width: u16, height: u16| Rect::new(0, 0, width, height);
+
+        for width in [80u16, 81, 1, 0, 3] {
+            let (tree, ids) = row(3);
+            let placed = tree.layout(frame(width, 24));
+
+            assert_eq!(placed.len(), 3, "every leaf is placed");
+            assert_eq!(
+                placed.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+                ids,
+                "in the tree's own order, which is left to right"
+            );
+            assert_eq!(
+                placed
+                    .iter()
+                    .map(|(_, at)| u32::from(at.width))
+                    .sum::<u32>(),
+                u32::from(width),
+                "the widths add up to the frame at width {width} — the \
+                 assertion that fails the moment each side rounds its own share"
+            );
+
+            // Walking left to right, each pane starts exactly where the last
+            // one ended.
+            let mut edge = 0u16;
+            for (id, at) in &placed {
+                assert_eq!(at.x, edge, "{id:?} starts where its neighbour ended");
+                assert_eq!(at.height, 24, "a column split does not change height");
+                edge = edge.saturating_add(at.width);
+            }
+        }
+    }
+
+    /// **A row split divides height, and a resize moves the divider it names.**
+    ///
+    /// The two axes are one function with the roles swapped, so this is the
+    /// half that would silently keep working if `divide` cut the wrong way.
+    #[test]
+    fn a_row_split_divides_height_and_follows_the_share() {
+        let mut tree = PaneTree::Leaf(PaneId(0));
+        assert!(tree.split(PaneId(0), PaneId(1), Direction::Down));
+
+        let placed = tree.layout(Rect::new(0, 0, 80, 24));
+        assert_eq!(placed[0].1, Rect::new(0, 0, 80, 12));
+        assert_eq!(
+            placed[1].1,
+            Rect::new(0, 12, 80, 12),
+            "the lower pane starts where the upper one ended, full width"
+        );
+
+        assert!(tree.resize(PaneId(0), 25));
+        let placed = tree.layout(Rect::new(0, 0, 80, 24));
+        assert_eq!(placed[0].1.height, 18, "75% of 24");
+        assert_eq!(
+            placed[1].1.y, 18,
+            "and the one below moves down by exactly what the one above gained"
+        );
+        assert_eq!(placed[0].1.height + placed[1].1.height, 24);
     }
 
     /// **A split puts the new pane on the side the direction names.**
