@@ -756,6 +756,27 @@ enum Intent {
     /// is expressible now, so *"close them all"* and *"close the focused one"*
     /// are two verbs rather than one under two names.
     CloseAllFloats,
+    /// An Action for the loop to apply to the focused buffer (`T052`).
+    ///
+    /// **The one intent that carries a mutation rather than a request**, and it
+    /// exists because there are two appliers in this program and the VM can
+    /// only reach one of them. [`AppHost::apply`] is the layer's — the runtime,
+    /// the floats, the store — and [`Editing::act`] is the loop's, holding the
+    /// rope. A key reaches the second; scheme could not reach it at all, so
+    /// every buffer-domain capability typed at `:repl` answered *"not built
+    /// yet"* including ones that shipped three phases ago. `T052`'s
+    /// `apply-edits` is the first capability whose acceptance says it must
+    /// **work** from Steel, which is what made the gap a defect rather than a
+    /// shape.
+    ///
+    /// **The outcome comes back as a notice, not as the caller's answer**, and
+    /// that is the cost of the arrangement rather than an oversight.
+    /// [`Intent::OpenPicker`] has the same one: `AppHost::apply` answers the
+    /// scheme caller `done` because the loop has not run yet, so a refusal
+    /// arrives on the notice row a frame later. Boxed because an [`Action`] is
+    /// the largest thing this enum carries and every other variant would grow
+    /// to match it.
+    Act(Box<Action>),
 }
 
 /// The editor as Steel is allowed to see it.
@@ -1594,6 +1615,21 @@ impl Host for AppHost {
                 done(Value::Null)
             }
             Action::Runtime(RuntimeAction::PersistForm { form }) => self.persist(form),
+            // `T052` — **the door into the loop's applier**, and deliberately
+            // one capability wide.
+            //
+            // A blanket `Action::Buffer(_)` arm here would be worse than the
+            // gap it closes: every buffer capability the loop has not armed
+            // would stop answering `#refused · not built yet — Txxx builds it`
+            // and start answering `#done` for something that never happened.
+            // The honest refusal is what the CLI and MCP doors are *for* at
+            // this phase, and `parity.rs` reads it. So this is the one
+            // capability whose acceptance says it must work from Steel, and
+            // the next one adds its own line.
+            Action::Buffer(BufferAction::ApplyEdits { .. }) => {
+                self.ask(Intent::Act(Box::new(request.action.clone())));
+                done(Value::Null)
+            }
             // `T093` — the four float verbs, and the registry `OPEN-QUESTIONS.md`
             // §43 found missing. All four post an [`Intent`] rather than acting:
             // composing a surface runs scheme, and a binding is already inside
@@ -3970,6 +4006,19 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 Intent::OpenPicker(id, query) => {
                     shell.picker = Some(PickerSession::open(SourceId(id), query, &shell.wake));
                     editing.open_picker = true;
+                }
+                // `T052`. Applied through `act` and not `apply`, because `act`
+                // is the applier that holds a rope — which is the whole reason
+                // this variant exists. The focused buffer, because that is what
+                // *"the buffer"* means to a caller that named none; a capability
+                // that wants to say which one takes a `buffer` parameter and is
+                // routed by `Buffers::named` before it gets here.
+                Intent::Act(action) => {
+                    let outcome =
+                        editing.act(&mut Cx::new(held, focus, &mut panes, &mut shell), &action);
+                    if let Some(said) = phosphor_steel::answer::trouble(&outcome) {
+                        notice = Some(said);
+                    }
                 }
                 // **Dropping the rows is the whole of invalidation**, because
                 // nothing caches them between opens: `Layer::source` runs the
@@ -7321,26 +7370,48 @@ impl Editing {
                 done()
             }
             // `T052` — **the shape an agent writes through.** Its row calls it
-            // *"the primitive `T029`'s log replays"*, and that is what the
-            // grouping is for: an agent that rewrote nine call sites is one `u`
-            // away from before it, not nine.
+            // *"the primitive `T029`'s log replays"*, and one `u` undoing the
+            // whole batch is what makes it that shape: an agent that rewrote
+            // nine call sites is one keystroke away from before it, not nine.
             //
-            // **One `begin`/`commit` around the loop is the whole of the undo
-            // group**, and no new machinery: `Editing::begin` is depth-counted
-            // already, so each `splice` inside sees depth 2 and returns early,
-            // and `UndoTree::record` appends into the group this opened. The
-            // batch becomes one `Change` with N edits — which is the same shape
-            // `UndoTree::record_batch` builds, reached through the path every
-            // other edit in this file takes rather than through a second one.
+            // **The undo group is free here, and saying otherwise was the
+            // first version of this comment.** It claimed the `begin`/`commit`
+            // below was *"the whole of the undo group"*; removing the pair and
+            // re-running the test proved it is not — the test still passed.
+            // The boundary belongs to the input machine: `Timeline::close`'s
+            // own doc says *"the group boundary is the machine's —
+            // `History::CommitUndoGroup`, emitted at exactly the three places
+            // vim closes one"*, so every edit made while applying **one**
+            // Action is already one group, however many `splice` calls it
+            // takes. This arm gets that for nothing, and the test asserts it
+            // because it is `T052`'s acceptance rather than because this code
+            // causes it.
+            //
+            // What the pair *does* buy is one fork transaction and one
+            // highlight-cache reset for the batch instead of N:
+            // `Editing::begin` is depth-counted, so each `splice` inside sees
+            // depth 2 and returns early. That is worth having and is not what
+            // the acceptance is about.
             Action::Buffer(BufferAction::ApplyEdits { edits }) => {
                 // **Last first, and this is not a preference.** The spans are
-                // positions in the document *as the agent read it*; applying
-                // the first edit moves every position after it, so a
-                // front-to-back walk writes the second edit at an offset that
-                // stopped being true one line earlier. Descending by start
-                // offset keeps every span that has not been applied yet valid,
-                // which is the same rule LSP puts on a `WorkspaceEdit` and for
-                // the same reason.
+                // positions in the document *as the agent read it*, and
+                // applying one moves every position after it. Descending by
+                // start offset keeps every span not yet applied valid, which is
+                // the same rule LSP puts on a `WorkspaceEdit` and for the same
+                // reason.
+                //
+                // **What that costs is narrower than it first looks, and the
+                // test had to be rewritten to find it.** A [`Span`] is
+                // line-and-column, not an offset, and `Editing::range` resolves
+                // it against the document as it stands — so two edits on
+                // *different* lines survive either order as long as neither
+                // changes how many lines there are. The first version of
+                // `apply_edits_is_one_undo_group` used exactly that pair and
+                // **passed with the sort planted front-to-back**. Two edits on
+                // one line is where the order is load-bearing: replacing five
+                // columns with three moves everything after it on that row, and
+                // the second edit lands three columns late. That is the pair
+                // the test uses now.
                 //
                 // Stable, so two edits at one offset keep the order the agent
                 // declared them in — *"the edits, in order"* is the row's own

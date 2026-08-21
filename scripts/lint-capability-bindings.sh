@@ -107,6 +107,10 @@ EMITTED = {
     "show-unknown-key-hint": "the loop raises it when a key is bound to nothing",
     # The agent's door. A verb whose point is that something else calls it.
     "declare-regions": "the agent's door — `T041`'s whole subject",
+    # `T052`. The batch verb, and its row says so: *"the shape an agent writes
+    # through"*. Nobody types a list of spans and replacement texts; an agent
+    # emits one over MCP, and `Intent::Act` is what carries it to the rope.
+    "apply-edits": "the agent's door — the batch an agent writes through",
     "drop-regions": "the agent's door",
     "mark-unseen": "the agent's door",
     "reanchor": "the agent's door",

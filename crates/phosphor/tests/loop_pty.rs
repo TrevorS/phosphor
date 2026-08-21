@@ -3203,6 +3203,92 @@ mod driven {
         );
     }
 
+    /// **`T052`: `apply-edits` is a batch, and one `u` is all of it.**
+    ///
+    /// The clause `T052`'s *Done when* singles out — *"a batch applied as one
+    /// undo group, which is the shape an agent writes through"* — pressed in
+    /// the running binary. An agent that rewrote two call sites is one keystroke
+    /// away from before it, not two.
+    ///
+    /// **The undo half of this passes for free, and that was measured rather
+    /// than assumed.** Deleting the arm's `begin`/`commit` pair and re-running
+    /// left it green: the group boundary is the input machine's
+    /// (`History::CommitUndoGroup`, per `Timeline::close`), so every edit made
+    /// while applying one Action is already one group. The assertion stays
+    /// because it is the task's acceptance — a future change to where the
+    /// boundary is drawn has to keep it true — but it is not evidence about
+    /// this arm, and a test whose failure mode nobody has seen is worth saying
+    /// so about.
+    ///
+    /// **It is also the test that proves scheme reaches the rope.** The first
+    /// version of this failed on `#refused · not built yet — T052 builds it`
+    /// with the arm already written: `AppHost::apply` is the VM's applier and
+    /// `Editing::act` is the loop's, and nothing joined them, so no
+    /// buffer-domain capability had ever been reachable from `:repl`.
+    /// `Intent::Act` is that join.
+    ///
+    /// **The two edits are on one line, and that is the whole of what makes
+    /// the ordering testable.** A `Span` is line-and-column and is resolved
+    /// against the document as it stands, so two edits on *different* lines
+    /// survive either order — the first draft of this test used exactly that
+    /// pair and **passed with the sort planted front-to-back**. Replacing five
+    /// columns with three moves everything after it on that row, so a
+    /// front-to-back walk writes the second edit three columns late: a wrong
+    /// *result* rather than a crash, which is why this asserts the text.
+    #[test]
+    fn apply_edits_is_one_undo_group() {
+        let scratch = Scratch::new("apply-edits");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha bravo\ncharlie\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+
+        // `alpha bravo` becomes `one two` — two edits on one row, declared in
+        // reading order, which is the order an agent produces them in and the
+        // order that is wrong to apply in. `alpha` is columns 1..6 and `bravo`
+        // is columns 7..12 **of the line as it was read**; once `alpha` is
+        // three characters, `bravo` is at 5..10 and a front-to-back walk
+        // writes over the wrong three columns.
+        let form = concat!(
+            "(apply-edits! (list ",
+            "(hash \"span\" (hash \"start\" (hash \"line\" 1 \"column\" 1) ",
+            "\"end\" (hash \"line\" 1 \"column\" 6)) \"text\" \"one\") ",
+            "(hash \"span\" (hash \"start\" (hash \"line\" 1 \"column\" 7) ",
+            "\"end\" (hash \"line\" 1 \"column\" 12)) \"text\" \"two\")))\r"
+        );
+        // `#ok`, not `#done` with a value: `AppHost::apply` answers the
+        // scheme caller the moment it posts the intent — see `Intent::Act` on
+        // why the real outcome arrives on the notice row instead.
+        editor.press_until(form.as_bytes(), "#ok");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        let edited = grid_of(&editor.after(b"0"));
+        assert!(
+            edited.contains("one two"),
+            "both edits landed, in the right columns — a front-to-back walk \
+             writes the second one three columns late; grid was: {edited}"
+        );
+        assert!(
+            !edited.contains("alpha") && !edited.contains("bravo"),
+            "and none of the old row survives; grid was: {edited}"
+        );
+
+        // **One `u`.** Two undo steps would leave half the row rewritten.
+        let undone = grid_of(&editor.after(b"u"));
+        editor.quit();
+        assert!(
+            undone.contains("alpha bravo"),
+            "one `u` undid the whole batch; grid was: {undone}"
+        );
+        assert!(
+            !undone.contains("one") && !undone.contains("two"),
+            "and not just half of it — the batch is one undo group; grid was: \
+             {undone}"
+        );
+    }
+
     /// **`T050`: a session attaches and a turn completes — in the running
     /// binary.**
     ///

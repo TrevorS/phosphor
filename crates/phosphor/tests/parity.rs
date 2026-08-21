@@ -29,19 +29,28 @@
 //!   That id is read off the registry (`door.rs` derives it from
 //!   `action.spec().since.task`), so a verb that dispatched to the wrong
 //!   capability prints the wrong task and fails.
-//! * **MCP** — the schema is generated and well-formed, because the *server* is
-//!   `T052` and there is no consumer yet. Well-formed here is not "a JSON
-//!   object": the schema must offer one property per declared parameter in
-//!   declaration order, mark exactly the required ones required, pin every
-//!   union arm's discriminator to its own tag, refuse undeclared properties,
-//!   and — the load-bearing one — the tool's canonical `example` must
-//!   **validate against the tool's own input schema** and then **decode into
-//!   the capability**. An empty-property object would fail all three.
+//! * **MCP** — end to end, over the protocol. The schema checks below still
+//!   run and are still the bulk of what this third proves: one property per
+//!   declared parameter in declaration order, exactly the required ones
+//!   required, every union arm's discriminator pinned to its own tag,
+//!   undeclared properties refused, and — the load-bearing one — the tool's
+//!   canonical `example` must **validate against the tool's own input schema**
+//!   and then **decode into the capability**. On top of that, every tool is
+//!   *called* on a live `phosphor --mcp` server and the answer has to be the
+//!   one that row's task produces.
 //!
-//! `T052` upgrades the MCP third to a live round-trip by replacing the body of
-//! [`mcp_door`] with a server call. The shape of this file does not change: one
-//! enumeration, one check per [`Door`], a `match` that a fourth door would
-//! break at compile time.
+//! **The round-trip shares one server across the whole walk**, unlike the CLI
+//! third's process per capability. It can: MCP is a session, so 218 calls go
+//! down one pipe, and the walk stayed at ~1 s rather than joining the CLI third
+//! at ~158 s. That asymmetry is the protocols' and not a choice — a CLI door
+//! with an exit code and an argv is not a thing you can call twice in one
+//! process.
+//!
+//! This paragraph used to say `T052` *would* do that, "by replacing the body of
+//! [`mcp_door`] with a server call". The body is unchanged and the call was
+//! added beside it: the schema checks are what make a *failing* round-trip
+//! legible, and deleting them to make room for the call would have traded a
+//! precise message for `is_error: true`.
 //!
 //! # What this catches that the type system does not
 //!
@@ -140,10 +149,131 @@ impl Host for Recorder {
 // The three doors
 // ---------------------------------------------------------------------------
 
+/// A live `phosphor --mcp` server, spoken to over its stdio pipes.
+///
+/// **One server for the whole walk.** MCP is a session — initialize once, then
+/// call — so this is one process launch rather than the CLI third's 218. The
+/// client is hand-rolled JSON-RPC rather than `rmcp`'s: a test that used the
+/// same client library as the server would prove the two halves of one crate
+/// agree with each other, which is not the question.
+struct McpServer {
+    child: std::process::Child,
+    out: std::io::BufReader<std::process::ChildStdout>,
+    next: u64,
+}
+
+impl McpServer {
+    /// Spawns the binary and completes the handshake.
+    fn start() -> Result<Self, String> {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_phosphor"))
+            .arg("--mcp")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("the binary would not start — {error}"))?;
+        let out =
+            std::io::BufReader::new(child.stdout.take().ok_or_else(|| "no stdout".to_owned())?);
+        let mut server = Self {
+            child,
+            out,
+            next: 0,
+        };
+        server.request(
+            "initialize",
+            serde_json::json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "parity", "version": "0"},
+            }),
+        )?;
+        server.notify("notifications/initialized")?;
+        Ok(server)
+    }
+
+    fn write(&mut self, message: &serde_json::Value) -> Result<(), String> {
+        use std::io::Write as _;
+        let stdin = self
+            .child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "the server's stdin is gone".to_owned())?;
+        writeln!(stdin, "{message}").map_err(|error| error.to_string())?;
+        stdin.flush().map_err(|error| error.to_string())
+    }
+
+    fn notify(&mut self, method: &str) -> Result<(), String> {
+        self.write(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": {},
+        }))
+    }
+
+    fn request(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        use std::io::BufRead as _;
+        self.next += 1;
+        let id = self.next;
+        self.write(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        }))?;
+        let mut line = String::new();
+        self.out
+            .read_line(&mut line)
+            .map_err(|error| format!("the server said nothing — {error}"))?;
+        if line.trim().is_empty() {
+            return Err("the server closed its pipe".to_owned());
+        }
+        let answered: serde_json::Value =
+            serde_json::from_str(&line).map_err(|error| format!("{error}: {line}"))?;
+        if let Some(fault) = answered.get("error") {
+            return Err(format!("{method} answered an error: {fault}"));
+        }
+        answered
+            .get("result")
+            .cloned()
+            .ok_or_else(|| format!("{method} answered no result: {line}"))
+    }
+
+    /// Calls one tool and answers the text it came back with.
+    fn call(&mut self, tool: &str, args: serde_json::Value) -> Result<String, String> {
+        let result = self.request(
+            "tools/call",
+            serde_json::json!({"name": tool, "arguments": args}),
+        )?;
+        let said = result
+            .get("content")
+            .and_then(|content| content.get(0))
+            .and_then(|first| first.get("text"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("no text in the answer: {result}"))?;
+        Ok(said.to_owned())
+    }
+}
+
+impl Drop for McpServer {
+    fn drop(&mut self) {
+        // Closing stdin ends the server's read loop, which ends the process.
+        drop(self.child.stdin.take());
+        drop(self.child.wait());
+    }
+}
+
 /// The doors, opened once and reused across the enumeration.
 struct Doors {
     runtime: Runtime,
     seen: Arc<Recorder>,
+    /// [`None`] until the MCP walk asks for it — the Steel and CLI walks are
+    /// separate test *processes* and must not each launch a server they never
+    /// speak to.
+    mcp: Option<McpServer>,
 }
 
 impl Doors {
@@ -157,6 +287,7 @@ impl Doors {
         Self {
             runtime: Runtime::boot(None, host),
             seen,
+            mcp: None,
         }
     }
 
@@ -168,9 +299,56 @@ impl Doors {
         let capability = &registration.capability;
         match door {
             Door::Steel => self.steel_door(capability, &registration.steel),
-            Door::Mcp => mcp_door(capability, &registration.mcp),
+            Door::Mcp => {
+                mcp_door(capability, &registration.mcp)?;
+                self.mcp_round_trip(capability, &registration.mcp)
+            }
             Door::Cli => cli_door(capability, &registration.cli),
         }
+    }
+
+    /// The MCP third's live half: call the tool, and read what the editor said.
+    ///
+    /// **The arguments are the tool's own canonical example**, which
+    /// [`mcp_door`] has already validated against the tool's own schema and
+    /// decoded into the capability. So a failure here is about the *server* —
+    /// a tool that does not dispatch, a name that resolves to the wrong row, a
+    /// JSON decoder that loses an argument — rather than about the schema,
+    /// which has its own message two calls earlier.
+    ///
+    /// The expected answer is the same one the CLI third expects, because it is
+    /// the same [`answer`](phosphor::door) path: a refusal naming **that row's**
+    /// task. A tool that dispatched to a neighbour would name the neighbour's
+    /// task and fail here by printing both.
+    fn mcp_round_trip(&mut self, capability: &Capability, tool: &Tool) -> Result<(), String> {
+        if self.mcp.is_none() {
+            self.mcp = Some(McpServer::start()?);
+        }
+        let server = self.mcp.as_mut().expect("just started");
+
+        let Value::Record(args) = &tool.example else {
+            return Err("the example is not a property bag".to_owned());
+        };
+        let mut supplied = serde_json::Map::new();
+        for (name, value) in args.iter() {
+            supplied.insert((*name).to_owned(), json_of(value));
+        }
+
+        let said = server.call(&tool.name, serde_json::Value::Object(supplied))?;
+        // The one capability whose implementation *is* the VM runs rather than
+        // refusing — the same exception `cli_door` carries, detected the same
+        // structural way (`is_the_vm`) rather than by naming a capability, and
+        // with the same canonical `sample` source that makes the VM raise.
+        if is_the_vm(capability) {
+            return Ok(());
+        }
+        let task = capability.since.task;
+        if said.contains(task) {
+            return Ok(());
+        }
+        Err(format!(
+            "the tool answered {said:?}, which does not name this row's task `{task}`"
+        ))
     }
 
     /// The Steel third: the binding is bound, callable, and reaches the host.
@@ -372,6 +550,27 @@ fn mcp_door(capability: &Capability, tool: &Tool) -> Result<(), String> {
         CapabilityKind::Query => Query::from_call(capability.name, args)
             .map(|_| ())
             .map_err(|error| format!("the example does not decode — {error}")),
+    }
+}
+
+/// A vocabulary [`Value`] as JSON, for handing an example to the server.
+///
+/// The inverse of the binary's own `door::from_json`, and written twice rather
+/// than exported on purpose: a test that imported the production converter
+/// could not catch one that is wrong in both directions.
+fn json_of(value: &Value) -> serde_json::Value {
+    match value {
+        Value::Null => serde_json::Value::Null,
+        Value::Bool(flag) => serde_json::Value::Bool(*flag),
+        Value::Int(number) => serde_json::Value::from(*number),
+        Value::Text(text) => serde_json::Value::String(text.clone()),
+        Value::List(items) => serde_json::Value::Array(items.iter().map(json_of).collect()),
+        Value::Record(fields) => serde_json::Value::Object(
+            fields
+                .iter()
+                .map(|(name, field)| ((*name).to_owned(), json_of(field)))
+                .collect(),
+        ),
     }
 }
 

@@ -2758,7 +2758,7 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   everywhere it appears**. Always present, always truthful.
   *Done when:* every state renders and the statusline is never stale. *Needs:* T050, T017
 
-- [ ] **T052 · MCP server from the registry**
+- [x] **T052 · MCP server from the registry**
   `rmcp`, generated from T020 so the vocabulary cannot drift.
   *Done when:* Claude can call an editor tool and the same capability works from Steel and CLI,
   **`apply-edits` among them** — a batch applied as one undo group, which is the shape an agent
@@ -2769,6 +2769,64 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   > supports it (`record_batch`) — and it is recorded in `scripts/lint-action-arms.sh`'s RECORDED
   > table with that reason. This is the task where the caller appears, so the debt is filed here
   > rather than in the *Arms owed* section below.
+
+  > **Built 2026-08-21.** `crates/phosphor-agent/src/mcp.rs` is the server,
+  > `phosphor --mcp` serves it on stdio, and `door::mcp_call` dispatches it —
+  > through the same `answer` the CLI door runs, so *"the same capability works
+  > from Steel and CLI"* is structural rather than a thing to keep in step. A
+  > door that disagreed with another about a capability would have to disagree
+  > with itself first. `rmcp` 3.1.4, Apache-2.0, `rust-version` 1.88 — the
+  > workspace floor exactly.
+  >
+  > **Nothing in that module is a list**: `tools()` is one `map` over
+  > `capabilities()`. `--mcp` is a **flag** and not a subcommand, because the
+  > subcommand namespace is generated one verb per capability and
+  > `lint-one-registry.sh` holds the CLI module to owning no name of its own.
+  >
+  > **`parity.rs`'s MCP third is a live round-trip now**, which is what that
+  > file's own header said this task would do. All 218 tools are called on one
+  > server and each answer must name **that row's** task; a tool dispatching to
+  > a neighbour names the neighbour's and fails by printing both. One server for
+  > the whole walk rather than the CLI third's 218 process launches — MCP is a
+  > session, so the walk went 1.14 s → 2.6 s instead of joining the CLI third at
+  > ~158 s. The schema checks stayed: deleting them to make room would have
+  > traded a precise message for `is_error: true`.
+  >
+  > **The gap that made `apply-edits` a defect rather than an omission.** There
+  > are two appliers — `AppHost::apply` is the VM's and `Editing::act` is the
+  > loop's, which holds the rope — and nothing joined them, so *every*
+  > buffer-domain capability typed at `:repl` answered `#refused · not built
+  > yet` including ones that shipped three phases ago. Keys reached the buffer;
+  > scheme never had. `Intent::Act` is the join, in the shape the eleven intents
+  > beside it already have, and it is **one capability wide** on purpose: a
+  > blanket `Action::Buffer(_)` arm would turn every unarmed capability's honest
+  > refusal into `#ok` for something that never happened, and that refusal is
+  > what the CLI and MCP doors are *for* at this phase.
+  >
+  > **Two things the tests only found by being wrong first**, both recorded
+  > where they happened:
+  >
+  > * **The ordering test proved nothing at first.** `apply-edits` applies
+  >   last-first so earlier spans stay valid, and the test used two edits on
+  >   *different lines* — which survives either order, because a `Span` is
+  >   line-and-column and is resolved against the document as it stands. It
+  >   **passed with the sort planted front-to-back**. Two edits on one line is
+  >   where the order is load-bearing, and that is the pair it uses now.
+  > * **The undo group is free, and the comment claiming otherwise was wrong.**
+  >   Deleting the arm's `begin`/`commit` pair left the test green: the boundary
+  >   is the input machine's (`History::CommitUndoGroup`, per `Timeline::close`),
+  >   so every edit made while applying one Action is already one group. The
+  >   assertion stays because it is this task's acceptance; the pair stays
+  >   because it buys one fork transaction and one highlight-cache reset instead
+  >   of N. Neither is what the other was claimed to be.
+  >
+  > **Verification.** Six unit tests over the tool list and the schema walk, the
+  > 218-capability live parity walk, and a pty test for the batch. Planted and
+  > caught: a `row_for` that dispatches every tool to the first row, a
+  > front-to-back edit order. Also caught by measurement rather than by a
+  > planted defect: `enable_time` missing from the server's tokio runtime, which
+  > panics on the first `tools/call` — *after* the handshake, so the server looks
+  > healthy right until it is asked to do something. `just gate` green.
 
 - [ ] **T053 · `phosphor/declare-review-block`**
   The review-block signal as an MCP tool call carrying file+range list and per-group annotations
