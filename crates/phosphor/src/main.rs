@@ -2496,7 +2496,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // What this editor is still owed an answer to — see `Outstanding`, which
     // is where the reason it counts rather than remembering the last request
     // is written down.
-    let mut outstanding = Outstanding::default();
+    // `T088`'s step 9: in-flight requests keyed by the buffer that asked.
+    let mut outstanding = Asking::default();
     // Whether the last key typed into the buffer while in insert mode. Set by
     // the key arm and read by the trigger below; a `bool` rather than a
     // re-derivation, because *"the edit stream moved"* is only knowable across
@@ -2918,7 +2919,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // parking is right: `due` survives the wait and is honoured on the pass
         // after the answer lands, which is the same re-arm the one-in-flight
         // gate has always had.
-        let deadline = if outstanding.awaiting(Lookup::Completion) {
+        let deadline = if outstanding.anyone_awaiting(Lookup::Completion) {
             None
         } else {
             due
@@ -3127,7 +3128,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     notice = Some(phosphor_steel::answer::why(&Refusal::NoSuchTarget).to_owned());
                     continue;
                 };
-                if outstanding.answers(&posted.action) {
+                if outstanding.at(named).answers(&posted.action) {
                     // The user's own request coming back. Applied through
                     // `act` and not `apply`, for the reason `deliver` gives:
                     // a reveal is `View::Scroll`, and nothing that is not the
@@ -3433,7 +3434,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             due = None;
         }
         if editing.lookup.is_none()
-            && !outstanding.awaiting(Lookup::Completion)
+            && !outstanding.at(held).awaiting(Lookup::Completion)
             && elapsed
             && let Some(language) = ready
             && (editing.prefix_len() >= floor
@@ -3466,7 +3467,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     let at = editing
                         .text(&Cx::new(held, focus, &mut panes, &mut shell))
                         .cursor();
-                    outstanding.sent(lookup);
+                    outstanding.at(held).sent(lookup);
                     let path = document.path.clone();
                     // **The word being completed goes with the request**, and
                     // it is read here rather than when the answer lands
@@ -3479,7 +3480,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         lookup,
                         path,
                         at,
-                        answering(lookup, at, prefix, &post),
+                        answering(lookup, at, prefix, held, &post),
                     );
                 }
                 // Not a failure and not silence: a second-tier buffer has no
@@ -4140,6 +4141,41 @@ struct Outstanding {
     hover: u32,
 }
 
+/// Every buffer's in-flight requests, by the buffer that asked (`T088`, step 9).
+///
+/// **[`Outstanding`] counted with no key at all** — three bare `u32`s for the
+/// whole session. With a second buffer open that is not an approximation but a
+/// wrong answer twice over: the insert-mode trigger's *"one request in flight
+/// at a time"* gate reads a count that a different file's request is holding
+/// open, so typing in B waits on A; and an answer for B is taken off A's count,
+/// so A's gate re-arms on an answer it never asked for.
+///
+/// Keyed, both stop being possible. The `Default` per entry is *"nothing in
+/// flight"*, which is the right answer for a buffer nobody has asked about yet.
+#[derive(Debug, Default)]
+struct Asking {
+    map: BTreeMap<BufferId, Outstanding>,
+}
+
+impl Asking {
+    /// This buffer's counts, created empty the first time it asks.
+    fn at(&mut self, buffer: BufferId) -> &mut Outstanding {
+        self.map.entry(buffer).or_default()
+    }
+
+    /// Whether **any** buffer is waiting on a `lookup`.
+    ///
+    /// The poll deadline is the session's — a parked `recv_until` is what stops
+    /// the loop spinning at full tilt for the length of a round trip, and an
+    /// answer for any buffer is an event that wakes it. So this one question is
+    /// deliberately not keyed, while the two that decide what to *do* are.
+    fn anyone_awaiting(&mut self, lookup: Lookup) -> bool {
+        self.map
+            .values_mut()
+            .any(|outstanding| outstanding.awaiting(lookup))
+    }
+}
+
 impl Outstanding {
     /// The counter `lookup` is answered out of.
     const fn slot(&mut self, lookup: Lookup) -> &mut u32 {
@@ -4205,7 +4241,13 @@ impl Outstanding {
 /// on it. Without it, a real server's answer — *the whole set that could go at
 /// this position*, which is what the protocol says a server sends — buries the
 /// code being typed into.
-fn answering(lookup: Lookup, at: Position, prefix: String, post: &Post) -> Insights {
+fn answering(
+    lookup: Lookup,
+    at: Position,
+    prefix: String,
+    buffer: BufferId,
+    post: &Post,
+) -> Insights {
     let post = Arc::clone(post);
     Arc::new(move |insight: Insight| {
         let action = match insight {
@@ -4215,33 +4257,33 @@ fn answering(lookup: Lookup, at: Position, prefix: String, post: &Post) -> Insig
                     .map(offered)
                     .collect(),
                 at,
-                buffer: None,
+                buffer: Some(buffer),
             },
             Insight::Signature(signature) => LspAction::IngestSignatureHelp {
                 signature: Some(signed(*signature)),
                 at,
-                buffer: None,
+                buffer: Some(buffer),
             },
             Insight::Hover(prose) => LspAction::IngestHover {
                 prose,
                 at,
-                buffer: None,
+                buffer: Some(buffer),
             },
             Insight::Nothing => match lookup {
                 Lookup::Completion => LspAction::IngestCompletions {
                     items: Vec::new(),
                     at,
-                    buffer: None,
+                    buffer: Some(buffer),
                 },
                 Lookup::SignatureHelp => LspAction::IngestSignatureHelp {
                     signature: None,
                     at,
-                    buffer: None,
+                    buffer: Some(buffer),
                 },
                 Lookup::Hover => LspAction::IngestHover {
                     prose: Vec::new(),
                     at,
-                    buffer: None,
+                    buffer: Some(buffer),
                 },
             },
         };
@@ -9642,7 +9684,7 @@ mod tests {
     use phosphor_core::request::LanguageId;
 
     use super::{
-        AppHost, Buffers, COMPLETION_MIN_CHARS, COMPLETION_MIN_CHARS_DEFAULT, Caret, Cli,
+        AppHost, Asking, Buffers, COMPLETION_MIN_CHARS, COMPLETION_MIN_CHARS_DEFAULT, Caret, Cli,
         CommandFactory as _, Cx, EXPAND_TAB, Editing, EditorText, ExStep, FromArgMatches as _,
         IndentStyle, Intent, Key, Layer, Lookup, Machine, NodeId, Outstanding, Pane, Panes, Repl,
         ReplStep, Session, Shell, StatusVm, Surface, TAB_WIDTH, Table, Timeline, UndoTree, Vm,
@@ -12431,6 +12473,96 @@ mod tests {
              the assertion that fails the moment the list goes back on `Editing`"
         );
         assert_eq!(panes.at(right).jump_at, 0);
+    }
+
+    /// **An answer tagged for B lands in B, while A is focused.**
+    ///
+    /// This is the chain step 6a and step 9 build between them: `answering`
+    /// tags the Action with the buffer that asked, `Buffers::named` routes it,
+    /// and the arm's `at` guard tests it against *that* buffer's cursor. Every
+    /// link was missing — the tag was `buffer: None` on all six, and the arm
+    /// dropped the field with `..`.
+    #[test]
+    fn a_completion_answer_lands_in_the_buffer_that_asked_for_it() {
+        let (mut buffers, focused) = Buffers::new(typed("alpha", 120).editing);
+        let asked = buffers.open(typed("bravo", 120).editing);
+
+        let mut panes = one_pane();
+        let mut shell = shell();
+        let at = buffers
+            .at_mut(asked)
+            .text(&Cx::new(asked, PaneId(0), &mut panes, &mut shell))
+            .cursor();
+
+        let answer = Action::Lsp(phosphor_core::action::LspAction::IngestCompletions {
+            items: vec![WireCompletion {
+                label: "bravado".to_owned(),
+                insert: "bravado".to_owned(),
+                detail: None,
+                documentation: Vec::new(),
+                kind: None,
+                source: None,
+                deprecated: false,
+            }],
+            at,
+            buffer: Some(asked),
+        });
+
+        let target = Buffers::named(&answer, focused);
+        assert_eq!(target, asked, "the tag routes it");
+
+        buffers.at_mut(target).apply(
+            &mut Cx::new(target, PaneId(0), &mut panes, &mut shell),
+            &answer,
+        );
+
+        assert!(
+            buffers.at_mut(asked).completion.is_some(),
+            "the buffer that asked has the list"
+        );
+        assert!(
+            buffers.at_mut(focused).completion.is_none(),
+            "and the one in front of the user does not — the assertion that \
+             fails while the answer is untagged and the arm reads `..`"
+        );
+    }
+
+    /// **One buffer's in-flight request does not hold another's gate shut.**
+    ///
+    /// `Outstanding` counted with no key at all — three bare `u32`s for the
+    /// whole session — and that is wrong twice over with two buffers open. The
+    /// insert-mode trigger's *"one request in flight at a time"* gate reads a
+    /// count a different file's request is holding open, so typing in B waits
+    /// on A; and an answer for B is taken off A's count, so A's gate re-arms on
+    /// an answer it never asked for.
+    #[test]
+    fn a_request_in_flight_for_one_buffer_does_not_gate_another() {
+        let mut asking = Asking::default();
+        let (a, b) = (BufferId(0), BufferId(1));
+
+        asking.at(a).sent(Lookup::Completion);
+
+        assert!(asking.at(a).awaiting(Lookup::Completion));
+        assert!(
+            !asking.at(b).awaiting(Lookup::Completion),
+            "B may ask, because it is not the one waiting"
+        );
+        assert!(
+            asking.anyone_awaiting(Lookup::Completion),
+            "and the poll deadline is the session's, because an answer for any \
+             buffer is an event that wakes the loop"
+        );
+
+        // B's answer comes back and must not re-arm A.
+        assert!(
+            !asking.at(b).answers(&ingest_completions()),
+            "B was owed nothing"
+        );
+        assert!(
+            asking.at(a).awaiting(Lookup::Completion),
+            "so A is still waiting — the assertion that fails while one count \
+             serves every buffer"
+        );
     }
 
     /// **`:wall` writes every dirty buffer, and says what it could not write.**

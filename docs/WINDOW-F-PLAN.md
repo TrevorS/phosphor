@@ -280,6 +280,14 @@ Then three refusals become real, and each becomes a question about `Buffers` rat
 
 **Verification:** existing completion/signature tests in `main.rs`'s test module. New unit test — ingest an answer tagged for buffer B while pane A is focused; assert A's `completion` is still `None` and B's is populated.
 
+> **DONE.** `Asking { map: BTreeMap<BufferId, Outstanding> }`, and **`answering` tags the three `ingest-*` Actions** with the buffer that asked rather than `buffer: None`.
+>
+> That tag is the link the plan does not name, and without it step 6a's routing had nothing to route on: 6a made the applier *read* the selector while every producer still set it to `None`. The chain is only worth anything end to end — tag, route, guard — and each of the three was missing.
+>
+> **One question is deliberately not keyed.** The poll deadline is the session's: a parked `recv_until` is what stops the loop spinning at full tilt for the length of a round trip, and an answer for any buffer is an event that wakes it. `anyone_awaiting` asks about all of them, while the two that decide what to *do* ask about one.
+>
+> **As run:** `just gate` green, 1,408 tests. Two added — the plan's, **pressed with the three ingest tags removed from `Buffers::named`** where it fails, and `a_request_in_flight_for_one_buffer_does_not_gate_another`.
+
 ### Step 10 — `Asks`, and the pane verbs the loop performs
 
 **Files:** `crates/phosphor/src/main.rs`
