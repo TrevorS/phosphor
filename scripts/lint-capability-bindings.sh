@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# A built mutation a person can reach, or a recorded reason it is not one.
+#
+# WHY THIS EXISTS. `T088` shipped `split-pane`, `focus-pane`, `close-pane` and
+# `resize-pane` with arms, a query, and a passing gate — and **nothing bound to
+# any of them**. The task's acceptance asked for arms and a query and never for
+# keys, so the only way a person could make a split was a side effect of the
+# files picker. Four capabilities, reachable by an agent over MCP and by nobody
+# at a keyboard, and every existing lint said clean:
+#
+#   * `lint-action-arms.sh` proves a ticked task's mutations are NAMED by the
+#     binary. All four were.
+#   * `lint-key-coverage.sh` proves every BOUND key is pressed by a test. None
+#     of them was bound, so it had nothing to say.
+#
+# Between those two there was no lint at all, and the gap is exactly the shape
+# of `T016` — reachable, working, and unreachable through the door a person
+# uses. `set-virtual-text-visible` had been sitting in it since `T032`.
+#
+# WHAT IT CHECKS. Every capability that (a) belongs to a ticked task, (b) the
+# binary names — so an arm exists — and (c) is a *mutation a person drives*
+# must be written down somewhere in `runtime/`. The three spellings the layer
+# uses are all accepted, and getting that wrong is how this was miscounted
+# twice while it was being written:
+#
+#   `(key/cmd "split-pane" …)`   a binding row or an ex body
+#   `(open-repl!)`               a Steel procedure, which `:repl` uses
+#   `(list 'paste before)`       a quoted symbol inside a `key/*` helper
+#
+# WHAT IT DOES NOT CHECK, and each is a real category rather than an excuse:
+#
+#   * the input machine emits it (`move-cursor`, `set-mode`, `set-count` …) —
+#     a keymap never names one, the machine turns keys into them;
+#   * a producer posts it (`ingest-*`) — nobody types an LSP answer;
+#   * a surface handles its own keys in Rust (`picker-accept`, `repl-history`,
+#     `float-select`) — `picker_key` and `repl_key` are those keymaps;
+#   * it is the agent's door (`declare-regions`, `set-keybinding`) — a verb
+#     whose whole point is that something other than a person calls it.
+#
+# Those four sets are listed below with the reason each is in one. A capability
+# in none of them, with an arm and a ticked task and no binding, fails.
+#
+# RECORDED can only shrink, which is `lint-action-arms.sh`'s shape and for the
+# same reason: a row here is a promise, not a place to put things. It fails
+# four ways — a new unbound capability, a RECORDED row that is now bound, a
+# RECORDED row naming a capability that no longer exists, and an EMITTED row
+# for one that does not either.
+
+set -uo pipefail
+cd "$(dirname "$0")/.." || exit 1
+
+python3 - <<'PY'
+import pathlib
+import re
+import sys
+
+ACTIONS = pathlib.Path("crates/phosphor-core/src/action.rs")
+TASKS = pathlib.Path("docs/TASKS.md")
+BIN = pathlib.Path("crates/phosphor/src")
+RUNTIME = pathlib.Path("runtime")
+
+# Capabilities something other than a person is meant to emit. The value is the
+# reason, and it is printed when a row goes stale so the next reader does not
+# have to reconstruct it.
+EMITTED = {
+    # The input machine turns keys into these. A keymap names an *operator* or
+    # a motion; the machine emits the mutation.
+    "move-cursor": "the input machine emits it from a motion key",
+    "set-cursor": "the input machine emits it; `gg`/`G`/a find resolve here",
+    "extend-selection": "the input machine emits it while an anchor is set",
+    "clear-selection": "the input machine emits it on leaving visual mode",
+    "select-object": "the input machine emits it from a text object",
+    "set-mode": "the machine's own report of a transition it already made",
+    "set-count": "the machine's pending count",
+    "select-register": "the machine's pending register",
+    "cancel-pending": "the machine clearing a half-typed sequence",
+    "feed-keys": "the machine replaying, for `.` and macros",
+    "repeat-last": "the machine replaying the last change",
+    "commit-undo-group": "the machine closing a batch after an edit",
+    "set-case": "the machine emits it from `key/operator \"toggle-case\"`",
+    # Producers post these; nobody types an answer.
+    "ingest-completions": "the LSP client posts it",
+    "ingest-diagnostics": "the LSP client posts it",
+    "ingest-hover": "the LSP client posts it",
+    "ingest-signature-help": "the LSP client posts it",
+    # A surface with its own key handler in Rust. `picker_key` and `repl_key`
+    # are keymaps too; they are just not written in Scheme.
+    "picker-accept": "`picker_key` handles it — the picker's own keymap",
+    "set-picker-query": "`picker_key` handles it, on every printable key",
+    "cycle-picker-source": "`picker_key` handles it — `<tab>`",
+    "toggle-picker-preview": "`picker_key` handles it",
+    "float-select": "the float's own key handling",
+    "float-select-row": "the float's own key handling",
+    "float-accept": "the float's own key handling",
+    "close-float": "`closes_surface` handles `esc` for every float",
+    "close-all-floats": "`closes_surface` handles `esc` for every float",
+    "close-repl": "`repl_key` handles it — `esc`",
+    "repl-history": "`repl_key` handles it — up and down",
+    "repl-to-buffer": "`repl_key` handles it — `<C-c>`",
+    "eval": "the REPL's own enter key, and `--eval` at the CLI door",
+    "persist-form": "the REPL routes a config verb to it",
+    "show-unknown-key-hint": "the loop raises it when a key is bound to nothing",
+    # The agent's door. A verb whose point is that something else calls it.
+    "declare-regions": "the agent's door — `T041`'s whole subject",
+    "drop-regions": "the agent's door",
+    "mark-unseen": "the agent's door",
+    "reanchor": "the agent's door",
+    "define-picker-source": "the Steel API — `runtime/pickers.scm` defines with it",
+    "invalidate-picker-source": "the Steel API, for a source whose data moved",
+    "define-language": "the Steel API — `runtime/languages/` declares with it",
+    "define-float-surface": "the Steel API — `runtime/arch.scm` registers with it",
+    "set-keybinding": "the agent's door; the shipped layer keeps its own table",
+    "remove-keybinding": "the agent's door, the same way",
+    "set-register": "the agent's door — a person yanks into one",
+}
+
+# Built, user-facing, and bound to nothing. Each row is a promise to bind it.
+RECORDED = {
+    "open-arch": (
+        "a second capability for `:arch`, which reaches the same float through "
+        "`open-float`. One of the two is redundant and the choice is not this "
+        "lint's — recorded so it is a decision rather than a silence."
+    ),
+    "set-virtual-text-visible": (
+        "`T032`'s rail collapse. `za` is bound, but to `set-fold`, which is a "
+        "different capability — so a claude rail cannot be collapsed from a "
+        "key. Wants a binding; `T041`'s owners make it addressable."
+    ),
+}
+
+# -- the vocabulary ---------------------------------------------------------
+text = ACTIONS.read_text(encoding="utf-8")
+declared = re.findall(
+    r'^\s+([A-Z][A-Za-z0-9]*) = "([a-z0-9-]+)" \[\s*(\w+)\s*/\s*"([^"]+)"',
+    text,
+    re.M,
+)
+if len(declared) < 100:
+    print(
+        f"lint-capability-bindings: read only {len(declared)} variants from {ACTIONS} — "
+        "the macro's shape moved and this lint is now checking nothing.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+ticked = set(re.findall(r"^- \[x\] \*\*(T\d+|V\d+)", TASKS.read_text(encoding="utf-8"), re.M))
+
+# -- which the binary names, so an arm exists -------------------------------
+body = []
+for path in sorted(BIN.glob("*.rs")):
+    source = path.read_text(encoding="utf-8")
+    module = re.search(r"^#\[cfg\(test\)\]", source, re.M)
+    body.append(source[: module.start()] if module else source)
+body = "\n".join(body)
+
+# -- which the layer writes down, in any of its three spellings --------------
+runtime = "\n".join(path.read_text(encoding="utf-8") for path in sorted(RUNTIME.rglob("*.scm")))
+bound = set(re.findall(r'"([a-z0-9-]+)"', runtime))
+bound |= set(re.findall(r"\(([a-z0-9-]+)!", runtime))
+bound |= set(re.findall(r"'([a-z0-9-]+)", runtime))
+
+names = {name for _, name, _, _ in declared}
+armed = {
+    name
+    for variant, name, _phase, task in declared
+    if task in ticked and re.search(rf"\b{variant}\b", body)
+}
+
+problems = []
+
+for name in sorted(armed - bound - set(EMITTED) - set(RECORDED)):
+    problems.append(
+        f"`{name}` has an arm, belongs to a ticked task, and nothing in {RUNTIME}/ "
+        f"names it — no key and no ex command can reach it.\n"
+        f"    Bind it, or add it to EMITTED with what emits it instead, or to "
+        f"RECORDED with the reason it is not bound yet."
+    )
+
+for name in sorted(set(RECORDED) & bound):
+    problems.append(
+        f"RECORDED lists `{name}` and the layer now names it — delete the row."
+    )
+
+for name in sorted(set(RECORDED) - names):
+    problems.append(f"RECORDED lists `{name}`, which the vocabulary no longer declares.")
+
+for name in sorted(set(EMITTED) - names):
+    problems.append(f"EMITTED lists `{name}`, which the vocabulary no longer declares.")
+
+if problems:
+    print("lint-capability-bindings: FAILED", file=sys.stderr)
+    for problem in problems:
+        print(f"  - {problem}", file=sys.stderr)
+    sys.exit(1)
+
+reachable = len(armed & bound)
+print(
+    f"lint-capability-bindings: clean — {len(armed)} armed on ticked tasks, "
+    f"{reachable} bound in {RUNTIME}/, {len(set(EMITTED) & armed)} emitted elsewhere, "
+    f"{len(RECORDED)} recorded"
+)
+PY

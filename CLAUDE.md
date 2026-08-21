@@ -120,6 +120,18 @@ Hygiene and truthfulness — each of these exists because the thing it catches a
   `rust-toolchain.toml`, and every `T0xx` cited in a Rust comment must be a task that exists.
 - **Doc links** — `cargo doc` with warnings denied. This codebase cross-references itself through
   intra-doc links and nothing ran `cargo doc` until this lint; the first run found eight broken.
+- **Capability bindings** — a built mutation a person can reach, or a recorded reason it is not
+  one. `T088` shipped four pane verbs with arms, a query and a passing gate, and **nothing bound
+  to any of them**: the task's acceptance asked for arms and never for keys, so the only way to
+  make a split was a side effect of the files picker. Both of the lints that could have caught it said clean —
+  `lint-action-arms.sh` proves a ticked task's mutations are *named by the binary*, and
+  `lint-key-coverage.sh` proves every *bound* key is pressed by a test, so an unbound one is
+  invisible to it. Between them there was nothing, and `set-virtual-text-visible` had been in
+  that gap since `T032`. Capabilities something other than a person emits are listed with the
+  reason — the input machine's, a producer's, a surface whose keymap is Rust, the agent's door —
+  and the shrink-only RECORDED table holds the rest. **The three spellings the layer uses for a
+  capability name all count**, and getting that wrong is how the gap was miscounted twice while
+  the lint was being written: `(key/cmd "name" …)`, `(name! …)`, and `(list 'name …)`.
 - **Doc line citations** — prose is cited by heading or quoted phrase, never by a markdown path with a line number stapled to it.
   `file:line` is right for *code*, where a moved line usually means a moved fact and two other
   lints already check the references; nothing holds a line number pointed at a paragraph. Two
@@ -142,7 +154,7 @@ Hygiene and truthfulness — each of these exists because the thing it catches a
 - **Fuzz targets** — the `fuzz/` crate's targets are checked against the parsers they claim.
 - **Counts nothing else recomputes** — the capability and parity counts (`209`/`627` went stale in
   six places at once), and the lint count in CI's own prose, which said "six" while sixteen
-  existed. **Twenty-two lints now** — and this paragraph itself said seventeen for a window after the
+  existed. **Twenty-three lints now** — and this paragraph itself said seventeen for a window after the
   eighteenth landed, because `doc_claims.py` section 6 globbed `.github/workflows/*.yml` and could
   not see the file every agent reads on entry. It reads this one too now, so the sentence you are
   reading is recomputed rather than remembered.

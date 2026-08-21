@@ -400,6 +400,13 @@
 (define (key/at-cursor) (hash "kind" "cursor"))
 (define (key/at-selection) (hash "kind" "selection"))
 (define (key/focused-pane) (hash "kind" "focused"))
+;; the other three `PaneRef` spellings. `direction` is resolved against the
+;; split tree — the nearest ancestor dividing along that axis, then its
+;; neighbour's nearest leaf — so `<C-w>l` in a nested layout lands in the pane
+;; actually to the right rather than whichever is next in some list.
+(define (key/pane-toward direction) (hash "kind" "direction" "direction" direction))
+(define (key/next-pane) (hash "kind" "next"))
+(define (key/prev-pane) (hash "kind" "prev"))
 
 ;; ---------------------------------------------------------------------------
 ;; dispatch
@@ -1142,6 +1149,70 @@
 (keymap-set! "<C-6>" (key/run (key/cmd "open-alternate" "pane" (key/focused-pane)))
              "the previous file" "normal")
 
+;; ---------------------------------------------------------------------------
+;; <C-w> — windows, which vim calls them and this calls panes (T088)
+;; ---------------------------------------------------------------------------
+;;
+;; **the four pane capabilities shipped with arms and nothing bound to them.**
+;; T088's acceptance asked for arms and a query and got both; it never asked for
+;; keys, so for a while the only way a person could make a split was the files
+;; picker's <C-v>. these are the keys, and `scripts/lint-capability-bindings.sh`
+;; is what stops the next one shipping unreachable.
+;;
+;; **the split direction is `splitbelow`/`splitright`, not vim's bare default.**
+;; vim with neither option set puts the new window *above* and to the *left*;
+;; almost every modern config sets both, telescope's <C-v>/<C-x> already behave
+;; that way, and this editor's picker keys were written that way first. being
+;; internally consistent beats matching an unset default nobody uses.
+;;
+;; **splitting moves focus, and that is a second call.** `split-pane` does not
+;; move it — opening a pane and looking at it are two things, and `:sbuffer`
+;; wants the first without the second. vim's <C-w>v does both, so the binding
+;; does both: split, then focus in the direction the split went.
+(keymap-set! "<C-w> v"
+             (key/run (key/cmd "split-pane" "pane" (key/focused-pane)
+                               "direction" "right" "kind" "buffer")
+                      (key/cmd "focus-pane" "pane" (key/pane-toward "right")))
+             "split right" "normal")
+(keymap-set! "<C-w> s"
+             (key/run (key/cmd "split-pane" "pane" (key/focused-pane)
+                               "direction" "down" "kind" "buffer")
+                      (key/cmd "focus-pane" "pane" (key/pane-toward "down")))
+             "split below" "normal")
+
+;; hjkl, the same four the buffer uses, one level out.
+(keymap-set! "<C-w> h" (key/run (key/cmd "focus-pane" "pane" (key/pane-toward "left")))
+             "focus left" "normal")
+(keymap-set! "<C-w> j" (key/run (key/cmd "focus-pane" "pane" (key/pane-toward "down")))
+             "focus below" "normal")
+(keymap-set! "<C-w> k" (key/run (key/cmd "focus-pane" "pane" (key/pane-toward "up")))
+             "focus above" "normal")
+(keymap-set! "<C-w> l" (key/run (key/cmd "focus-pane" "pane" (key/pane-toward "right")))
+             "focus right" "normal")
+
+;; **cycle order is the tree's, not the order panes were opened.** <C-w>w walks
+;; the windows as they are *arranged*, which is what makes it predictable on a
+;; layout you did not build in one sitting.
+(keymap-set! "<C-w> w" (key/run (key/cmd "focus-pane" "pane" (key/next-pane)))
+             "focus the next pane" "normal")
+(keymap-set! "<C-w> W" (key/run (key/cmd "focus-pane" "pane" (key/prev-pane)))
+             "focus the previous pane" "normal")
+
+;; closing the last pane refuses — `:quit` is the verb for leaving, and it is a
+;; different question.
+(keymap-set! "<C-w> c" (key/run (key/cmd "close-pane" "pane" (key/focused-pane)))
+             "close this pane" "normal")
+
+;; **the step is percentage points, and the capability's row says cells.** the
+;; split tree deliberately does not know how big anything is — a tree that
+;; stored cells would be wrong the moment the terminal resized — so the arm
+;; reads a delta as points against the divider it moves. five is about a column
+;; on an 80-wide frame, which is what a person means by "a bit wider".
+(keymap-set! "<C-w> +" (key/run (key/cmd "resize-pane" "pane" (key/focused-pane) "delta" 5))
+             "grow this pane" "normal")
+(keymap-set! "<C-w> -" (key/run (key/cmd "resize-pane" "pane" (key/focused-pane) "delta" -5))
+             "shrink this pane" "normal")
+
 ;; **`:help` and `:repl` are deliberately not here.** 3c draws six rows and
 ;; those are the six; both surfaces are one ex command away, and a leader popup
 ;; that does not match its own drawing teaches the wrong thing.
@@ -1409,6 +1480,25 @@
 
 (ex-set! "th[eme]" "switch theme"
          (lambda (rest bang) (key/run (key/cmd "set-theme" "slug" rest))))
+
+;; vim's three window commands, the spellings a person's fingers already know.
+;; `:split` and `:vsplit` are the <C-w>s / <C-w>v pair under their other names,
+;; and go the same way for the same reason.
+(ex-set! "sp[lit]" "split this pane, below"
+         (lambda (rest bang)
+           (key/run (key/cmd "split-pane" "pane" (key/focused-pane)
+                             "direction" "down" "kind" "buffer")
+                    (key/cmd "focus-pane" "pane" (key/pane-toward "down")))))
+
+(ex-set! "vs[plit]" "split this pane, beside"
+         (lambda (rest bang)
+           (key/run (key/cmd "split-pane" "pane" (key/focused-pane)
+                             "direction" "right" "kind" "buffer")
+                    (key/cmd "focus-pane" "pane" (key/pane-toward "right")))))
+
+(ex-set! "clo[se]" "close this pane; the last one refuses — :quit leaves"
+         (lambda (rest bang)
+           (key/run (key/cmd "close-pane" "pane" (key/focused-pane)))))
 
 (ex-set! "repl" "a steel prompt — 6b"
          (lambda (rest bang) (begin (open-repl!) 'ran)))

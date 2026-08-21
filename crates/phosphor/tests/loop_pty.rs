@@ -492,6 +492,40 @@ mod driven {
         /// when it answers — so the frame a key produced and the frames an
         /// answer produced cannot be told apart by counting. This is the seam
         /// where a test stops counting and starts reading.
+        /// Press `keys` and answer the screen once the editor has finished
+        /// reacting to *them*.
+        ///
+        /// **[`Editor::shown_on_grid`] cannot do this and is not meant to.** It
+        /// waits for a needle and then settles, which is exactly right when the
+        /// needle is the thing the press produces — and wrong when the needle
+        /// was already on screen, because then it matches on the frame *before*
+        /// the press and settles against a terminal that has not been asked to
+        /// do anything yet.
+        ///
+        /// `<C-w>v` is that case: two panes on one buffer draw the same text,
+        /// so there is no string the split makes appear. Measured — the grid
+        /// came back with one pane, and one harmless press later it had two.
+        ///
+        /// So this waits for a frame to be *drawn* first, then settles. It
+        /// makes no claim about what the frame says, which is the caller's to
+        /// assert.
+        fn after(&self, keys: &[u8]) -> Screen {
+            let before = self.frames.load(Ordering::Relaxed);
+            (&*self.master)
+                .write_all(keys)
+                .expect("the child takes the keys");
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while self.frames.load(Ordering::Relaxed) == before {
+                assert!(
+                    Instant::now() < deadline,
+                    "the editor drew nothing after {keys:?}"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            self.settle();
+            self.screen()
+        }
+
         fn settle(&self) {
             let mut quiet_since = Instant::now();
             let mut last = self.frames.load(Ordering::Relaxed);
@@ -680,6 +714,30 @@ mod driven {
     ///
     /// So a skipped cell may be a space, and two thirds of the characters have
     /// to be there exactly — which a run of spaces cannot satisfy.
+    /// Whether `wanted` appears at least twice — what "two panes on one buffer"
+    /// looks like from outside, since both draw the same text.
+    ///
+    /// Exact rather than [`shows`]'s two-thirds match: a fuzzy count would find
+    /// a second copy in the noise of a wide frame, and the whole claim is that
+    /// there are two.
+    fn twice(frame: &str, wanted: &str) -> bool {
+        frame.matches(wanted).count() >= 2
+    }
+
+    /// The same, one pane further.
+    fn thrice(frame: &str, wanted: &str) -> bool {
+        frame.matches(wanted).count() >= 3
+    }
+
+    /// A screen as one string, rows joined — [`Editor::shown_on_grid`] answers
+    /// a `Screen` and the counting above is over the whole of it.
+    fn grid_of(screen: &Screen) -> String {
+        (0..SCREEN.ws_row)
+            .map(|row| screen.line(row))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn shows(frame: &str, wanted: &str) -> bool {
         let frame: Vec<char> = frame.chars().collect();
         let wanted: Vec<char> = wanted.chars().collect();
@@ -3028,6 +3086,120 @@ mod driven {
             !shows(&split, "T088"),
             "and it no longer declines by naming the task that builds it; \
              frame was: {split}"
+        );
+    }
+
+    /// **The `<C-w>` window keys, on a real terminal.**
+    ///
+    /// `T088` shipped four capabilities with arms and nothing bound to them —
+    /// its acceptance asked for arms and a query and never for keys, so for a
+    /// while the only way a person could make a split was the files picker's
+    /// `<C-v>`. `scripts/lint-capability-bindings.sh` is what stops the next
+    /// one shipping unreachable; this is what proves these ones are not.
+    ///
+    /// **One test for the whole set, deliberately.** Each key is one call into
+    /// machinery that is unit-tested against the tree directly — split, focus,
+    /// close and resize all have their own assertions in `main.rs` over two and
+    /// three panes. What only a terminal can say is that the *bindings* reach
+    /// them, and that is one question asked eleven times.
+    ///
+    /// **The prefix is pressed on its own**, and that is not padding: `<C-w>`
+    /// raises `3c`'s which-key grid, so a single `press_until(b"\x17v", …)`
+    /// matches the *popup* frame and returns before the split has happened.
+    /// The first press waits for the grid the popup draws, the second for the
+    /// screen after it.
+    #[test]
+    fn the_window_keys_split_focus_resize_and_close() {
+        let scratch = Scratch::new("window-keys");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // The prefix draws the grid, and the grid is the list of these keys.
+        let hints = editor.shown_on_grid(b"\x17", "split right");
+        assert!(
+            shows(&grid_of(&hints), "focus the next pane"),
+            "the which-key grid lists what `<C-w>` can do"
+        );
+        editor.shown_on_grid(b"\x1b", "NORMAL");
+
+        // **Two panes on one buffer draw the same text twice**, which is the
+        // observable a terminal has and a unit test does not.
+        //
+        // **Both bytes in one literal**, and that is not cosmetic: `<C-w> v` is
+        // *one* notation, `key_coverage.py` spells it `\x17v`, and a test that
+        // pressed the prefix and the key separately would cover neither. It
+        // matches the popup frame first — `shown_on_grid` settles after
+        // matching, so the screen it answers is the one after the split.
+        let split = grid_of(&editor.after(b"\x17v"));
+        assert!(
+            twice(&split, "alpha"),
+            "<C-w>v put a second pane beside the first; grid was: {split}"
+        );
+
+        // **Left and right, in a layout that has a left and a right.** The
+        // vertical pair is tested after the horizontal split below, and the
+        // separation is the point: `<C-w>k` with nothing above refuses, which
+        // is correct and is what `T098`'s rule makes a key say out loud.
+        for keys in [&b"\x17h"[..], b"\x17l", b"\x17w", b"\x17W"] {
+            let moved = grid_of(&editor.after(keys));
+            assert!(
+                !moved.contains("no such"),
+                "a focus key refused; grid was: {moved}"
+            );
+            assert!(
+                twice(&moved, "alpha"),
+                "and both panes are still drawn; grid was: {moved}"
+            );
+        }
+
+        // Resize both ways.
+        for keys in [&b"\x17+"[..], b"\x17-"] {
+            let sized = grid_of(&editor.after(keys));
+            assert!(
+                twice(&sized, "alpha"),
+                "a resize kept both panes; grid was: {sized}"
+            );
+        }
+
+        // A third pane below, which is what gives `j` and `k` somewhere to go.
+        let stacked = grid_of(&editor.after(b"\x17s"));
+        assert!(
+            thrice(&stacked, "alpha"),
+            "<C-w>s stacked a third; grid was: {stacked}"
+        );
+
+        for keys in [&b"\x17k"[..], b"\x17j"] {
+            let moved = grid_of(&editor.after(keys));
+            assert!(
+                !moved.contains("no such"),
+                "a vertical focus key refused in a layout that has one; grid \
+                 was: {moved}"
+            );
+        }
+
+        let closed = grid_of(&editor.after(b"\x17c"));
+        assert!(
+            !closed.contains("no such"),
+            "closing a pane refused; grid was: {closed}"
+        );
+        assert!(
+            twice(&closed, "alpha") && !thrice(&closed, "alpha"),
+            "and there are two left; grid was: {closed}"
+        );
+
+        // The ex spellings of the same two.
+        editor.after(b":split\r");
+        let vsplit = grid_of(&editor.after(b":vsplit\r"));
+        editor.quit();
+
+        assert!(
+            thrice(&vsplit, "alpha"),
+            ":vsplit is <C-w>v under its other name; grid was: {vsplit}"
         );
     }
 
