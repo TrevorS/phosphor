@@ -2301,6 +2301,53 @@ Until then `chrome.tab_bar_rule` is a theme colour nothing draws with. It stays
 in the theme — deleting a §5 colour to match a build is the wrong direction, and
 `T011`'s validator and the frame-grid test both name it.
 
+### 51 · A dependency turned on `serde_json/preserve_order`, and the LSP client's wire bytes changed
+
+**Found by `T050`**, and found the hard way: adding `agent-client-protocol` to
+`phosphor-agent` turned `phosphor-buffer::lsp_documents` red — a test in a crate
+that has never heard of ACP, asserting about `textDocument/didChange`.
+
+The mechanism, verified on 2026-08-21:
+
+* `agent-client-protocol` and `agent-client-protocol-schema` both list
+  `preserve_order` among their `serde_json` features.
+* Cargo unifies features per crate across everything it builds at once, so
+  `cargo nextest run --workspace` builds **one** `serde_json` for the whole
+  tree, with `preserve_order` on.
+* With that feature, `serde_json::Value`'s map is an `IndexMap` and keys come
+  out in insertion order. Without it, it is a `BTreeMap` and keys come out
+  alphabetically.
+* `async-lsp` round-trips through `Value`, so every LSP message this editor
+  sends now has its object keys in declaration order rather than alphabetical
+  order.
+
+**The test was the thing that was wrong, and it said so itself.** Its comment
+read *"the fields come out in `serde`'s alphabetical order, which is what is on
+the wire"* — true, and a fact about `serde_json`'s map type rather than about
+LSP. Key order is not a protocol property; JSON objects are unordered by
+specification and every server parses them as such. The assertion is parsed now
+(`lsp_documents::message`) instead of matched as a substring.
+
+**Two things worth knowing before the next one bites.**
+
+1. **The reproduction depends on how you invoke cargo.** `cargo nextest run -p
+   phosphor-buffer` passes and `cargo nextest run --workspace -E
+   'package(phosphor-buffer)'` fails, because only the second unifies features
+   across members. `just test` runs `--workspace`, so CI sees the unified
+   build and a narrow local run does not. Three whole-workspace runs and a
+   parent-commit run were spent proving it was not contention before the
+   invocation difference was the thing that answered it.
+2. **The audit for other order-sensitive assertions came back clean.** Line 212
+   of `lsp_documents.rs` was the only assertion in `crates/*/tests/` matching a
+   multi-key JSON substring; every other raw-string check is a single key
+   (`"version":2`, `"result":null`) and is order-independent by construction.
+
+**Not reversed, and the reason is worth stating.** `preserve_order` could be
+forced off by pinning `serde_json` without it, but nothing in the workspace can
+un-ask a dependency for a feature — and there is no reason to want to. Insertion
+order is at least as good a wire order as alphabetical, and the defect was never
+the ordering.
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

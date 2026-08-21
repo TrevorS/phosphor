@@ -19,12 +19,24 @@
 #      `binary_id(=…)` that quietly selects zero tests. nextest does not warn —
 #      the filter is still valid — so the group shrinks and the run goes green.
 #
-# The spawn markers are `Command::new` and `open_pty`, and a file carrying one
-# **must** be in the group. Extras are allowed on purpose: `phosphor-buffer::lsp`
-# has neither marker and belongs there anyway, because it starts servers through
-# the client under test. A library can spawn on a test's behalf; the deadline is
-# the test's either way. So this is a subset check in one direction and an
-# existence check in the other, which is the strongest pair that is true.
+# The spawn markers are `Command::new`, `open_pty`, `ServerSpec::new` and
+# `SessionSpec::new`, and a file carrying one **must** be in the group.
+#
+# **The last two were added after the first two missed a spawner that then took
+# the suite down.** `phosphor-buffer::lsp_documents` builds a `ServerSpec` around
+# `sh -c` and hands it to the client, which spawns it — so the file has neither
+# of the original markers, was never in the group, and `.config/nextest.toml`'s
+# own prose said of it *"neither of which spawns anything"*. It ran at full
+# width until `T050` added six more child-spawning tests, and then its 20-second
+# poll for a `didChange` came back with a log holding nothing but `initialize`.
+# A spec naming a command **is** a spawn marker: it is how this workspace asks a
+# library to start a process, and both clients spell it the same way.
+#
+# Extras are still allowed on purpose: `phosphor-buffer::lsp` carries no marker
+# at all and belongs there anyway. A library can spawn on a test's behalf; the
+# deadline is the test's either way. So this is a subset check in one direction
+# and an existence check in the other, which is the strongest pair that is
+# true.
 #
 # Deliberately NOT checked: that nextest parses the filter, or that the group
 # binds at runtime. `cargo nextest run` does both on every invocation — an
@@ -61,7 +73,7 @@ while IFS= read -r file; do
         echo "  add  + binary_id(=$id)  to the filter in $config"
         violations=$((violations + 1))
     fi
-done < <(grep -lE 'Command::new|open_pty' crates/*/tests/*.rs)
+done < <(grep -lE 'Command::new|open_pty|ServerSpec::new|SessionSpec::new' crates/*/tests/*.rs)
 
 # 2. Every name is a real test binary.
 while IFS= read -r id; do

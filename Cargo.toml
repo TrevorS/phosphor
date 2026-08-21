@@ -74,6 +74,16 @@ version = "0.1.0"
 async-lsp = { version = "0.2.4", default-features = false, features = [
     "omni-trait",
 ] }
+# `T050`'s session transport — the Agent Client Protocol, which is how an editor
+# talks to Claude Code (SPIKES.md's manifest names 2.0.0, and this is it).
+# Apache-2.0, and its `rust-version` is 1.88.0 — the workspace floor exactly, so
+# it moves no MSRV.
+#
+# No features. Every one of the six is `unstable_*` and gates a schema
+# extension — auth methods, elicitation, end-turn token usage, MCP-over-ACP,
+# protocol v2, session fork — and this client speaks the stable protocol. A turn
+# that completes needs none of them.
+agent-client-protocol = { version = "2.0.0", default-features = false }
 # The CLI door's argument parser (SPIKES.md's manifest, `phosphor --eval`).
 # `T090` is its first consumer — `--theme <slug>` plus the file to open — and
 # `T023` takes the same parser when `--eval` lands, which is why it is pinned

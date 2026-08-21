@@ -205,14 +205,44 @@ fn an_incremental_server_gets_a_range_over_the_whole_previous_document() {
 
     let text = logged(&log, "textDocument/didChange");
     // `"one\ntwo\n"` is three lines under `split('\n')` — the third is empty —
-    // so the end of the document is line 2, character 0. The fields come out
-    // in `serde`'s alphabetical order, which is what is on the wire.
-    assert!(
-        text.contains(
-            r#""range":{"end":{"character":0,"line":2},"start":{"character":0,"line":0}}"#
-        ),
-        "{text}"
-    );
+    // so the end of the document is line 2, character 0.
+    //
+    // **Parsed, not matched.** This assertion was a substring of the wire
+    // bytes, in `serde_json`'s alphabetical key order, and its own comment said
+    // so: *"the fields come out in `serde`'s alphabetical order, which is what
+    // is on the wire."* That was true and it was not a fact about LSP — it was
+    // a fact about `serde_json::Value` being a `BTreeMap`, which it stops being
+    // the moment **anything** in the workspace turns on `preserve_order`.
+    // `T050`'s `agent-client-protocol` does, cargo unifies features across
+    // members, and this test went red in a crate that has never heard of ACP.
+    // Key order is not a protocol property, so nothing should assert on one.
+    let change = message(&text, "textDocument/didChange");
+    let range = &change["params"]["contentChanges"][0]["range"];
+    assert_eq!(range["start"]["line"], 0, "{text}");
+    assert_eq!(range["start"]["character"], 0, "{text}");
+    assert_eq!(range["end"]["line"], 2, "{text}");
+    assert_eq!(range["end"]["character"], 0, "{text}");
+}
+
+/// The first JSON-RPC message in `log` whose `method` is `method`.
+///
+/// The log is LSP frames run together — `Content-Length` headers and bodies —
+/// so this finds the body by its method name and lets `serde_json`'s streaming
+/// deserialiser find its end. Reading one value and stopping is what makes the
+/// concatenation parseable at all.
+fn message(log: &str, method: &str) -> serde_json::Value {
+    let needle = format!(r#""method":"{method}""#);
+    let at = log
+        .find(&needle)
+        .unwrap_or_else(|| panic!("no {method} in the log: {log}"));
+    let start = log[..at]
+        .rfind('{')
+        .unwrap_or_else(|| panic!("no object around {method}: {log}"));
+    serde_json::Deserializer::from_str(&log[start..])
+        .into_iter::<serde_json::Value>()
+        .next()
+        .unwrap_or_else(|| panic!("no value at {method}: {log}"))
+        .unwrap_or_else(|error| panic!("{method} is not valid json ({error}): {log}"))
 }
 
 /// `didClose`, and the record going with it: after a close the client has

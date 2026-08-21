@@ -53,7 +53,13 @@ max-threads = 8
 # the 109s baseline.
 #
 # The membership is by binary, and exact: `binary(lsp)` would substring-match
-# `lsp_documents` and `lsp_properties`, neither of which spawns anything.
+# every `lsp_*` file, and a substring is not a decision.
+#
+# **This paragraph used to end *"neither of which spawns anything"*, and it was
+# false about `lsp_documents`** — that file builds a `ServerSpec` around `sh -c`
+# and hands it to the client, which spawns it. It is in the group now, and
+# `scripts/lint-nextest-group.sh` counts a spec that names a command as a spawn
+# marker so the next one cannot be missed by eye.
 #
 # `scripts/lint-nextest-group.sh` holds this list against the tree. A filter
 # that silently matches nothing is the failure mode this file exists to prevent
@@ -67,12 +73,23 @@ max-threads = 8
 # it spawns servers *through the client under test*. The lint requires every
 # spawner to be here and permits extras for that reason — a library can start a
 # process on a test's behalf, and the deadline is the test's either way.
+#
+# **`phosphor-agent::session_client` is the second of those, and it cost a
+# whole-suite failure to learn.** `T050`'s tests drive a toy ACP agent that the
+# SDK spawns for them, so the file carries neither marker and `lint-nextest-group`
+# said clean. Added at full width, they starved
+# `phosphor-buffer::lsp_documents`, whose 20-second poll for a `didChange` came
+# back with a log holding nothing but `initialize` — a test that has nothing to
+# do with ACP, failing in the shape this file was written to prevent, on the run
+# that introduced six new child processes.
 [[profile.default.overrides]]
 filter = '''
     binary_id(=phosphor::loop_pty)
   + binary_id(=phosphor::door)
   + binary_id(=phosphor::parity)
+  + binary_id(=phosphor-agent::session_client)
   + binary_id(=phosphor-buffer::lsp)
+  + binary_id(=phosphor-buffer::lsp_documents)
   + binary_id(=phosphor-buffer::lsp_servers)
   + binary_id(=phosphor-core::journal)
   + binary_id(=phosphor-term::owning_the_terminal)

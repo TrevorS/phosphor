@@ -5,10 +5,13 @@ publish.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
-# The transports (`agent-client-protocol`, `rmcp`, tokio) arrive with S6/T050;
-# nothing in the floor belongs here yet.
+# `rmcp` arrives with `T052`; the ACP transport is here from `T050`.
 [dependencies]
+agent-client-protocol.workspace = true
 phosphor-core.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
 
 [lints]
 workspace = true
