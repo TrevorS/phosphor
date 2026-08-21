@@ -175,7 +175,17 @@ The swap block (`main.rs:3062-3117`) rewrites `editor`, `timeline`, `depth`, `al
 
 Extract the block into `fn open_into(...)` with an explicit, named reset. **Do not construct a fresh `Editing` here.** That is the form to reach for only after step 8; see §2.
 
-**Verification:** existing file-swap tests in `crates/phosphor/tests/loop_pty.rs`. One new unit test that selects a range in file A, opens file B, and asserts `editing.selection_from.is_none()` — the assertion shape the existing test at `main.rs:8867-8871` already uses. Asserting on `get_selection()` instead would pass on `master` today, because the swap replaces `editing.editor` wholesale at `:3066-3067`.
+> **DONE, and the extraction is narrower than "the block".** What is worth naming is the *reset list*, not the loop's business around it — a free function taking the twelve locals that block reads (`host`, `theme`, `dirty`, `edits`, `servers`, `synced`, `sent`, `notice`, `surface`, plus the three the context already carries) would be harder to check than the block it replaced. So the extraction is `Editing::opens(editor, file, timeline) -> Option<PathBuf>`, answering the file that left, which is the pane's alternate. The loop keeps the parts that are the loop's: reading the file, the journal notice, the server's `didClose`/`didOpen` pair.
+>
+> **The list is the deliverable.** It resets `editor`, `timeline`, `depth`, the completion, the signature, `file` — and the two that were missing, `selection_from` and `selection_kind`. What deliberately does *not* reset is written down beside it: `registers` (vim's are global), `mode` (the machine's report, and the machine did not change), `source_order`, `collapsed`, and the pane's own four.
+>
+> **Why the second field is the one that matters.** The plan found `selection_from` and called `selection_kind` "the second field". It is more than a second instance: `ExtendSelection` *reads* `selection_kind` and never sets it, so `V` in the file you left makes the first extend in the file you arrived at linewise. One missing field is a bug; two, with different reach, is what makes a written list worth more than a patch.
+
+**Verification:** existing file-swap tests in `crates/phosphor/tests/loop_pty.rs`. One new unit test that selects a range in file A, opens file B, and asserts `editing.selection_from.is_none()`. Asserting on `get_selection()` instead would pass on `master` today, because the swap replaces `editing.editor` wholesale.
+
+**As run:** `just gate` green, 1,395 tests. `opening_a_file_drops_a_selection_measured_in_the_last_one` — and it was **pressed with the planted defect**: with the two reset lines removed it fails on the field assertion, with the message it was written to print. That is the check this repository asks of a new lint and the same one is owed by a test claiming to close a bug.
+
+The reachability argument is worth keeping, because it is what makes this a bug rather than a tidiness: `SelectRange` guards a stale anchor by containment, but `ExtendSelection` reads `get_or_insert(head)` and takes whatever is there — and that arm is reachable straight after a swap, because the **machine** is the session's and its visual anchor outlives the buffer.
 
 ### Step 6 — Honour the six discarded selectors; stop synthesising `Focused`
 

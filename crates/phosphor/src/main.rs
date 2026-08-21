@@ -3131,26 +3131,30 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // extension, and the extension is in the name.
                         let fresh = found.is_none();
                         let text = found.unwrap_or_default();
-                        editing.editor =
-                            buffer(grammar_of(&host.languages(), &file), &text, &theme)?;
-                        track_dirty(&mut editing.editor, &dirty, &edits);
+                        let mut rope = buffer(grammar_of(&host.languages(), &file), &text, &theme)?;
+                        track_dirty(&mut rope, &dirty, &edits);
                         let (timeline, note) = Timeline::opened(&file);
-                        editing.timeline = timeline;
-                        editing.depth = 0;
                         // A journal that could not be opened outranks *"new
                         // file"*: both are true, one row holds one of them, and
                         // the surprising one is the one that has to be said.
                         // The other is visible in the buffer, which is empty.
                         notice = note.or_else(|| fresh.then(|| new_file(&file)));
+                        // **The swap is one call, and the list of what it
+                        // resets lives at [`Editing::opens`].** It was spelled
+                        // out here across a dozen lines, which is how two
+                        // fields came to be missing from it: a reader checking
+                        // the block against the struct has to hold both in
+                        // their head, and a reader checking a named list only
+                        // has to read it.
+                        //
                         // The file leaving the pane becomes the alternate, so
-                        // `CTRL-^` goes back to it. Here rather than in the
-                        // capability's arm because this is the branch that
-                        // knows a *different* file arrived: the `same` case
-                        // above never swaps, and an alternate set there would
-                        // make `CTRL-^` a no-op that points at the file you are
-                        // already in.
-                        pane.alternate = editing.file.take();
-                        editing.file = Some(file);
+                        // `CTRL-^` goes back to it. Set from this branch's
+                        // answer rather than in the capability's arm, because
+                        // this is the branch that knows a *different* file
+                        // arrived: the `same` case above never swaps, and an
+                        // alternate set there would make `CTRL-^` a no-op
+                        // pointing at the file you are already in.
+                        pane.alternate = editing.opens(rope, file, timeline);
                         surface = Surface::Buffer;
                         // The server hears about the swap in both directions:
                         // `didClose` for what it was holding — after which it falls
@@ -3163,10 +3167,6 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         }
                         synced = adopt(editing, &host.languages(), &servers);
                         sent = edits.get();
-                        // A new buffer is a new place; a list anchored in the old
-                        // one would be drawn over code it knows nothing about.
-                        editing.close_completion();
-                        editing.signature = None;
                         // `gd` landing. Applied as the Action it is, so the
                         // cursor moves through the one path every cursor move
                         // goes through and the viewport follows it — `apply`
@@ -7682,6 +7682,55 @@ impl Editing {
     /// Dropping is not the only exit — `Lsp::IngestCompletions`' arm *replaces*
     /// a session, and clears the same flag for its own reason. The field's doc
     /// counts both.
+    /// Put a different rope in this buffer, and answer the file that left.
+    ///
+    /// **The reset list, written down, because the unwritten one was already
+    /// wrong.** The swap block in the loop rewrote `editor`, `timeline`,
+    /// `depth`, `file`, the completion and the signature, and left two fields
+    /// holding facts about a rope that is no longer here:
+    ///
+    /// * [`Editing::selection_from`] is a **char offset**, and offsets do not
+    ///   survive a rope. `SelectRange` guards against a stale one by
+    ///   containment — *"an anchor outside the range it is the anchor of is not
+    ///   that range's anchor"* — but [`Editing::act`]'s `ExtendSelection` arm
+    ///   does not; it reads `get_or_insert(head)` and takes whatever is there.
+    ///   That arm is reachable straight after a swap because the *machine* is
+    ///   the session's and its visual anchor outlives the buffer, so a motion
+    ///   key extends from an offset measured in a file that is no longer open.
+    /// * [`Editing::selection_kind`] is the second, and it is the one that made
+    ///   the list worth naming rather than the bug worth patching. It drives
+    ///   [`Editing::selected`]'s linewise widening and the yank's `linewise`
+    ///   flag, and `ExtendSelection` reads it without ever setting it — so `V`
+    ///   in the file you left makes the first extend in the file you arrived at
+    ///   linewise.
+    ///
+    /// Both are facts about the departed rope in exactly the way `editor` and
+    /// `timeline` are, which is the test this list is built on: if the value
+    /// describes the text that just left, it resets here.
+    ///
+    /// **What deliberately does not reset**, because it is not the rope's:
+    /// `registers` (vim's are global), `mode` (the machine's report, and the
+    /// machine did not change), `source_order` and `collapsed` — and the pane's
+    /// own four, which is what step 4a moved them for.
+    ///
+    /// This is not a fresh [`Editing`]. That form is right and is what step 8
+    /// reaches for, once `Buffers` can hold the one being left behind; until
+    /// then a swap is a rewrite and the list is how it stays honest.
+    fn opens(&mut self, editor: Editor, file: PathBuf, timeline: Timeline) -> Option<PathBuf> {
+        self.editor = editor;
+        self.timeline = timeline;
+        self.depth = 0;
+        // A new buffer is a new place; a list anchored in the old one would be
+        // drawn over code it knows nothing about.
+        self.close_completion();
+        self.signature = None;
+        self.selection_from = None;
+        self.selection_kind = SelectionKind::Char;
+        let leaving = self.file.take();
+        self.file = Some(file);
+        leaving
+    }
+
     fn close_completion(&mut self) {
         self.completion = None;
         self.offered.clear();
@@ -9187,7 +9236,7 @@ mod tests {
         AppHost, Buffers, COMPLETION_MIN_CHARS, COMPLETION_MIN_CHARS_DEFAULT, Caret, Cli,
         CommandFactory as _, Cx, EXPAND_TAB, Editing, EditorText, ExStep, FromArgMatches as _,
         IndentStyle, Intent, Key, Layer, Lookup, Machine, NodeId, Outstanding, Pane, Panes, Repl,
-        ReplStep, Session, Shell, StatusVm, Surface, TAB_WIDTH, Table, UndoTree, Vm,
+        ReplStep, Session, Shell, StatusVm, Surface, TAB_WIDTH, Table, Timeline, UndoTree, Vm,
         WireCompletion, boot, buffer, closes_surface, completion_floor, decode, deliver, door,
         ex_key, grammar_of, indent_style, is_press, repl_key, restored, seeding, server_chip,
         split, submit_ex, vm, wire_undo,
@@ -11901,6 +11950,64 @@ mod tests {
              the assertion that fails the moment the list goes back on `Editing`"
         );
         assert_eq!(right.jump_at, 0);
+    }
+
+    /// **A selection anchor does not survive the rope it was measured in.**
+    ///
+    /// `selection_from` is a char offset. The swap block rewrote `editor`,
+    /// `timeline`, `depth`, `file`, the completion and the signature, and left
+    /// this one holding a position in a file that is no longer open.
+    ///
+    /// **The assertion is on the field, not on `get_selection()`,** and that is
+    /// deliberate: asserting on the selection would pass on the broken code,
+    /// because the swap replaces `editing.editor` wholesale and a fresh editor
+    /// has no selection to show. The stale value is invisible until the next
+    /// `ExtendSelection` reads it — which is reachable straight after a swap,
+    /// because the machine is the *session's* and its visual anchor outlives
+    /// the buffer.
+    #[test]
+    fn opening_a_file_drops_a_selection_measured_in_the_last_one() {
+        let mut editing = editing("alpha bravo charlie delta echo\n");
+
+        // Select `bravo`, the way `v e` does, and leave the anchor set.
+        editing.apply(&Action::Motion(
+            phosphor_core::action::MotionAction::SelectRange {
+                span: Span {
+                    start: Position { line: 1, column: 7 },
+                    end: Position {
+                        line: 1,
+                        column: 12,
+                    },
+                },
+                kind: phosphor_core::request::SelectionKind::Line,
+            },
+        ));
+        assert!(
+            editing.selection_from.is_some(),
+            "the anchor is set — otherwise this test proves nothing"
+        );
+
+        let theme = super::builtin("phosphor-dark").expect("a shipped theme");
+        let file = scratch("swap").join("other.txt");
+        let leaving = editing.editing.opens(
+            buffer("text", "one\n", &theme).expect("a buffer"),
+            file.clone(),
+            Timeline::detached(),
+        );
+
+        assert_eq!(leaving, None, "this buffer had no file to leave behind");
+        assert_eq!(editing.file.as_deref(), Some(file.as_path()));
+        assert!(
+            editing.selection_from.is_none(),
+            "an offset into the rope that just left is not a position in this one"
+        );
+        assert_eq!(
+            editing.selection_kind,
+            phosphor_core::request::SelectionKind::Char,
+            "and `V` in the file you left does not make the first extend in the \
+             file you arrived at linewise — `ExtendSelection` reads this and \
+             never sets it"
+        );
     }
 
     /// **Two panes, two buffers, and every lookup by id** — step 4c's whole
