@@ -3203,6 +3203,120 @@ mod driven {
         );
     }
 
+    /// **`T050`: a session attaches and a turn completes — in the running
+    /// binary.**
+    ///
+    /// `phosphor-agent`'s own tests prove the client; this proves the *editor*
+    /// has one. Three things only a terminal can answer: that `agent-command`
+    /// spawns an agent, that §5's session segment is the client's report rather
+    /// than the `SessionState::None` the statusline hardcoded until now, and
+    /// that `:claude` starts a turn a person can watch.
+    ///
+    /// **The `slow` fixture mode exists for the middle frame.** `turn` answers
+    /// in microseconds, so `idle`, `working` and `idle` would all land inside
+    /// one frame and the test could assert none of them. Two seconds is long
+    /// enough to photograph and short enough not to dominate the suite.
+    ///
+    /// The agent is the same `toy_acp_agent.py` the client's tests drive,
+    /// reached across the crate boundary rather than copied: two spellings of
+    /// one fixture is how the two would come to disagree about the protocol.
+    #[test]
+    fn a_session_attaches_and_a_turn_completes_in_the_editor() {
+        let scratch = Scratch::new("acp-session");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+
+        // **No session before the option names one.** §5's segment is
+        // *"always present and truthful"*, and the truth here is that there is
+        // nothing to be present about.
+        let before = statusline(&editor.screen());
+        assert!(
+            !before.contains("claude"),
+            "something claimed a session before one was asked for: {before}"
+        );
+
+        // `(set-option! …)` — the whole attach door, which is why a live agent
+        // is one REPL line away rather than a task away.
+        let form = format!(
+            "(set-option! \"agent-command\" \"python3 {} slow\")\r",
+            agent.display()
+        );
+        editor.press_until(form.as_bytes(), "()");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // Attached and between turns is `idle`.
+        let idle = shown(&editor, "claude idle");
+        assert!(
+            shows(&idle, "claude idle"),
+            "the session never attached; session was: {idle}"
+        );
+
+        // **A turn, watched.** `:claude` is `send-message`, and the fixture
+        // holds the stop reason for two seconds so `working` is a frame that
+        // exists.
+        editor.press_quietly(b":claude what is 2 + 2?\r");
+        let working = shown(&editor, "claude working");
+        assert!(
+            shows(&working, "claude working"),
+            "the turn never showed as working; session was: {working}"
+        );
+
+        // And it ends. Polled rather than read once: the counter going back to
+        // `idle` is a *removal* of the working segment, so the frame that does
+        // it can land just after a read.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut after = statusline(&editor.screen());
+        while after.contains("working") {
+            assert!(
+                Instant::now() < deadline,
+                "the turn never ended; statusline was: {after}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+            after = statusline(&editor.screen());
+        }
+        assert!(
+            after.contains("idle"),
+            "the turn ended into something other than idle: {after}"
+        );
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **An anchored message is refused by name rather than sent without its
+    /// anchor**, because claude answering about the wrong thing with nothing on
+    /// screen to say the range went missing is the worse failure.
+    ///
+    /// The refusal is `T058`'s, which is the task that builds the line the
+    /// anchor comes from.
+    #[test]
+    fn a_message_with_an_anchor_names_the_task_that_owes_it() {
+        let scratch = Scratch::new("acp-anchor");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let said = editor.press_until(
+            b"(send-message! \"hello\" (list (hash \"kind\" \"cursor\")))\r",
+            "T058",
+        );
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+        editor.quit();
+
+        assert!(
+            shows(&said, "T058"),
+            "an anchored message was not refused by name; session was: {said}"
+        );
+    }
+
     /// **`T089`: the tab bar appears on the second pane and never on the
     /// first, and its counts are the store's.**
     ///

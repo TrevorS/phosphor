@@ -2679,9 +2679,79 @@ bet; a lukewarm result here is worth stopping over, not building past.
 
 Split at the internal checkpoint from Q10. Two checkpoints.
 
-- [ ] **T050 · ACP session client**
+- [x] **T050 · ACP session client**
   `agent-client-protocol`. One Claude Code session per editor per repo.
   *Done when:* a session attaches and a turn completes. *Needs:* T019
+
+  > **Built 2026-08-21.** `crates/phosphor-agent/src/session.rs` is the client —
+  > one thread, one runtime, one child process, and every method returns without
+  > waiting, which is deliberately `phosphor-buffer`'s LSP client's shape.
+  > `crates/phosphor/src/agent.rs` is the loop's half of the seam.
+  > `agent-client-protocol` 2.0.0, Apache-2.0, `rust-version` 1.88.0 — the
+  > workspace floor exactly, so it moved no MSRV. No features: all six are
+  > `unstable_*` and a turn that completes needs none of them.
+  >
+  > **Reachable from a REPL line, which is what makes it testable now.**
+  > `(set-option! "agent-command" "npx @zed-industries/claude-code-acp")` and the
+  > next frame attaches; `:claude <message>` starts a turn. An **option** rather
+  > than a capability, deliberately — `T057` owns the lifecycle verbs, and an
+  > option cannot say *which of several running sessions*, which is the question
+  > that task exists to answer. `send-message` is `T058`'s and is armed here
+  > because *"a turn completes"* is unreachable without a way to start one;
+  > `T058` owns the **line** (`1c`, the `⚓` chip, ex-style history), and the arm
+  > refuses any message carrying anchors by naming it.
+  >
+  > **`StatusVm.session` is filled in, which is what the sentence there
+  > promised** — it read *"`T050` and `T071` fill those two in; a fixture here
+  > would be a lie on a real terminal"* and drew `SessionState::None` forever.
+  > It is `session_state(life, turn)` now: the client's report about the
+  > *connection* joined to the editor's record of the *turn*, with the join in
+  > the binary so a rendering decision stays out of a transport.
+  >
+  > **The app clock was never read.** `Interpreter::at` existed, nothing called
+  > it, so `now` sat at `Millis(0)` and neither `Node::Spinner` nor
+  > `Node::Elapsed` could move. Honest while there was nothing to wait on; the
+  > loop reads its own epoch now and the planted-defect run photographed
+  > `⠋ claude working · 0:00`.
+  >
+  > **`Life::Starting` draws as `None`, and that is a gap this task records
+  > rather than closes.** §5 lists *"idle, working+elapsed, waiting, paused,
+  > lost"* and a session that is spawning is none of them. `None` is the least
+  > wrong of the six and still wrong: for the second an agent takes to answer
+  > `initialize`, the statusline says there is no session while one is starting.
+  > `T051`'s *Done when* is *"every state renders"*, so the sixth state is that
+  > task's to add or to rule out.
+  >
+  > **One turn at a time, enforced rather than assumed.** The client documented
+  > it and did not hold to it: two `send_prompt`s overwrote the turn id and
+  > emitted one `turn-ended` for two `turn-began`s, leaving a transcript row
+  > that never closes. Prompts queue now. Found by a test that sends two without
+  > waiting, because that is what a person typing quickly does.
+  >
+  > **The dependency changed another crate's wire bytes** —
+  > [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md) §51. Both ACP crates ask `serde_json`
+  > for `preserve_order`; cargo unifies features across a `--workspace` build,
+  > so `Value`'s map became an `IndexMap` and every LSP message `async-lsp`
+  > round-trips came out in declaration order. A `phosphor-buffer` test that
+  > asserted a multi-key JSON substring went red — its own comment admitted the
+  > order was a fact about `serde_json`'s map type rather than about LSP. It
+  > parses now.
+  >
+  > **A spawner two lints could not see.** `phosphor-agent::session_client`
+  > drives children the SDK spawns for it, and `phosphor-buffer::lsp_documents`
+  > builds a `ServerSpec` around `sh -c` — neither carries `Command::new` or
+  > `open_pty`, and `.config/nextest.toml` said in prose that the second
+  > *"[does not] spawn anything"*. Both are in the `spawns-a-child` group now,
+  > and `lint-nextest-group.sh` counts `ServerSpec::new`/`SessionSpec::new` as
+  > spawn markers.
+  >
+  > **Verification.** Six client tests against `toy_acp_agent.py` — a fixture
+  > that speaks the wire form and imports none of the SDK, so a pass means both
+  > sides agree with the protocol rather than with each other — plus two pty
+  > tests in the running binary. Five planted defects, five caught: an un-queued
+  > second prompt, a `turn-began` that records nothing, a `turn-ended` that never
+  > clears, a `session_state` that never reports a session, and a
+  > `lint-nextest-group` row removed. `just gate` green.
 
 - [ ] **T051 · `SessionState` + statusline**
   One enum — Idle, Working{elapsed}, Waiting, Paused, Lost, None — **rendered identically

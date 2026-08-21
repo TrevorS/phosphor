@@ -21,6 +21,11 @@ survive:
   `mute`      answers `initialize` and `session/new`, then never answers a
               prompt. The client must stay attached and stay responsive; a
               turn that never ends is not a hang.
+  `slow`      the whole exchange, with the stop reason held back for
+              `SLOW_SECONDS`. The only mode in which "claude is working" is
+              observable on a screen: `turn` answers in microseconds, so a test
+              watching the statusline would see `idle`, `working` and `idle`
+              inside one frame and could assert none of them.
   `deaf`      exits immediately after `initialize`. The connection drops
               mid-session, which is `7b`'s seam and `Failure::Dropped`.
   `gibberish` answers `initialize` with a line that is not JSON at all.
@@ -32,8 +37,13 @@ with the protocol.
 
 import json
 import sys
+import time
 
 SESSION = "toy-session-1"
+
+#: How long `slow` holds a turn open. Long enough for a pty test to see a frame
+#: drawn during it, short enough not to dominate the suite.
+SLOW_SECONDS = 2.0
 
 
 def send(message: dict) -> None:
@@ -99,6 +109,8 @@ def main() -> int:
                 for block in params.get("prompt") or []
                 if isinstance(block, dict)
             )
+            if mode == "slow":
+                time.sleep(SLOW_SECONDS)
             notify(
                 "session/update",
                 {

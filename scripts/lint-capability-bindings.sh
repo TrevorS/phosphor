@@ -81,6 +81,11 @@ EMITTED = {
     # Producers post these; nobody types an answer.
     "ingest-completions": "the LSP client posts it",
     "ingest-diagnostics": "the LSP client posts it",
+    # `T050`. The same shape one door over: a turn boundary is something the
+    # agent did, so the ACP client posts it and nobody types it. What a person
+    # types is `:claude`, which is `send-message`, and that is bound.
+    "turn-began": "the ACP session client posts it when a prompt goes out",
+    "turn-ended": "the ACP session client posts it when the agent stops",
     "ingest-hover": "the LSP client posts it",
     "ingest-signature-help": "the LSP client posts it",
     # A surface with its own key handler in Rust. `picker_key` and `repl_key`

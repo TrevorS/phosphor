@@ -1559,6 +1559,23 @@
          (lambda (rest bang)
            (key/run (key/cmd "restart-language-server" "language" rest))))
 
+;; T050 — a message to claude, and the plainest possible way to send one.
+;;
+;; `SPC c p` above raises T058's PromptLine, which is the surface this editor
+;; is supposed to talk through: 1c's line, the ⚓ chip when a selection rides
+;; along, ex-style history. that task is not built. this is not a substitute
+;; for it and does not want to be — it is the door that makes "a session
+;; attaches and *a turn completes*" reachable by a person, because nothing can
+;; complete a turn nobody can start.
+;;
+;; no anchors, deliberately. `send-message` takes them and the arm refuses a
+;; message that carries any, by naming T058: an anchor silently dropped means
+;; claude answers about the wrong thing with nothing on screen to say the range
+;; went missing. the ex line has no selection to offer anyway.
+(ex-set! "cl[aude]" "send claude a message — :claude <message>"
+         (lambda (rest bang)
+           (key/run (key/cmd "send-message" "body" rest "anchors" (list)))))
+
 ;; ---------------------------------------------------------------------------
 ;; the prompt key
 ;; ---------------------------------------------------------------------------

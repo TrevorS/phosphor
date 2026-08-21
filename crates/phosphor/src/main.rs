@@ -153,7 +153,7 @@ use phosphor_buffer::undo::{Caret, CharRange, Edit as TreeEdit, NodeId, Step, Un
 use phosphor_core::action::{
     Action, AppAction, BufferAction, FileAction, FloatAction, HistoryAction, InputAction,
     LspAction, MotionAction, Outcome, PaneAction, PickerAction, PromptAction, Receipt, Refusal,
-    RegionAction, Request, RuntimeAction, ViewAction,
+    RegionAction, Request, RuntimeAction, SessionAction, ViewAction,
 };
 use phosphor_core::config;
 use phosphor_core::input::key::{Code, Key, Mods, Named};
@@ -169,20 +169,22 @@ use phosphor_core::request::{
     Completion as WireCompletion, Direction, EditMode, FoldState, KeySeq, LanguageId, PaneId,
     PaneKind, PaneRef, Position, PromptKind, RegionFilter, RegionId, RegisterName, Seek,
     SelectionKind, Sequence, Signature as WireSignature, SourceId, Span, Target, TextObject,
+    TurnId,
 };
 // `Scope` is already the input table's (`keymaps.scm`'s normal/insert/visual),
 // and a second one under the same name in a 9,000-line file is a trap rather
 // than an ambiguity the compiler catches — both are `Scope::File`-shaped
 // enums.
 use crate::picker::PickerSession;
+use phosphor_agent::session::Life as SessionLife;
 use phosphor_core::store::{
     Fingerprint, Lens, Scope as RegionScope, SeenState, Snapshot as AnchorSnapshot,
     SyntaxStep as AnchorStep,
 };
 use phosphor_core::value::{Args, Value, Wire as _};
 use phosphor_core::view::{
-    Axis as ViewAxis, Child, Constraint, Density, Emphasis, Float as ViewFloat, KeyHint, Mood,
-    Node, SessionState, Slot, Tab, Tone, Tree,
+    Axis as ViewAxis, Child, Constraint, Density, Emphasis, Float as ViewFloat, KeyHint, Millis,
+    Mood, Node, SessionState, Slot, Tab, Tone, Tree,
 };
 use phosphor_steel::boot::{BootFault, BootReport, BootUnit};
 use phosphor_steel::float::ExLine;
@@ -222,6 +224,7 @@ use ratatui::style::Style;
 use ratatui_code_editor::code::Code as SourceCode;
 use ratatui_code_editor::selection::Selection;
 
+mod agent;
 mod door;
 mod events;
 mod lsp;
@@ -2573,6 +2576,15 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         wall: false,
         closing: None,
         splitting: None,
+        // `T050`. Started here and attached to nothing: the runtime thread is
+        // idle until `agent-command` names something, which is the same
+        // *"nothing is spawned until attach"* contract `LanguageServers` has.
+        session: phosphor_agent::session::Session::start(
+            agent::sink(poster.clone()),
+            agent::waking(poster.clone()),
+        ),
+        turn: None,
+        agent: None,
     };
     // `T088`'s step 4c: every buffer by id, every pane by id, one of each.
     // The maps are the wrong shape for one entry and that is what they are
@@ -2691,6 +2703,18 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // transition rather than a state — read one way it would close a hover the
     // moment it arrived, since normal mode is where hover is read.
     let mut was_inserting = false;
+    // **The app's own epoch** (`view::Millis`: *"the epoch is the app's own …
+    // because only differences are ever rendered"*). Nothing read a clock
+    // before `T050`, so the interpreter's `now` sat at zero and neither
+    // `Node::Spinner` nor `Node::Elapsed` could move — which was honest while
+    // there was no session to wait on and is not any more.
+    let started = Instant::now();
+    // Where a session is rooted. The workspace is the directory the editor was
+    // started in — `Timeline::open_at`'s rule, and the honest root until `T071`
+    // makes it the repository's — read once, because a session outlives a frame
+    // and `getcwd` per frame would be asking a question whose answer cannot
+    // change inside this process.
+    let workspace = std::env::current_dir().unwrap_or_default();
 
     // The document the servers have been told about, and how many edits ago.
     // `didChange` is sent from the top of the loop rather than from the edit,
@@ -2744,6 +2768,22 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // reads of `host.flag` could disagree inside one frame — the VM runs
         // between them.
         let soft_wrap = cli.soft_wrap || host.flag("soft-wrap") == Some(true);
+        // **`T050` — the session follows the option, and only when it moves.**
+        // Read per frame for the reason `soft-wrap` is: the value is the editor
+        // layer's and `(set-option! "agent-command" …)` at the REPL has to
+        // reach the next keystroke. *Acted on* only when it differs, because
+        // honouring `soft-wrap` is free and spawning a process is not.
+        let wanted = host.text(agent::COMMAND);
+        if wanted != shell.agent {
+            shell.agent = wanted.clone();
+            match wanted.as_deref().and_then(agent::spec_from) {
+                Some(spec) => shell.session.attach(spec, workspace.clone()),
+                // The option was cleared. `stop` rather than nothing, so
+                // `:set agent-command ""` is a way to end a session and not
+                // just a way to stop naming one.
+                None => shell.session.stop(),
+            }
+        }
         // **Every pane, from the tree — and everything that depends on a
         // rectangle, in the same pass.**
         //
@@ -2944,11 +2984,19 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 path,
                 dirty: editing.dirty.get(),
             }),
-            // Truthful, and the truth at S4 is that there is no session and no
-            // VCS adapter. `T050` and `T071` fill those two in; a fixture here
-            // would be a lie on a real terminal.
-            session: SessionState::None,
-            since: None,
+            // **`T050` fills the first of the two in**, which is what the
+            // sentence this replaced promised: *"`T050` and `T071` fill those
+            // two in; a fixture here would be a lie on a real terminal."* It is
+            // the client's report and never the editor's guess — see
+            // [`session_state`].
+            session: session_state(&shell.session.life(), shell.turn.as_ref()),
+            // Where the elapsed counter counts from, in the app's own epoch.
+            // A turn's `Instant` is converted here rather than stored as
+            // `Millis`, because the arm that records it cannot see `started`
+            // and a second epoch is how two clocks disagree.
+            since: shell.turn.map(|(_, began)| {
+                Millis(u64::try_from(began.duration_since(started).as_millis()).unwrap_or(u64::MAX))
+            }),
             ask_pending: false,
             // **`T041` — §5's `●n`, counted rather than zero.** Over the file
             // on screen, which is what `runtime/statusline.scm`'s own VM doc
@@ -3066,6 +3114,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             signature: editing.signature.as_ref(),
             picker: picker_vm.as_ref(),
             tabs: &tab_bar,
+            now: Millis(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)),
         };
         term.draw(|frame| {
             draw(
@@ -4014,6 +4063,32 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
 
     term.restore()?;
     Ok(())
+}
+
+/// What §5's session segment says, from the client's report and the turn.
+///
+/// **Two facts, one answer.** [`SessionLife`] is about the *connection* — is there an
+/// agent, is it attached, did it go — and the turn is about what that agent is
+/// doing. §5's enum spans both, so this is where they meet, and putting the
+/// join here rather than inside the client is what keeps a rendering decision
+/// out of a transport.
+///
+/// **[`SessionLife::Starting`] draws as `None`, and that is a gap rather than a
+/// choice.** §5 lists five states and a none: *"idle, working+elapsed, waiting,
+/// paused, lost"*. A session that is spawning is none of them — it is not
+/// working, because no turn has begun, and it is not lost. `None` is the least
+/// wrong of the six and it is still wrong: for the second or two an agent takes
+/// to hand back its `initialize`, the statusline says there is no session while
+/// one is starting. `T051`'s *Done when* is *"every state renders and the
+/// statusline is never stale"*, so the sixth state is that task's to add or to
+/// rule out.
+fn session_state(life: &SessionLife, turn: Option<&(TurnId, Instant)>) -> SessionState {
+    match life {
+        SessionLife::None | SessionLife::Starting => SessionState::None,
+        SessionLife::Lost(_) => SessionState::Lost,
+        SessionLife::Attached { .. } if turn.is_some() => SessionState::Working,
+        SessionLife::Attached { .. } => SessionState::Idle,
+    }
 }
 
 /// What the statusline says about this buffer's language server (`7c`,
@@ -5027,6 +5102,12 @@ struct Overlay<'a> {
     /// [`Geometry::tabs`]. `Node::Empty` below two panes, which is the frame
     /// where [`Geometry::tabs`] is [`None`] and nothing asks for this at all.
     tabs: &'a Tree,
+    /// This frame's reading of the app clock (`T050`).
+    ///
+    /// The whole animation budget: `Node::Spinner` and `Node::Elapsed` render
+    /// `now - since`, so a spinner turning costs *frames* and zero
+    /// recompositions. It was never read until there was something to wait on.
+    now: Millis,
 }
 
 /// One frame: the pane, the strips over it, then the statusline.
@@ -5086,8 +5167,9 @@ fn draw(
     // collapse had to carry the capability across or put the blocks back —
     // blank cells on a `NO_COLOR` terminal, with nothing on screen to say so.
     // See [`Interpreter::fill`] for why it is a builder and not a prop.
-    let interpreter =
-        Interpreter::new(theme, &painted).fill(state_fill(phosphor_term::colour_available()));
+    let interpreter = Interpreter::new(theme, &painted)
+        .fill(state_fill(phosphor_term::colour_available()))
+        .at(overlay.now);
 
     let tree = match composed {
         // A surface composed as a whole frame owns it — `6b` draws its own
@@ -5950,6 +6032,29 @@ struct Shell {
     /// loop answers what only it can: whether there is another buffer for the
     /// pane to show afterwards.
     closing: Option<BufferId>,
+    /// The ACP session (`T050`).
+    ///
+    /// **On the shell rather than beside the language servers**, and the
+    /// difference is who reaches it: a server is spoken to by the loop alone,
+    /// while a session is spoken to by an *arm* — `send-message` prompts it —
+    /// and [`Cx`] is the only way an arm reaches anything that is not its own
+    /// rope.
+    session: phosphor_agent::session::Session,
+    /// The turn in flight and when it began, or [`None`] between turns.
+    ///
+    /// Two readers, and they are the two halves of §5's session segment: which
+    /// [`SessionState`] to draw, and where the elapsed counter counts from.
+    /// Written by the `turn-began` and `turn-ended` arms and by nothing else,
+    /// so *"claude is working"* is the client's report rather than the
+    /// editor's guess.
+    turn: Option<(TurnId, Instant)>,
+    /// The `agent-command` the session is currently attached to.
+    ///
+    /// Kept so the loop can tell *"the option changed"* from *"the option is
+    /// set"*. Without it, reading the option per frame would respawn the agent
+    /// per frame — which is the shape `soft-wrap` gets away with because
+    /// honouring it is free and spawning a process is not.
+    agent: Option<String>,
 }
 
 impl std::fmt::Debug for Shell {
@@ -7905,6 +8010,51 @@ impl Editing {
                 self.restart = Some(language.clone());
                 done()
             }
+
+            // -- `T050`: the session ------------------------------------------
+            //
+            // **Neither of these touches a buffer**, which is exactly why they
+            // are arms here rather than in the loop: `Cx` is how an Action
+            // reaches something that is not its own rope, and a turn is a fact
+            // about the session. The alternative — the loop intercepting two
+            // Actions before `act` ever sees them — is a second applier, and
+            // this build has spent a window making sure there is one.
+            Action::Session(SessionAction::TurnBegan { turn, .. }) => {
+                cx.shell.turn = Some((*turn, Instant::now()));
+                done()
+            }
+            Action::Session(SessionAction::TurnEnded { turn, .. }) => {
+                // **Only the turn that is running ends.** A stop reason for a
+                // turn the editor has already forgotten is not an error — a
+                // session replaced mid-turn produces exactly one — and clearing
+                // unconditionally would blank a *newer* turn's clock, leaving
+                // the statusline saying `idle` while claude works.
+                if cx.shell.turn.is_some_and(|(running, _)| running == *turn) {
+                    cx.shell.turn = None;
+                }
+                done()
+            }
+            // `T058`'s capability, armed here because `T050`'s *Done when* is
+            // *"a session attaches and **a turn completes**"* and nothing can
+            // complete a turn nobody can start. What `T058` owns is the
+            // **line** — `1c`, the `⚓` anchor chip, ex-style history — and the
+            // anchors below are the seam between the two.
+            Action::Session(SessionAction::SendMessage { body, anchors }) => {
+                if !anchors.is_empty() {
+                    // **Refused rather than sent without them.** An anchored
+                    // message whose anchor is silently dropped is worse than no
+                    // anchored message: claude answers about the wrong thing
+                    // and nothing on screen said the file and range went
+                    // missing.
+                    return Outcome::Refused(Refusal::NotYetImplemented { task: "T058" });
+                }
+                if body.trim().is_empty() {
+                    return declined("nothing to say — :claude <message>");
+                }
+                cx.shell.session.prompt(body.clone());
+                done()
+            }
+
             action => Outcome::Refused(Refusal::NotYetImplemented {
                 task: action.spec().since.task,
             }),
@@ -11054,6 +11204,15 @@ mod tests {
             wall: false,
             closing: None,
             splitting: None,
+            // `T050`. Started and attached to nothing, which is what the
+            // client's own contract calls for — the runtime thread is idle
+            // until an `agent-command` names something, and no test here does.
+            session: phosphor_agent::session::Session::start(
+                Arc::new(|_| true),
+                phosphor_agent::session::unwatched(),
+            ),
+            turn: None,
+            agent: None,
         }
     }
 
