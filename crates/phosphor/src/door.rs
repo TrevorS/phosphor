@@ -544,6 +544,75 @@ pub(crate) fn run(call: &Call, runtime: Option<&mut dyn Evaluate>) -> Result<Exi
 }
 
 // ---------------------------------------------------------------------------
+// The MCP door (`T052`)
+// ---------------------------------------------------------------------------
+
+/// One tool call, run through the same path the CLI door runs.
+///
+/// **This is the whole of what makes *"the same capability works from Steel and
+/// CLI"* structural.** There is no MCP dispatcher: a tool name resolves to a
+/// registry row, its JSON arguments become a `phosphor_core::value::Args`, and the result is the
+/// same [`Call`] `phosphor mark-seen --target …` assembles and the same
+/// [`answer`] runs. A door that disagreed with another about what a capability
+/// does would have to disagree with *itself* first.
+///
+/// # Errors
+///
+/// The call never reached the editor: an unknown tool, or arguments the
+/// vocabulary cannot decode. A **refusal** is not an error — it is what the
+/// editor said, and it comes back in the `Ok`.
+pub(crate) fn mcp_call(
+    tool: &str,
+    args: &serde_json::Map<String, serde_json::Value>,
+    runtime: Option<&mut dyn Evaluate>,
+) -> Result<String, String> {
+    let row = phosphor_agent::mcp::row_for(tool).ok_or_else(|| format!("no such tool: {tool}"))?;
+    let mut call = Call::new(row.name);
+    // **In the row's declaration order, not the JSON's.** An object's key order
+    // is the client's business and `Args` is *"its arguments, in declaration
+    // order"*; walking the row is what makes the two agree without trusting the
+    // wire. A declared parameter the client omitted is simply absent, which is
+    // what an optional parameter means and what a required one is refused for
+    // one call later.
+    for param in row.params {
+        if let Some(supplied) = args.get(param.name) {
+            call.args.set(param.name, from_json(supplied));
+        }
+    }
+    let answer = answer(&call, runtime).map_err(|error| error.to_string())?;
+    Ok(render(&answer))
+}
+
+/// JSON into the vocabulary's own [`Value`].
+///
+/// Total, because [`Value`] spans JSON exactly once you decide what a float is.
+/// **A float truncates rather than failing**, and that is the honest reading of
+/// this vocabulary: `Value` has *"one integer case rather than signed/unsigned
+/// pairs"* and carries no real numbers at all, because no parameter in the
+/// registry is one. A client that sends `3.0` for a line number means line 3;
+/// one that sends `3.7` has made an error the payload type will catch by name,
+/// which is a better message than "the wire could not read a float".
+fn from_json(value: &serde_json::Value) -> Value {
+    match value {
+        serde_json::Value::Null => Value::Null,
+        serde_json::Value::Bool(flag) => Value::Bool(*flag),
+        serde_json::Value::Number(number) => number.as_i64().map_or_else(
+            || Value::Int(number.as_f64().unwrap_or_default() as i64),
+            Value::Int,
+        ),
+        serde_json::Value::String(text) => Value::Text(text.clone()),
+        serde_json::Value::Array(items) => Value::List(items.iter().map(from_json).collect()),
+        serde_json::Value::Object(fields) => {
+            let mut args = phosphor_core::value::Args::new();
+            for (name, field) in fields {
+                args.set(name, from_json(field));
+            }
+            Value::Record(args)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 //

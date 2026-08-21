@@ -84,6 +84,19 @@ async-lsp = { version = "0.2.4", default-features = false, features = [
 # protocol v2, session fork — and this client speaks the stable protocol. A turn
 # that completes needs none of them.
 agent-client-protocol = { version = "2.0.0", default-features = false }
+# `T052`'s MCP server — the agent's door, and the third of invariant 2's three.
+# SPIKES.md's manifest names `rmcp`; 3.1.4 is what it resolves to and its
+# `rust-version` is 1.88, the workspace floor exactly.
+#
+# `server` and `transport-io` only. The default set adds `macros`, which is the
+# `#[tool]` attribute pair for a handful of hand-written tools — this door has
+# 218 derived from the registry, so the macros would be dead weight and the
+# `schemars` they pull would be a **second schema generator** beside
+# `registry::mcp::tool`, which is exactly the drift `T020` exists to prevent.
+rmcp = { version = "3.1.4", default-features = false, features = [
+    "server",
+    "transport-io",
+] }
 # The CLI door's argument parser (SPIKES.md's manifest, `phosphor --eval`).
 # `T090` is its first consumer — `--theme <slug>` plus the file to open — and
 # `T023` takes the same parser when `--eval` lands, which is why it is pinned

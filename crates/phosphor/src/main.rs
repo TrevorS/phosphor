@@ -287,6 +287,20 @@ struct Cli {
     /// runtime until T096.
     #[arg(long)]
     soft_wrap: bool,
+
+    /// Serve MCP on stdin and stdout — the agent's door (T052). Opens no
+    /// terminal, exactly as `--eval` does, and speaks nothing else on those
+    /// pipes: an agent spawns `phosphor --mcp` and every byte either way is
+    /// JSON-RPC.
+    ///
+    /// **A flag rather than a subcommand.** The subcommand namespace is
+    /// generated — one verb per capability, and
+    /// `scripts/lint-one-registry.sh` holds the CLI module to being a total
+    /// function of the table with no name of its own. A hand-written `mcp`
+    /// verb would sit in that namespace as the one entry the registry did not
+    /// put there.
+    #[arg(long, conflicts_with_all = ["path", "eval", "repl"])]
+    mcp: bool,
 }
 
 /// Which mood [`Cli::float`] opens. Design Language §4's two.
@@ -2414,6 +2428,94 @@ fn main() -> ExitCode {
     }
 }
 
+/// One tool call, on its way to the VM's thread.
+///
+/// The reply channel travels with the question for [`Answer`](phosphor_buffer::lsp)'s
+/// reason one door over: a caller that asked must be answered on every path,
+/// and a `Sender` dropped by a thread that ended answers `Err` at the receiver
+/// rather than hanging it.
+type Ask = (
+    String,
+    serde_json::Map<String, serde_json::Value>,
+    std::sync::mpsc::Sender<Result<String, String>>,
+);
+
+/// The editor an MCP tool call reaches.
+///
+/// **A channel, because the VM cannot cross a thread.** `rmcp` hands the
+/// handler out by shared reference and requires `Send + Sync`; [`Layer`] owns a
+/// `steel-core` runtime built on `Rc`, so it is `!Send` and always will be.
+/// The reconciliation is the one this build already uses for the LSP client and
+/// the ACP session: the thing that cannot move gets a thread of its own and is
+/// reached by message.
+///
+/// Serialising tool calls is not a cost of that arrangement — it is what one
+/// runtime means. Two concurrent calls into one VM would have to serialise
+/// somewhere.
+struct McpEditor {
+    asks: std::sync::mpsc::Sender<Ask>,
+}
+
+impl phosphor_agent::mcp::Editor for McpEditor {
+    fn call(
+        &self,
+        capability: &str,
+        args: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<String, String> {
+        let (reply, answered) = std::sync::mpsc::channel();
+        self.asks
+            .send((capability.to_owned(), args.clone(), reply))
+            .map_err(|_| "the editor's runtime has gone".to_owned())?;
+        answered
+            .recv()
+            .map_err(|_| "the editor's runtime answered nothing".to_owned())?
+    }
+}
+
+/// Serves MCP on stdin and stdout until the client goes.
+///
+/// One runtime, built the same way `--eval`'s is ([`vm`]), so an agent calling
+/// `phosphor/eval` and a shell running `phosphor --eval` are answered out of
+/// the same VM — which is `T023`'s *"identical results"* claim extended to the
+/// third door rather than restated for it.
+///
+/// **Nothing in this function may print.** stdout *is* the protocol here, and a
+/// stray line is a parse error at the other end rather than a cosmetic problem.
+/// That is also why it returns before [`Term`] exists.
+fn serve_mcp() -> Result<ExitCode, Box<dyn Error>> {
+    let (asks, orders) = std::sync::mpsc::channel::<Ask>();
+    // The VM's own thread. It ends when the last `asks` sender is dropped,
+    // which is when the server does, which is when the client goes.
+    let holding = std::thread::Builder::new()
+        .name("phosphor-mcp-vm".to_owned())
+        .spawn(move || {
+            let (mut runtime, _host) = vm();
+            while let Ok((tool, args, reply)) = orders.recv() {
+                let answered = door::mcp_call(&tool, &args, Some(&mut Vm(&mut runtime)));
+                drop(reply.send(answered));
+            }
+        })?;
+
+    // A current-thread runtime: this process does one thing, and `rmcp`'s stdio
+    // transport is the only thing in it that awaits.
+    let served = tokio::runtime::Builder::new_current_thread()
+        .enable_io()
+        // **`enable_time` is not optional here**, and the failure was loud:
+        // `rmcp`'s service loop arms a timeout per request, and a runtime
+        // without timers panics *"a Tokio 1.x context was found, but timers are
+        // disabled"* on the first `tools/call` — after the handshake, so the
+        // server looks healthy right up until it is asked to do something.
+        .enable_time()
+        .build()?
+        .block_on(phosphor_agent::mcp::Server::new(McpEditor { asks }).serve_stdio());
+    // The sender is gone with the server, so this joins rather than blocking.
+    drop(holding.join());
+    // `Box<dyn Error + Send + Sync>` is not `Box<dyn Error>`, and `?` will not
+    // bridge the two — the string is what a caller can do anything with anyway.
+    served.map_err(|error| error.to_string())?;
+    Ok(ExitCode::SUCCESS)
+}
+
 /// argv chooses: the CLI door, or the S1 host.
 ///
 /// Both branches come out of one [`ArgMatches`], so there is no second parse and
@@ -2437,6 +2539,12 @@ fn dispatch(matches: &ArgMatches) -> Result<ExitCode, Box<dyn Error>> {
         let call = door::eval_call(source)?;
         let (mut runtime, _host) = vm();
         return Ok(door::run(&call, Some(&mut Vm(&mut runtime)))?);
+    }
+    // `T052`. Before [`Term`] exists, for `--eval`'s reason and one more: this
+    // process's stdout **is** the protocol, so anything that printed to it
+    // would be a parse error at the other end.
+    if cli.mcp {
+        return serve_mcp();
     }
 
     // No file is a command line, not a mistake (`T107`). The argument used to
@@ -7210,6 +7318,42 @@ impl Editing {
             Action::Buffer(BufferAction::Replace { span, text }) => {
                 self.remove(*span);
                 self.insert(span.start, text);
+                done()
+            }
+            // `T052` — **the shape an agent writes through.** Its row calls it
+            // *"the primitive `T029`'s log replays"*, and that is what the
+            // grouping is for: an agent that rewrote nine call sites is one `u`
+            // away from before it, not nine.
+            //
+            // **One `begin`/`commit` around the loop is the whole of the undo
+            // group**, and no new machinery: `Editing::begin` is depth-counted
+            // already, so each `splice` inside sees depth 2 and returns early,
+            // and `UndoTree::record` appends into the group this opened. The
+            // batch becomes one `Change` with N edits — which is the same shape
+            // `UndoTree::record_batch` builds, reached through the path every
+            // other edit in this file takes rather than through a second one.
+            Action::Buffer(BufferAction::ApplyEdits { edits }) => {
+                // **Last first, and this is not a preference.** The spans are
+                // positions in the document *as the agent read it*; applying
+                // the first edit moves every position after it, so a
+                // front-to-back walk writes the second edit at an offset that
+                // stopped being true one line earlier. Descending by start
+                // offset keeps every span that has not been applied yet valid,
+                // which is the same rule LSP puts on a `WorkspaceEdit` and for
+                // the same reason.
+                //
+                // Stable, so two edits at one offset keep the order the agent
+                // declared them in — *"the edits, in order"* is the row's own
+                // wording, and it is the only thing left for it to mean once
+                // position has decided the rest.
+                let mut ordered: Vec<&phosphor_core::request::Edit> = edits.iter().collect();
+                ordered.sort_by_key(|edit| std::cmp::Reverse(self.offset(edit.span.start)));
+                self.begin();
+                for edit in ordered {
+                    self.remove(edit.span);
+                    self.insert(edit.span.start, &edit.text);
+                }
+                self.commit();
                 done()
             }
             Action::Buffer(BufferAction::Yank { target, register }) => {

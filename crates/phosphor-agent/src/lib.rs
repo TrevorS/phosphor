@@ -6,4 +6,5 @@
 //!
 //! Owned by `agent`.
 
+pub mod mcp;
 pub mod session;

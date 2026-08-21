@@ -5,10 +5,11 @@ publish.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
-# `rmcp` arrives with `T052`; the ACP transport is here from `T050`.
+# Both transports: the ACP client (`T050`) and the MCP server (`T052`).
 [dependencies]
 agent-client-protocol.workspace = true
 phosphor-core.workspace = true
+rmcp.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
