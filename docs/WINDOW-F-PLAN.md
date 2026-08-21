@@ -231,6 +231,16 @@ Separately: `Editing::reveal` hardcodes `PaneRef::Focused {}` and calls `self.ac
 
 **Verification:** existing didChange tests in `loop_pty.rs`; new unit test — edit buffer A, assert B's `edits` counter did not move and B's `sent` still equals it.
 
+> **DONE.** `edits`, `synced` and `sent` are `Editing` fields; `dirty` already was. `adopt` **records** into the buffer it adopted rather than answering the loop, because a return value the loop stores in one local is the shape that cannot hold two open files. The sync block is `for buffer in buffers.map.values_mut()`, which is the correction that matters: a server holding a file that is not on screen was never told it changed, so every completion, hover and diagnostic it produced for that file was computed against the text as it was when the file was last looked at — and nothing on screen would have said so.
+>
+> **`Editing::retrack` is a method rather than a call with the loop's two `Rc`s**, and that is the whole point of the step. A new `Editor` carries no change callback, so a swapped-in rope leaves both counters frozen; handing the *loop's* pair to a second buffer's rope would instead have both buffers reporting one file's edits. A buffer re-points its own.
+>
+> **The test found a gap nobody was looking for.** `one_buffers_edits_do_not_move_another_buffers_didchange_gate` failed on its *first* assertion — it could not get A's counter to move at all. The change callback was installed by whoever built the `Editor`, which the loop did via `dirty_flag` and no other caller did at all: a buffer constructed anywhere else silently counted nothing, and its `edits != sent` gate was closed forever. The constructor calls `retrack` now, so a buffer counts its own edits from birth and no caller has to remember.
+>
+> That change had a visible consequence worth recording rather than hiding: installing the callback **clears** the dirty flag, so two tests that handed `dirty: true` in at construction now set it afterwards. That is the more truthful shape anyway — unsaved work is a state you reach, and `[+]` is supposed to mean *"different from what is on disk"* rather than *"somebody passed true"*.
+>
+> **As run:** `just gate` green, 1,402 tests. Two added — the A-does-not-move-B gate, and `a_buffer_that_takes_a_new_rope_still_counts_its_own_edits`.
+
 ### Step 8 — Session fields into `Shell`; `:wall`, `:q`, `:close-buffer` become questions about `Buffers`
 
 **Files:** `crates/phosphor/src/main.rs`, `crates/phosphor/tests/loop_pty.rs`

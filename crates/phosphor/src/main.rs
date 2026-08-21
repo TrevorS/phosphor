@@ -2388,6 +2388,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         editor,
         path,
         Rc::clone(&dirty),
+        Rc::clone(&edits),
         timeline,
     ));
     let (mut panes, _) = Panes::new(Pane::new(first));
@@ -2508,8 +2509,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // accepting a completion — is one change as far as a server is concerned,
     // and telling it three times would have it answering about text the user
     // never saw.
-    let mut synced: Option<Document> = adopt(buffers.at_mut(first), &host.languages(), &servers);
-    let mut sent = edits.get();
+    adopt(buffers.at_mut(first), &host.languages(), &servers);
 
     loop {
         // **Focus, then the pane, then the buffer it holds** — by id, every
@@ -2579,12 +2579,32 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // when the buffer opened — *"completions for a prefix that is no longer
         // there is not a stale-looking list; it is a wrong one, and nothing on
         // screen says so"* (`LanguageServers::change`).
-        if edits.get() != sent {
-            sent = edits.get();
-            if let (Some(language), Some(document)) = (editing.language.clone(), synced.as_ref()) {
-                servers.change(&language, document.path.clone(), editing.contents());
+        //
+        // **Over every buffer, not the focused one.** This block read one
+        // `edits` against one `sent` and asked `editing` — whatever was on
+        // screen — for its contents. With a second buffer open that is not a
+        // partial answer but a wrong one: a server holding file B is never told
+        // B changed, so every completion, hover and diagnostic it produces for
+        // B is computed against the text as it was when B was last looked at.
+        // A file you edited, switched away from, and came back to would answer
+        // about a version of itself that no longer exists, and nothing on
+        // screen would say so.
+        //
+        // Each buffer's `edits` and `sent` are its own for the same reason: one
+        // pair cannot express *"A changed, B did not"*, and comparing A's
+        // counter against B's last-sent is a comparison between two files.
+        for buffer in buffers.map.values_mut() {
+            if buffer.edits.get() == buffer.sent {
+                continue;
+            }
+            buffer.sent = buffer.edits.get();
+            if let (Some(language), Some(document)) =
+                (buffer.language.clone(), buffer.synced.as_ref())
+            {
+                servers.change(&language, document.path.clone(), buffer.contents());
             }
         }
+        let editing = buffers.at_mut(held);
 
         // `T040` — the diagnostics on screen, resolved against *this* buffer.
         //
@@ -2596,7 +2616,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // property of the composition rather than of one widget. There is one
         // source today; `T041` adds the rest to this `Vec` and nothing else
         // here changes.
-        let published = synced
+        let published = editing
+            .synced
             .as_ref()
             .map(|document| shell.store.diagnostics_of(&document.key))
             .unwrap_or_default();
@@ -2754,7 +2775,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             surface: None,
             file: editing.file.clone().map(|path| StatusFile {
                 path,
-                dirty: dirty.get(),
+                dirty: editing.dirty.get(),
             }),
             // Truthful, and the truth at S4 is that there is no session and no
             // VCS adapter. `T050` and `T071` fill those two in; a fixture here
@@ -2954,7 +2975,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                             ReplStep::Close => surface = Surface::Buffer,
                             ReplStep::ToBuffer => {
                                 editing.editor = session_buffer(&repl, &theme)?;
-                                track_dirty(&mut editing.editor, &dirty, &edits);
+                                editing.retrack();
                                 surface = Surface::Buffer;
                             }
                         }
@@ -3145,7 +3166,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // where a `[+]` buffer lost its edit with no prompt and no notice.
             // There is no `force` on `open-file` to offer, so the sentence is
             // the whole refusal: `:w` and press it again.
-            if !same && dirty.get() {
+            if !same && editing.dirty.get() {
                 editing.open_at = None;
                 notice = Some(format!(
                     "{}: {}",
@@ -3174,8 +3195,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // extension, and the extension is in the name.
                         let fresh = found.is_none();
                         let text = found.unwrap_or_default();
-                        let mut rope = buffer(grammar_of(&host.languages(), &file), &text, &theme)?;
-                        track_dirty(&mut rope, &dirty, &edits);
+                        let rope = buffer(grammar_of(&host.languages(), &file), &text, &theme)?;
                         let (timeline, note) = Timeline::opened(&file);
                         // A journal that could not be opened outranks *"new
                         // file"*: both are true, one row holds one of them, and
@@ -3205,12 +3225,12 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // back to what is on disk, which is the specification's own
                         // rule — and `didOpen` for what took its place.
                         if let (Some(language), Some(document)) =
-                            (editing.language.clone(), synced.take())
+                            (editing.language.clone(), editing.synced.take())
                         {
                             servers.close(&language, &document.path);
                         }
-                        synced = adopt(editing, &host.languages(), &servers);
-                        sent = edits.get();
+                        adopt(editing, &host.languages(), &servers);
+                        editing.sent = editing.edits.get();
                         // `gd` landing. Applied as the Action it is, so the
                         // cursor moves through the one path every cursor move
                         // goes through and the viewport follows it — `apply`
@@ -3379,7 +3399,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // answer arrives on the runtime thread, posts into the queue, and is
         // applied on a later turn of this loop.
         if let Some(lookup) = editing.lookup.take() {
-            match (editing.language.clone(), synced.as_ref()) {
+            match (editing.language.clone(), editing.synced.as_ref()) {
                 (Some(language), Some(document)) => {
                     let at = editing
                         .text(&Cx::new(held, focus, &mut panes, &mut shell))
@@ -3411,7 +3431,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // `PaneRef` is knowledge `phosphor-buffer` does not have and must not
         // guess (`lsp::Locations`).
         if let Some(question) = editing.question.take() {
-            match (editing.language.clone(), synced.as_ref()) {
+            match (editing.language.clone(), editing.synced.as_ref()) {
                 (Some(language), Some(document)) => {
                     let at = editing
                         .text(&Cx::new(held, focus, &mut panes, &mut shell))
@@ -3468,7 +3488,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 Intent::History(delta) => repl.history(delta),
                 Intent::ToBuffer => {
                     editing.editor = session_buffer(&repl, &theme)?;
-                    track_dirty(&mut editing.editor, &dirty, &edits);
+                    editing.retrack();
                     surface = Surface::Buffer;
                 }
                 // The CLI and MCP doors, arriving in the editor layer's own
@@ -5707,6 +5727,31 @@ struct Editing {
     /// as the fork's batch and the undo tree are concerned.
     depth: u32,
     dirty: Rc<Cell<bool>>,
+    /// How many committed edit batches this buffer has seen (`T038`).
+    ///
+    /// **Per buffer, and one `Rc<Cell<u64>>` against one `sent` could not say
+    /// *"A changed, B did not"*.** It rides the fork's one change callback
+    /// beside [`Editing::dirty`] — see [`track_dirty`] for why the two share a
+    /// slot — and the loop compares it against [`Editing::sent`] to decide
+    /// whether a server needs telling.
+    ///
+    /// Deliberately **not** reset when a rope is swapped in: the loop compares
+    /// against its own last value, and a counter restarting at zero would read
+    /// as *"nothing changed"* on the frame a new file opened.
+    edits: Rc<Cell<u64>>,
+    /// The document the servers have been told about, or [`None`] where this
+    /// buffer's language declares no server.
+    ///
+    /// **A loop local until step 7**, which is the same mistake `Outstanding`
+    /// makes one layer up: with N buffers, one `synced` means the server is
+    /// told about whichever file happens to be on screen and every other open
+    /// file goes stale.
+    synced: Option<Document>,
+    /// The value [`Editing::edits`] had when the last `didChange` went out.
+    ///
+    /// The gate is `edits != sent`, and both halves have to be this buffer's or
+    /// the comparison is between two different files.
+    sent: u64,
     /// Set by `App::Quit`; the loop reads it once per turn.
     quit: bool,
     /// What mode the machine says it is in — **the machine's report, kept so
@@ -5782,16 +5827,23 @@ impl Editing {
     /// would be a second answer to *"where does undo go"*.
     #[cfg(test)]
     fn new(editor: Editor, file: Option<PathBuf>, dirty: Rc<Cell<bool>>) -> Self {
-        Self::with_timeline(editor, file, dirty, Timeline::detached())
+        Self::with_timeline(
+            editor,
+            file,
+            dirty,
+            Rc::new(Cell::new(0)),
+            Timeline::detached(),
+        )
     }
 
     fn with_timeline(
         editor: Editor,
         file: Option<PathBuf>,
         dirty: Rc<Cell<bool>>,
+        edits: Rc<Cell<u64>>,
         timeline: Timeline,
     ) -> Self {
-        Self {
+        let mut editing = Self {
             editor,
             file,
             open: None,
@@ -5830,9 +5882,20 @@ impl Editing {
             timeline,
             depth: 0,
             dirty,
+            edits,
+            synced: None,
+            sent: 0,
             quit: false,
             mode: EditMode::Normal,
-        }
+        };
+        // **Every buffer counts its own edits from birth.** The change callback
+        // used to be installed by whoever built the [`Editor`], which the loop did
+        // via [`dirty_flag`] and no other caller did at all — so a buffer
+        // constructed anywhere else silently counted nothing, and the
+        // `edits != sent` gate on it was closed forever. Found by the test that
+        // asserts A's edits do not move B's, which could not get A's to move.
+        editing.retrack();
+        editing
     }
 
     /// The whole rope, as a server and a `:write` both want it.
@@ -7920,6 +7983,7 @@ impl Editing {
     /// then a swap is a rewrite and the list is how it stays honest.
     fn opens(&mut self, editor: Editor, file: PathBuf, timeline: Timeline) -> Option<PathBuf> {
         self.editor = editor;
+        self.retrack();
         self.timeline = timeline;
         self.depth = 0;
         // A new buffer is a new place; a list anchored in the old one would be
@@ -7931,6 +7995,21 @@ impl Editing {
         let leaving = self.file.take();
         self.file = Some(file);
         leaving
+    }
+
+    /// Point this buffer's dirty flag and edit counter at its current rope.
+    ///
+    /// **A new [`Editor`] carries no change callback**, so a swapped-in rope
+    /// would leave both frozen at whatever the last one made them — `[+]` on a
+    /// buffer nobody has touched, and an edit counter that never moves again.
+    ///
+    /// It is a method rather than a call to [`track_dirty`] with the loop's two
+    /// `Rc`s, and that is step 7's point: the loop's pair belongs to the buffer
+    /// it booted with. Handing them to a *second* buffer's rope would have both
+    /// buffers reporting one file's edits, which is the same shape of mistake
+    /// as one `synced` for two open files.
+    fn retrack(&mut self) {
+        track_dirty(&mut self.editor, &self.dirty.clone(), &self.edits.clone());
     }
 
     fn close_completion(&mut self) {
@@ -9338,11 +9417,7 @@ fn grammar_of<'a>(languages: &'a Languages, path: &Path) -> &'a str {
 /// The cost is one table clone per file opened; the alternative is a criterion
 /// that is true only across a restart, which is the one thing *"no Rust
 /// change"* was supposed to mean.
-fn adopt(
-    editing: &mut Editing,
-    languages: &Languages,
-    servers: &LanguageServers,
-) -> Option<Document> {
+fn adopt(editing: &mut Editing, languages: &Languages, servers: &LanguageServers) {
     let language = editing
         .file
         .as_deref()
@@ -9359,7 +9434,8 @@ fn adopt(
         .map(|spec| spec.command);
     editing.language.clone_from(&language);
     let (Some(language), Some(file)) = (language, editing.file.clone()) else {
-        return None;
+        editing.synced = None;
+        return;
     };
     let path = lsp::absolute(&file);
     let root = lsp::attach(servers, languages, &language, &path);
@@ -9367,10 +9443,13 @@ fn adopt(
     // which is what lets it convert a UTF-16 column if one attaches later
     // (`LanguageServers::open`).
     servers.open(&language, path.clone(), editing.contents());
-    Some(Document {
+    // **Recorded on the buffer rather than answered to the loop.** It was a
+    // return value the loop stored in one local, which is the shape that
+    // cannot hold two open files — see [`Editing::synced`].
+    editing.synced = Some(Document {
         key: lsp::key_for(&path, root.as_deref()),
         path,
-    })
+    });
 }
 
 /// The buffer as the servers know it: the path they were told, and the key
@@ -10167,7 +10246,7 @@ mod tests {
 
     #[test]
     fn a_quit_that_would_lose_work_is_refused_unless_forced() {
-        let dirty = std::rc::Rc::new(std::cell::Cell::new(true));
+        let dirty = std::rc::Rc::new(std::cell::Cell::new(false));
         let mut editing = Bench {
             editing: Editing::new(
                 buffer(
@@ -10183,6 +10262,13 @@ mod tests {
             focus: PaneId(0),
             shell: shell(),
         };
+        // **Set after construction, not handed in.** Step 7 made every
+        // `Editing` install its own change callback at birth, and installing
+        // one clears the flag — a freshly tracked rope is clean, which is what
+        // makes `[+]` mean *"different from what is on disk"* rather than
+        // *"somebody passed true"*. Unsaved work is a state you reach, so the
+        // test reaches it.
+        dirty.set(true);
         let outcome = editing.apply(&Action::App(phosphor_core::action::AppAction::Quit {
             force: false,
         }));
@@ -10343,16 +10429,21 @@ mod tests {
 
         fn with_dirty(text: &str, dirty: bool) -> Self {
             let theme = super::builtin("phosphor-dark").expect("a shipped theme");
+            let flag = std::rc::Rc::new(std::cell::Cell::new(false));
             let mut editing = Bench {
                 shell: shell(),
                 editing: Editing::new(
                     buffer("text", text, &theme).expect("a buffer"),
                     None,
-                    std::rc::Rc::new(std::cell::Cell::new(dirty)),
+                    std::rc::Rc::clone(&flag),
                 ),
                 panes: one_pane(),
                 focus: PaneId(0),
             };
+            // After construction: installing the change callback clears it, and
+            // step 7 moved that installation into the constructor so no caller
+            // has to remember it.
+            flag.set(dirty);
             editing.pane_mut().area = Rect::new(0, 0, 80, 24);
             let (layer, _host) = booted();
             Self {
@@ -12196,6 +12287,97 @@ mod tests {
              the assertion that fails the moment the list goes back on `Editing`"
         );
         assert_eq!(panes.at(right).jump_at, 0);
+    }
+
+    /// **Editing A does not move B's edit counter**, which is the whole of what
+    /// step 7 makes expressible.
+    ///
+    /// The counter was one `Rc<Cell<u64>>` held by the loop and compared
+    /// against one `sent`. That pair cannot say *"A changed, B did not"*: with
+    /// a second buffer open, the server holding B is never told B changed, so
+    /// every completion, hover and diagnostic it produces for B is computed
+    /// against the text as it was when B was last looked at. A file you edited,
+    /// switched away from, and came back to would answer about a version of
+    /// itself that no longer exists — and nothing on screen would say so.
+    ///
+    /// The counters are `Rc`s the change callback holds, so the assertion is on
+    /// them rather than on the server: the didChange gate is `edits != sent`,
+    /// and this is that gate's two halves.
+    #[test]
+    fn one_buffers_edits_do_not_move_another_buffers_didchange_gate() {
+        let mut alpha = editing("alpha\n");
+        let bravo = editing("bravo\n");
+
+        assert_eq!(alpha.edits.get(), 0);
+        assert_eq!(bravo.edits.get(), 0);
+
+        alpha.apply(&Action::Buffer(
+            phosphor_core::action::BufferAction::Insert {
+                at: Position { line: 1, column: 1 },
+                text: "// ".to_owned(),
+            },
+        ));
+
+        assert!(
+            alpha.edits.get() > 0,
+            "the buffer that was edited counted it"
+        );
+        assert_eq!(
+            bravo.edits.get(),
+            0,
+            "and the one that was not did not — the assertion that cannot even \
+             be written while the counter is the loop's"
+        );
+        assert_eq!(
+            bravo.sent,
+            bravo.edits.get(),
+            "so B's didChange gate is closed, and its server is not told about \
+             an edit made in A"
+        );
+        assert_ne!(
+            alpha.sent,
+            alpha.edits.get(),
+            "while A's is open, and the next pass sends it"
+        );
+    }
+
+    /// **A swapped-in rope re-points the counters at itself.**
+    ///
+    /// A new `Editor` carries no change callback, so without this both the
+    /// dirty flag and the edit counter freeze at whatever the last rope made
+    /// them: `[+]` on a buffer nobody has touched, and a `didChange` that never
+    /// goes out again. `Editing::opens` calls `retrack`, and it is a method on
+    /// the buffer rather than a call with the loop's two `Rc`s — handing the
+    /// loop's pair to a *second* buffer's rope would have both buffers
+    /// reporting one file's edits.
+    #[test]
+    fn a_buffer_that_takes_a_new_rope_still_counts_its_own_edits() {
+        let mut editing = editing("alpha\n");
+        let theme = super::builtin("phosphor-dark").expect("a shipped theme");
+        let file = scratch("retrack").join("other.txt");
+
+        editing.editing.opens(
+            buffer("text", "one\n", &theme).expect("a buffer"),
+            file,
+            Timeline::detached(),
+        );
+        let before = editing.edits.get();
+
+        editing.apply(&Action::Buffer(
+            phosphor_core::action::BufferAction::Insert {
+                at: Position { line: 1, column: 1 },
+                text: "x".to_owned(),
+            },
+        ));
+
+        assert!(
+            editing.edits.get() > before,
+            "the counter follows the rope it is counting"
+        );
+        assert!(
+            editing.dirty.get(),
+            "and so does the dirty flag, which is the half a user sees as `[+]`"
+        );
     }
 
     /// **A reveal moves the pane the cursor moved in, not the focused one.**
