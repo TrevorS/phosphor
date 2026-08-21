@@ -2987,6 +2987,50 @@ mod driven {
         );
     }
 
+    /// **`<C-v>` in the picker opens the row in a new split**, which is Teej's
+    /// ruling at `T088`'s entry: telescope's `<CR>` opens in the current
+    /// window, `<C-v>` vertical, `<C-x>` horizontal.
+    ///
+    /// It declined with *"one pane until T088 splits it"* until step 12. What
+    /// this can hold from the outside is the half a screen shows: the editor
+    /// takes the key, does not refuse it, and ends up looking at the file the
+    /// row named. That the *tree* gained a leaf is asserted where two panes can
+    /// be built without a terminal — `a_split_puts_the_new_pane_on_the_side_it_was_told`
+    /// in `main.rs`.
+    ///
+    /// **Not a new pane by default** is the other half of the ruling, and
+    /// `<CR>` is what proves it: a picker that split on every accept would make
+    /// finding a file a window-management decision, which is the thing those
+    /// defaults exist to avoid.
+    #[test]
+    fn control_v_in_the_picker_opens_the_row_in_a_split() {
+        let scratch = Scratch::new("picker-split");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+
+        // **`Cargo.toml` is the needle for the reason the tab-cycle test gives
+        // it**: the `files` source lists the editor's cwd, which is the crate
+        // directory, so a file written into the scratch tree is not in it.
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(b"(open-picker! \"files\")\r", "Cargo.toml");
+        editor.press_until(b"Cargo", "Cargo.toml");
+        let split = editor.press_until(b"\x16", "[package]");
+        editor.quit();
+
+        assert!(
+            shows(&split, "[package]"),
+            "the row opened and the split is showing that file's first line; \
+             frame was: {split}"
+        );
+        assert!(
+            !shows(&split, "T088"),
+            "and it no longer declines by naming the task that builds it; \
+             frame was: {split}"
+        );
+    }
+
     /// **`:close-buffer` on the only buffer says what to type instead.**
     ///
     /// It used to answer *"one buffer, one pane — :quit leaves; T088 gives a

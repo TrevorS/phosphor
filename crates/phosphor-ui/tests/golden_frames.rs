@@ -274,8 +274,10 @@ fn screen_1a_minus_agent() {
 /// are keyed by theme *field*, so the two halves are byte-identical there and
 /// any drift in which field paints what shows up as a diff.
 ///
-/// They are two renders rather than two panes because panes are `T088`,
-/// three windows away; drawing them side by side would be inventing a layout.
+/// They are two renders rather than two panes, and they stay two renders now
+/// that `T088` has landed: a pane is the *host's* arrangement and this file
+/// draws widgets against a `Rect` with no host at all. Splitting one here would
+/// be inventing a layout to prove a colour contract with.
 #[test]
 fn screen_9c() {
     let mut out = String::new();

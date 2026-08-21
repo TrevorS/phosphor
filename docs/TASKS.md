@@ -2706,7 +2706,7 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   *Done when:* a declared block becomes a grouped set of unseen markers + a notification.
   *Needs:* T052, T041
 
-- [ ] **T088 · Pane manager — splits and focus** 📌
+- [x] **T088 · Pane manager — splits and focus** 📌
   `T054` calls the transcript *"a pane, not a float — splits, holds focus like a window, survives
   float churn"*, and nothing was tasked to provide panes. This is that: the split/focus model in
   the binary's event loop, pane kinds (buffer, transcript, and in v1.5 claude-built), focus
@@ -2719,6 +2719,40 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   focus exactly where it was, **and the four `[S6 / "T088"]` capabilities have arms** —
   `split-pane`, `focus-pane`, `close-pane`, `resize-pane` (`action.rs:630-647`) — **plus the
   `panes` query** (`query.rs:410`). *Needs:* T019, T015
+
+  > ### Built 2026-08-20, in twelve steps — what the five clauses came to
+  >
+  > *Done when* asked for five things. Each is met and each has a test that fails without it:
+  >
+  > 1. **Two panes split.** `PaneTree` is a pure data structure — no terminal, no `Editor`, no
+  >    theme and no `Rect` — so split, close, resize and direction are unit-tested with no geometry
+  >    at all, which is what let the model be right before a pixel existed.
+  > 2. **Focus moves between them.** `Panes::resolve` answers all five `PaneRef` variants off the
+  >    tree; `Next`/`Prev` walk its order rather than the map's, because `<C-w>w` cycles windows as
+  >    they are *arranged*.
+  > 3. **Opening then closing a float returns focus exactly where it was.** The plan proposed a
+  >    focus-return stack. **It needs none, and a stack would have been wrong**: not one float verb
+  >    carries a `PaneRef`, so none *can* name a pane, and a verb that cannot name a pane cannot
+  >    move focus to one. Had something else moved focus while the float was open — `focus-pane`
+  >    from a keymap or an agent — snapping back would have undone what was asked for.
+  > 4. **The four capabilities have arms.** And they are ordinary arms on `Editing::act`, which the
+  >    plan said was impossible because they *"mutate the tree an `Editing` was borrowed out of"*.
+  >    That stopped being true at step 4c: an `Editing` comes out of `Buffers` and the tree lives in
+  >    `Panes`, two structs.
+  > 5. **The `panes` query.** Plain data, not a view tree: the row says *"the pane tree, with which
+  >    one has focus"*, so it answers what the arrangement **is** rather than how to draw one.
+  >
+  > **What the build found that no plan predicted.** Making `Resources::editor` a real lookup
+  > exposed a composition naming `BufferId(1)` while `Buffers` minted from zero — an id that had
+  > named nothing, unnoticed, because nothing read it. The state column went blank the instant the
+  > door started looking, and a *screen* test caught it, which is the only kind that could.
+  >
+  > **And the rule that shaped every step**: three times a field or a variant the plan asked for had
+  > no reader yet, and `dead_code` under `-D warnings` refused it. *A ticked task may not ship
+  > something no keystroke can reach* turns out to apply one layer down, to a struct field, and the
+  > compiler enforces it for free.
+  >
+  > Twelve commits, `e2ce0db`..`HEAD`. `WINDOW-F-PLAN.md` carries the per-step record.
 
   > ### Teej's three rulings, 2026-08-20: **follow nvim and telescope**
   >

@@ -355,6 +355,18 @@ Ten `T088` sites in `main.rs`, grepped this session: `:591` (`CloseAllFloats` �
 
 **Verification:** `just gate` — all six, in CI's order, one invocation. Then CP-6's manual half.
 
+> **DONE, and `T088` is ticked.** The three things left of *Done when* landed here: the picker's split arm (Teej's ruling as code, plus telescope's two keys), `compose_panes` so N panes draw, and the `panes` query.
+>
+> **`compose_panes` added no vocabulary**, which is the check worth stating: `Node::Split` already *"divides its area along an axis and gives each child a share"*, `Constraint::Percent` is one of its five shapes, and `Node::Pane` already carried the id and the focus flag. `one_pane` was the degenerate case all along and is gone.
+>
+> **The float clause needs no focus-return stack, and one would have been wrong.** A float is not a pane: no float verb carries a `PaneRef`, so none *can* name a pane. Had something else moved focus while the float was open, snapping back would undo what was asked for. Asserted over the registry, with the contrast — the pane verbs all do name one — because without it the float half would pass against a registry where nothing named anything.
+>
+> **A methodology note, recorded because it cost real time.** The first version of that assertion was a PTY test reading the statusline after closing a float, and it failed. `press_until` returns the cells drawn *since* the press, and closing the float did not change the statusline, so it was not in the diff. There was no bug. A structural assertion is the right instrument for what a verb *can* do; a screen test is the right instrument for what a frame shows.
+>
+> **`Pane::holds` finally landed**, four steps after the plan first asked for it. Step 4a left it out because `dead_code` rejects a field with no reader, and the `panes` query is that reader — the tree cannot say what a pane holds, because a `PaneTree` knows arrangement and a `Pane` knows contents.
+>
+> **As run:** `just gate` green, 1,420 tests. `lint-action-arms` reports 75 ticked tasks clean, which is the tick demanding the four arms and finding them.
+
 ---
 
 ## 2. How this plan avoids the three fatal flaws the judges found

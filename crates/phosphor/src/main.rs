@@ -181,7 +181,8 @@ use phosphor_core::store::{
 };
 use phosphor_core::value::{Args, Value, Wire as _};
 use phosphor_core::view::{
-    Child, Density, Emphasis, Float as ViewFloat, KeyHint, Mood, Node, SessionState, Tone, Tree,
+    Axis as ViewAxis, Child, Constraint, Density, Emphasis, Float as ViewFloat, KeyHint, Mood,
+    Node, SessionState, Slot, Tone, Tree,
 };
 use phosphor_steel::boot::{BootFault, BootReport, BootUnit};
 use phosphor_steel::float::ExLine;
@@ -734,7 +735,9 @@ enum Intent {
     /// `close-all-floats`. One slot today, so it is [`Intent::CloseFloat`] with
     /// a different name — and it stays a separate verb because §9's rule is
     /// *"at most one has focus"*, not *"at most one exists"*, and `T088`'s
-    /// panes are where that stops being the same sentence.
+    /// panes are where those stopped being the same sentence: a float per pane
+    /// is expressible now, so *"close them all"* and *"close the focused one"*
+    /// are two verbs rather than one under two names.
     CloseAllFloats,
 }
 
@@ -802,6 +805,14 @@ struct HostState {
     picker_rows: Option<(String, Vec<phosphor_core::view::SpanRow>)>,
     /// The heads it *offers* instead of writing. See [`OFFERED_HEADS`].
     offered: Vec<String>,
+    /// The shape of the screen, as the loop last laid it out (`T088`).
+    ///
+    /// **Published rather than reached for**, which is the shape
+    /// [`HostState::picker_rows`] already established and for the same reason:
+    /// the panes are the *loop's*, this side answers queries on another
+    /// thread, and a query that borrowed the live tree would be the re-entrant
+    /// routing that pattern exists to avoid.
+    panes: Option<Value>,
 }
 
 /// The boot file's name, and it names two different files.
@@ -1338,6 +1349,13 @@ impl AppHost {
         })
     }
 
+    /// Publish the screen's shape, so `panes` has an answer (`T088`).
+    fn publish_panes(&self, shape: Value) {
+        if let Ok(mut state) = self.state.lock() {
+            state.panes = Some(shape);
+        }
+    }
+
     /// Publish what the loop derived, so `picker-rows` has an answer
     /// (`T046`).
     fn publish_picker(&self, rows: Option<(String, Vec<phosphor_core::view::SpanRow>)>) {
@@ -1371,6 +1389,26 @@ impl Answers for AppHost {
                 // `Revision::INITIAL` because the store has no revision until
                 // `T041` and a number invented here would be one a cache could
                 // trust wrongly.
+                revision: Revision::INITIAL,
+            }),
+            // `T088` — the pane tree and which one has focus.
+            //
+            // **The last frame's shape, not this instant's**, on
+            // `picker-rows`' terms: an answer derived on the frame that drew
+            // it is the honest one for a question about what is on screen, and
+            // the alternative is a query reaching into the loop's own state
+            // from another thread.
+            //
+            // An empty answer before the first frame is not a failure — it is
+            // `query.rs`'s *"an absent thing answers empty"*, and there is
+            // genuinely no screen yet.
+            Query::Ui(phosphor_core::query::UiQuery::Panes {}) => Ok(Answer {
+                value: self
+                    .state
+                    .lock()
+                    .ok()
+                    .and_then(|state| state.panes.clone())
+                    .unwrap_or(Value::Null),
                 revision: Revision::INITIAL,
             }),
             // `T040`. Answered off the same store the gutter draws from.
@@ -2534,6 +2572,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         falling_through: false,
         wall: false,
         closing: None,
+        splitting: None,
     };
     // `T088`'s step 4c: every buffer by id, every pane by id, one of each.
     // The maps are the wrong shape for one entry and that is what they are
@@ -2815,6 +2854,12 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         }
         let editing = buffers.at_mut(held);
 
+        // **The screen's shape, published for the `panes` query** (`T088`).
+        // Once per frame, on `picker-rows`' terms: the panes are the loop's
+        // and a query answering on another thread cannot borrow them, so the
+        // answer is what the last frame laid out. See [`HostState::panes`].
+        host.publish_panes(panes.describe());
+
         // **The one place the frame cache learns that arbitrary scheme ran.**
         // Not per call site, not by remembering: `Layer` is the only way into
         // the VM and every method on it that can run user scheme sets the flag
@@ -2861,7 +2906,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 (Surface::Buffer, _) => passive_float(editing),
                 _ => None,
             };
-            let tree = Tree::new(one_pane(focus, held, soft_wrap));
+            let tree = Tree::new(compose_panes(&panes.tree, &panes, focus, soft_wrap));
             Composed::Pane(match float {
                 Some(float) => tree.with_float(float),
                 None => tree,
@@ -3097,7 +3142,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     // machine. `esc` is handled by `closes_surface` below.
                     Event::Key(key) if matches!(surface, Surface::Picker) => {
                         if let Some(session) = shell.picker.as_mut() {
-                            match picker_key(key, session) {
+                            let step = picker_key(key, session);
+                            match step {
                                 PickerStep::Typing => {}
                                 PickerStep::Cycle(delta) => {
                                     let outcome = editing.apply(
@@ -3108,12 +3154,21 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                         notice = Some(phosphor_steel::answer::why(&why));
                                     }
                                 }
-                                PickerStep::Accept => {
-                                    let outcome = editing.apply(
+                                PickerStep::Accept | PickerStep::Split(_) => {
+                                    // **The direction is the key's, not the
+                                    // Action's.** `AcceptHow::Split` says that
+                                    // it splits and carries no direction, so
+                                    // the two picker keys are the two ways —
+                                    // widening the vocabulary to carry one
+                                    // would answer a question nobody asked.
+                                    let (how, toward) = match step {
+                                        PickerStep::Split(toward) => (AcceptHow::Split, toward),
+                                        _ => (AcceptHow::Open, Direction::Right),
+                                    };
+                                    let outcome = editing.accept_picker(
                                         &mut Cx::new(held, focus, &mut panes, &mut shell),
-                                        &Action::Picker(PickerAction::PickerAccept {
-                                            how: AcceptHow::Open,
-                                        }),
+                                        how,
+                                        toward,
                                     );
                                     match outcome {
                                         Outcome::Refused(why) => {
@@ -3269,6 +3324,51 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             if !trouble.is_empty() {
                 notice = Some(trouble.join("; "));
             }
+        }
+
+        // **A picker row into a new split** (`T088`, step 12). Three things
+        // an arm cannot do at once, which is why it asked instead: split the
+        // tree, open a *new* buffer, and point the new pane at it.
+        //
+        // The order matters. The pane is split first and shows the same buffer
+        // the picker was opened over, so a failure to read the file leaves a
+        // split showing something rather than a pane pointing at nothing — and
+        // the failure closes it again, because a split you did not ask for is
+        // worse than the refusal you did.
+        if let Some((file, toward)) = shell.splitting.take() {
+            match opening(&file) {
+                Ok(found) => {
+                    let fresh = found.is_none();
+                    let text = found.unwrap_or_default();
+                    let rope = buffer(grammar_of(&host.languages(), &file), &text, &theme)?;
+                    let (timeline, note) = Timeline::opened(&file);
+                    let mut opened = Editing::with_timeline(
+                        rope,
+                        Some(file.clone()),
+                        Rc::new(Cell::new(false)),
+                        Rc::new(Cell::new(0)),
+                        timeline,
+                    );
+                    adopt(&mut opened, &host.languages(), &servers);
+                    let id = buffers.open(opened);
+                    match panes.split(focus, Pane::new(id), toward) {
+                        Some(fresh_pane) => {
+                            // **Focus follows the split**, which is what a
+                            // picker means: you asked for that file, so you are
+                            // looking at it. vim's `:split` does the same.
+                            panes.focus = fresh_pane;
+                            notice = note.or_else(|| fresh.then(|| new_file(&file)));
+                        }
+                        None => {
+                            buffers.map.remove(&id);
+                            notice = Some(phosphor_steel::answer::why(&Refusal::NoSuchTarget));
+                        }
+                    }
+                }
+                Err(error) => notice = Some(format!("{}: {error}", file.display())),
+            }
+            // The loop's own bindings are stale the moment either map changed.
+            continue;
         }
 
         // **`:close-buffer` — and whether there is anywhere to go is the
@@ -3963,10 +4063,14 @@ fn buffer(language: &str, text: &str, theme: &Theme) -> Result<Editor, Box<dyn E
 
 /// `6b`'s `C-c buffer` — the session as an editable buffer.
 ///
-/// **One pane, so this replaces what was on screen.** `T088` gives the session
-/// a pane of its own; until then the honest limit is that there is one, and
-/// nothing is lost by using it — `S2` has no save path, so the file on disk is
-/// untouched and `q` already discards the same unsaved edits.
+/// **It replaces what was on screen, and that is now a choice rather than a
+/// limit.** It read *"one pane, so this replaces what was on screen; `T088`
+/// gives the session a pane of its own"* — and `T088` landed, so the sentence
+/// stopped being about what was possible. Opening it in a split is one
+/// `split-pane` away; whether `C-c buffer` *should* is `T054`'s question, since
+/// the transcript is the surface that owns *"a pane, not a float"* (Design
+/// Language §9). Nothing is lost by replacing: `S2` has no save path, so the
+/// file on disk is untouched and `q` already discards the same unsaved edits.
 ///
 /// The language is `text`: the fork is built with ten grammars and scheme is not
 /// one of them (`language_of`). `define-language` (`T037`) is what makes a
@@ -3979,7 +4083,7 @@ fn session_buffer(repl: &Repl, theme: &Theme) -> Result<Editor, Box<dyn Error>> 
 // The frame
 // ---------------------------------------------------------------------------
 
-/// The host's frame: one pane, holding the buffer.
+/// The host's frame: the split tree, composed.
 ///
 /// **The composition `scripts/lint-node-kinds.sh` recorded as owed** — two
 /// rows, `Pane` and `Buffer`, both against `T088`, both deleted in the commit
@@ -4009,12 +4113,62 @@ fn session_buffer(repl: &Repl, theme: &Theme) -> Result<Editor, Box<dyn Error>> 
 /// *"cannot be honoured from here"* because re-wrapping needs `&mut Editor`,
 /// so the loop applies it above and the node reports it. Saying `false` while
 /// the loop wraps would make the tree lie about the frame it composed.
-fn one_pane(pane: PaneId, buffer: BufferId, soft_wrap: bool) -> Node {
-    Node::Pane {
-        pane,
-        holds: PaneKind::Buffer,
-        focused: true,
-        child: Child::new(Node::Buffer { buffer, soft_wrap }),
+/// **The vocabulary already had everything this needs**, which is the check
+/// worth stating: `Node::Split` *"divides its area along an angle and gives each
+/// child a share"*, `Constraint::Percent` is one of its five shapes, and
+/// `Node::Pane` carries the id and the focus flag. Composing N panes added no
+/// node kind and no prop — a split tree was always what these were for, and
+/// `one_pane` was the degenerate case.
+///
+/// **`focused` is per pane and exactly one is true.** §9's rule is *"panes
+/// never dim each other — only floats dim what is behind them"*, so this says
+/// which pane keystrokes go to and says nothing about brightness.
+///
+/// A pane whose buffer this host does not have composes `Node::Empty`, which
+/// draws nothing: `query.rs`'s *"an absent thing answers empty"*, and the state
+/// a transcript pane will be in until `T054` fills it.
+fn compose_panes(tree: &PaneTree, panes: &Panes, focus: PaneId, soft_wrap: bool) -> Node {
+    match tree {
+        PaneTree::Leaf(id) => {
+            let pane = panes.at(*id);
+            Node::Pane {
+                pane: *id,
+                holds: pane.holds(),
+                focused: *id == focus,
+                child: Child::new(
+                    pane.buffer
+                        .map_or(Node::Empty {}, |buffer| Node::Buffer { buffer, soft_wrap }),
+                ),
+            }
+        }
+        PaneTree::Split {
+            axis,
+            first,
+            second,
+            first_share,
+        } => Node::Split {
+            axis: match axis {
+                Axis::Columns => ViewAxis::Columns,
+                Axis::Rows => ViewAxis::Rows,
+            },
+            slots: vec![
+                Slot::new(
+                    Constraint::Percent {
+                        percent: u32::from(*first_share),
+                    },
+                    compose_panes(first, panes, focus, soft_wrap),
+                ),
+                // **The remainder, not the complement.** `Percent { 100 - n }`
+                // would round independently and leave a column nothing owns at
+                // odd widths — the same failure `PaneTree::layout` avoids by
+                // giving the far side what the near side left, and the same
+                // fix: `Fill` takes what is left.
+                Slot::new(
+                    Constraint::Fill { weight: 1 },
+                    compose_panes(second, panes, focus, soft_wrap),
+                ),
+            ],
+        },
     }
 }
 
@@ -4034,7 +4188,7 @@ enum Composed {
     /// surface, and the statusline under it."* It draws its own chrome, so the
     /// host draws none: no strips, no statusline, no cursor.
     Frame(Tree),
-    /// The host's frame: [`one_pane`], with whatever float this surface hangs
+    /// The host's frame: [`compose_panes`], with whatever float this surface hangs
     /// over it. The two strips, the statusline and the cursor are the host's,
     /// around it.
     Pane(Tree),
@@ -4106,9 +4260,13 @@ fn take_rows(body: &mut Rect, rows: u16) -> Option<Rect> {
 ///
 /// Both are kept here rather than reconciled, and [`Geometry::body`] versus
 /// [`Geometry::pane`] is that divergence written down: reconciling them moves a
-/// viewport, which is a pixel change and not this step's. `T088`'s pane layout
-/// replaces [`Geometry::pane`] with N of them, which is what this type exists
-/// to make possible.
+/// viewport, which is a pixel change and was not that step's.
+///
+/// **[`PaneTree::layout`] divides [`Geometry::body`] into N rects since step
+/// 11**, which is what this type existed to make possible.
+/// [`Geometry::pane`] is still the whole strip and is what the chrome measures
+/// against; the per-pane rects live on [`Pane::area`], because a rect a *pane*
+/// owns is the pane's and not the frame's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Geometry {
     /// The whole terminal — what a tree-composed surface owns.
@@ -4116,7 +4274,7 @@ struct Geometry {
     /// The buffer's rows **before** the strips come off them. What the loop
     /// measures a wrap width, a scroll and a mouse hit test against.
     body: Rect,
-    /// The buffer's rows **after** them: what [`one_pane`]'s tree is rendered
+    /// The buffer's rows **after** them: what [`compose_panes`]'s tree is rendered
     /// into, what a float dims, and what the cursor is placed inside.
     pane: Rect,
     /// `3c`'s leader grid, when a prefix is half-typed and its rows fit.
@@ -4553,7 +4711,7 @@ fn signed(signature: phosphor_buffer::lsp::Signature) -> WireSignature {
 /// **It returns the float and not a tree.** It used to hang one off an empty
 /// root, because an empty root was how a float said *"over what the widgets
 /// painted"*; the widgets are gone and the pane underneath is a composition,
-/// so the caller hangs this over [`one_pane`] instead. Four other surfaces
+/// so the caller hangs this over [`compose_panes`] instead. Four other surfaces
 /// took the same shape and changed the same way.
 fn passive_float(editing: &Editing) -> Option<ViewFloat> {
     let body = if editing.completion.is_some() {
@@ -4642,10 +4800,13 @@ impl Resources for Painted<'_> {
         self.signature
     }
 
-    /// **One picker, and it is implicit** — the same shape [`Resources::editor`]
-    /// has for buffers until `T088`. `view.rs` puts the source on the node so a
-    /// composition can name one, and there is one session to name; a host with
-    /// two open pickers is not a thing this editor can be in.
+    /// **One picker, and it is implicit** — which [`Resources::editor`] no
+    /// longer is, and the difference is the point. That one became a real
+    /// lookup at `T088`'s step 11 because there are two buffers to tell apart;
+    /// this one stays implicit because there is one session and a host with two
+    /// open pickers is not a thing this editor can be in. `view.rs` puts the
+    /// source on the node so a composition can name one, and there is one to
+    /// name.
     fn picker(&self, _source: &SourceId) -> Option<&PickerVm> {
         self.picker
     }
@@ -5443,6 +5604,17 @@ fn journal_key(file: &Path) -> Result<PathBuf, String> {
 /// half of that ruling and is deliberately not assumed to ride along with it.
 #[derive(Debug, Clone)]
 struct Pane {
+    /// What this pane shows (`request::PaneKind`).
+    ///
+    /// **Step 4a left this out for want of a reader** — a field `dead_code`
+    /// rejects is a field this build does not ship — and the `panes` query is
+    /// that reader: *"the pane tree, with which one has focus"* has to say what
+    /// each one holds, and the tree cannot, because a `PaneTree` knows
+    /// arrangement and a `Pane` knows contents.
+    ///
+    /// One variant is reachable today. `Transcript` is `T054`'s and `Custom` is
+    /// v1.5's, and `split-pane` refuses both by naming the task.
+    holds: PaneKind,
     /// Which buffer is in it, or [`None`] for a pane holding something that is
     /// not one — the transcript, or a view tree claude emitted.
     ///
@@ -5584,6 +5756,15 @@ struct Shell {
     /// feature, which is what `a_bare_phosphor_with_unsaved_work_is_still_quittable`
     /// exists to say, and it is what caught this.
     discard: bool,
+    /// A file `accept-picker` asked to open in a **new split**, and which way
+    /// (`T088`, step 12).
+    ///
+    /// Drained by the loop, because it is three things an arm cannot do at
+    /// once: split the tree, open a *new* buffer, and point the new pane at it.
+    /// The middle one is the wall — `Editing::act` holds `&mut self`, which is
+    /// an entry in `Buffers`, so minting a sibling out of the same map is an
+    /// aliasing error rather than a missing call.
+    splitting: Option<(PathBuf, Direction)>,
     /// A buffer `:close-buffer` asked to close, drained the same way.
     ///
     /// The arm answers what it can see — a dirty buffer refuses
@@ -5842,6 +6023,16 @@ fn divide(area: Rect, axis: Axis, share: u16) -> (Rect, Rect) {
     }
 }
 
+/// An id as the wire spells one: a non-negative integer.
+///
+/// The same conversion `phosphor_core::request`'s `ids!` macro writes, and the
+/// same saturation — an id that will not fit an `i64` is a session with more
+/// than nine quintillion panes in it, and clamping is a better answer there
+/// than a panic.
+fn numbered(id: u64) -> Value {
+    Value::Int(i64::try_from(id).unwrap_or(i64::MAX))
+}
+
 /// An even split, which is what every new one is.
 const EVEN: u16 = 50;
 
@@ -5868,6 +6059,40 @@ impl PaneTree {
                 found.extend(second.leaves());
                 found
             }
+        }
+    }
+
+    /// This tree as plain data, for the `panes` query.
+    ///
+    /// A leaf is `{"pane": <id>}` and a split is `{"axis", "share", "first",
+    /// "second"}`. **Plain data and not a `Node`**: this answers *what the
+    /// arrangement is*, and a view tree would answer *how to draw one* — the
+    /// query's own row says *"the pane tree, with which one has focus"*, and
+    /// the shape is the tree's rather than a picture of it.
+    fn describe(&self) -> Value {
+        match self {
+            Self::Leaf(id) => Value::Record(Args::new().with("pane", numbered(id.0))),
+            Self::Split {
+                axis,
+                first,
+                second,
+                first_share,
+            } => Value::Record(
+                Args::new()
+                    .with(
+                        "axis",
+                        Value::Text(
+                            match axis {
+                                Axis::Columns => "columns",
+                                Axis::Rows => "rows",
+                            }
+                            .to_owned(),
+                        ),
+                    )
+                    .with("share", Value::Int(i64::from(*first_share)))
+                    .with("first", first.describe())
+                    .with("second", second.describe()),
+            ),
         }
     }
 
@@ -6142,6 +6367,47 @@ impl Panes {
         true
     }
 
+    /// The screen's shape, as the `panes` query answers it (`T088`).
+    ///
+    /// The tree, which one has focus, and what each pane holds — the last is
+    /// the half the tree cannot say, because a `PaneTree` knows arrangement
+    /// and a `Pane` knows contents.
+    fn describe(&self) -> Value {
+        let panes = self
+            .tree
+            .leaves()
+            .into_iter()
+            .map(|id| {
+                let pane = self.at(id);
+                Value::Record(
+                    Args::new()
+                        .with("pane", numbered(id.0))
+                        .with(
+                            "holds",
+                            Value::Text(
+                                match pane.holds() {
+                                    PaneKind::Buffer => "buffer",
+                                    PaneKind::Transcript => "transcript",
+                                    PaneKind::Custom => "custom",
+                                }
+                                .to_owned(),
+                            ),
+                        )
+                        .with(
+                            "buffer",
+                            pane.buffer.map_or(Value::Null, |id| numbered(id.0)),
+                        ),
+                )
+            })
+            .collect();
+        Value::Record(
+            Args::new()
+                .with("tree", self.tree.describe())
+                .with("focus", numbered(self.focus.0))
+                .with("panes", Value::List(panes)),
+        )
+    }
+
     /// The pane `id` names, or [`None`] if it names none.
     fn get(&self, id: PaneId) -> Option<&Pane> {
         self.map.get(&id)
@@ -6223,9 +6489,15 @@ impl<'a> Cx<'a> {
 }
 
 impl Pane {
+    /// What this pane shows.
+    const fn holds(&self) -> PaneKind {
+        self.holds
+    }
+
     /// The pane a single-pane session starts in, before any layout has run.
     fn new(buffer: BufferId) -> Self {
         Self {
+            holds: PaneKind::Buffer,
             buffer: Some(buffer),
             area: Rect::ZERO,
             alternate: None,
@@ -6877,9 +7149,6 @@ impl Editing {
                     Err(reason) => declined(&reason),
                 }
             }
-            // One buffer, so this is `save-buffer` under its other name. It is
-            // still the honest implementation of *"writes every dirty buffer"*
-            // — there is exactly one, and `T088` is what makes there be more.
             // **`:wall` writes every dirty buffer, and the loop is what does
             // it.** This arm called `self.write(None)` under a comment saying
             // *"there is exactly one, and `T088` is what makes there be more"*.
@@ -7381,9 +7650,11 @@ impl Editing {
                 if cx.shell.picker.is_none() {
                     return declined("no float with a primary verb is focused");
                 }
-                self.accept_picker(cx, AcceptHow::Open)
+                self.accept_picker(cx, AcceptHow::Open, Direction::Right)
             }
-            Action::Picker(PickerAction::PickerAccept { how }) => self.accept_picker(cx, *how),
+            Action::Picker(PickerAction::PickerAccept { how }) => {
+                self.accept_picker(cx, *how, Direction::Right)
+            }
             // `T047` — tab. The *order* is the layer's, so this arm knows how
             // to walk a list and not what is in it. A picker over a source the
             // order does not name starts from the first, which is what makes
@@ -8043,21 +8314,34 @@ impl Editing {
     /// *"new file"*, and having two places decide what a path means is how the
     /// two disagree.
     ///
-    /// `AcceptHow::Split` and `AcceptHow::Quickfix` decline by naming their
-    /// tasks. A split needs `T088` and there is one pane; the quickfix list is
-    /// *"drawn once and named in no task"* (`request.rs`) and building it here
-    /// would be inventing a surface nobody has asked for.
-    fn accept_picker(&mut self, cx: &mut Cx<'_>, how: AcceptHow) -> Outcome {
+    /// **`AcceptHow::Split` opens it in a new split**, which is Teej's ruling
+    /// at `T088`'s entry: telescope's `<CR>` opens in the current window, `<C-v>`
+    /// vertical, `<C-x>` horizontal. It declined with *"one pane until T088
+    /// splits it"* and the vocabulary already agreed with the ruling —
+    /// `AcceptHow::Open` is documented *"open it in the focused pane"* and
+    /// `AcceptHow::Split` *"open it in a new split"* — so this adds no
+    /// vocabulary, only the arm.
+    ///
+    /// **`toward` is the host's and not the Action's**, deliberately.
+    /// `AcceptHow::Split` says *that* it splits and carries no direction, so
+    /// the two picker keys are the two ways and a `picker-accept` arriving from
+    /// Steel or a keymap takes the default. Widening the vocabulary to carry a
+    /// direction would be answering a question nobody asked.
+    ///
+    /// `AcceptHow::Quickfix` still declines by naming its task: the quickfix
+    /// list is *"drawn once and named in no task"* (`request.rs`) and building
+    /// it here would be inventing a surface nobody has asked for.
+    fn accept_picker(&mut self, cx: &mut Cx<'_>, how: AcceptHow, toward: Direction) -> Outcome {
         let Some(session) = cx.shell.picker.as_ref() else {
             return declined("no picker open");
         };
-        match how {
-            AcceptHow::Open => {}
-            AcceptHow::Split => return declined("one pane until T088 splits it"),
+        let splitting = match how {
+            AcceptHow::Open => false,
+            AcceptHow::Split => true,
             AcceptHow::Quickfix => {
                 return declined("no quickfix list — drawn in 8a, named in no task");
             }
-        }
+        };
         let Some(text) = session.matcher.selected_text() else {
             return declined("no row selected");
         };
@@ -8079,7 +8363,13 @@ impl Editing {
             Ok(_) | Err(_) => (PathBuf::from(head), None),
         };
         cx.shell.picker = None;
-        self.open = Some(path);
+        if splitting {
+            // The loop performs it: a split needs a *new* buffer and this arm
+            // holds one out of the map it would have to mint into.
+            cx.shell.splitting = Some((path, toward));
+        } else {
+            self.open = Some(path);
+        }
         self.open_at = at;
         Outcome::Done(Receipt {
             capability: "picker-accept",
@@ -9620,7 +9910,10 @@ enum ReplStep {
 /// whose body is a text input `q` is a character you are typing. §9's `esc` is
 /// the one that works; the REPL is a text surface and the machine's modes are
 /// the buffer's, so this is not the input machine's path and is not meant to
-/// become one until the REPL is a pane (`T088`).
+/// become one. It read *"until the REPL is a pane (`T088`)"*; panes exist now
+/// and the REPL is still a surface, because which of the two it should be is
+/// `T054`'s question about the transcript rather than something the split tree
+/// decided by existing.
 fn repl_key(key: KeyEvent, repl: &mut Repl, layer: &mut Layer) -> ReplStep {
     let control = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
@@ -9690,8 +9983,14 @@ enum PickerStep {
     Close,
     /// `<tab>` — cycle to the next source (`T047`).
     Cycle(i64),
-    /// `↵` — open the highlighted row (`T047`).
+    /// `↵` — open the highlighted row in the focused pane (`T047`).
     Accept,
+    /// `<C-v>` / `<C-x>` — open it in a new split, beside or below.
+    ///
+    /// **Two keys rather than one, and telescope's two.** A picker that split
+    /// on every `↵` would make finding a file a window-management decision,
+    /// which is the thing those defaults exist to avoid.
+    Split(Direction),
 }
 
 /// One key, while the picker has the frame.
@@ -9727,6 +10026,9 @@ fn picker_key(key: KeyEvent, session: &mut PickerSession) -> PickerStep {
             session.matcher.filter("");
         }
         KeyCode::Char('c') if control => return PickerStep::Close,
+        // Telescope's spelling: `<C-v>` puts it beside, `<C-x>` below.
+        KeyCode::Char('v') if control => return PickerStep::Split(Direction::Right),
+        KeyCode::Char('x') if control => return PickerStep::Split(Direction::Down),
         // `<C-n>` / `<C-p>` rather than `j` / `k`: the filter line owns every
         // printable key while it is open, so a letter is filter text and cannot
         // also be a motion.
@@ -10252,7 +10554,7 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 
-    use phosphor_core::action::{Action, Outcome, Refusal, Request, RuntimeAction};
+    use phosphor_core::action::{Action, Outcome, PaneAction, Refusal, Request, RuntimeAction};
     use phosphor_core::registry::Door;
     use phosphor_core::request::{
         Actor, BufferId, Direction, PaneId, PaneRef, Position, Severity, Span,
@@ -10572,6 +10874,7 @@ mod tests {
             falling_through: false,
             wall: false,
             closing: None,
+            splitting: None,
         }
     }
 
@@ -13143,6 +13446,179 @@ mod tests {
         );
     }
 
+    /// **Two panes compose to a `Node::Split` holding two `Node::Pane`s, and
+    /// exactly one is focused.**
+    ///
+    /// §9's rule is *"panes never dim each other — only floats dim what is
+    /// behind them"*, so `focused` says which pane keystrokes go to and says
+    /// nothing about brightness. Exactly one being true is what makes that
+    /// sentence checkable.
+    ///
+    /// The second slot is `Fill`, not `Percent { 100 - n }`: two children that
+    /// each round their own share leave a column nothing owns at odd widths,
+    /// which is the failure `PaneTree::layout` avoids the same way.
+    #[test]
+    fn two_panes_compose_to_a_split_with_one_of_them_focused() {
+        let (mut panes, left) = Panes::new(Pane::new(BufferId(0)));
+        let right = panes
+            .split(left, Pane::new(BufferId(1)), Direction::Right)
+            .expect("the pane splits");
+        panes.focus = right;
+
+        let tree = panes.tree.clone();
+        let phosphor_core::view::Node::Split { axis, slots } =
+            crate::compose_panes(&tree, &panes, right, false)
+        else {
+            panic!("two panes are a split");
+        };
+
+        assert_eq!(axis, phosphor_core::view::Axis::Columns);
+        assert_eq!(slots.len(), 2);
+        assert_eq!(
+            slots[0].constraint,
+            phosphor_core::view::Constraint::Percent { percent: 50 }
+        );
+        assert_eq!(
+            slots[1].constraint,
+            phosphor_core::view::Constraint::Fill { weight: 1 },
+            "the second takes what the first left, rather than rounding its own \
+             share and leaving a column nobody owns"
+        );
+
+        let focused: Vec<_> = slots
+            .iter()
+            .map(|slot| match slot.child.node() {
+                phosphor_core::view::Node::Pane { pane, focused, .. } => (*pane, *focused),
+                other => panic!("a slot holds a pane, not {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            focused,
+            vec![(left, false), (right, true)],
+            "one pane is focused and it is the one with focus — §9's rule is \
+             about keystrokes, and panes never dim each other"
+        );
+    }
+
+    /// **Opening then closing a float returns focus exactly where it was**, and
+    /// it needs nothing to remember it — `T088`'s acceptance criterion, proven
+    /// where it is exact.
+    ///
+    /// **The plan proposed a focus-return stack** so the return would be state
+    /// rather than luck. It is neither: a float is not a pane. Not one of the
+    /// three float verbs carries a `PaneRef`, so none of them *can* name a pane,
+    /// and a verb that cannot name a pane cannot move focus to one. That is
+    /// what this asserts — over the registry, which is the one description of a
+    /// capability there is.
+    ///
+    /// **A stack would have been wrong as well as unnecessary.** If something
+    /// did move focus while the float was open — `focus-pane` from a keymap or
+    /// an agent — snapping back would undo what was asked for.
+    ///
+    /// The contrast is the assertion's other half: the four pane verbs *do*
+    /// name a pane, every one of them. A test that only checked the floats
+    /// would pass against a registry where nothing named anything.
+    #[test]
+    fn no_float_verb_can_name_a_pane_so_none_can_move_focus() {
+        use phosphor_core::registry::ParamType;
+
+        // **A `PaneRef`, not a `PaneId`** — the pane verbs take *which pane*
+        // as a reference (`focused`, an id, a direction, next/prev), which is a
+        // union rather than a bare id. What they have in common is the argument
+        // itself, and a verb with no such argument has no way to say which pane
+        // it means.
+        let names_a_pane = |action: &Action| {
+            action
+                .spec()
+                .params
+                .iter()
+                .any(|param| param.name == "pane" && matches!(param.ty, ParamType::Union(_)))
+        };
+
+        for float in [
+            Action::Float(phosphor_core::action::FloatAction::CloseFloat {}),
+            Action::Float(phosphor_core::action::FloatAction::CloseAllFloats {}),
+        ] {
+            assert!(
+                !names_a_pane(&float),
+                "{} names a pane, so it could move focus — which is what makes \
+                 `opening then closing a float returns focus exactly where it \
+                 was` need no state to hold it",
+                float.spec().name
+            );
+        }
+
+        for pane in [
+            Action::Pane(PaneAction::FocusPane {
+                pane: PaneRef::Focused {},
+            }),
+            Action::Pane(PaneAction::ClosePane {
+                pane: PaneRef::Focused {},
+            }),
+        ] {
+            assert!(
+                names_a_pane(&pane),
+                "{} is a pane verb and names one — without this the float half \
+                 would pass against a registry where nothing named anything",
+                pane.spec().name
+            );
+        }
+    }
+
+    /// **The `panes` query answers the tree, the focus and what each pane
+    /// holds** — `T088`'s fifth acceptance clause.
+    ///
+    /// Plain data rather than a view tree: the query's own row says *"the pane
+    /// tree, with which one has focus"*, so this answers what the arrangement
+    /// **is**, and a `Node` would answer how to draw one.
+    ///
+    /// The split is between the two structures on purpose. A `PaneTree` knows
+    /// arrangement and a `Pane` knows contents, so the tree describes the
+    /// shape and the `panes` list describes what is in each leaf — and neither
+    /// has to learn the other's job to answer.
+    #[test]
+    fn the_panes_query_describes_the_tree_the_focus_and_the_contents() {
+        let (mut panes, left) = Panes::new(Pane::new(BufferId(0)));
+        let right = panes
+            .split(left, Pane::new(BufferId(1)), Direction::Right)
+            .expect("the pane splits");
+        panes.focus = right;
+
+        let Value::Record(shape) = panes.describe() else {
+            panic!("the shape is a record");
+        };
+
+        assert_eq!(
+            shape.get("focus"),
+            Some(&Value::Int(i64::try_from(right.0).expect("a small id"))),
+            "which one has focus, by id"
+        );
+
+        let Some(Value::Record(tree)) = shape.get("tree") else {
+            panic!("two panes are a split");
+        };
+        assert_eq!(tree.get("axis"), Some(&Value::Text("columns".to_owned())));
+        assert_eq!(tree.get("share"), Some(&Value::Int(50)));
+
+        let Some(Value::List(leaves)) = shape.get("panes") else {
+            panic!("the panes are a list");
+        };
+        assert_eq!(leaves.len(), 2, "in the tree's order, left to right");
+        let Value::Record(first) = &leaves[0] else {
+            panic!("each is a record");
+        };
+        assert_eq!(
+            first.get("pane"),
+            Some(&Value::Int(i64::try_from(left.0).expect("a small id")))
+        );
+        assert_eq!(first.get("holds"), Some(&Value::Text("buffer".to_owned())));
+        assert_eq!(
+            first.get("buffer"),
+            Some(&Value::Int(0)),
+            "and which buffer is in it — the half the tree cannot say"
+        );
+    }
+
     /// **The panes tile the frame exactly, at any width.**
     ///
     /// The far side of a divider takes what the near side left, rather than
@@ -14698,7 +15174,7 @@ mod tests {
                 holds,
                 focused,
                 child,
-            } = crate::one_pane(PaneId(7), BufferId(3), soft_wrap)
+            } = frame_of(PaneId(7), BufferId(3), soft_wrap)
             else {
                 panic!("the host's frame is a pane");
             };
@@ -14718,6 +15194,23 @@ mod tests {
                 "the pane holds the buffer, and carries the wrap the loop applied"
             );
         }
+    }
+
+    /// One pane over one buffer, composed the way the loop composes the frame.
+    ///
+    /// `one_pane` was a separate function until step 12 folded it into
+    /// `compose_panes` as the degenerate case, which is what it always was — a
+    /// `PaneTree::Leaf` with nothing beside it.
+    fn frame_of(pane: PaneId, buffer: BufferId, soft_wrap: bool) -> phosphor_core::view::Node {
+        let (panes, _) = Panes::new(Pane::new(buffer));
+        let mut panes = panes;
+        // `Panes::new` mints from zero; this test names its own ids so that
+        // passing them through is what is being checked.
+        let held = panes.map.remove(&PaneId(0)).expect("the first pane");
+        panes.map.insert(pane, held);
+        panes.tree = PaneTree::Leaf(pane);
+        panes.focus = pane;
+        crate::compose_panes(&panes.tree.clone(), &panes, pane, soft_wrap)
     }
 
     /// §8's degradation, at the binary's end of it.

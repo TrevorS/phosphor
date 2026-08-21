@@ -124,9 +124,14 @@ RECORDED = {
                                    "focus. It is filed as OPEN-QUESTIONS.md §47 now: `T088` "
                                    "ships a `BufferId`-keyed map and nothing that puts an entry "
                                    "in it with no pane pointing at one, so `T060` inherits the "
-                                   "container and owes the rules — attach/detach, what "
-                                   "`:wall` and `:q` count, and what an unattached buffer wraps "
-                                   "to. The ask is still the nearer of the two."),
+                                   "container and owes the rules. **Two of those `T088` "
+                                   "answered on its way past**: `:wall` writes every dirty "
+                                   "buffer and `:quit` counts unsaved work in all of them, both "
+                                   "over the map rather than the focused entry, so an "
+                                   "unattached buffer is already counted by each. What is left "
+                                   "for `T060` is attach/detach and what an unattached buffer "
+                                   "wraps to — it has no pane, so it has no width. The ask is "
+                                   "still the nearer of the two."),
     # `SetVirtualTextVisible` was recorded here against `T041` and is gone: the
     # store landed, so a rail can be named by its owning region and the arm is
     # in `Editing::collapse`. It is per-owner without a fork patch — the host
