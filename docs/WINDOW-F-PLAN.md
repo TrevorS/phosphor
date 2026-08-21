@@ -191,6 +191,18 @@ The reachability argument is worth keeping, because it is what makes this a bug 
 
 **Files:** `crates/phosphor/src/main.rs`
 
+**Split 6a / 6b, because the six are two problems.** Four carry an `Option<BufferId>` (`set-cursor` and the three `ingest-*`) and two carry a `PaneRef` (`scroll`, `open-file`) — and the constraint on each half is different in kind. A buffer selector cannot be honoured *inside* an arm at all: `Editing::act` holds `&mut self`, which **is** an entry in `Buffers`, so reaching a sibling out of the same map is an aliasing error rather than a missing lookup. It has to be routed at the door. A pane selector has no such problem, because a pane is not the thing the arm is a method on — it needs `Cx` to carry `&mut Panes` instead of one `&mut Pane`, which is a different change with a different risk.
+
+> **6a — the four buffer selectors. DONE.**
+>
+> `Buffers::named(action, focus) -> BufferId` is the routing, read at the door before choosing which `Editing` to hand the Action to. The loop's posted arm — the one producer that can name a buffer that is not on screen — resolves it and refuses `NoSuchTarget` when the id names nothing.
+>
+> **A guard closes the doors that cannot route.** An ex line runs its Actions against the buffer it was typed in, and a Steel command may name any id it likes; there is no sibling lookup available at either. So `Cx` carries the `BufferId` it is applying to, and `Editing::act` refuses at the top when the Action names a different one. Routing where routing is possible, refusal where it is not — and that is what gives `Cx::buffer` a reader, which is the bar every field in step 4 had to clear.
+>
+> **The loop resolves the focused buffer three times per pass, not once.** Draw, event, and the post-event block each take their own borrow. Held as one binding across the pass, the posted arm could not reach a second buffer at all — the borrow checker says so — and the four selectors would have gone on being discarded. That is the change that makes 6a possible and it is four lines.
+>
+> **Verification:** `just gate` green, 1,397 tests. `an_action_naming_a_buffer_is_routed_to_that_buffer` (two buffers; the named one's cursor moves and the focused one's does not) and `a_stale_buffer_id_refuses_instead_of_moving_the_focused_cursor` — the second **pressed with the guard removed**, where it fails as written.
+
 Six arms drop a pane or buffer selector with `..`, each confirmed: `MotionAction::SetCursor { position, .. }` (`:5298`), `ViewAction::Scroll { request, .. }` (`:5386`), `FileAction::SaveBuffer { path, .. }` (`:5453`), `FileAction::OpenFile { path, at, .. }` (`:5470`), and `LspAction::IngestCompletions` / `IngestSignatureHelp` / `IngestHover` (`:5640`, `:5684`, `:5701`). Each `..` becomes a real read through `cx.tree.resolve` or a `Buffers` lookup.
 
 Separately: `Editing::reveal` (`:5224-5235`) hardcodes `PaneRef::Focused {}` at `:5231` and calls `self.act`. It must name `cx.pane` — the moment the `Scroll` arm honours its selector, an unfocused pane's reveal scrolls the focused one. No existing test can see this, because today both halves ignore the ref and are self-consistent by accident.

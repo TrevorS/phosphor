@@ -2909,6 +2909,14 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // extension point (`events`) something another agent can use
             // without editing the file that owns the loop.
             events::AppEvent::Term(event) => {
+                // **The focused buffer, resolved for this arm rather than held
+                // across the loop.** A keystroke and a click are the two
+                // producers that cannot name a buffer — the machine has no
+                // ids and a click resolves through a pane — so *this* arm is
+                // where "the focused one" is a fact rather than an assumption.
+                // The `Posted` arm below resolves its own, because a posted
+                // Action can name a buffer that is not on screen.
+                let editing = buffers.at_mut(held);
                 // A notice says what the last ex line did, and the next key
                 // is the acknowledgement — there is no dismiss and nothing to
                 // remember. `8e`'s hint is acknowledged the same way: it has
@@ -2960,7 +2968,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 PickerStep::Typing => {}
                                 PickerStep::Cycle(delta) => {
                                     let outcome = editing.apply(
-                                        &mut Cx::new(pane, &mut shell),
+                                        &mut Cx::new(held, pane, &mut shell),
                                         &Action::Picker(PickerAction::CyclePickerSource { delta }),
                                     );
                                     if let Outcome::Refused(why) = outcome {
@@ -2969,7 +2977,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 }
                                 PickerStep::Accept => {
                                     let outcome = editing.apply(
-                                        &mut Cx::new(pane, &mut shell),
+                                        &mut Cx::new(held, pane, &mut shell),
                                         &Action::Picker(PickerAction::PickerAccept {
                                             how: AcceptHow::Open,
                                         }),
@@ -3013,7 +3021,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 notice = submit_ex(
                                     &mut layer,
                                     editing,
-                                    &mut Cx::new(pane, &mut shell),
+                                    &mut Cx::new(held, pane, &mut shell),
                                     &ex_line,
                                 );
                             }
@@ -3032,23 +3040,27 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 layer: &mut layer,
                                 seed: &mut seed,
                                 editing,
-                                cx: Cx::new(pane, &mut shell),
+                                cx: Cx::new(held, pane, &mut shell),
                             }
                             .key(pressed);
                             typing = machine.mode() == EditMode::Insert && edits.get() != before;
                         }
                     }
                     Event::Mouse(mouse) => {
-                        for action in
-                            mouse_actions(&mut machine, editing, &Cx::new(pane, &mut shell), mouse)
-                        {
+                        for action in mouse_actions(
+                            &mut machine,
+                            editing,
+                            &Cx::new(held, pane, &mut shell),
+                            mouse,
+                        ) {
                             // `Input::SetMode` is the machine reporting a
                             // transition it has already made — `Machine::click`
                             // and `Machine::drag` mutate it directly, the way
                             // `feed` does — so there is nothing here to apply
                             // and `Editing` has no arm for one.
                             if !matches!(action, Action::Input(_)) {
-                                let _ = editing.apply(&mut Cx::new(pane, &mut shell), &action);
+                                let _ =
+                                    editing.apply(&mut Cx::new(held, pane, &mut shell), &action);
                             }
                         }
                     }
@@ -3067,13 +3079,29 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // changing state, and the statusline's server chip is what says so.
             events::AppEvent::Woke(_) => {}
             events::AppEvent::Posted(posted) => {
+                // **Which buffer the Action names, before deciding what to do
+                // with it.** A posted Action is the one kind that can name a
+                // buffer that is not the focused one: `set-cursor` over MCP
+                // carries a `BufferId`, and the three `ingest-*` answers carry
+                // the one that asked. The applier used to drop all four with
+                // `..` and act on whatever was in front of the user.
+                let named = Buffers::named(&posted.action, held);
+                let Some(target) = buffers.get_mut(named) else {
+                    // A stale id from an agent working off an old query, which
+                    // is what `NoSuchTarget` is for. Said out loud rather than
+                    // dropped: the producer asked about a buffer, and silence
+                    // is indistinguishable from having done it.
+                    notice = Some(phosphor_steel::answer::why(&Refusal::NoSuchTarget).to_owned());
+                    continue;
+                };
                 if outstanding.answers(&posted.action) {
                     // The user's own request coming back. Applied through
                     // `act` and not `apply`, for the reason `deliver` gives:
                     // a reveal is `View::Scroll`, and nothing that is not the
                     // user may move the viewport the user is looking at.
-                    drop(editing.act(&mut Cx::new(pane, &mut shell), &posted.action));
-                } else if let Some(note) = deliver(editing, &mut Cx::new(pane, &mut shell), &posted)
+                    drop(target.act(&mut Cx::new(named, pane, &mut shell), &posted.action));
+                } else if let Some(note) =
+                    deliver(target, &mut Cx::new(named, pane, &mut shell), &posted)
                 {
                     notice = Some(note);
                 }
@@ -3085,6 +3113,13 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // surface. Both are recorded by `Editing::act` and performed here, for
         // the same reason `Intent` exists — the thing that decides is not the
         // thing that owns.
+        //
+        // **Resolved again, and that is the point.** The draw above and the
+        // event between them each took their own borrow, so no one binding is
+        // alive across the whole pass — which is what lets the `Posted` arm
+        // reach a buffer that is not the focused one. Held as one binding, it
+        // could not, and the four `buffer` selectors went on being discarded.
+        let editing = buffers.at_mut(held);
         if let Some(file) = editing.open.take() {
             // **`gd` into the file you are already in is the common case**, and
             // re-reading it from disk would throw away everything typed since
@@ -3116,7 +3151,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 // it is the user's own — `apply`, so the viewport follows.
                 if let Some(at) = editing.open_at.take() {
                     drop(editing.apply(
-                        &mut Cx::new(pane, &mut shell),
+                        &mut Cx::new(held, pane, &mut shell),
                         &Action::Motion(MotionAction::SetCursor {
                             position: at,
                             buffer: None,
@@ -3173,7 +3208,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // rather than `act`, because this *is* the user's jump.
                         if let Some(at) = editing.open_at.take() {
                             drop(editing.apply(
-                                &mut Cx::new(pane, &mut shell),
+                                &mut Cx::new(held, pane, &mut shell),
                                 &Action::Motion(MotionAction::SetCursor {
                                     position: at,
                                     buffer: None,
@@ -3337,7 +3372,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         if let Some(lookup) = editing.lookup.take() {
             match (editing.language.clone(), synced.as_ref()) {
                 (Some(language), Some(document)) => {
-                    let at = editing.text(&Cx::new(pane, &mut shell)).cursor();
+                    let at = editing.text(&Cx::new(held, pane, &mut shell)).cursor();
                     outstanding.sent(lookup);
                     let path = document.path.clone();
                     // **The word being completed goes with the request**, and
@@ -3367,7 +3402,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         if let Some(question) = editing.question.take() {
             match (editing.language.clone(), synced.as_ref()) {
                 (Some(language), Some(document)) => {
-                    let at = editing.text(&Cx::new(pane, &mut shell)).cursor();
+                    let at = editing.text(&Cx::new(held, pane, &mut shell)).cursor();
                     let path = document.path.clone();
                     // `T036` answers in *places*, and what a place means
                     // depends on the question: a definition is one place and
@@ -5212,6 +5247,16 @@ impl std::fmt::Debug for Shell {
 /// read through `Resources`, which has no `&mut` in it and must never grow one.
 #[derive(Debug)]
 struct Cx<'a> {
+    /// Which buffer the Action is being applied to.
+    ///
+    /// **Carried so an arm can refuse a selector it cannot honour.** Routing
+    /// happens at the door — the loop reads [`Buffers::named`] and hands the
+    /// Action to the buffer it names — but not every door can route: an ex line
+    /// runs its Actions against the buffer the ex line was typed in, and a
+    /// Steel command could name any id it likes. Where routing is impossible,
+    /// refusing is the honest answer, and this is what the refusal compares
+    /// against.
+    buffer: BufferId,
     /// The pane the Action lands in, borrowed for its length.
     view: &'a mut Pane,
     /// What the session owns.
@@ -5249,6 +5294,41 @@ impl Buffers {
         };
         let id = buffers.open(first);
         (buffers, id)
+    }
+
+    /// Which buffer an Action names, or the focused one when it names none.
+    ///
+    /// **Four capabilities carry an `Option<BufferId>` and the applier dropped
+    /// all four with `..`**: `set-cursor`, and the three `ingest-*` answers.
+    /// The doc on each says *"absent means the focused one"*, which the applier
+    /// honoured by accident — it read the focused buffer because it had no
+    /// other, so `Some(anything)` and `None` did the same thing. An agent
+    /// naming a buffer it once knew about got the *focused* buffer's cursor
+    /// moved, which is the failure mode `Refusal::NoSuchTarget` exists for:
+    /// *"a stale id from an agent working off an old query"*.
+    ///
+    /// This is a total function over the four, not over the vocabulary. A fifth
+    /// capability growing a `buffer` argument is a line here, and the arm that
+    /// forgets it goes on discarding — which is why step 9 keys `Outstanding`
+    /// rather than leaving the tagging to whoever posts.
+    fn named(action: &Action, focus: BufferId) -> BufferId {
+        let named = match action {
+            Action::Motion(MotionAction::SetCursor { buffer, .. })
+            | Action::Lsp(LspAction::IngestCompletions { buffer, .. })
+            | Action::Lsp(LspAction::IngestSignatureHelp { buffer, .. })
+            | Action::Lsp(LspAction::IngestHover { buffer, .. }) => *buffer,
+            _ => None,
+        };
+        named.unwrap_or(focus)
+    }
+
+    /// The buffer `id` names, or [`None`] if it names none.
+    ///
+    /// The fallible half of [`Buffers::at_mut`], for the callers that have been
+    /// handed an id by somebody else and must answer for it rather than trust
+    /// it.
+    fn get_mut(&mut self, id: BufferId) -> Option<&mut Editing> {
+        self.map.get_mut(&id)
     }
 
     /// Takes a buffer and answers the id it was given.
@@ -5336,8 +5416,12 @@ impl<'a> Cx<'a> {
     /// Named rather than written as a literal at each call, because step 4c
     /// changes what it takes — the pane and the tree both come out of `Panes`
     /// by then — and a constructor is one place to change rather than thirty.
-    fn new(view: &'a mut Pane, shell: &'a mut Shell) -> Self {
-        Self { view, shell }
+    fn new(buffer: BufferId, view: &'a mut Pane, shell: &'a mut Shell) -> Self {
+        Self {
+            buffer,
+            view,
+            shell,
+        }
     }
 }
 
@@ -5729,6 +5813,22 @@ impl Editing {
     /// One Action. The `_` arm answers with the task that builds it, derived
     /// from the capability's own row rather than from a list here.
     fn act(&mut self, cx: &mut Cx<'_>, action: &Action) -> Outcome {
+        // **The four buffer selectors, checked once here rather than dropped in
+        // four arms.** `set-cursor` and the three `ingest-*` answers each carry
+        // an `Option<BufferId>` whose doc says *"absent means the focused
+        // one"*; the arms wrote `..` and read whatever buffer they were called
+        // on, so `Some(anything)` and `None` did the same thing and an id an
+        // agent held across a `close-buffer` moved the wrong cursor.
+        //
+        // The loop routes what it can — [`Buffers::named`] at the posted door
+        // sends the Action to the buffer it names — and this is the half that
+        // cannot be routed: an ex line runs against the buffer it was typed in,
+        // and a Steel command may name any id. `NoSuchTarget` is the refusal
+        // whose own doc names this case, *"a stale id from an agent working off
+        // an old query"*.
+        if Buffers::named(action, cx.buffer) != cx.buffer {
+            return Outcome::Refused(Refusal::NoSuchTarget);
+        }
         let name = action.spec().name;
         let done = || {
             Outcome::Done(Receipt {
@@ -9416,13 +9516,15 @@ mod tests {
     impl Bench {
         /// One Action, applied to this buffer in this pane.
         fn apply(&mut self, action: &Action) -> Outcome {
-            let mut cx = Cx::new(&mut self.pane, &mut self.shell);
+            let buffer = self.pane.buffer.expect("a bench's pane holds its buffer");
+            let mut cx = Cx::new(buffer, &mut self.pane, &mut self.shell);
             self.editing.apply(&mut cx, action)
         }
 
         /// One Action, applied without the reveal — see [`Editing::act`].
         fn act(&mut self, action: &Action) -> Outcome {
-            let mut cx = Cx::new(&mut self.pane, &mut self.shell);
+            let buffer = self.pane.buffer.expect("a bench's pane holds its buffer");
+            let mut cx = Cx::new(buffer, &mut self.pane, &mut self.shell);
             self.editing.act(&mut cx, action)
         }
 
@@ -9450,7 +9552,11 @@ mod tests {
         /// so a test of one calls it the way the loop does rather than through
         /// a wrapper only tests would have.
         fn split(&mut self) -> (&mut Editing, Cx<'_>) {
-            (&mut self.editing, Cx::new(&mut self.pane, &mut self.shell))
+            let buffer = self.pane.buffer.expect("a bench's pane holds its buffer");
+            (
+                &mut self.editing,
+                Cx::new(buffer, &mut self.pane, &mut self.shell),
+            )
         }
     }
 
@@ -11935,8 +12041,8 @@ mod tests {
         let mut left = Pane::new(BufferId(0));
         let right = Pane::new(BufferId(0));
 
-        editing.push_jump(&mut Cx::new(&mut left, &mut shell));
-        editing.push_jump(&mut Cx::new(&mut left, &mut shell));
+        editing.push_jump(&mut Cx::new(BufferId(0), &mut left, &mut shell));
+        editing.push_jump(&mut Cx::new(BufferId(0), &mut left, &mut shell));
 
         assert_eq!(
             left.jumplist.len(),
@@ -11950,6 +12056,93 @@ mod tests {
              the assertion that fails the moment the list goes back on `Editing`"
         );
         assert_eq!(right.jump_at, 0);
+    }
+
+    /// **`set-cursor` naming a buffer goes to that buffer**, which is the
+    /// whole of what step 6 does for the four selectors the applier discarded.
+    ///
+    /// `Buffers::named` is the routing, and it is deliberately a read rather
+    /// than a method on the Action: the door reads it *before* choosing which
+    /// `Editing` to hand the Action to, because an arm holding `&mut self`
+    /// cannot reach a sibling out of the same map.
+    #[test]
+    fn an_action_naming_a_buffer_is_routed_to_that_buffer() {
+        let alpha = editing("alpha").editing;
+        let bravo = editing("bravo").editing;
+        let (mut buffers, first) = Buffers::new(alpha);
+        let second = buffers.open(bravo);
+
+        let elsewhere = Action::Motion(phosphor_core::action::MotionAction::SetCursor {
+            position: Position { line: 1, column: 4 },
+            buffer: Some(second),
+        });
+        let here = Action::Motion(phosphor_core::action::MotionAction::SetCursor {
+            position: Position { line: 1, column: 4 },
+            buffer: None,
+        });
+
+        assert_eq!(
+            Buffers::named(&elsewhere, first),
+            second,
+            "an Action that names a buffer names it"
+        );
+        assert_eq!(
+            Buffers::named(&here, first),
+            first,
+            "and one that names none means the focused one, which is what its \
+             own doc says"
+        );
+
+        let mut shell = shell();
+        let mut pane = Pane::new(second);
+        let target = Buffers::named(&elsewhere, first);
+        buffers
+            .at_mut(target)
+            .apply(&mut Cx::new(target, &mut pane, &mut shell), &elsewhere);
+
+        assert_eq!(
+            buffers.at_mut(second).editor.get_cursor(),
+            3,
+            "the named buffer's cursor moved"
+        );
+        assert_eq!(
+            buffers.at_mut(first).editor.get_cursor(),
+            0,
+            "and the focused one's did not — the assertion that fails while \
+             the arm reads `..`"
+        );
+    }
+
+    /// **A buffer id that names nothing refuses rather than moving whatever is
+    /// in front of the user.**
+    ///
+    /// The routing at the loop's posted door answers this by not finding the
+    /// buffer. This is the other half: a door that *cannot* route — an ex line
+    /// runs against the buffer it was typed in — hands the Action to the
+    /// focused buffer, and the guard at the top of `Editing::act` is what stops
+    /// it being applied there. `NoSuchTarget`'s own doc names this exact case:
+    /// *"a stale id from an agent working off an old query"*.
+    #[test]
+    fn a_stale_buffer_id_refuses_instead_of_moving_the_focused_cursor() {
+        let mut editing = editing("alpha bravo");
+
+        let outcome = editing.apply(&Action::Motion(
+            phosphor_core::action::MotionAction::SetCursor {
+                position: Position { line: 1, column: 7 },
+                buffer: Some(BufferId(99)),
+            },
+        ));
+
+        assert!(
+            matches!(outcome, Outcome::Refused(Refusal::NoSuchTarget)),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            editing.editor.get_cursor(),
+            0,
+            "and the cursor in front of the user did not move, which is what \
+             the discarded selector did instead"
+        );
     }
 
     /// **A selection anchor does not survive the rope it was measured in.**
@@ -12103,7 +12296,7 @@ mod tests {
                 Some(file),
                 std::rc::Rc::new(std::cell::Cell::new(false)),
             );
-            editing.push_jump(&mut Cx::new(&mut pane, &mut shell));
+            editing.push_jump(&mut Cx::new(BufferId(0), &mut pane, &mut shell));
         }
 
         assert_eq!(
@@ -12142,10 +12335,10 @@ mod tests {
         };
 
         let in_narrow = editing
-            .wrapped(&Cx::new(&mut narrow, &mut shell), &prose)
+            .wrapped(&Cx::new(BufferId(0), &mut narrow, &mut shell), &prose)
             .len();
         let in_wide = editing
-            .wrapped(&Cx::new(&mut wide, &mut shell), &prose)
+            .wrapped(&Cx::new(BufferId(0), &mut wide, &mut shell), &prose)
             .len();
         assert!(
             in_narrow > in_wide,
