@@ -333,7 +333,17 @@ Two panes on one buffer means two `wrap_to` widths on one `Editor`; the last one
 >
 > **No separator column.** A divider between panes is a drawing decision and Design Language's to make; `layout` answers where the panes *are*, and inventing a gutter in the one place that cannot see a theme would put the decision in the wrong hands.
 >
-> **11b is the draw half and is not done**: splitting the prep block per-pane/per-buffer, `Painted` holding the buffer map, and `Resources::editor`/`state_marks` becoming real lookups. That is the change that lets two panes *draw*, and it is the one ruling (a)'s `viewport` rides in on — the door gains `viewport(PaneId)` there, which is where its reader finally exists.
+> **11b DONE — the draw half.** The prep block splits by what each thing is *about*: per pane goes everything that depends on a rectangle (area, wrap width, whitespace mode), per buffer everything that depends on the document (indent unit, didChange, the whole decoration pass). `decorate` is the extraction that matters — it ran once per frame against whichever buffer was on screen, and `state_marks` takes a `BufferId`.
+>
+> **`layout` takes the outer rect and each pane insets its own.** 11a laid out `editor_area(body)`, which insets once for the whole frame and then slices it — with two panes the second one's text would start two cells left of its own gutter.
+>
+> `Tints` moved onto `Editing`, for step 7's reason: it diffs against what it last uploaded, so one table against N editors would see every switch as a total change and re-upload the whole set.
+>
+> **Making the door real found an id that named nothing.** The composition wrote `THE_BUFFER = BufferId(1)` and `THE_PANE = PaneId(1)`, whose own doc said *"the literal moves into `Buffers` when the map lands"*. It landed at step 4c and mints from **zero** — so the composition named a buffer that did not exist, and nothing noticed because nothing read the id. The state column went blank the instant the door started looking, and a *screen* test caught it, which is the only kind that could.
+>
+> **Ruling (a) a second time, recorded where it happens:** two panes on one buffer means two wrap widths on one `Editor` and the last wins. The wrap is the fork's, one per `Editor`; a per-pane wrap needs the per-pane viewport the ruling puts on `Pane`, whose reader is `Resources::viewport` — which is a `phosphor-ui` trait change and is **not** in this step. Until it exists the pane laid out last decides, and saying so is better than letting it look intentional.
+>
+> **As run:** `just gate` green, 1,416 tests — golden frames and screen tests unchanged at one pane, which is what this step asks. One added, pressed with the old *"every id resolves to whatever is on screen"* behaviour restored, where it fails.
 
 ### Step 12 — Retire the refusals and the prose that names them, then tick
 

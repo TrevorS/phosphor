@@ -193,7 +193,7 @@ use phosphor_steel::source;
 use phosphor_steel::status::{self, ComposeError, StatusFile, StatusVm};
 use phosphor_term::{Frame, KeyboardProtocol, Term};
 use phosphor_ui::buffer_view::{self, Editor, StateMark, editor_area};
-use phosphor_ui::diagnostics::{DiagnosticsVm, RowPolicy, RowScope};
+use phosphor_ui::diagnostics::{DiagnosticsVm, RowPolicy, RowScope, Tally};
 use phosphor_ui::float::{
     self, Anchor, CompletionItemVm, CompletionList, CompletionVm, Float, FloatBody, FloatFooter,
     FloatHeader, FloatSlot, FooterHint, SignatureBody, SignatureVm, TextBody,
@@ -336,6 +336,151 @@ const DIAGNOSTIC_MAX_ROWS: &str = "diagnostic-max-rows";
 /// ([`phosphor_ui::diagnostics::Tally`], `2b`). So a policy that draws no row
 /// hides nothing; it decides what *speaks*, and the default is the line you are
 /// on, which is helix's default too.
+/// What one buffer's decoration comes to for this frame.
+///
+/// Three answers with three audiences: the state column is the *widget's* and
+/// is looked up per buffer through [`Resources::state_marks`], while the two
+/// counts are the *statusline's* and are only ever wanted for the buffer the
+/// user is looking at.
+#[derive(Debug)]
+struct Decorated {
+    /// One [`StateMark`] per visual row, already resolved through §3's ladder.
+    marks: Vec<StateMark>,
+    /// How many diagnostics of each severity this buffer holds.
+    tally: Tally,
+    /// How many unseen regions are in it.
+    unseen: usize,
+}
+
+/// Resolves everything that decorates one buffer, and installs what the fork
+/// holds.
+///
+/// **Extracted at step 11b, and the extraction is the point.** This ran once
+/// per frame against whichever buffer was on screen, which was right while
+/// there was one. `Resources::state_marks` takes a `BufferId` and answered the
+/// same column for every id it was handed — so a second pane showing a second
+/// file would draw the *focused* file's error markers beside its text. Running
+/// it per buffer is what makes that door able to tell them apart.
+///
+/// It mutates: `tints.sync`, `virtual_text::install` and `set_styled_spans`
+/// all write to the editor, which is why it happens before the draw and not
+/// during it. `Resources` has no `&mut` in it and must never grow one.
+fn decorate(
+    buffer: &mut Editing,
+    store: &store::Shared,
+    host: &AppHost,
+    theme: &Theme,
+) -> Decorated {
+    // `T040` — the diagnostics on screen, resolved against *this* buffer.
+    //
+    // **The state column is computed once, here.** `diagnostics.rs`'s
+    // header is explicit that its `regions` are one source among several
+    // and that the host *"concatenates them with every other source of
+    // regions — unseen edits, threads, failures — and calls
+    // `gutter::state_column` once"*, which is what makes §3's ladder a
+    // property of the composition rather than of one widget. There is one
+    // source today; `T041` adds the rest to this `Vec` and nothing else
+    // here changes.
+    let published = buffer
+        .synced
+        .as_ref()
+        .map(|document| store.diagnostics_of(&document.key))
+        .unwrap_or_default();
+    let shown = DiagnosticsVm::new(&published);
+    let tally = shown.tally();
+    let mut regions = Vec::new();
+    regions.extend(shown.regions(&buffer.editor));
+    // **`T041` — the second source this `Vec` was built for.** The comment
+    // above has said since `T040` that *"there is one source today; `T041`
+    // adds the rest to this `Vec` and nothing else here changes"*, and
+    // nothing else here does: the ladder in `gutter::resolve` folds the two
+    // together, so a line carrying both an unseen edit and an error is
+    // trouble-red by §3's own priority rather than by whichever source ran
+    // second.
+    //
+    // Seen regions are handed over as well as unseen ones, deliberately.
+    // `RegionState::Seen` resolves to `StateMark::None` — §3's row 18,
+    // *"seen — marker cleared, line is plain"* — so the ladder is what
+    // decides they draw nothing, in the one place that decides it.
+    let unseen = buffer.file.as_deref().map_or(0, |path| {
+        let spans: Vec<_> = store
+            .spans_in(path)
+            .into_iter()
+            .map(|(span, state)| {
+                (
+                    span,
+                    match state {
+                        SeenState::Unseen => gutter::RegionState::Unseen,
+                        SeenState::Seen => gutter::RegionState::Seen,
+                    },
+                )
+            })
+            .collect();
+        regions.extend(gutter::spans(&buffer.editor, &spans));
+        // `T087` — §3's row tints, through the fork's marks API. The same
+        // `spans` the gutter's column is built from, so the tint and the
+        // marker cannot disagree about a row.
+        //
+        // Called every frame and **uploads on almost none of them**:
+        // `Tints::sync` diffs first, because `set_marks` replaces wholesale
+        // and a 500-region file would otherwise re-upload the whole set on
+        // every keystroke. That diff is what keeps this off the hot path.
+        let (editor, tints) = (&mut buffer.editor, &mut buffer.tints);
+        tints.sync(editor, theme, &spans);
+        spans
+            .iter()
+            .filter(|(_, state)| *state == gutter::RegionState::Unseen)
+            .count()
+    });
+    // **How many of them may speak, reported at `CP-4`.** A half-typed
+    // `path:` made rust-analyzer answer with eleven cascade parse errors
+    // and every one became a row, so the code being edited went off the
+    // bottom of the screen. The policy is read per pass for the same
+    // reason the completion floor and `soft-wrap` are: an option changed
+    // at the REPL is a fact about now, not about the last restart.
+    let rows = shown.rows(theme, &diagnostic_rows(host, &buffer.editor));
+    // **`T041` gives a diagnostic's rail an owner, and that is what makes
+    // it collapsible.** `phosphor_ui::diagnostics::rows` hands them back
+    // unowned and says why: *"a region id is the store's and there are no
+    // regions until `T041`, at which point a diagnostic's row is owned by
+    // the region anchored to its node"*. Positional here, anchored at
+    // `T042`; a row on a line no region covers stays unowned, which is
+    // honest — there is nothing to collapse it by.
+    //
+    // The filter is the whole of `set-virtual-text-visible`'s per-owner
+    // half: a collapsed owner's rows are not in the list installed, so the
+    // fork's single global flag never has to become a per-region one.
+    let rows: Vec<_> = buffer.file.clone().map_or(rows.clone(), |path| {
+        rows.into_iter()
+            .filter_map(|row| {
+                let at = Position {
+                    line: u32::try_from(row.anchor.line.saturating_add(1)).unwrap_or(u32::MAX),
+                    column: u32::try_from(row.anchor.col.saturating_add(1)).unwrap_or(u32::MAX),
+                };
+                match store.covering(&path, at) {
+                    Some(owner) if buffer.collapsed.contains(&owner) => None,
+                    Some(owner) => Some(row.owned_by(owner)),
+                    None => Some(row),
+                }
+            })
+            .collect()
+    });
+    let underlines = shown.underlines(&buffer.editor, theme);
+    virtual_text::install(&mut buffer.editor, &rows);
+    buffer.editor.set_styled_spans(underlines);
+    // As many rows as any region reaches and no more. `BufferView`'s own
+    // contract is that *"rows past the end of the slice are
+    // `StateMark::None`"*, so a column sized to the buffer would be the
+    // same answer with a `Vec` the length of the file in it.
+    let deepest = regions.iter().map(|region| region.rows.end).max();
+    let marks = gutter::state_column(&regions, deepest.unwrap_or(0));
+    Decorated {
+        marks,
+        tally,
+        unseen,
+    }
+}
+
 fn diagnostic_rows(host: &AppHost, editor: &Editor) -> RowPolicy {
     let scope = match host.text(DIAGNOSTIC_ROWS).as_deref() {
         Some("all") => RowScope::Everywhere,
@@ -2407,11 +2552,6 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // shape for this and `phosphor-ui` defers it to `T058`, so what S3 can hold
     // is the primitives — a row of labels where the statusline goes, which is
     // where vim puts it too.
-    // `T087`'s side table: what the fork's marks currently hold, so a frame
-    // with no news can upload nothing. Owned by the loop rather than by
-    // `Editing`, because it describes the *editor's* decoration and is
-    // rebuilt from the store rather than mutated alongside it.
-    let mut tints = phosphor_ui::tints::Tints::new();
     // `T047`'s landing slot for a `request-references` answer. See
     // [`References`] for why it is a slot and not an Action payload.
     let references: References = Arc::new(Mutex::new(Vec::new()));
@@ -2533,7 +2673,6 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             .at(focus)
             .buffer
             .expect("the focused pane holds a buffer until step 11 gives it anything else to hold");
-        let editing = buffers.at_mut(held);
 
         // The size the *next* frame will be laid out at, and the layout itself.
         // **`draw` used to re-split `frame.area()`**, so the wrap width and the
@@ -2548,47 +2687,79 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // ratatui answers with a `Resize` event and the next pass corrects.
         let size = term.size()?;
         let mut geometry = lay_out(Rect::new(0, 0, size.width, size.height));
-        // **Every pane, from the tree.** This laid out the focused one and
-        // left the rest holding whatever area they were last given — which is
-        // the frame before a resize, or `Rect::ZERO` for a pane that has never
-        // been focused. A scroll measured against a stale rect pages by the
-        // wrong number of rows, and one measured against zero pages by none.
-        for (id, area) in panes.tree.layout(editor_area(geometry.body)) {
-            panes.at_mut(id).area = area;
-        }
         // `init.scm` sets `soft-wrap` at boot and `(set-option! …)` can change
         // it at the REPL, so it is read per frame rather than once: the option
         // is the editor layer's, and the flag is the override.
         //
-        // Bound rather than tested in place because the composition below
-        // needs the same answer: `Node::Buffer`'s `soft_wrap` prop is the
-        // request, and this is where the request is honoured. Two reads of
-        // `host.flag` could disagree inside one frame — the VM runs between
-        // them.
+        // Bound rather than tested in place because the composition below needs
+        // the same answer: `Node::Buffer`'s `soft_wrap` prop is the request,
+        // and the per-pane pass below is where the request is honoured. Two
+        // reads of `host.flag` could disagree inside one frame — the VM runs
+        // between them.
         let soft_wrap = cli.soft_wrap || host.flag("soft-wrap") == Some(true);
-        if soft_wrap {
-            // Free when the width has not changed, and it moves no viewport.
-            soft_wrap::wrap_to(&mut editing.editor, geometry.body);
+        // **Every pane, from the tree — and everything that depends on a
+        // rectangle, in the same pass.**
+        //
+        // This block used to do four things against the focused editor and the
+        // whole frame. Three of them are about a *rectangle* — where the text
+        // starts, how wide it wraps, how tall it scrolls — and one pane's
+        // rectangle is not another's, so they belong here rather than beside
+        // the document work below.
+        //
+        // **`layout` takes the outer rect and each pane insets its own.**
+        // Step 11a laid out `editor_area(body)`, which insets once for the
+        // whole frame and then slices it — so with two panes the second one's
+        // text would start two cells left of its own gutter. Each pane reserves
+        // its own three columns, so the inset is per pane and the tree divides
+        // what is outside them.
+        //
+        // **Two panes on one buffer means two wrap widths on one `Editor`, and
+        // the last one wins.** That is ruling (a) showing up a second time and
+        // it is recorded here because here is where it happens: the wrap is the
+        // fork's, one per `Editor`, and a per-pane wrap needs the per-pane
+        // viewport the ruling puts on `Pane` — whose reader is
+        // `Resources::viewport`, which does not exist yet. Until it does, the
+        // honest behaviour is that the pane laid out last decides, and the
+        // honest thing to do is say so rather than let it look intentional.
+        for (id, outer) in panes.tree.layout(geometry.body) {
+            panes.at_mut(id).area = editor_area(outer);
+            let Some(shown) = panes.at(id).buffer else {
+                continue;
+            };
+            let buffer = buffers.at_mut(shown);
+            if soft_wrap {
+                // Free when the width has not changed, and it moves no
+                // viewport.
+                soft_wrap::wrap_to(&mut buffer.editor, outer);
+            }
+            // `8e`'s whitespace marks are INSERT-only, and the mode is the
+            // machine's — the first thing in this loop that is not hardcoded.
+            //
+            // **The boundary conversion is gone.** It existed because
+            // `soft_wrap::EditMode` was a two-value copy that said of itself
+            // *"the real mode enum is `spine`'s and does not exist yet
+            // (`T026`)"*; the widget re-exports
+            // `phosphor_core::request::EditMode` now, so there is one enum and
+            // nothing to convert.
+            soft_wrap::set_mode(&mut buffer.editor, machine.mode());
         }
-        // `T104` — what one indent level is, and how wide a `\t` draws. Both
-        // are read per pass for the reason `soft-wrap` and the completion floor
+        // `T104` — what one indent level is, and how wide a `\t` draws.
+        //
+        // **Per buffer, not per pane**, and the difference is what the value is
+        // *about*: an indent unit comes from the language declaration and from
+        // `set-option!`, neither of which knows anything about a rectangle. Two
+        // panes on one file indent the same; two files in one pane do not.
+        //
+        // Read per pass for the reason `soft-wrap` and the completion floor
         // are: the option is the editor layer's, `(set-option! …)` at the REPL
         // has to reach the next keystroke, and a value cached at boot would
         // make the setting a fact about the last restart. `set_tab_width` is
         // free when the number has not moved and rebuilds the row stream when
         // it has, because a wider tab moves every wrap point.
-        editing.indent_style = indent_style(&host, &host.languages(), editing.language.as_ref());
-        editing.editor.set_tab_width(editing.indent_style.tab_width);
-
-        // `8e`'s whitespace marks are INSERT-only, and the mode is the
-        // machine's — the first thing in this loop that is not hardcoded.
-        //
-        // **The boundary conversion is gone.** It existed because
-        // `soft_wrap::EditMode` was a two-value copy that said of itself *"the
-        // real mode enum is `spine`'s and does not exist yet (`T026`)"*; the
-        // widget re-exports `phosphor_core::request::EditMode` now, so there is
-        // one enum and nothing to convert.
-        soft_wrap::set_mode(&mut editing.editor, machine.mode());
+        for buffer in buffers.map.values_mut() {
+            buffer.indent_style = indent_style(&host, &host.languages(), buffer.language.as_ref());
+            buffer.editor.set_tab_width(buffer.indent_style.tab_width);
+        }
 
         // `T038`'s document sync. Once per turn and only when the edit stream
         // moved: `T036` sent `didOpen` and nothing after it, so every request
@@ -2621,111 +2792,28 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 servers.change(&language, document.path.clone(), buffer.contents());
             }
         }
-        let editing = buffers.at_mut(held);
 
-        // `T040` — the diagnostics on screen, resolved against *this* buffer.
+        // **Every buffer, not the one on screen.** `decorate` was this block,
+        // inline, against whichever buffer was focused — and
+        // `Resources::state_marks` takes a `BufferId` and answered the same
+        // column whatever it was handed. A second pane showing a second file
+        // would have drawn the focused file's error markers beside its text.
         //
-        // **The state column is computed once, here.** `diagnostics.rs`'s
-        // header is explicit that its `regions` are one source among several
-        // and that the host *"concatenates them with every other source of
-        // regions — unseen edits, threads, failures — and calls
-        // `gutter::state_column` once"*, which is what makes §3's ladder a
-        // property of the composition rather than of one widget. There is one
-        // source today; `T041` adds the rest to this `Vec` and nothing else
-        // here changes.
-        let published = editing
-            .synced
-            .as_ref()
-            .map(|document| shell.store.diagnostics_of(&document.key))
-            .unwrap_or_default();
-        let shown = DiagnosticsVm::new(&published);
-        let tally = shown.tally();
-        let mut regions = Vec::new();
-        regions.extend(shown.regions(&editing.editor));
-        // **`T041` — the second source this `Vec` was built for.** The comment
-        // above has said since `T040` that *"there is one source today; `T041`
-        // adds the rest to this `Vec` and nothing else here changes"*, and
-        // nothing else here does: the ladder in `gutter::resolve` folds the two
-        // together, so a line carrying both an unseen edit and an error is
-        // trouble-red by §3's own priority rather than by whichever source ran
-        // second.
-        //
-        // Seen regions are handed over as well as unseen ones, deliberately.
-        // `RegionState::Seen` resolves to `StateMark::None` — §3's row 18,
-        // *"seen — marker cleared, line is plain"* — so the ladder is what
-        // decides they draw nothing, in the one place that decides it.
-        let unseen = editing.file.as_deref().map_or(0, |path| {
-            let spans: Vec<_> = shell
-                .store
-                .spans_in(path)
-                .into_iter()
-                .map(|(span, state)| {
-                    (
-                        span,
-                        match state {
-                            SeenState::Unseen => gutter::RegionState::Unseen,
-                            SeenState::Seen => gutter::RegionState::Seen,
-                        },
-                    )
-                })
-                .collect();
-            regions.extend(gutter::spans(&editing.editor, &spans));
-            // `T087` — §3's row tints, through the fork's marks API. The same
-            // `spans` the gutter's column is built from, so the tint and the
-            // marker cannot disagree about a row.
-            //
-            // Called every frame and **uploads on almost none of them**:
-            // `Tints::sync` diffs first, because `set_marks` replaces wholesale
-            // and a 500-region file would otherwise re-upload the whole set on
-            // every keystroke. That diff is what keeps this off the hot path.
-            tints.sync(&mut editing.editor, &theme, &spans);
-            spans
-                .iter()
-                .filter(|(_, state)| *state == gutter::RegionState::Unseen)
-                .count()
-        });
-        // **How many of them may speak, reported at `CP-4`.** A half-typed
-        // `path:` made rust-analyzer answer with eleven cascade parse errors
-        // and every one became a row, so the code being edited went off the
-        // bottom of the screen. The policy is read per pass for the same
-        // reason the completion floor and `soft-wrap` are: an option changed
-        // at the REPL is a fact about now, not about the last restart.
-        let rows = shown.rows(&theme, &diagnostic_rows(&host, &editing.editor));
-        // **`T041` gives a diagnostic's rail an owner, and that is what makes
-        // it collapsible.** `phosphor_ui::diagnostics::rows` hands them back
-        // unowned and says why: *"a region id is the store's and there are no
-        // regions until `T041`, at which point a diagnostic's row is owned by
-        // the region anchored to its node"*. Positional here, anchored at
-        // `T042`; a row on a line no region covers stays unowned, which is
-        // honest — there is nothing to collapse it by.
-        //
-        // The filter is the whole of `set-virtual-text-visible`'s per-owner
-        // half: a collapsed owner's rows are not in the list installed, so the
-        // fork's single global flag never has to become a per-region one.
-        let rows: Vec<_> = editing.file.clone().map_or(rows.clone(), |path| {
-            rows.into_iter()
-                .filter_map(|row| {
-                    let at = Position {
-                        line: u32::try_from(row.anchor.line.saturating_add(1)).unwrap_or(u32::MAX),
-                        column: u32::try_from(row.anchor.col.saturating_add(1)).unwrap_or(u32::MAX),
-                    };
-                    match shell.store.covering(&path, at) {
-                        Some(owner) if editing.collapsed.contains(&owner) => None,
-                        Some(owner) => Some(row.owned_by(owner)),
-                        None => Some(row),
-                    }
-                })
-                .collect()
-        });
-        let underlines = shown.underlines(&editing.editor, &theme);
-        virtual_text::install(&mut editing.editor, &rows);
-        editing.editor.set_styled_spans(underlines);
-        // As many rows as any region reaches and no more. `BufferView`'s own
-        // contract is that *"rows past the end of the slice are
-        // `StateMark::None`"*, so a column sized to the buffer would be the
-        // same answer with a `Vec` the length of the file in it.
-        let deepest = regions.iter().map(|region| region.rows.end).max();
-        let marks = gutter::state_column(&regions, deepest.unwrap_or(0));
+        // The state column is the widget's and is wanted for every buffer; the
+        // two counts are the statusline's and are wanted for one, so the
+        // focused buffer's are the ones kept.
+        let mut columns: BTreeMap<BufferId, Vec<StateMark>> = BTreeMap::new();
+        let mut tally = Tally::default();
+        let mut unseen = 0;
+        for (id, buffer) in &mut buffers.map {
+            let decorated = decorate(buffer, &shell.store, &host, &theme);
+            if *id == held {
+                tally = decorated.tally;
+                unseen = decorated.unseen;
+            }
+            columns.insert(*id, decorated.marks);
+        }
+        let editing = buffers.at_mut(held);
 
         // **The one place the frame cache learns that arbitrary scheme ran.**
         // Not per call site, not by remembering: `Layer` is the only way into
@@ -2773,7 +2861,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 (Surface::Buffer, _) => passive_float(editing),
                 _ => None,
             };
-            let tree = Tree::new(one_pane(THE_BUFFER, soft_wrap));
+            let tree = Tree::new(one_pane(focus, held, soft_wrap));
             Composed::Pane(match float {
                 Some(float) => tree.with_float(float),
                 None => tree,
@@ -2889,25 +2977,31 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             .as_mut()
             .map(|session| session.matcher.tick(list_rows));
 
+        // **Every buffer's editor, lent to the interpreter for one frame.**
+        // Borrowed rather than cloned — an `Editor` holds a rope, a tree-sitter
+        // tree and a highlight cache — and immutably, which is what makes it
+        // safe to hand across the `Resources` door: that trait has no `&mut` in
+        // it and must never grow one.
+        let editors: BTreeMap<BufferId, &Editor> = buffers
+            .map
+            .iter()
+            .map(|(id, buffer)| (*id, &buffer.editor))
+            .collect();
+        let editing = buffers.at(held);
         let overlay = Overlay {
             chrome,
             status: status_tree,
             leader: &leader,
             hint: hint.as_ref(),
-            marks: &marks,
+            columns: &columns,
+            focused: (held, panes.at(focus).area),
             completion: editing.completion.as_ref(),
             signature: editing.signature.as_ref(),
             picker: picker_vm.as_ref(),
         };
         term.draw(|frame| {
             draw(
-                frame,
-                &editing.editor,
-                &theme,
-                &geometry,
-                &floats,
-                &screen,
-                &overlay,
+                frame, &editors, &theme, &geometry, &floats, &screen, &overlay,
             );
         })?;
 
@@ -3885,21 +3979,6 @@ fn session_buffer(repl: &Repl, theme: &Theme) -> Result<Editor, Box<dyn Error>> 
 // The frame
 // ---------------------------------------------------------------------------
 
-/// The one buffer, until `T088` makes a [`BufferId`] name a choice.
-///
-/// [`Painted::editor`] resolves every id to the buffer that is on screen, so
-/// the number here is arbitrary and the *naming* is not: a composition has to
-/// say which buffer it holds, and until there are two the honest answer is the
-/// only one there is. The literal moves into `Buffers` when the map lands.
-const THE_BUFFER: BufferId = BufferId(1);
-
-/// The one pane, on the same terms as [`THE_BUFFER`].
-///
-/// `PaneId`'s own declaration reads *"a pane in the split tree (`T088`)"*, and
-/// this is the first line in the binary to write one down. The split tree is
-/// still a constant.
-const THE_PANE: PaneId = PaneId(1);
-
 /// The host's frame: one pane, holding the buffer.
 ///
 /// **The composition `scripts/lint-node-kinds.sh` recorded as owed** — two
@@ -3915,14 +3994,24 @@ const THE_PANE: PaneId = PaneId(1);
 /// so composing a gutter beside it would draw the column twice and would give
 /// a creditor to the one entry whose whole point is having none.
 ///
+/// **The ids are the real ones since step 11b, and that is not cosmetic.**
+/// They were `THE_BUFFER = BufferId(1)` and `THE_PANE = PaneId(1)`, two
+/// constants whose own doc said *"the number here is arbitrary and the naming
+/// is not"* — true while `Painted::editor` resolved every id to the buffer on
+/// screen. It resolves by id now, and `Buffers` mints from zero, so the
+/// composition was naming a buffer that did not exist: the state column went
+/// blank the moment the door started looking. Caught by
+/// `a_diagnostic_outranks_an_unseen_region_on_the_same_row`, which is a
+/// screen test and the only kind that could see it.
+///
 /// `soft_wrap` is what the option says this frame, not what the editor was
 /// last wrapped to. The prop is a **request**: `Resources`' own doc says it
 /// *"cannot be honoured from here"* because re-wrapping needs `&mut Editor`,
 /// so the loop applies it above and the node reports it. Saying `false` while
 /// the loop wraps would make the tree lie about the frame it composed.
-fn one_pane(buffer: BufferId, soft_wrap: bool) -> Node {
+fn one_pane(pane: PaneId, buffer: BufferId, soft_wrap: bool) -> Node {
     Node::Pane {
-        pane: THE_PANE,
+        pane,
         holds: PaneKind::Buffer,
         focused: true,
         child: Child::new(Node::Buffer { buffer, soft_wrap }),
@@ -4488,8 +4577,16 @@ fn passive_float(editing: &Editing) -> Option<ViewFloat> {
 /// also not a completion list.
 #[derive(Clone, Copy)]
 struct Painted<'a> {
-    editor: &'a Editor,
-    marks: &'a [StateMark],
+    /// Every open buffer's editor, by id.
+    ///
+    /// **A map, and the door is the reason.** [`Resources::editor`] takes a
+    /// `BufferId` and answered the same editor whatever it was handed, under a
+    /// doc reading *"one buffer, and it is implicit"* — honest while there was
+    /// one, and a second pane showing a second file would have drawn the
+    /// focused file's text in both.
+    editors: &'a BTreeMap<BufferId, &'a Editor>,
+    /// Every open buffer's state column, by id, on the same terms.
+    columns: &'a BTreeMap<BufferId, Vec<StateMark>>,
     completion: Option<&'a CompletionVm>,
     signature: Option<&'a SignatureVm>,
     /// `T045`. Computed before the draw rather than during it: the matcher
@@ -4498,12 +4595,19 @@ struct Painted<'a> {
     picker: Option<&'a PickerVm>,
 }
 
+impl<'a> Overlay<'a> {
+    /// The editor behind the focused buffer, if this host still has it.
+    fn focused_editor(&self, editors: &'a BTreeMap<BufferId, &'a Editor>) -> Option<&'a Editor> {
+        editors.get(&self.focused.0).copied()
+    }
+}
+
 impl std::fmt::Debug for Painted<'_> {
     /// The editor holds a rope, a tree-sitter tree and a highlight cache and
     /// implements no `Debug`; what is printable is what this frame is showing.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Painted")
-            .field("marks", &self.marks.len())
+            .field("buffers", &self.editors.len())
             .field("completion", &self.completion.is_some())
             .field("signature", &self.signature.is_some())
             .field("picker", &self.picker.is_some())
@@ -4512,16 +4616,22 @@ impl std::fmt::Debug for Painted<'_> {
 }
 
 impl Resources for Painted<'_> {
-    /// **One buffer, and it is implicit.** `T088` is what makes there be more
-    /// than one and what makes a `BufferId` name anything; until then every id
-    /// resolves to the buffer that is on screen, which is the honest answer to
-    /// *"the editor behind this id"* in an editor with one.
-    fn editor(&self, _buffer: BufferId) -> Option<&Editor> {
-        Some(self.editor)
+    /// **A real lookup since `T088`'s step 11.** It answered `Some(the one
+    /// editor)` for every id, under a doc reading *"one buffer, and it is
+    /// implicit"* — which was honest while there was one and became a lie the
+    /// moment a second pane could show a second file.
+    ///
+    /// An id this host does not have answers `None`, which draws nothing: a
+    /// stale composition must never be able to break a frame.
+    fn editor(&self, buffer: BufferId) -> Option<&Editor> {
+        self.editors.get(&buffer).copied()
     }
 
-    fn state_marks(&self, _buffer: BufferId) -> &[StateMark] {
-        self.marks
+    /// The state column for a buffer, on [`Resources::editor`]'s terms: a real
+    /// lookup, and an id this host does not have draws the ground rather than
+    /// another buffer's error markers.
+    fn state_marks(&self, buffer: BufferId) -> &[StateMark] {
+        self.columns.get(&buffer).map_or(&[][..], Vec::as_slice)
     }
 
     fn completion(&self) -> Option<&CompletionVm> {
@@ -4563,11 +4673,19 @@ struct Overlay<'a> {
     leader: &'a [KeyHint],
     /// `8e`'s once-per-session unknown-key row, on the frame it was taught.
     hint: Option<&'a Node>,
-    /// `T040`'s state column, already resolved through §3's ladder — one mark
-    /// per visual row, computed **once** by the loop over every source of
-    /// regions there is. See where it is built for why that is the host's job
-    /// and not the gutter's.
-    marks: &'a [StateMark],
+    /// Which buffer has focus, and the rect its pane occupies.
+    ///
+    /// **Two things in the frame belong to exactly one pane**, however many
+    /// there are: the terminal's own cursor goes in one place, and the
+    /// unknown-key strip's indent is measured against one buffer's gutter.
+    /// Both read the focused editor directly before step 11b, which was the
+    /// same thing while the frame *was* the pane.
+    focused: (BufferId, Rect),
+    /// `T040`'s state column for **every** buffer, already resolved through
+    /// §3's ladder — one mark per visual row, computed by the loop over every
+    /// source of regions there is. See [`decorate`] for why that is the host's
+    /// job and not the gutter's, and why it is a map.
+    columns: &'a BTreeMap<BufferId, Vec<StateMark>>,
     /// The live completion session and the live signature-help or hover answer
     /// (`T038`, `T039`), which [`Painted`] lends the interpreter. They ride
     /// here because they are the two things the frame needs that the buffer
@@ -4610,7 +4728,7 @@ struct Overlay<'a> {
 /// scroll bounds, and two answers to one question is how they came to disagree.
 fn draw(
     frame: &mut Frame<'_>,
-    editor: &Editor,
+    editors: &BTreeMap<BufferId, &Editor>,
     theme: &Theme,
     geometry: &Geometry,
     floats: &FloatSlot<'_>,
@@ -4624,8 +4742,8 @@ fn draw(
     let geometry = &geometry.clamped_to(frame.area());
 
     let painted = Painted {
-        editor,
-        marks: overlay.marks,
+        editors,
+        columns: overlay.columns,
         completion: overlay.completion,
         signature: overlay.signature,
         picker: overlay.picker,
@@ -4671,7 +4789,11 @@ fn draw(
     if let Some((row, hint)) = hint_row {
         let strip = Tree::new(unknown_key::strip(
             hint.clone(),
-            buffer_view::gutter_width(editor),
+            // The focused buffer's gutter: the strip is one row across the
+            // frame and lines up with the text the user is looking at.
+            overlay
+                .focused_editor(editors)
+                .map_or(0, buffer_view::gutter_width),
         ));
         Interpreter::new(theme, &NoResources).render(&strip, row, frame.buffer_mut());
     }
@@ -4755,7 +4877,13 @@ fn draw(
             frame.set_cursor_position((x, geometry.status.y));
         }
         None => {
-            if let Some((x, y)) = editor.get_visible_cursor(&editor_area(geometry.pane)) {
+            // **The focused pane's rect, not the frame's.** `geometry.pane`
+            // is the whole body; with two panes the cursor belongs in the one
+            // that has focus, and `Pane::area` is already inset for it.
+            if let Some((x, y)) = overlay
+                .focused_editor(editors)
+                .and_then(|editor| editor.get_visible_cursor(&overlay.focused.1))
+            {
                 frame.set_cursor_position((x, y));
             }
         }
@@ -5585,6 +5713,12 @@ impl Buffers {
         self.map.get_mut(&id)
     }
 
+    /// The buffer `id` names, read-only — [`Buffers::at_mut`]'s other half,
+    /// for a caller holding an immutable borrow of the map alongside it.
+    fn at(&self, id: BufferId) -> &Editing {
+        self.map.get(&id).expect("a BufferId names an open buffer")
+    }
+
     /// Takes a buffer and answers the id it was given.
     ///
     /// **The one place a `BufferId` is minted**, and it comes off the counter
@@ -6267,6 +6401,17 @@ struct Editing {
     /// as the fork's batch and the undo tree are concerned.
     depth: u32,
     dirty: Rc<Cell<bool>>,
+    /// `T087`'s side table: what the fork's marks currently hold for *this*
+    /// buffer, so a frame with no news uploads nothing.
+    ///
+    /// **Per buffer, and it was the loop's.** It describes one `Editor`'s
+    /// decoration and works by diffing against what it last uploaded — so one
+    /// table against N editors would see every switch as a total change and
+    /// re-upload the whole set, which is the exact cost the diff exists to
+    /// avoid. Moved here at step 11b for the same reason step 7 moved the
+    /// edit counter: a value that describes one buffer cannot be the
+    /// session's.
+    tints: phosphor_ui::tints::Tints,
     /// How many committed edit batches this buffer has seen (`T038`).
     ///
     /// **Per buffer, and one `Rc<Cell<u64>>` against one `sent` could not say
@@ -6399,6 +6544,7 @@ impl Editing {
             depth: 0,
             dirty,
             edits,
+            tints: phosphor_ui::tints::Tints::new(),
             synced: None,
             sent: 0,
         };
@@ -10100,6 +10246,7 @@ fn unknown_theme(slug: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
@@ -10113,6 +10260,8 @@ mod tests {
     use phosphor_core::value::Value;
     use phosphor_steel::answer;
     use phosphor_steel::host::Host;
+    use phosphor_ui::buffer_view::{Editor, StateMark};
+    use phosphor_ui::interpret::Resources;
     use ratatui::layout::Rect;
 
     use super::door::Evaluate as _;
@@ -10128,11 +10277,11 @@ mod tests {
     use super::{
         AppHost, Asking, Buffers, COMPLETION_MIN_CHARS, COMPLETION_MIN_CHARS_DEFAULT, Caret, Cli,
         CommandFactory as _, Cx, EXPAND_TAB, Editing, EditorText, ExStep, FromArgMatches as _,
-        IndentStyle, Intent, Key, Layer, Lookup, Machine, NodeId, Outstanding, Pane, PaneTree,
-        Panes, Repl, ReplStep, Session, Shell, StatusVm, Surface, TAB_WIDTH, Table, Timeline,
-        UndoTree, Vm, WireCompletion, boot, buffer, closes_surface, completion_floor, decode,
-        deliver, door, ex_key, grammar_of, indent_style, is_press, repl_key, restored, seeding,
-        server_chip, split, submit_ex, vm, wire_undo,
+        IndentStyle, Intent, Key, Layer, Lookup, Machine, NodeId, Outstanding, Painted, Pane,
+        PaneTree, Panes, Repl, ReplStep, Session, Shell, StatusVm, Surface, TAB_WIDTH, Table,
+        Timeline, UndoTree, Vm, WireCompletion, boot, buffer, closes_surface, completion_floor,
+        decode, deliver, door, ex_key, grammar_of, indent_style, is_press, repl_key, restored,
+        seeding, server_chip, split, submit_ex, vm, wire_undo,
     };
 
     fn event(code: KeyCode) -> KeyEvent {
@@ -10414,7 +10563,7 @@ mod tests {
         Shell {
             store: Arc::new(store::Shared::default()),
             wake: Arc::new(|| {}),
-            registers: std::collections::BTreeMap::new(),
+            registers: BTreeMap::new(),
             picker: None,
             source_order: Vec::new(),
             mode: phosphor_core::request::EditMode::Normal,
@@ -12934,6 +13083,66 @@ mod tests {
         (tree, ids)
     }
 
+    /// **The door tells two buffers apart**, which is the whole of step 11b.
+    ///
+    /// `Resources::editor` answered `Some(the one editor)` for every id, and
+    /// `state_marks` answered the same column — both under a doc reading *"one
+    /// buffer, and it is implicit"*, which was honest while there was one. A
+    /// second pane showing a second file would have drawn the focused file's
+    /// text *and* its error markers beside the other file's name.
+    ///
+    /// The `None` arms matter as much as the `Some` ones: `query.rs`'s rule is
+    /// *"an absent thing answers empty"*, so a composition naming a buffer this
+    /// host does not have must draw nothing rather than draw the wrong one.
+    #[test]
+    fn the_resources_door_answers_per_buffer_and_empty_for_an_id_it_lacks() {
+        let alpha = editing("alpha").editing;
+        let bravo = editing("bravo\nbravo").editing;
+        let (a, b) = (BufferId(0), BufferId(1));
+
+        let editors: BTreeMap<BufferId, &Editor> =
+            BTreeMap::from([(a, &alpha.editor), (b, &bravo.editor)]);
+        let columns: BTreeMap<BufferId, Vec<StateMark>> = BTreeMap::from([
+            (a, vec![StateMark::ClaudeUnseen]),
+            (b, vec![StateMark::None, StateMark::Trouble]),
+        ]);
+        let painted = Painted {
+            editors: &editors,
+            columns: &columns,
+            completion: None,
+            signature: None,
+            picker: None,
+        };
+
+        assert_eq!(
+            painted.editor(a).map(Editor::get_content).as_deref(),
+            Some("alpha"),
+            "an id resolves to its own buffer"
+        );
+        assert_eq!(
+            painted.editor(b).map(Editor::get_content).as_deref(),
+            Some("bravo\nbravo"),
+            "and the other id to the other one — the assertion that fails while \
+             every id resolves to whatever is on screen"
+        );
+        assert!(
+            painted.editor(BufferId(9)).is_none(),
+            "an id this host does not have draws nothing"
+        );
+
+        assert_eq!(painted.state_marks(a), &[StateMark::ClaudeUnseen]);
+        assert_eq!(
+            painted.state_marks(b),
+            &[StateMark::None, StateMark::Trouble],
+            "each buffer's markers are its own, so one pane cannot draw \
+             another file's errors beside its text"
+        );
+        assert!(
+            painted.state_marks(BufferId(9)).is_empty(),
+            "and an absent thing answers empty rather than borrowing a column"
+        );
+    }
+
     /// **The panes tile the frame exactly, at any width.**
     ///
     /// The far side of a divider takes what the near side left, rather than
@@ -14489,17 +14698,21 @@ mod tests {
                 holds,
                 focused,
                 child,
-            } = crate::one_pane(crate::THE_BUFFER, soft_wrap)
+            } = crate::one_pane(PaneId(7), BufferId(3), soft_wrap)
             else {
                 panic!("the host's frame is a pane");
             };
-            assert_eq!(pane, crate::THE_PANE);
+            // **Ids the caller chose, not constants this file owns.** They were
+            // `THE_PANE` and `THE_BUFFER`, and testing a composition against
+            // the same two literals it was built from could not tell you the
+            // function carried them through at all.
+            assert_eq!(pane, PaneId(7));
             assert_eq!(holds, phosphor_core::request::PaneKind::Buffer);
             assert!(focused, "one pane, and keystrokes go to it");
             assert_eq!(
                 child.node(),
                 &phosphor_core::view::Node::Buffer {
-                    buffer: crate::THE_BUFFER,
+                    buffer: BufferId(3),
                     soft_wrap,
                 },
                 "the pane holds the buffer, and carries the wrap the loop applied"
