@@ -46,6 +46,8 @@
     "statusline.scm"
     "pickers.scm"
     "arch.scm"
+    ;; `T057` — 7d/5d, the second surface built entirely from the spans hatch.
+    "dashboard.scm"
     "languages/typescript.scm"
     "languages/javascript.scm"
     "languages/rust.scm"

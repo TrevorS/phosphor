@@ -2425,6 +2425,52 @@ change, not five 30-second deadlines. The arithmetic was there to be done.
 `scripts/key_coverage.py`'s `RECORDED` is empty again. Both keystroke tests run
 in under four seconds.
 
+### 54 · `:cn` reaches the session client and the handshake never completes; the option with the same command works
+
+**Raised by `T057`, 2026-08-21, and it is why that task is not ticked.**
+
+`:cn python3 <toy agent> turn` runs `start-session`, which calls
+`Session::attach` — and it *does*: the client records `Life::Starting` and the
+notice row says `starting claude`. Then nothing. Probed against a real 120×30
+pty for eight seconds: no `claude attached`, no `claude idle`, no
+`session would not start`, no `session lost`. It sits in `Starting`.
+
+The same command through the option — `(set-option! "agent-command" "python3
+<toy agent> turn")` — reaches `claude idle` inside a second, in the same probe,
+against the same binary.
+
+**What has been ruled out.**
+
+* Not the ex command: `:cn` resolves, and neither *"no such command"* nor
+  *"ambiguous"* appears.
+* Not the argument: both paths hand `agent::spec_from` the identical string, and
+  the option path's spec spawns.
+* Not the loop's option check racing the verb. That *was* a real bug — the check
+  compared against `Shell::agent`, which the verb had just set, so it read "the
+  option changed to nothing" and stopped the session on the next frame. Fixed by
+  splitting `Shell::wanted` (the last option seen) from `Shell::agent` (what is
+  attached), and the symptom survives the fix.
+* Not a spawn failure: those record `Failure::Spawn` and say so on the notice
+  row.
+
+**The one difference left is where `attach` is called from.** The option path
+calls it from the loop; the verb path calls it from inside `Editing::act`, which
+runs during event handling before the frame is drawn. Both send on the same
+channel to the same supervisor thread. Why one completes and the other does not
+is the question.
+
+The `cwd` argument differs in spelling and not in value — the loop passes the
+`workspace` captured at boot, the arm passes `std::env::current_dir()` — and
+both are the same directory in the probe. Worth eliminating first anyway, since
+it is one line.
+
+**What ships meanwhile.** `7d` renders and is tested: the dashboard says
+`none running`, offers its three verbs, and is drawn entirely through the spans
+hatch. `5d`'s discovery list is written in `runtime/dashboard.scm` against a
+`discover-sessions` that answers empty and will until v1.5's tmux control mode.
+Editing through a mid-turn drop is tested. Sessions still start the way `T050`
+shipped them, through the option.
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

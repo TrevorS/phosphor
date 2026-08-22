@@ -3206,6 +3206,117 @@ mod driven {
         );
     }
 
+    /// **`T057`: `7d` and `5d` reproduce, and `:cn` starts a session.**
+    ///
+    /// The dashboard is one screen with two data shapes — `7d` is *"session /
+    /// none running"* and `5d` is the same surface with discovery's list under
+    /// it. Discovery answers empty until v1.5's tmux control mode, so what a
+    /// terminal can show today is `7d`, and `5d`'s branch is written in
+    /// `runtime/dashboard.scm` against the day it is not.
+    ///
+    /// **Built entirely from the spans hatch**, like `:arch` — the second proof
+    /// that `Node::Spans` is sufficient for a real surface, and a better one,
+    /// because these rows change with the session where the diagram's numbers
+    /// only change with the store.
+    ///
+    /// **`:cn` is not asserted here.** It reaches the client — the session goes
+    /// to `Starting` and the notice says `starting claude` — and then never
+    /// completes the handshake, while `(set-option! "agent-command" …)` with
+    /// the identical command does. `docs/OPEN-QUESTIONS.md` §54 records the
+    /// difference; the assertion lands with the fix.
+    #[test]
+    fn the_dashboard_reproduces_screen_7d() {
+        let scratch = Scratch::new("dashboard");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // **`7d`: cold start.** No session, and the surface says so in a
+        // sentence rather than a glyph — the strip has no room and `7d` does.
+        let cold = editor.press_until(b":dashboard\r", "none running");
+        assert!(
+            shows(&cold, "none running"),
+            "`7d` states what it found; session was: {cold}"
+        );
+        assert!(
+            // Needled on the words, not the spacing: adjacent `view/run`s are
+            // laid out with a cell between them, so `:cn start claude` in the
+            // source is `:cn  start claude` on the grid.
+            shows(&cold, "start claude"),
+            "and offers `7d`'s three verbs; session was: {cold}"
+        );
+        editor.press_quietly(b"\x1b");
+
+        // **`:reattach` with nothing to reattach to declines by name.** `7b`'s
+        // remedy needs a session to have existed; `T057` built the verb, so it
+        // no longer names a task — it says what is missing.
+        let nothing = editor.press_until(b":reattach\r", "no session to reattach");
+        assert!(
+            shows(&nothing, "no session to reattach"),
+            "the remedy says what it needs; session was: {nothing}"
+        );
+
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **`T057`: the editor stays usable through a mid-turn drop.**
+    ///
+    /// The task's emphasis — *"editing never blocks on session trouble"* — and
+    /// the half of it a terminal can answer. The agent dies while a turn is
+    /// running; the statusline says so, and the buffer still takes keys.
+    ///
+    /// **Not asserted by watching the session state alone.** `T051`'s test
+    /// already proves the strip follows a drop with no keystroke. What is
+    /// proven here is the other side: that the *editing* path is untouched by
+    /// it, which is only visible by editing.
+    #[test]
+    fn editing_survives_a_session_dying_mid_turn() {
+        let scratch = Scratch::new("survives-drop");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let form = format!(
+            "(set-option! \"agent-command\" \"python3 {} linger\")\r",
+            agent.display()
+        );
+        editor.press_until(form.as_bytes(), "()");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+        shown(&editor, "claude idle");
+
+        // The agent goes on its own schedule. Nothing is pressed to make it.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if grid_of(&editor.screen()).contains("session lost") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the session never dropped; grid was: {}",
+                grid_of(&editor.screen())
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // **And the editor is an editor.** `o` opens a line, `x` types into it,
+        // `esc` leaves insert — none of which has anything to do with a
+        // session, which is exactly the claim.
+        editor.press_quietly(b"ox\x1b");
+        let edited = shown(&editor, "x");
+        editor.leave_by(b"ZQ");
+        assert!(
+            shows(&edited, "alpha"),
+            "the buffer is still there after the drop; session was: {edited}"
+        );
+    }
+
     /// **`T058`: screen `1c` reproduces from a keystroke.**
     ///
     /// The task's *Done when* — *"pressing `:` in the running binary raises the
@@ -3986,7 +4097,8 @@ mod driven {
         let deferred: &[(&str, &str)] = &[
             ("inbox", "T067"),
             ("diff-disk", "T070"),
-            ("reattach", "T057"),
+            // `:reattach` left this table when `T057` built the lifecycle —
+            // with no session it declines by *name* now rather than by task.
             ("comment", "T068"),
         ];
         for (command, task) in deferred {

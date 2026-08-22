@@ -1721,6 +1721,29 @@ impl Host for AppHost {
                 done(Value::Null)
             }
             Action::Runtime(RuntimeAction::PersistForm { form }) => self.persist(form),
+            // `5d`'s *"discovery finds running agents"*, and it finds none.
+            //
+            // **An empty list is the truthful answer and not a stub.** The two
+            // things the mockup draws are a tmux pane (`%3`) and a headless
+            // socket (`~/.claude/sock/4f2a`); reaching the first needs tmux
+            // control mode, which `docs/TASKS.md` puts at v1.5, and the second
+            // needs a socket transport this build does not have — `T050`'s
+            // client speaks stdio to a child it owns. So there is nowhere to
+            // look, and answering a guess would put a row on `5d` that `↵`
+            // could not adopt.
+            Action::Session(SessionAction::DiscoverSessions {}) => Outcome::Done(Receipt {
+                capability: name,
+                value: Value::List(Vec::new()),
+                note: Some(
+                    "no way to find a running agent yet — v1.5's tmux control mode".to_owned(),
+                ),
+            }),
+            // **Armed here rather than in `Editing::act`, and that is where a
+            // Steel caller lands.** `runtime/dashboard.scm` calls this to draw
+            // `5d`'s list, and a surface body runs in the VM — which reaches
+            // this applier and not the loop's. It needs no buffer and no
+            // session handle, so there is nothing to reach for.
+
             // `T052` — **the door into the loop's applier**, and deliberately
             // one capability wide.
             //
@@ -2898,6 +2921,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         prompt_step: None,
         history: Vec::new(),
         recalled: None,
+        hinted: false,
+        wanted: None,
     };
     // `T088`'s step 4c: every buffer by id, every pane by id, one of each.
     // The maps are the wrong shape for one entry and that is what they are
@@ -3109,8 +3134,14 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // layer's and `(set-option! "agent-command" …)` at the REPL has to
         // reach the next keystroke. *Acted on* only when it differs, because
         // honouring `soft-wrap` is free and spawning a process is not.
+        // **Compared against the last *option* seen, not against what is
+        // attached.** Those were one field until `T057` gave a *verb* the same
+        // job: `:cn` sets `Shell::agent`, the option is unset, and a check
+        // against `agent` then read "the option changed to nothing" on the very
+        // next frame and stopped the session the verb had just started.
         let wanted = host.text(agent::COMMAND);
-        if wanted != shell.agent {
+        if wanted != shell.wanted {
+            shell.wanted = wanted.clone();
             shell.agent = wanted.clone();
             match wanted.as_deref().and_then(agent::spec_from) {
                 Some(spec) => shell.session.attach(spec, workspace.clone()),
@@ -5657,6 +5688,9 @@ fn referencing(post: &Post, slot: &References) -> phosphor_buffer::lsp::Location
 /// drifts silently is the Rust one. `runtime/arch.scm` registers it.
 const ARCH_SURFACE: &str = "arch";
 
+/// `T057`'s dashboard surface id, as `runtime/dashboard.scm` registers it.
+const DASHBOARD_SURFACE: &str = "dashboard";
+
 /// The start line of a region record, if it names `path` (`T049`).
 ///
 /// Reads the record the `regions` query already answers rather than reaching
@@ -6965,6 +6999,20 @@ struct Shell {
     /// as a status — and an event is a difference between two frames. One
     /// `PartialEq` is the whole mechanism.
     life: phosphor_agent::session::Life,
+    /// The `agent-command` option as of the last frame (`T057`).
+    ///
+    /// Distinct from [`Shell::agent`], which is *what is attached* — a verb can
+    /// set that without the option moving, and the option can be cleared while
+    /// a verb-started session runs. One field could not tell those apart.
+    wanted: Option<String>,
+    /// Whether `7d`'s one hint line has been dismissed (`T057`).
+    ///
+    /// *"three verbs, then out of the way"* is the screen's own caption, and
+    /// this is the "then": `dismiss-dashboard-hint` sets it and the row stops
+    /// being drawn. Per session rather than persisted — a fresh editor is a
+    /// fresh cold start, and `T101`'s config home is where a *preference* would
+    /// go if this ever became one.
+    hinted: bool,
     /// The `agent-command` the session is currently attached to.
     ///
     /// Kept so the loop can tell *"the option changed"* from *"the option is
@@ -8906,6 +8954,21 @@ impl Editing {
                 self.float = Some((ARCH_SURFACE.to_owned(), Value::Record(Args::new())));
                 done()
             }
+            // `T057` — `7d`/`5d`, and a sibling of `:arch` in every way that
+            // matters: a **Steel** surface, because the dashboard is rows of
+            // facts and `Node::Spans` draws rows of facts. Zero lines in
+            // `phosphor-ui`, and the id is the one `runtime/dashboard.scm`
+            // registers.
+            Action::App(AppAction::OpenDashboard {}) => {
+                self.float = Some((DASHBOARD_SURFACE.to_owned(), Value::Record(Args::new())));
+                done()
+            }
+            // *"three verbs, then out of the way"* — `7d`'s own caption, and
+            // this is the "then".
+            Action::App(AppAction::DismissDashboardHint {}) => {
+                cx.shell.hinted = true;
+                done()
+            }
             // `T045` — the picker's own three. `open-picker`'s row cites
             // `T046` and is applied here anyway: a widget nothing can put on
             // screen is the reachability gap `T016` was ticked with, and the
@@ -9079,6 +9142,107 @@ impl Editing {
                 }
                 done()
             }
+            // -- `T057`: the session's life ------------------------------------
+            //
+            // Seven verbs over one client. **None of them can block**, which is
+            // the task's own emphasis — *"editing never blocks on session
+            // trouble"* — and it is structural rather than careful:
+            // `phosphor_agent::session::Session`'s every method returns without
+            // waiting, so an arm here is a channel send and a state read.
+            Action::Session(SessionAction::StartSession { agent, cwd }) => {
+                let Some(spec) = agent::spec_from(agent) else {
+                    return declined("no agent named — :cn <command>");
+                };
+                let root = cwd
+                    .clone()
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                cx.shell.agent = Some(agent.clone());
+                cx.shell.session.attach(spec, root);
+                done()
+            }
+            // **The endpoint is a command**, and that is the honest reading at
+            // this phase: ACP is spoken over a child's stdio, so *where a
+            // session is* is the thing that starts one. A socket endpoint is a
+            // second transport and `5d`'s `~/.claude/sock/4f2a` is what it
+            // would be for — recorded on `discover-sessions` below, which is
+            // where the gap actually bites.
+            Action::Session(SessionAction::AttachSession { endpoint }) => {
+                let Some(spec) = agent::spec_from(endpoint) else {
+                    return declined("no endpoint named");
+                };
+                cx.shell.agent = Some(endpoint.clone());
+                cx.shell
+                    .session
+                    .attach(spec, std::env::current_dir().unwrap_or_default());
+                done()
+            }
+            // Nothing to adopt, because nothing is ever discovered. Refused by
+            // *target* rather than by task: the verb is built and the handle is
+            // the thing that does not exist.
+            Action::Session(SessionAction::AdoptSession { .. }) => {
+                Outcome::Refused(Refusal::NoSuchTarget)
+            }
+            // `:reattach` — `7b`'s remedy, and the reason `Failure::Dropped`'s
+            // sentence names it. The spec is the one already attached, so this
+            // needs no argument and cannot reattach to the wrong thing.
+            Action::Session(SessionAction::ReattachSession {}) => {
+                let Some(agent) = cx.shell.agent.clone() else {
+                    return declined("no session to reattach — :cn <command>");
+                };
+                let Some(spec) = agent::spec_from(&agent) else {
+                    return declined("no session to reattach — :cn <command>");
+                };
+                cx.shell
+                    .session
+                    .attach(spec, std::env::current_dir().unwrap_or_default());
+                done()
+            }
+            // **Detach and end are the same call today, and the difference is
+            // recorded rather than pretended.** Detaching is supposed to leave
+            // the agent running; this client owns the child and `kill_on_drop`
+            // is what stops the editor stranding one, so letting go of a stdio
+            // child *is* ending it. The two stay separate verbs because the
+            // distinction is the transport's, not the vocabulary's — a socket
+            // endpoint would make it real without changing either row.
+            Action::Session(SessionAction::DetachSession {}) => {
+                cx.shell.session.stop();
+                cx.shell.agent = None;
+                Outcome::Done(Receipt {
+                    capability: name,
+                    value: Value::Null,
+                    note: Some(
+                        "the agent stops with the editor — a stdio child is ours".to_owned(),
+                    ),
+                })
+            }
+            Action::Session(SessionAction::EndSession { force }) => {
+                // Mid-turn needs the `force`, which is what the row's `Ask`
+                // policy is about one layer up: ending a turn that is running
+                // throws away work claude has done.
+                if !force && cx.shell.turn.is_some() {
+                    return declined("a turn is running — :end-session! ends it anyway");
+                }
+                cx.shell.session.stop();
+                cx.shell.agent = None;
+                done()
+            }
+            // `7b`'s seam, recorded into the transcript where the turn is.
+            Action::Session(SessionAction::SessionSeam { kind, note }) => {
+                let Some((turn, _)) = cx.shell.turn else {
+                    return declined("no turn to mark");
+                };
+                let said = note.clone().unwrap_or_else(|| {
+                    match kind {
+                        phosphor_core::request::SeamKind::Paused => "paused",
+                        phosphor_core::request::SeamKind::Lost => "connection lost mid-turn",
+                        phosphor_core::request::SeamKind::Resumed => "resumed",
+                    }
+                    .to_owned()
+                });
+                cx.shell.transcript.at(turn).ended = Some(said);
+                done()
+            }
+
             // -- `T054`: the transcript ---------------------------------------
             //
             // Four producer verbs and one surface verb. All four are `Allow` —
@@ -12412,6 +12576,8 @@ mod tests {
             prompt_step: None,
             history: Vec::new(),
             recalled: None,
+            hinted: false,
+            wanted: None,
         }
     }
 
