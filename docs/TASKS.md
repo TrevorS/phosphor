@@ -3292,9 +3292,115 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   > that rendered nothing failed the markdown half. `just gate` and
   > `just hack` green.
 
-- [ ] **T056 · OSC 8 tool-row jump links**
+- [x] **T056 · OSC 8 tool-row jump links**
   *Done when:* clicking a tool row jumps to the file and range, on the primary terminal.
   *Needs:* T054
+
+  > **Built 2026-08-21.** `transcript::link` writes the sequence, `jump_uri`
+  > builds the URI, and `tool-call-started` grew the two fields that make a
+  > jump possible. **The press itself stays `CP-6`'s** — `docs/TASKS.md`'s own
+  > Tier-3 table says *"links may render, but nothing can click one"* — so what
+  > ships is everything up to it, proven at the byte.
+  >
+  > **`path` is not `target`, and merging them would have been the bug.** ACP
+  > carries a `title` — what the row *says* — and a separate `locations` list of
+  > absolute paths. A real agent's title is a sentence: `7b`'s own mockup draws
+  > *"Replacing the reconnect loop's hand-rolled sleep"*. A link built from the
+  > title would point at a file named after a sentence. `1b` draws a path in the
+  > title, which is exactly the coincidence that makes the mistake easy.
+  >
+  > **The whole sequence is one cell's symbol, and that is the design.** OSC 8
+  > is stateful: `ESC]8;;uri ST` opens a link and everything printed until the
+  > empty closer belongs to it. Ratatui paints by diffing two cell grids and
+  > emitting only what changed, so an opener and a closer in separate cells are
+  > two independent decisions — and the frame where the URI changes but the last
+  > character does not prints the opener, skips the closer, and leaves the link
+  > running across everything drawn after it. **That is not a rare race**; it is
+  > what happens the first time claude edits a different file whose name ends in
+  > the same letter. One cell can only be emitted or skipped whole.
+  >
+  > **Ratatui 0.30.1 added the two options this needs, for this.**
+  > `CellDiffOption::ForcedWidth` because the anchor's symbol measures dozens of
+  > columns and occupies as many as the text does, and `CellDiffOption::Skip` on
+  > the cells it covers so nothing paints into the middle of a sequence. The
+  > upstream doc says so in as many words: *"prevent the buffer from overwriting
+  > a cell that is covered by something from an escape sequence, such as
+  > graphics or links."*
+  >
+  > **Clipped before the sequence is built, never after.** The tail of the
+  > string is the closer; truncating the finished thing is the one failure that
+  > escapes the pane it was drawn in.
+  >
+  > **The link is underlined**, which is
+  > `phosphor_core::view::Emphasis::Underline`'s own definition — *"an OSC 8
+  > jump link in the transcript"* — and the only affordance a link has where
+  > hovering costs nothing and clicking is the verb.
+  >
+  > **`Editor::raw` is a new reader in the pty harness and the only one that
+  > skips `printable`.** An escape sequence occupies no cell, so a grid cannot
+  > carry this claim; every other assertion in that file goes through the grid,
+  > and its doc says why — needling the raw stream for *text* is what
+  > `OPEN-QUESTIONS.md` §54 records going wrong.
+  >
+  > **Two footer hints were claiming keys that do not do that.** `1b` draws
+  > `q close` and `q` is vim's macro-recording key in this build, bound in
+  > `keymaps.scm` in normal mode everywhere; the footer says `<C-w> c close`
+  > now. `1b`'s `↵ jump to file` is gone rather than corrected, because a
+  > keyboard jump needs a focused row inside a transcript pane and no task owns
+  > that selection model — recorded at §56 with the ruling left to Teej.
+  > `T088`'s lesson is why this was worth stopping for: a verb with an arm, a
+  > passing gate, and nothing bound to it survived three windows.
+  >
+  > **Percent-encoding is not done, deliberately.** A path with a space, a `#`
+  > or a `%` produces a URI a strict parser reads wrongly. Encoding is a table,
+  > the table is a crate, and a hand-rolled subset is the almost-right this
+  > build's lints exist to catch — so it is a dependency decision and it is
+  > `spine`'s. §56 records it.
+  >
+  > **The task owns a verb I had not noticed, and two lints found it in
+  > sequence.** `goto-location` is declared `[S6 / "T056"]` — *"opens a file at
+  > a position — a picker accept, a transcript tool row, an OSC 8 link"* — and
+  > ticking the task without it made `lint-action-arms` fail by name. Arming it
+  > in `Editing::act` then made `lint-capability-bindings` fail, because nothing
+  > in `runtime/` names it. And **arming it was still not enough**: running
+  > `(goto-location! …)` at the REPL answered
+  > `#refused · not built yet — T056 builds it` with a clean arms lint, because
+  > every one of its three callers arrives through a *door* — which is
+  > `AppHost::apply`, not the loop's applier. It is the second capability on
+  > that forwarding list, and the list stays one capability wide for the reason
+  > `T052` gave it: a blanket arm would turn every unarmed verb's honest refusal
+  > into a `#done` for something that never happened. Same shape as
+  > `discover-sessions` in `T057`, one applier the other way round.
+  >
+  > It is `EMITTED` rather than bound, and the reason is the capability's own
+  > sentence: a click lands in the *terminal*, which resolves the `file://` URI
+  > itself; a picker accept is the picker's binding; `open-file` is the one a
+  > person types. None of the three is a key.
+  >
+  > **Verification.** Four widget tests asserting the exact bytes — the whole
+  > sequence in one cell, the declared width being the twelve columns
+  > `src/retry.rs` occupies rather than the sixty its symbol measures, every
+  > covered cell skipped *and* the column after it drawable again, a call with
+  > no file drawn as plain text, and a pane too narrow clipping the text while
+  > still closing the link. One keystroke test through a real pty, reading the
+  > raw stream for the opener with the file and line the agent gave and for the
+  > closer immediately after the text. The toy agent sends `locations` now.
+  > One more keystroke test drives `goto-location` through the REPL — the door
+  > a pty can reach — and asserts the *position*, because landing at the top of
+  > the right file is the wrong answer drawn convincingly. Four planted defects,
+  > four caught: an anchor that stops declaring its width, covered cells left
+  > paintable, a URI that forgets the line, and a jump that forgets the
+  > position.
+  >
+  > **Two stuck children on the way, both `leave_by`'s untimed `child.wait()`
+  > and both my test's fault** — `T058`'s lesson arriving twice more. Opening a
+  > file closes the REPL float over the pane, so `(close-repl!)` sent after the
+  > jump is eleven normal-mode keys of which `o` is *open a line*: the editor
+  > sat in INSERT where `ZQ` is two more characters. And waiting for
+  > `elsewhere.txt` matched the REPL's *echo* of the path being typed, one frame
+  > before anything opened. The test presses `q` — the REPL footer's own key —
+  > and needles the target file's contents, which are in neither the form nor
+  > the echo. `just gate` green.
 
 - [x] **T057 · Session lifecycle**
   Cold start (`7d`), attach/adopt/start (`5d`), drop and reattach (`7b`), opening mid-task
@@ -3505,11 +3611,122 @@ live.
   > caught: an anchor that does not ride along, and a half-open range.
   > `scripts/key_coverage.py`'s `RECORDED` is empty. `just gate` green.
 
-- [ ] **T059 · QuestionBody**
+- [x] **T059 · QuestionBody**
   Prose + amber digit options `[1]`–`[n]` + full-command footer. Digits answer only while
   focused.
   *Done when:* screen `4a` reproduces in the running binary and its digits answer while focused.
   *Needs:* T057, T084
+
+  > **Built 2026-08-21.** `crates/phosphor-ui/src/question.rs` draws
+  > `Node::Question`, `runtime/asks.scm` composes `4a` around it, and the two
+  > ask verbs are armed in both appliers.
+  >
+  > **The third editor-layer surface, and the first that is not the spans
+  > hatch.** `:arch` and the dashboard are `view/spans` because they are
+  > drawings; `4a` is ordinary chrome — a needs-you float with a header, a body
+  > and a footer — which is what `T084`'s primitive is *for*. The body is a real
+  > node kind because *"prose, amber digit options, and the full command in the
+  > footer"* is a shape three screens share (`4a`, `7a`, `4b`) rather than one
+  > drawing.
+  >
+  > **The float names the ask it shows, and that is load-bearing.**
+  > `Resources::ask` is keyed where its four neighbours are implicit — there is
+  > one completion list, one picker, one transcript, and there are as many
+  > questions as claude has asked. A float composed for ask 8 draws ask 8
+  > whatever has arrived behind it, so answering what you are reading is the
+  > same thing as answering what you meant.
+  >
+  > **Two fields raise the float, and neither applier composes one.**
+  > `Shell::asking` is what should be asked and `Shell::asked` is what is on
+  > screen; the loop compares them once a pass. That is what lets `enqueue-ask`
+  > be armed in *both* appliers without either knowing what a float is — and it
+  > has to be armed twice, which is the day's second instance of the same
+  > lesson: `(enqueue-ask! …)` at the REPL raised `4a` while `:ask …` answered
+  > *"not built yet — T060 builds it"*, because an ex command is a keystroke and
+  > a keystroke lands in `Editing::act`. Measured at the terminal. What is *not*
+  > duplicated is the write — both call `Shell::enqueue_ask`, and both mint from
+  > one counter shared with `AppHost` the way the store already is, because two
+  > counters hand two questions the same id the first time both doors are used.
+  >
+  > **`Node::Question` had no height arm and the symptom was in that code's own
+  > comment.** `Ctx::height`'s `_ => 0` gave the float a zero-row body, and it
+  > drew a header, two rules and nothing — which is exactly what `Node::Picker`'s
+  > arm records happening to *it*: *"this arm was missing for a build, and the
+  > symptom is exactly that."*
+  >
+  > **And it is the first node kind whose height depends on its width.**
+  > `NodeBody::desired_height` discarded the width under a comment reading
+  > *"nothing in the tree reflows"*, true of all thirty kinds until a paragraph
+  > went in a float body. `Ctx::height_at` lists the kinds that reflow and
+  > delegates the rest, so there is one height table and not two.
+  >
+  > **`enqueue-ask` is `T060`'s capability, armed here.** That task's *Done
+  > when* is about the **queue** — a question waiting behind a float that has
+  > focus, `]!`, the `!` surviving a 40-column shed, one store query behind all
+  > three — and none of it is the verb existing. `4a` cannot reproduce without a
+  > producer, so the producer lands with the screen and the queueing lands with
+  > the queue. `esc later` is honest and incomplete for the same reason: the
+  > float closes and the ask stays queued, and nothing yet brings it back.
+  >
+  > **Waiting outranks working, which is the point of the state.** `4a`'s strip
+  > says `! claude waiting` while a turn is still running. What the `!` means is
+  > *the next move is yours*, and a strip that said `working` would be truthful
+  > about the agent and useless to the person it is drawn for.
+  >
+  > **The answer goes nowhere yet and the notice says so.** Getting it back to
+  > the agent is a wire — ACP's response to whatever asked — and the thing that
+  > asks is `T060`'s queue and `T061`'s permission flow. What `4a`'s acceptance
+  > is about is that a digit answers.
+  >
+  > **The task owns a second verb, and the lint named it.** `float-answer` is
+  > declared `[S6 / "T059"]` — *"answers the focused ask by digit — `4a`'s amber
+  > option digits"* — and the first version of this went straight from the key
+  > arm to `answer-ask`, around it. It is the better shape and the vocabulary
+  > already knew: **the focused ask is resolved by the verb rather than carried
+  > as a parameter**, which is the whole difference between the two. A digit
+  > that named an ask id would be a digit that could answer a question you are
+  > not looking at. The key arm now decides only *that* a digit was pressed, and
+  > `float-answer` delegates to `answer-ask` the same way `float-accept`
+  > delegates to `picker-accept`.
+  >
+  > **Both are `EMITTED`, and the reasons are different.** `float-answer` is
+  > *"the float's own key handling"* — `float-accept`'s existing row, and the
+  > keymap for a digit has to be Rust because a digit means two things depending
+  > on what holds the screen, which `keymaps.scm` has no way to ask.
+  > `answer-ask` is emitted by `float-answer`, having resolved which ask is
+  > focused.
+  >
+  > **`answer-ask` is deliberately not armed in `AppHost::apply`.** It is rated
+  > `Deny`, so no door reaches that applier with one; an arm there would be a
+  > path nothing can take. The first version had one, and the notice it wrote
+  > was the only thing keeping the test green — routing the digit through
+  > `float-answer` made the arm unreachable and the notice vanished. It lives in
+  > `Shell::answer_ask` now, through `Shell::saying`, which is `T053`'s channel
+  > and exists for exactly this: a `Receipt::note` reaches whoever *called*, and
+  > the caller here is a digit.
+  >
+  > **The float body is a helper and not an expression inside the surface
+  > string**, which is a rule this file learned from `lint-node-kinds.sh` rather
+  > than from taste: that lint strips string literals before it looks, so a
+  > `(view/question …)` living only inside a `define-float-surface!` body is
+  > invisible to it and `Node::Question` reads as a kind nothing reaches. It is
+  > also better — the composition is code, so the REPL can call it. **Twenty-five
+  > of thirty node kinds are composed now**, and the `Question` row is out of the
+  > RECORDED table.
+  >
+  > **Verification.** Two keystroke tests. `4a` from `:ask` — the needs-you
+  > float, the prose wrapping across two rows, `[1]`–`[3]` each carrying the
+  > digit that answers it, `! claude waiting` on the strip, an unoffered digit
+  > declining **by name** rather than being swallowed, and `2` answering, which
+  > closes the float and stops the strip waiting. And the other half of *"only
+  > while focused"*: `3j` is still three lines down, and a digit at a float that
+  > is **not** a question is not an answer either.
+  >
+  > **That second case is one the first version of the test could not see, and a
+  > planted defect is what found it.** With `Shell::asked` deleted from the gate
+  > — leaving only *"a float holds the screen"* — both tests went green, because
+  > neither had a non-question float open. Pressing `1` at `:arch` now proves
+  > the condition. Three planted defects, three caught. `just gate` green.
 
 - [ ] **T060 · The ask queue**
   Per Q9: a question arriving while another float holds focus **sets the statusline `!` and

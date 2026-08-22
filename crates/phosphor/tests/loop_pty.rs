@@ -551,6 +551,21 @@ mod driven {
             printable(&transcript[mark.min(transcript.len())..])
         }
 
+        /// Every byte the child has written, escapes and all (`T056`).
+        ///
+        /// **The one reader in this file that does not go through
+        /// [`printable`]**, and it exists because there is exactly one kind of
+        /// claim a grid cannot carry: an escape sequence occupies no cell.
+        /// `printable` strips CSI and OSC on purpose — a test that needled the
+        /// raw stream for *text* would be reading a diff renderer's output as
+        /// if it were a screen, which is the mistake `OPEN-QUESTIONS.md` §54
+        /// records. Text goes through [`Editor::shown_on_grid`]. Sequences come
+        /// through here, and nothing else should.
+        fn raw(&self) -> String {
+            let transcript = self.transcript.lock().expect("the reader has not panicked");
+            String::from_utf8_lossy(&transcript).into_owned()
+        }
+
         /// How many bytes have been drawn — the mark [`Editor::since`] takes.
         fn mark(&self) -> usize {
             self.transcript
@@ -3289,6 +3304,261 @@ mod driven {
         assert!(
             !shows(&warm, "none running"),
             "the dashboard follows the session it started; grid was:\n{warm}"
+        );
+    }
+
+    /// **`T056`: the OSC 8 sequence reaches a real terminal.**
+    ///
+    /// The task's *Done when* is *"clicking a tool row jumps to the file and
+    /// range, on the primary terminal"*, and the click is Tier 3 —
+    /// `docs/TASKS.md`'s own table says *"links may render, but nothing can
+    /// click one"*, which is why `CP-6` asks Teej to press it inside tmux. What
+    /// a test can hold this to is everything up to the press: that the bytes
+    /// are emitted, that the URI names the file and the line the agent gave,
+    /// and that the whole sequence arrives in one piece.
+    ///
+    /// **Read off the raw stream on purpose.** Every other assertion in this
+    /// file reads the composed grid, because a grid is what a person sees —
+    /// this one is about bytes a grid *cannot* show, since an escape sequence
+    /// occupies no cell. §54 is the entry about using the wrong reader; this is
+    /// the case where the byte stream is the right one.
+    #[test]
+    fn a_tool_row_emits_its_osc_8_link_to_the_terminal() {
+        let scratch = Scratch::new("osc8");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let started = format!(":cn python3 {} turn\r", agent.display());
+        editor.shown_on_grid(started.as_bytes(), "claude attached");
+
+        // A turn, so there is a tool row — the fixture's `turn` mode edits
+        // `/tmp/toy/src/retry.rs` at line 19 and says so in `locations`.
+        editor.press_quietly(b":claude add retry with backoff\r");
+        shown(&editor, "claude idle");
+        editor.shown_on_grid(b" t", "retry.rs");
+
+        let bytes = editor.raw();
+        assert!(
+            bytes.contains("\u{1b}]8;;file:///tmp/toy/src/retry.rs#L19\u{1b}\\"),
+            "the opener names the file and the line the agent gave"
+        );
+        // **The closer, and specifically that it follows the target text.** An
+        // opener alone is the failure this whole design is arranged against: a
+        // link that never closes runs on across everything drawn after it.
+        assert!(
+            bytes.contains("src/retry.rs\u{1b}]8;;\u{1b}\\"),
+            "and the sequence closes immediately after the text it wraps"
+        );
+
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **`T059`: screen `4a` reproduces, and its digits answer.**
+    ///
+    /// *"mid-turn question · quick-answer with digits, prose with `:c`, or
+    /// ignore until later"*. The float, the wrapped prose, the amber `[n]`
+    /// column, and the digit that closes it.
+    ///
+    /// **The producer is `:ask`**, an ex command in `runtime/asks.scm`. The
+    /// real one is the agent, over whatever a question turns out to be on the
+    /// ACP wire — `T060`'s queue and `T061`'s permission flow — and a screen
+    /// nothing can put on screen is a screen nothing can check.
+    #[test]
+    fn screen_4a_reproduces_and_its_digits_answer() {
+        let scratch = Scratch::new("question");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // A session, because `4a`'s strip says `! claude waiting` and there is
+        // nothing to be waiting *for* without one.
+        let started = format!(":cn python3 {} mute\r", agent.display());
+        editor.shown_on_grid(started.as_bytes(), "claude attached");
+
+        let asked = grid_of(&editor.shown_on_grid(
+            b":ask cargo test fails on trunk before my change. Bisect it first,               or stay scoped to the retry work?|bisect trunk|stay scoped|show me the failure\r",
+            "needs input",
+        ));
+        assert!(
+            shows(&asked, "bisect trunk"),
+            "`4a`'s options are drawn; grid was:\n{asked}"
+        );
+        assert!(
+            shows(&asked, "[3] show me the failure"),
+            "each with the digit that answers it; grid was:\n{asked}"
+        );
+        // **Wrapped, not one long row.** `4a` draws the question over two
+        // lines, and a float as wide as claude's longest sentence is the thing
+        // `QuestionBody::desired_height` takes a width for.
+        let head = asked
+            .lines()
+            .position(|row| row.contains("Bisect it first"))
+            .expect("the question is on screen");
+        let tail = asked
+            .lines()
+            .position(|row| row.contains("work?"))
+            .expect("and so is the end of it");
+        assert!(
+            tail > head,
+            "the prose wraps rather than running off the float; grid was:\n{asked}"
+        );
+        // §5's `!`. **Waiting outranks working**, which is the point of the
+        // state: what it means is *the next move is yours*.
+        assert!(
+            shows(&asked, "claude waiting"),
+            "and the strip says whose move it is; grid was:\n{asked}"
+        );
+
+        // **A digit no option carries declines by name.** A float that ate the
+        // key would be indistinguishable from one that had not noticed.
+        let unoffered = editor.press_until(b"7", "no option 7");
+        assert!(
+            shows(&unoffered, "no option 7"),
+            "an unoffered digit says so; session was: {unoffered}"
+        );
+
+        // And the one that is offered answers, which closes the float.
+        let answered = editor.press_until(b"2", "answered 2");
+        assert!(
+            shows(&answered, "answered 2"),
+            "the digit answers; session was: {answered}"
+        );
+        let after = grid_of(&editor.shown_on_grid(b"", "alpha"));
+        assert!(
+            !shows(&after, "needs input"),
+            "and the float that asked is gone; grid was:\n{after}"
+        );
+        // **The `!` goes with it**, because the strip and the float read one
+        // map. A `!` that outlived its question is §5's *"always truthful"*
+        // failing in the one moment it is being read.
+        assert!(
+            !shows(&after, "claude waiting"),
+            "and the strip stops waiting; grid was:\n{after}"
+        );
+
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **`T059`: a digit over a buffer is still vim's count prefix.**
+    ///
+    /// The other half of *"digits answer only while it is focused"*, and the
+    /// half a test of the float cannot see. `2` with no question on screen has
+    /// to reach the input machine unchanged — the arm that answers is gated on
+    /// a float holding the screen *and* showing an ask, and a gate with one
+    /// condition too few would quietly take every digit in normal mode.
+    #[test]
+    fn a_digit_with_no_question_on_screen_is_still_a_count() {
+        let scratch = Scratch::new("count-prefix");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\nbravo\ncharlie\ndelta\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // `3j` is three lines down. If the digit had been swallowed, `j` alone
+        // would land on line 2.
+        let moved = grid_of(&editor.shown_on_grid(b"3j", "4:1"));
+        assert!(
+            shows(&moved, "4:1"),
+            "the count reached the motion; grid was:\n{moved}"
+        );
+
+        // **And a digit over a float that is not a question is not an answer
+        // either.** This is the condition a test of the buffer cannot reach:
+        // `Surface::Float` holds the screen, so a gate that only checked *which
+        // surface* would try to answer `AskId(0)` and decline by name. Planted
+        // and caught — with `Shell::asked` removed from the gate, the two tests
+        // above both still passed.
+        let over = editor.press_until(b":arch\r", "substrate");
+        assert!(
+            shows(&over, "substrate"),
+            "a float that is not a question is open; session was: {over}"
+        );
+        // **Marked, then pressed, because the right answer draws nothing.** A
+        // digit at a float that has no use for it is a key the editor ignores,
+        // and `press_until` waiting on a frame that never comes is a
+        // thirty-second deadline rather than a failure. `esc` is what redraws,
+        // and the delta from before the digit is what carries the notice the
+        // defect would have written.
+        let mark = editor.mark();
+        editor.press_quietly(b"1");
+        editor.shown_on_grid(b"\x1b", "NORMAL");
+        let pressed = editor.since(mark);
+        editor.leave_by(b"ZQ");
+        assert!(
+            !shows(&pressed, "no option 1"),
+            "and a digit at it is not an answer to anything; session was: {pressed}"
+        );
+    }
+
+    /// **`T056`: `goto-location` opens the file at the position it names.**
+    ///
+    /// The verb the link is *for*, and the one thing about `T056` a keyboard
+    /// can drive. Its three callers are a picker accept, a tool row click and
+    /// an OSC 8 link — a terminal resolves the third itself, and none of them
+    /// is a key — so it is recorded as `EMITTED` in
+    /// `scripts/lint-capability-bindings.sh` and reached here through the door
+    /// a pty *can* drive, which is the same argument `T053`'s block test makes.
+    #[test]
+    fn goto_location_opens_the_file_at_the_position_it_names() {
+        let scratch = Scratch::new("goto-location");
+        let runtime = copy_layer(&scratch.path);
+        let here = scratch.path.join("sample.txt");
+        fs::write(&here, "alpha\n").expect("a fixture");
+        let there = scratch.path.join("elsewhere.txt");
+        fs::write(&there, "one\ntwo\nthree\n").expect("a second fixture");
+
+        let editor = Editor::open(&here, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let form = format!(
+            "(goto-location! \"{}\" (hash \"line\" 3 \"column\" 1) (key/focused-pane))\r",
+            there.display()
+        );
+        // **No `(close-repl!)` after this, and that is not an omission.**
+        // Opening a file replaces what the pane holds, so the REPL is gone by
+        // the time the form has answered — and a `(close-repl!)` typed after it
+        // is eleven normal-mode keys, of which `o` is *open a line* and the
+        // rest are insert. The editor then sits in INSERT, where `ZQ` is two
+        // more characters, and the test hangs in `leave_by`'s untimed
+        // `child.wait()`. Measured: one stuck child per run.
+        //
+        // **The position is the point of the verb**, not garnish on naming a
+        // file — `open-file`'s `at` is optional and this one's is what a jump
+        // link carries. So the readout is the assertion: landing at the top of
+        // the right file would be the wrong answer drawn convincingly.
+        // **Needled on the file's contents, not on its name.** The REPL echoes
+        // the form as you type it, path and all, so waiting for
+        // `elsewhere.txt` matches the *echo* on the frame before anything has
+        // opened — and then `ZQ` goes into a REPL that is still up, which is
+        // another stuck child. `three` is on line 3 of the target and nowhere
+        // in the form.
+        editor.press_until(form.as_bytes(), "#ok");
+        // **`q`, the REPL's own footer key, and one keystroke exactly.** The
+        // float is over the pane the file lands in, so nothing is visible until
+        // it is gone — and `(close-repl!)` typed here is eleven normal-mode
+        // keys the moment the float closes under them, of which `o` is *open a
+        // line*. That left the editor in INSERT, where `ZQ` is two more
+        // characters and `leave_by`'s untimed `child.wait()` never returns.
+        // Measured: one stuck child per run.
+        let landed = grid_of(&editor.shown_on_grid(b"q", "three"));
+        editor.leave_by(b"ZQ");
+        assert!(
+            shows(&landed, "elsewhere.txt"),
+            "the named file is open; grid was:\n{landed}"
+        );
+        assert!(
+            shows(&landed, "3:1"),
+            "and the cursor is on the line it named; grid was:\n{landed}"
         );
     }
 

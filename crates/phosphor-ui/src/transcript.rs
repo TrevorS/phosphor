@@ -54,11 +54,14 @@
 //!
 //! Owned by `surface`.
 
+use core::num::NonZeroU16;
 use phosphor_core::request::{ToolCallId, TurnId};
 use phosphor_core::view::Density;
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
-use ratatui_core::style::Style;
+
+use ratatui_core::buffer::CellDiffOption;
+use ratatui_core::style::{Modifier, Style};
 use ratatui_core::text::Line;
 use ratatui_core::widgets::Widget;
 
@@ -103,6 +106,14 @@ pub struct ToolCall {
     /// What it is doing it to. `1b` draws a path for `edit` and a command for
     /// `bash`, which is the same field wearing two hats and is why it is text.
     pub target: Option<String>,
+    /// Where clicking this row goes — a `file://` URI with the line as its
+    /// fragment (`T056`). [`None`] for a call that touches no file, which is
+    /// most `bash` rows.
+    ///
+    /// **A URI and not a path**, because the widget's job is to wrap it in
+    /// OSC 8 and it must not be the thing deciding what a path means on this
+    /// machine.
+    pub link: Option<String>,
     /// Progress lines, newest last. Drawn only when the row is open.
     pub notes: Vec<String>,
     /// How it ended, or [`None`] while it is still running.
@@ -502,14 +513,13 @@ impl TranscriptPane<'_> {
             Style::new().fg(self.theme.actors.claude),
         );
         if let Some(target) = &call.target {
-            write(
-                buf,
-                area,
-                after + GAP,
-                y,
-                target,
-                Style::new().fg(self.theme.neutrals.text),
-            );
+            let style = Style::new().fg(self.theme.neutrals.text);
+            match &call.link {
+                Some(uri) => link(buf, area, after + GAP, y, target, uri, style),
+                None => {
+                    write(buf, area, after + GAP, y, target, style);
+                }
+            }
         }
         let Some(outcome) = &call.outcome else {
             return;
@@ -576,6 +586,81 @@ fn fit(blocks: &[Vec<Row>], room: usize, follow: bool) -> (usize, usize) {
 
 /// Write `text` at `(x, y)`, clipped to `area`. Answers the column after the
 /// last cell written.
+/// Write `text` at `x` as an OSC 8 hyperlink to `uri` (`T056`).
+///
+/// # Why the whole link lives in one cell
+///
+/// OSC 8 is **stateful**: `ESC]8;;uri ST` opens a link and everything printed
+/// until `ESC]8;; ST` belongs to it. Ratatui paints by diffing two cell grids
+/// and emitting only the cells that changed, so an opener and a closer in
+/// separate cells are two independent decisions — and the frame where the URI
+/// changes but the last character does not prints the opener, skips the closer,
+/// and leaves the link running across everything drawn after it. That is not a
+/// rare race; it is what happens the first time claude edits a different file
+/// whose name ends in the same letter.
+///
+/// So the entire sequence — opener, text, closer — is the symbol of a **single**
+/// cell, which the diff can only emit or skip whole. The cells it visually
+/// covers are marked [`CellDiffOption::Skip`] so nothing paints over the text
+/// mid-sequence, and the anchor carries [`CellDiffOption::ForcedWidth`] because
+/// its symbol measures dozens of columns wide and occupies as many as the text
+/// does. **Ratatui 0.30.1 added these two options for exactly this**, and says
+/// so: *"prevent the buffer from overwriting a cell that is covered by something
+/// from an escape sequence, such as graphics or links."*
+///
+/// The text is underlined, which is
+/// [`Emphasis::Underline`](phosphor_core::view::Emphasis)'s own definition —
+/// *"an OSC 8 jump link in the transcript"* — and the only affordance a link
+/// has on a surface where hovering costs nothing and clicking is the verb.
+///
+/// **A width of zero, or no room, writes nothing rather than half a sequence.**
+/// An opener with no closer is the one failure mode that escapes the pane it was
+/// drawn in.
+fn link(buf: &mut Buffer, area: Rect, x: u16, y: u16, text: &str, uri: &str, style: Style) {
+    if area.is_empty() || x >= area.right() || y >= area.bottom() || y < area.y {
+        return;
+    }
+    let room = area.right() - x;
+    let width = cells(text).min(room);
+    let Some(forced) = NonZeroU16::new(width) else {
+        return;
+    };
+    // **Clipped before the sequence is built**, so the closer is always the end
+    // of what is written. Truncating the finished string is the one thing that
+    // must never happen here: the tail of it is the closer, and a link that is
+    // cut short is a link that never closes.
+    let shown: String = {
+        let mut kept = String::new();
+        let mut used = 0;
+        for character in text.chars() {
+            let mut glyph = [0u8; 4];
+            let next = used + cells(character.encode_utf8(&mut glyph));
+            if next > width {
+                break;
+            }
+            kept.push(character);
+            used = next;
+        }
+        kept
+    };
+    let style = style.add_modifier(Modifier::UNDERLINED);
+    buf[(x, y)]
+        .set_symbol(&format!("{OSC8}{uri}{ST}{shown}{OSC8}{ST}"))
+        .set_style(style)
+        .set_diff_option(CellDiffOption::ForcedWidth(forced));
+    for covered in (x + 1)..(x + width) {
+        buf[(covered, y)]
+            .set_style(style)
+            .set_diff_option(CellDiffOption::Skip);
+    }
+}
+
+/// OSC 8's opener, up to the URI. `\x1b]8;;`.
+const OSC8: &str = "\x1b]8;;";
+/// The string terminator that closes an OSC. `\x1b\\` — ST, not BEL: both are
+/// accepted and ST is what the specification writes.
+const ST: &str = "\x1b\\";
+
 fn write(buf: &mut Buffer, area: Rect, x: u16, y: u16, text: &str, style: Style) -> u16 {
     if area.is_empty() || x >= area.right() || y >= area.bottom() || y < area.y {
         return x;
@@ -583,4 +668,133 @@ fn write(buf: &mut Buffer, area: Rect, x: u16, y: u16, text: &str, style: Style)
     let room = area.right() - x;
     let (next, _) = buf.set_stringn(x, y, text, room as usize, style);
     next.min(area.right())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PAD_COLS, ToolCall, TranscriptPane, TranscriptVm, Turn};
+    use crate::theme::Theme;
+    use phosphor_core::request::{ToolCallId, TurnId};
+    use ratatui_core::buffer::{Buffer, CellDiffOption};
+    use ratatui_core::layout::Rect;
+    use ratatui_core::style::Modifier;
+    use ratatui_core::widgets::Widget;
+
+    fn one_call(link: Option<&str>) -> TranscriptVm {
+        TranscriptVm {
+            header: String::new(),
+            turns: vec![Turn {
+                id: TurnId(1),
+                prompt: None,
+                prose: String::new(),
+                calls: vec![ToolCall {
+                    id: ToolCallId(1),
+                    verb: "edit".to_owned(),
+                    target: Some("src/retry.rs".to_owned()),
+                    link: link.map(str::to_owned),
+                    notes: Vec::new(),
+                    outcome: None,
+                }],
+                ended: None,
+                since: None,
+            }],
+            hints: Vec::new(),
+        }
+    }
+
+    fn drawn(vm: &TranscriptVm, width: u16) -> Buffer {
+        let theme = Theme::phosphor_dark();
+        let area = Rect::new(0, 0, width, 4);
+        let mut buf = Buffer::empty(area);
+        TranscriptPane::new(vm, &theme).render(area, &mut buf);
+        buf
+    }
+
+    /// Where the target starts: past the pad, the fold glyph, a space, `edit`,
+    /// and the two-cell gap.
+    const TARGET_X: u16 = PAD_COLS + 1 + 1 + 4 + super::GAP;
+
+    /// **`T056`: the bytes, exactly.**
+    ///
+    /// The click itself is Tier 3 and stays `CP-6`'s — a capture cannot press a
+    /// mouse — so what a test can hold this to is the sequence, and the sequence
+    /// is either right or it is a link to nowhere. Opener, URI, terminator,
+    /// text, empty opener, terminator; the whole of it in **one** cell.
+    #[test]
+    fn a_tool_row_with_a_location_is_one_osc_8_cell() {
+        let buf = drawn(&one_call(Some("file:///tmp/toy/src/retry.rs#L19")), 60);
+        let anchor = &buf[(TARGET_X, 0)];
+
+        assert_eq!(
+            anchor.symbol(),
+            "\x1b]8;;file:///tmp/toy/src/retry.rs#L19\x1b\\src/retry.rs\x1b]8;;\x1b\\",
+            "the anchor carries the whole sequence"
+        );
+        // **The width it declares is the width it covers**, not the width its
+        // symbol measures — which is sixty-odd columns of escape.
+        assert!(
+            matches!(anchor.diff_option, CellDiffOption::ForcedWidth(width) if width.get() == 12),
+            "and declares the twelve columns `src/retry.rs` occupies; was {:?}",
+            anchor.diff_option
+        );
+        assert!(
+            anchor.modifier.contains(Modifier::UNDERLINED),
+            "a link is underlined — `Emphasis::Underline`'s own definition"
+        );
+    }
+
+    /// **The cells the link covers are skipped, all of them.**
+    ///
+    /// This is the assertion that keeps OSC 8's statefulness from escaping the
+    /// row: a covered cell the diff was still willing to paint would print over
+    /// the middle of the sequence, and what follows a half-written opener is
+    /// linked until something closes it.
+    #[test]
+    fn every_cell_the_link_covers_is_skipped() {
+        let buf = drawn(&one_call(Some("file:///tmp/toy/src/retry.rs")), 60);
+        for x in (TARGET_X + 1)..(TARGET_X + 12) {
+            assert!(
+                matches!(buf[(x, 0)].diff_option, CellDiffOption::Skip),
+                "column {x} is covered by the link and must not be painted"
+            );
+        }
+        // And the column *after* the link is ordinary again — a run of skips
+        // that overshot would silently blank whatever came next.
+        assert!(
+            matches!(buf[(TARGET_X + 12, 0)].diff_option, CellDiffOption::None),
+            "the column after the link is drawable again"
+        );
+    }
+
+    /// **A call with no file is not a link**, which is most `bash` rows. Drawn
+    /// as plain text, with no sequence and nothing skipped.
+    #[test]
+    fn a_call_that_touches_no_file_is_plain_text() {
+        let buf = drawn(&one_call(None), 60);
+        assert_eq!(buf[(TARGET_X, 0)].symbol(), "s", "the target is just text");
+        assert!(
+            !buf[(TARGET_X, 0)].modifier.contains(Modifier::UNDERLINED),
+            "and is not underlined, because there is nowhere to go"
+        );
+    }
+
+    /// **A pane too narrow for the target clips the text and never the
+    /// sequence.** The closer is the last thing written; a link cut short is
+    /// the one failure that escapes the pane it was drawn in.
+    #[test]
+    fn a_narrow_pane_clips_the_text_and_still_closes_the_link() {
+        let buf = drawn(
+            &one_call(Some("file:///tmp/toy/src/retry.rs")),
+            TARGET_X + 5,
+        );
+        let symbol = buf[(TARGET_X, 0)].symbol();
+        assert!(
+            symbol.ends_with("\x1b]8;;\x1b\\"),
+            "the sequence closes; symbol was {symbol:?}"
+        );
+        assert!(
+            symbol.contains("\x1b\\src/r\x1b]8;;"),
+            "and the text inside it is what fits; symbol was {symbol:?}"
+        );
+    }
 }

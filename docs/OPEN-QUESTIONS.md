@@ -2508,6 +2508,51 @@ one. **The design is Teej's and the ruling is his**; the build has taken the
 reading that keeps §6 true, and this entry exists so the divergence is on the
 record rather than discovered later as a bug in the screens.
 
+### 56 · `1b`'s footer offers a keyboard jump the transcript has no focus to jump *from*
+
+**Raised by `T056`, 2026-08-21. Two of the three are recorded and closed inside
+that task; the third needs a ruling.**
+
+`1b` and `7b` draw the transcript pane's footer as `↵ jump to file · q close`
+and `:ca reattach · :cn new session · q close`. `T057` drew both footers
+verbatim; `T056` found that two of the three keys are not what they say.
+
+**`q` is bound, to something else.** `runtime/keymaps.scm` gives `q` to
+`set-macro-recording` — vim's own meaning — in normal mode, everywhere. The
+footer now says `<C-w> c close`, which is the binding that exists. This one is
+settled: a hint naming a key that does something else is worse than a hint fewer,
+and `T088` is the precedent for how long that survives unnoticed.
+
+**Percent-encoding is not done, deliberately.** `jump_uri` builds
+`file:///path#L19` by concatenation. A path containing a space, a `#` or a `%`
+produces a URI a strict parser reads wrongly. Encoding is a table, the table is
+the `percent-encoding` crate, and a hand-rolled subset of it is the kind of
+almost-right this build spends its lints avoiding — so it is a dependency
+decision rather than a defect, and it is `spine`'s. Every path this repository
+tests with is ASCII and slash-separated.
+
+**The open question is `↵`, and it is narrower than it looked.** The *verb*
+exists and works: `goto-location` is `T056`'s own capability, it is armed, it is
+reachable through every door, and a keystroke test drives it. What is missing is
+only the last inch — a **focused row** inside a transcript pane for `↵` to act
+on: a selection model the pane does not have, a movement vocabulary for it, and
+a `<cr>` binding scoped to that surface. `T059` adds digit-answering to a
+*float* and is the nearest thing, and it is not this.
+
+OSC 8 needs none of that, which is why `T056` shipped without it — a click lands
+in the terminal, which resolves the `file://` URI itself, and the underline is
+the affordance. That is
+[`Emphasis::Underline`](../crates/phosphor-core/src/view/props.rs)'s own
+definition of what the variant is for.
+
+So: **does a transcript row get focus, or is clicking the only way in?** Both are
+defensible. Clicking-only keeps the pane a stream you read, which is what §9's
+*"a transcript you are reading beside your code"* argues for, and it costs
+nothing to the keyboard-only user who can already `:e` the path they can see.
+Focus makes the surface navigable and makes `1b`'s own footer true, at the price
+of a second selection model in a pane. **Teej's call**; the footer says what is
+bound until it is made.
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

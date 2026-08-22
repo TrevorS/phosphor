@@ -106,6 +106,16 @@ EMITTED = {
     "float-select": "the float's own key handling",
     "float-select-row": "the float's own key handling",
     "float-accept": "the float's own key handling",
+    # `T059`. 4a's digits, and the keymap for them is Rust because a digit means
+    # two different things depending on what holds the screen: over a buffer it
+    # is vim's count prefix, and `keymaps.scm` has no way to ask what surface is
+    # up. The loop gates on both conditions and emits this verb.
+    "float-answer": "the float's own key handling — 4a's amber digits",
+    # Emitted by `float-answer` above, which resolves the focused ask and
+    # delegates. `answer-ask` names an ask by *id*, which is what makes it the
+    # wrong thing for a keyboard: a digit that carried one could answer a
+    # question you are not looking at. Its prose half is T060's and T061's wire.
+    "answer-ask": "float-answer emits it, having resolved which ask is focused",
     "close-float": "`closes_surface` handles `esc` for every float",
     "close-all-floats": "`closes_surface` handles `esc` for every float",
     "close-repl": "`repl_key` handles it — `esc`",
@@ -144,6 +154,13 @@ EMITTED = {
     "set-keybinding": "the agent's door; the shipped layer keeps its own table",
     "remove-keybinding": "the agent's door, the same way",
     "set-register": "the agent's door — a person yanks into one",
+    # `T056`. The capability's own sentence names its three callers — "a picker
+    # accept, a transcript tool row, an OSC 8 link" — and none of them is a
+    # person naming a file. A click lands in the *terminal*, which resolves the
+    # `file://` URI itself; `open-file` is the one a person types (`:e`). A
+    # keyboard jump from a focused transcript row would make this bindable and
+    # needs a selection model that pane does not have — OPEN-QUESTIONS.md ss56.
+    "goto-location": "the agent's door, a picker accept, and an OSC 8 click",
 }
 
 # Built, user-facing, and bound to nothing. Each row is a promise to bind it.

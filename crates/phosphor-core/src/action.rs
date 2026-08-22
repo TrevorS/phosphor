@@ -937,6 +937,14 @@ actions! {
             call: crate::request::ToolCallId = "the call's id",
             verb: String = "what it is doing — read, edit, run",
             target: Option<String> = "what it is doing it to",
+            // **`path` is not `target` and the two must not be merged**
+            // (`T056`). ACP carries a `title` — what the row *says* — and a
+            // separate `locations` list of absolute paths, and an agent's title
+            // is a sentence: `Replacing the reconnect loop's hand-rolled
+            // sleep`. A jump link built from the title would point at a file
+            // named after a sentence.
+            path: Option<String> = "the absolute path this call touches, for the jump link",
+            line: Option<u32> = "one-based line within that file, when the agent named one",
         }
         ToolCallProgress = "tool-call-progress" [S6 / "T054" / Allow]
             "adds progress to a running tool call" {

@@ -157,10 +157,6 @@ RECORDED = {
                     "already carry, and neither composes this tag. No creditor for the same "
                     "reason `Spinner` has none."),
     "Diff": ("T063", "`DiffBody`. Deferred in the interpreter."),
-    "Question": ("T059", "`QuestionBody`. Deferred in the interpreter. Q9's queued asks are a "
-                         "store query, and an ask that nothing has room for renders as the "
-                         "statusline's `!` flag alone — which `runtime/statusline.scm` composes "
-                         "as a `view/glyph`, not as this."),
     "Watch": ("T076", "`WatchOverlay` — the `◉ ⇒` stream, which renders *through* a "
                       "`VirtualText` row. That kind is composed (the unknown-key hint); this "
                       "one is the watch's own formatting and is deferred in the interpreter."),

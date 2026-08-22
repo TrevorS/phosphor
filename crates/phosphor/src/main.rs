@@ -151,9 +151,9 @@ use phosphor_buffer::lsp::{
 };
 use phosphor_buffer::undo::{Caret, CharRange, Edit as TreeEdit, NodeId, Step, UndoTree};
 use phosphor_core::action::{
-    Action, AppAction, BufferAction, FileAction, FloatAction, HistoryAction, InputAction,
-    LspAction, MotionAction, Outcome, PaneAction, PickerAction, PromptAction, Receipt, Refusal,
-    RegionAction, Request, RuntimeAction, SessionAction, ViewAction,
+    Action, AppAction, AskAction, BufferAction, FileAction, FloatAction, HistoryAction,
+    InputAction, LspAction, MotionAction, Outcome, PaneAction, PickerAction, PromptAction, Receipt,
+    Refusal, RegionAction, Request, RuntimeAction, SessionAction, ViewAction,
 };
 use phosphor_core::config;
 use phosphor_core::input::key::{Code, Key, Mods, Named};
@@ -165,7 +165,7 @@ use phosphor_core::language::{self, Languages};
 use phosphor_core::query::{Answer, Answers, Query, QueryError, RegionQuery, Revision};
 use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
-    AcceptHow, Actor, AnchorId, Binding, BufferId, CharRange as SignatureRange,
+    AcceptHow, Actor, AnchorId, AskId, Binding, BufferId, CharRange as SignatureRange,
     Completion as WireCompletion, Direction, EditMode, FileSpan, FoldState, KeySeq, LanguageId,
     PaneId, PaneKind, PaneRef, Position, PromptKind, RegionFilter, RegionId, RegisterName, Seek,
     SelectionKind, Sequence, Signature as WireSignature, SourceId, Span, Target, TextObject,
@@ -766,6 +766,16 @@ enum Intent {
     /// on the notice row, and this is how something on the other side of the
     /// VM reaches it.
     Say(String),
+    /// `enqueue-ask` — `T059`'s producer, minted on the door's side and
+    /// written to the queue on the loop's.
+    ///
+    /// **The id travels with the question rather than being allocated on
+    /// arrival**, because the door has already answered its caller with it: an
+    /// agent that asked has to be able to name the ask when the answer comes
+    /// back, and a receipt for an id the loop had not chosen yet would be a
+    /// promise about the future.
+    Enqueue(AskId, phosphor_ui::question::QuestionVm),
+
     /// An Action for the loop to apply to the focused buffer (`T052`).
     ///
     /// **The one intent that carries a mutation rather than a request**, and it
@@ -811,6 +821,15 @@ struct AppHost {
     /// into it — shared with the loop. See [`crate::store`] for why one store
     /// has two handles.
     store: Arc<store::Shared>,
+    /// The next ask id (`T059`), shared with the loop.
+    ///
+    /// **One counter with two holders, exactly like [`AppHost::store`]**, and
+    /// for the reason that made that one shared: `enqueue-ask` is armed in
+    /// *both* appliers — a door lands here and a keystroke lands in
+    /// `Editing::act` — and two counters would hand two questions the same id
+    /// the first time both doors were used in one session. `Shell` holds the
+    /// same `Arc`.
+    next_ask: Arc<Mutex<u64>>,
     /// Why the seen-state journal could not be opened, if it could not
     /// (`T044`).
     ///
@@ -978,6 +997,7 @@ impl AppHost {
             // `phosphor_buffer::grammar`.
             languages: Mutex::new(Languages::new(grammar::BUNDLED)),
             store: Arc::new(store::Shared::default()),
+            next_ask: Arc::new(Mutex::new(1)),
             store_note: None,
         }
     }
@@ -1137,6 +1157,21 @@ impl AppHost {
         if let Ok(mut state) = self.state.lock() {
             state.intents.push(intent);
         }
+    }
+
+    /// The next ask id (`T059`).
+    ///
+    /// **Minted here rather than in the loop**, so `enqueue-ask`'s receipt can
+    /// carry it — see [`Intent::Enqueue`]. Monotonic and never reused: an
+    /// answered ask's id coming back would address a different question.
+    fn ask_id(&self) -> AskId {
+        let mut next = self
+            .next_ask
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let id = *next;
+        *next = next.saturating_add(1);
+        AskId(id)
     }
 
     /// `6b`'s `· persisted to …` — one form appended to the config home.
@@ -1759,6 +1794,56 @@ impl Host for AppHost {
                 self.ask(Intent::Act(Box::new(request.action.clone())));
                 done(Value::Null)
             }
+            // `T056` — **the second line, and the reason the shape is one
+            // capability wide rather than a blanket arm.** `goto-location`'s
+            // own sentence names its callers — *"a picker accept, a transcript
+            // tool row, an OSC 8 link"* — and every one of them arrives through
+            // a *door*, which is this applier. The loop's arm holds the rope
+            // and cannot be reached from here without saying so.
+            //
+            // Found by running it: the verb had an arm in `Editing::act`, the
+            // arms lint was clean, and `(goto-location! …)` at the REPL still
+            // answered `#refused · not built yet — T056 builds it`. The same
+            // shape as `discover-sessions` in `T057`, one applier the other
+            // way round.
+            Action::Motion(MotionAction::GotoLocation { .. }) => {
+                self.ask(Intent::Act(Box::new(request.action.clone())));
+                done(Value::Null)
+            }
+            // -- `T059`: `4a`, claude asking mid-turn --------------------------
+            //
+            // **Both arms are here rather than in `Editing::act`, and neither
+            // touches a buffer.** An ask arrives through the agent's door and
+            // is answered from a float body, which runs in the VM — the same
+            // argument `discover-sessions` makes one task earlier, and the same
+            // one that makes these two `Intent`s rather than direct writes: the
+            // queue lives on `Shell`, which the loop owns.
+            //
+            // `enqueue-ask` is declared `[S6 / "T060"]` and armed here, which is
+            // deliberate. `T060`'s *Done when* is about the **queue** — waiting
+            // behind a float that has focus, `]!`, the `!` surviving a 40-column
+            // shed, one store query behind all three — and none of that is the
+            // verb existing. `4a` cannot reproduce in a running binary without
+            // something that produces a question, so the producer lands with the
+            // screen and the queueing lands with the queue.
+            Action::Ask(AskAction::EnqueueAsk { prose, options }) => {
+                let id = self.ask_id();
+                self.ask(Intent::Enqueue(
+                    id,
+                    phosphor_ui::question::QuestionVm {
+                        prose: prose.clone(),
+                        options: options.clone(),
+                    },
+                ));
+                // (The loop performs it; see `Shell::enqueue_ask`.)
+                // **The id is the receipt**, because an agent that asked has to
+                // be able to say which ask it asked when the answer comes back.
+                done(Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)))
+            }
+            // **`answer-ask` is deliberately *not* armed here.** It is rated
+            // `Deny` — a person only — so no door reaches this applier with
+            // one, and an arm would be a path nothing can take. The loop's
+            // applier has it, which is where a keystroke lands.
             // `T093` — the four float verbs, and the registry `OPEN-QUESTIONS.md`
             // §43 found missing. All four post an [`Intent`] rather than acting:
             // composing a surface runs scheme, and a binding is already inside
@@ -2893,6 +2978,13 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // Step 4b: what the session owns, once rather than once per buffer.
     let mut shell = Shell {
         store: Arc::clone(&host.store),
+        asks: BTreeMap::new(),
+        next_ask: Arc::clone(&host.next_ask),
+        asking: None,
+        asked: None,
+        // The directory the editor was started in — `Timeline::open_at`'s rule,
+        // and the honest root until `T071` makes it the repository's.
+        workspace: std::env::current_dir().unwrap_or_default(),
         wake: picker::waking(poster.clone()),
         registers: BTreeMap::new(),
         picker: None,
@@ -3050,12 +3142,12 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // `T054`. Held across passes because it is rebuilt only when the transcript
     // moves — see the publish below.
     let mut transcript_vm: Option<phosphor_ui::transcript::TranscriptVm> = None;
-    // Where a session is rooted. The workspace is the directory the editor was
-    // started in — `Timeline::open_at`'s rule, and the honest root until `T071`
-    // makes it the repository's — read once, because a session outlives a frame
-    // and `getcwd` per frame would be asking a question whose answer cannot
-    // change inside this process.
-    let workspace = std::env::current_dir().unwrap_or_default();
+    // Where a session is rooted, and what a jump link resolves against. Read
+    // once at boot and held on [`Shell`], because a session outlives a frame and
+    // `getcwd` per frame would be asking a question whose answer cannot change
+    // inside this process. Cloned here so the loop can hand it to `attach`
+    // without borrowing `shell` for the rest of the pass.
+    let workspace = shell.workspace.clone();
 
     // The document the servers have been told about, and how many edits ago.
     // `didChange` is sent from the top of the loop rather than from the edit,
@@ -3314,7 +3406,11 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             }
             shell.life = life.clone();
         }
-        host.publish_session(session_value(&life, shell.turn.as_ref()));
+        host.publish_session(session_value(
+            &life,
+            shell.turn.as_ref(),
+            !shell.asks.is_empty(),
+        ));
 
         // **`T054` — rebuilt and published only when the transcript moves.**
         // Its two neighbours above are a handful of fields and cost nothing per
@@ -3428,7 +3524,11 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // two in; a fixture here would be a lie on a real terminal."* It is
             // the client's report and never the editor's guess — see
             // [`session_state`].
-            session: session_state(&shell.session.life(), shell.turn.as_ref()),
+            session: session_state(
+                &shell.session.life(),
+                shell.turn.as_ref(),
+                !shell.asks.is_empty(),
+            ),
             // Where the elapsed counter counts from, in the app's own epoch.
             // A turn's `Instant` is converted here rather than stored as
             // `Millis`, because the arm that records it cannot see `started`
@@ -3620,6 +3720,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // 2+ panes"* agree by both asking the same tree the same question.
         let tab_bar = Tree::new(compose_tabs(&panes, &buffers, &unseen_per_buffer));
         let overlay = Overlay {
+            asks: &shell.asks,
             chrome,
             status: status_tree,
             leader: &leader,
@@ -3723,6 +3824,41 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                 editing.retrack();
                                 surface = Surface::Buffer;
                             }
+                        }
+                    }
+                    // **`T059` — `4a`'s digits, and the whole of *"only while
+                    // it is focused"*.**
+                    //
+                    // Two conditions, both the loop's: a question float is what
+                    // holds the screen, and it is showing an ask. Over a buffer
+                    // the same key is vim's count prefix and stays that — which
+                    // is why this is an arm here rather than a binding in
+                    // `keymaps.scm`, where a digit has no way to ask what is on
+                    // screen.
+                    //
+                    // **A digit no option carries is not swallowed.** `4a`
+                    // offers `[1]`–`[3]`; pressing `7` at it declines by name
+                    // rather than doing nothing, because a float that ate the
+                    // key would be indistinguishable from one that had not
+                    // noticed.
+                    Event::Key(key)
+                        if matches!(surface, Surface::Float)
+                            && shell.asked.is_some()
+                            && digit_pressed(key).is_some() =>
+                    {
+                        // **Through the capability, not around it.** The key
+                        // decides *that* a digit was pressed; `float-answer`
+                        // decides what a digit means, which ask is focused and
+                        // whether the option exists. A second copy of that
+                        // reasoning here is the *"no second path from a command
+                        // to the buffer"* rule `T033` set, one surface over.
+                        let digit = digit_pressed(key).unwrap_or(0);
+                        let outcome = editing.apply(
+                            &mut Cx::new(held, focus, &mut panes, &mut shell),
+                            &Action::Float(FloatAction::FloatAnswer { digit }),
+                        );
+                        if let Outcome::Refused(why) = outcome {
+                            notice = Some(phosphor_steel::answer::why(&why));
                         }
                     }
                     // `T045`. The picker owns every key while it is open, the
@@ -4344,6 +4480,14 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // widgets (`AppHost`).
         for intent in host.intents() {
             match intent {
+                // -- `T059`: the queue's two writes ------------------------
+                //
+                // **Written here rather than in the applier that took the
+                // call**, because the queue is on `Shell` and the loop owns it.
+                // The pair is deliberately thin: a question arrives and a
+                // question leaves, and *when* a float is raised over it is
+                // composition's business one layer up.
+                Intent::Enqueue(id, question) => shell.enqueue_ask(id, question),
                 Intent::OpenRepl => surface = Surface::Repl,
                 Intent::CloseRepl => surface = Surface::Buffer,
                 Intent::History(delta) => repl.history(delta),
@@ -4443,6 +4587,34 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     Err(why) => notice = Some(why.to_string()),
                 },
                 Intent::CloseFloat | Intent::CloseAllFloats => {
+                    open_float = None;
+                    if surface == Surface::Float {
+                        surface = Surface::Buffer;
+                    }
+                }
+            }
+        }
+
+        // **`T059` — the question float follows the queue, in one place.**
+        //
+        // Neither applier raises it: `Shell::asking` is *what should be asked*
+        // and `Shell::asked` is *what is on screen*, and this is the one line
+        // that makes them agree. So `enqueue-ask` from a key and from a door
+        // land on the same screen without either of them knowing what a float
+        // is, and answering one closes it without the arm reaching for
+        // composition.
+        if shell.asking != shell.asked {
+            shell.asked = shell.asking;
+            match shell.asked {
+                Some(id) => {
+                    let mut args = Args::new();
+                    args.set("ask", Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)));
+                    editing.float = Some((QUESTION_SURFACE.to_owned(), Value::Record(args)));
+                }
+                // Answered or deferred. Leaving the float up over an ask that no
+                // longer exists would draw an empty box — `Resources::ask`
+                // answers `None` — that the key which made it cannot dismiss.
+                None => {
                     open_float = None;
                     if surface == Surface::Float {
                         surface = Surface::Buffer;
@@ -4629,12 +4801,43 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
 /// one is starting. `T051`'s *Done when* is *"every state renders and the
 /// statusline is never stale"*, so the sixth state is that task's to add or to
 /// rule out.
-fn session_state(life: &SessionLife, turn: Option<&(TurnId, Instant)>) -> SessionState {
+fn session_state(
+    life: &SessionLife,
+    turn: Option<&(TurnId, Instant)>,
+    asking: bool,
+) -> SessionState {
     match life {
         SessionLife::None | SessionLife::Starting => SessionState::None,
         SessionLife::Lost(_) => SessionState::Lost,
+        // **`T059` — waiting outranks working, and that is the point of the
+        // state.** `4a`'s strip says `! claude waiting` while a turn is very
+        // much still running: what the `!` means is *the next move is yours*,
+        // and a strip that said `working` would be truthful about the agent and
+        // useless to the person it is drawn for.
+        SessionLife::Attached { .. } if asking => SessionState::Waiting,
         SessionLife::Attached { .. } if turn.is_some() => SessionState::Working,
         SessionLife::Attached { .. } => SessionState::Idle,
+    }
+}
+
+/// The digit a keystroke names, `1`–`9`, or [`None`] (`T059`).
+///
+/// **Bare digits only.** `4a` offers `[1]`–`[3]` and a modifier makes a
+/// different key: `<C-1>` is not option one typed emphatically, and treating it
+/// as one is how a chord starts answering questions.
+fn digit_pressed(key: KeyEvent) -> Option<u32> {
+    // `SHIFT` is left in: a shifted `1` is `!` on most layouts and arrives as a
+    // different `KeyCode` anyway, so excluding it would only reject a layout
+    // where the digit is the shifted glyph.
+    if key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER)
+    {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char(character) => character.to_digit(10).filter(|digit| *digit > 0),
+        _ => None,
     }
 }
 
@@ -4845,9 +5048,9 @@ impl Transcript {
 /// see [`HostState::session`]. `since` rides along because §5's `Working` is
 /// *"working+elapsed"*: a caller that has the state and not the mark can render
 /// five of the six and not the sixth.
-fn session_value(life: &SessionLife, turn: Option<&(TurnId, Instant)>) -> Value {
+fn session_value(life: &SessionLife, turn: Option<&(TurnId, Instant)>, asking: bool) -> Value {
     let mut fields = Args::new();
-    fields.set("state", session_state(life, turn).to_value());
+    fields.set("state", session_state(life, turn, asking).to_value());
     fields.set(
         "turn",
         turn.map_or(Value::Null, |(turn, _)| {
@@ -4881,6 +5084,35 @@ fn session_value(life: &SessionLife, turn: Option<&(TurnId, Instant)>) -> Value 
 /// the thirty a `npx` first run takes. Saying it here instead keeps §5's list
 /// intact: the strip carries the state, and the row below carries the fact that
 /// something is happening.
+/// The `file://` URI a transcript tool row links to (`T056`).
+///
+/// **OSC 8's own shape, and the two halves a terminal actually uses.** The
+/// scheme takes an authority and an empty one means *this machine* —
+/// `file:///Users/…` — which is what every terminal that implements OSC 8
+/// accepts and what a hostname would only narrow. The fragment is the line:
+/// `#L19` is the spelling editors and forges agree on, and a terminal that does
+/// not understand it opens the file, which is the right degradation.
+///
+/// **Relative paths are resolved against the workspace rather than refused.**
+/// ACP declares `locations[].path` absolute and a well-behaved agent sends one;
+/// an agent that sends `src/retry.rs` anyway would otherwise produce
+/// `file://src/retry.rs`, where `src` is read as an *authority* — a link to
+/// another machine. Joining is what makes that impossible rather than unlikely.
+///
+/// Nothing is percent-encoded. A path with a `#` or a space in it produces a
+/// URI a strict parser would read wrongly, and that is recorded at
+/// `OPEN-QUESTIONS.md` §56 rather than half-solved: encoding is a table, the
+/// table is `percent-encoding`, and a hand-rolled subset of it is the kind of
+/// almost-right this build spends its lints avoiding.
+fn jump_uri(workspace: &Path, path: &str, line: Option<u32>) -> String {
+    let resolved = workspace.join(path);
+    let mut uri = format!("file://{}", resolved.display());
+    if let Some(line) = line {
+        uri.push_str(&format!("#L{line}"));
+    }
+    uri
+}
+
 /// `7b`'s line under the seam: what a dropped turn left behind.
 ///
 /// *"disk state preserved · 2 regions arrived before the drop, marked unseen ·
@@ -4919,17 +5151,20 @@ fn transcript_hints(life: &SessionLife) -> Vec<KeyHint> {
             key: KeySeq(":cn".to_owned()),
             verb: "new session".to_owned(),
         });
-    } else {
-        // `1b`'s own footer. The jump is `T056`'s and the row it lands on is
-        // already drawn, so the hint names a verb this pane has and the OSC 8
-        // that makes it clickable arrives with that task.
-        hints.push(KeyHint {
-            key: KeySeq("<cr>".to_owned()),
-            verb: "jump to file".to_owned(),
-        });
     }
+    // **`<C-w> c`, and not `1b`'s `q`.** The mockup's footer draws `q close`,
+    // and `q` in this build is vim's macro-recording key — `runtime/keymaps.scm`
+    // binds it to `set-macro-recording`, in normal mode, everywhere. A footer
+    // naming a key that does something else is worse than a footer with one
+    // fewer row, and `T088` is the precedent for how that goes unnoticed: a
+    // verb with an arm, a passing gate, and nothing bound to it.
+    //
+    // **`1b`'s `↵ jump to file` is not here either**, for the harder reason:
+    // `T056` made the tool rows clickable through OSC 8, which has no key at
+    // all — the underline is the affordance. A *keyboard* jump needs a focused
+    // row in a transcript, which no task owns. `OPEN-QUESTIONS.md` §56.
     hints.push(KeyHint {
-        key: KeySeq("q".to_owned()),
+        key: KeySeq("<C-w> c".to_owned()),
         verb: "close".to_owned(),
     });
     hints
@@ -5790,6 +6025,9 @@ const ARCH_SURFACE: &str = "arch";
 /// `T057`'s dashboard surface id, as `runtime/dashboard.scm` registers it.
 const DASHBOARD_SURFACE: &str = "dashboard";
 
+/// `runtime/asks.scm`'s float — `4a`, claude asking mid-turn (`T059`).
+const QUESTION_SURFACE: &str = "question";
+
 /// The start line of a region record, if it names `path` (`T049`).
 ///
 /// Reads the record the `regions` query already answers rather than reaching
@@ -5929,6 +6167,9 @@ struct Painted<'a> {
     /// [`Transcript::revision`]'s reason, and lent here for the same one
     /// [`Painted::picker`] is: `Resources` has no `&mut` in it.
     transcript: Option<&'a phosphor_ui::transcript::TranscriptVm>,
+    /// `T059`'s questions, by id — see [`Overlay::asks`] for why this one is
+    /// keyed and its neighbours are not.
+    asks: &'a BTreeMap<AskId, phosphor_ui::question::QuestionVm>,
 }
 
 impl<'a> Overlay<'a> {
@@ -5995,6 +6236,13 @@ impl Resources for Painted<'_> {
     fn transcript(&self) -> Option<&phosphor_ui::transcript::TranscriptVm> {
         self.transcript
     }
+
+    /// `T059`. A real lookup, for the reason [`Resources::editor`] became one:
+    /// a float that named an ask and got whichever ask happened to be newest
+    /// would let you answer a question you were not reading.
+    fn ask(&self, ask: AskId) -> Option<&phosphor_ui::question::QuestionVm> {
+        self.asks.get(&ask)
+    }
 }
 
 /// What rides over the buffer on this frame, and what claims the chrome row.
@@ -6048,6 +6296,13 @@ struct Overlay<'a> {
     tabs: &'a Tree,
     /// `T054`'s transcript, when the session has said anything.
     transcript: Option<&'a phosphor_ui::transcript::TranscriptVm>,
+    /// `T059`'s questions, by id.
+    ///
+    /// **A map where its neighbours are an `Option`**, and `Node::Question`'s
+    /// own prop is why: there is one completion list and one transcript, and
+    /// there are as many asks as claude has asked. A float composed for ask 8
+    /// must draw ask 8 even with a newer one behind it.
+    asks: &'a BTreeMap<AskId, phosphor_ui::question::QuestionVm>,
     /// This frame's reading of the app clock (`T050`).
     ///
     /// The whole animation budget: `Node::Spinner` and `Node::Elapsed` render
@@ -6106,6 +6361,7 @@ fn draw(
         signature: overlay.signature,
         picker: overlay.picker,
         transcript: overlay.transcript,
+        asks: overlay.asks,
     };
 
     // **§8's degradation, asked for once for the whole tree.** It reached
@@ -6953,6 +7209,42 @@ struct Shell {
     /// `T041`'s store, shared with [`AppHost`] so the gutter, the statusline
     /// and the `region` queries cannot disagree about a file.
     store: Arc<store::Shared>,
+    /// `T059`'s questions, oldest first, by id.
+    ///
+    /// **A map on `Shell` rather than widget state**, which is `T060`'s rule
+    /// arriving one task early and for a reason that is already true: `4a`'s
+    /// float, the statusline's `!`, and whatever answers a digit all have to
+    /// agree about what is being asked, and three readers of one map cannot
+    /// disagree. What `T060` adds is the *queue* — waiting behind a float that
+    /// has focus, `]!`, and the store query — not the storage.
+    asks: BTreeMap<AskId, phosphor_ui::question::QuestionVm>,
+    /// The ask id counter, shared with [`AppHost::next_ask`] — see there.
+    next_ask: Arc<Mutex<u64>>,
+    /// Which ask the float on screen is showing, if the float on screen is a
+    /// question (`T059`).
+    ///
+    /// **This is what *"digits answer only while it is focused"* is made of.**
+    /// The node's own sentence is a rule about focus, and focus is the loop's;
+    /// a widget cannot know whether it is focused and must not try. So the
+    /// digit arm is gated on this being `Some` *and* the float surface holding
+    /// the screen — two conditions, both the loop's, and `1` over a buffer goes
+    /// on being vim's count prefix.
+    asking: Option<AskId>,
+    /// Which ask the float **currently on screen** is showing.
+    ///
+    /// **Two fields rather than one, and the pair is what raises the float.**
+    /// `asking` is what should be on screen and this is what is; the loop
+    /// compares them once per pass and opens or closes accordingly. Both
+    /// appliers therefore only have to say *what should be asked* — neither
+    /// composes a float, which neither is in a position to do.
+    asked: Option<AskId>,
+    /// Where the editor was started — what a session is rooted at, and what a
+    /// tool row's jump link resolves against (`T056`).
+    ///
+    /// **Held rather than asked for.** `getcwd` per arm is a question whose
+    /// answer cannot change inside this process, and an arm that asked it would
+    /// be a second definition of *the workspace* to drift from the loop's.
+    workspace: PathBuf,
     /// How a picker's matcher says it has results this frame did not show.
     ///
     /// Held by the session because a picker is opened from three places — the
@@ -7119,6 +7411,68 @@ struct Shell {
     /// per frame — which is the shape `soft-wrap` gets away with because
     /// honouring it is free and spawning a process is not.
     agent: Option<String>,
+}
+
+impl Shell {
+    /// The next ask id (`T059`). Monotonic and never reused: an answered ask's
+    /// id coming back would address a different question.
+    fn mint_ask(&self) -> AskId {
+        let mut next = self
+            .next_ask
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let id = *next;
+        *next = next.saturating_add(1);
+        AskId(id)
+    }
+
+    /// Queue a question and make it the one that should be on screen.
+    ///
+    /// **The one write, called from both appliers.** `enqueue-ask` is armed in
+    /// `Editing::act` for the keystroke path and in `AppHost::apply` for the
+    /// doors; a second copy of these three lines is a second set of rules about
+    /// what a new question does to the screen.
+    fn enqueue_ask(&mut self, id: AskId, question: phosphor_ui::question::QuestionVm) {
+        self.asks.insert(id, question);
+        // **It becomes the asked one immediately, and `T060` is what makes it
+        // wait.** Q9's rule — *"a question arriving while another float holds
+        // focus sets the statusline `!` and waits"* — is that task's whole
+        // subject and needs a queue to wait in.
+        self.asking = Some(id);
+    }
+
+    /// Answer a question and take it out of the queue.
+    ///
+    /// **Removed rather than marked**, because §5's `!`, `4a`'s float and
+    /// `T060`'s `]!` all read this one map: an ask that stayed in it with a
+    /// flag would be three readers agreeing about a question nobody is being
+    /// asked. Answers [`false`] for an id the queue does not have, which is the
+    /// ordinary case for a float answered twice.
+    fn answer_ask(&mut self, id: AskId, digit: Option<u32>, prose: Option<&str>) -> bool {
+        if self.asking == Some(id) {
+            self.asking = None;
+        }
+        if self.asks.remove(&id).is_none() {
+            return false;
+        }
+        // **The sentence goes through `Shell::saying`, which is `T053`'s
+        // channel and exists for exactly this shape.** A `Receipt::note`
+        // reaches whoever *called*, and the caller here is a digit — there is
+        // nobody on that side. The notice row is where §6 puts a sentence for
+        // the person at the terminal.
+        //
+        // **The answer itself goes nowhere yet, and this says what happened
+        // rather than pretending.** Getting it back to the agent is a wire —
+        // ACP's response to whatever asked — and the thing that asks is
+        // `T060`'s queue and `T061`'s permission flow.
+        self.saying = Some(match (digit, prose) {
+            (Some(digit), _) => format!("answered {digit}"),
+            (None, Some(said)) => format!("answered — {said}"),
+            // Unreachable: both appliers refuse an answer with neither.
+            (None, None) => "answered".to_owned(),
+        });
+        true
+    }
 }
 
 impl std::fmt::Debug for Shell {
@@ -8583,6 +8937,25 @@ impl Editing {
                 self.open_at = *at;
                 done()
             }
+            // **`T056`'s jump, and it is `open-file` with a different name.**
+            // The capability's own sentence names its three callers — *"a
+            // picker accept, a transcript tool row, an OSC 8 link"* — and what
+            // they have in common is that none of them is a *person naming a
+            // file*. `open-file` is `:e`; this is a place something already
+            // pointed at.
+            //
+            // **The two are redundant at the arm and that is recorded rather
+            // than resolved**, the same way `open-arch` and `open-float` are:
+            // collapsing them is a vocabulary decision and this is not the
+            // layer that gets to make one. What is *not* redundant is the
+            // shape — `position` here is the point of the verb, where
+            // `open-file`'s `at` is optional garnish on naming a file — and a
+            // door caller that can only say "here" needs a verb that says so.
+            Action::Motion(MotionAction::GotoLocation { path, position, .. }) => {
+                self.open = Some(path.clone());
+                self.open_at = *position;
+                done()
+            }
             // **vim's `CTRL-^`.** The alternate file is the one you were in
             // before this one, and pressing it twice puts you back — which is
             // the whole of why it is worth a key: the two files you are moving
@@ -9132,6 +9505,40 @@ impl Editing {
                 }
                 self.accept_picker(cx, AcceptHow::Open, Direction::Right)
             }
+            // `T059`. **`4a`'s digits under the float's name**, and it
+            // delegates rather than duplicating — the same shape `float-accept`
+            // above takes to `picker-accept`, and for the same reason: what a
+            // digit *means* is the float's business and what it *does* is the
+            // ask's.
+            //
+            // **The focused ask is resolved here and is not a parameter**,
+            // which is the whole difference between this verb and `answer-ask`.
+            // The node's sentence is *"digits answer only while it is
+            // focused"*; a digit that carried an ask id would be a digit that
+            // could answer a question you are not looking at.
+            Action::Float(FloatAction::FloatAnswer { digit }) => {
+                let Some(asked) = cx.shell.asked else {
+                    return declined("no question is focused");
+                };
+                let offered =
+                    cx.shell.asks.get(&asked).is_some_and(|question| {
+                        question.options.iter().any(|it| it.digit == *digit)
+                    });
+                if !offered {
+                    // **Declined by name rather than swallowed.** A float that
+                    // ate the key would be indistinguishable from one that had
+                    // not noticed.
+                    return declined(&format!("no option {digit} — press one that is offered"));
+                }
+                self.act(
+                    cx,
+                    &Action::Ask(AskAction::AnswerAsk {
+                        ask: asked,
+                        digit: Some(*digit),
+                        prose: None,
+                    }),
+                )
+            }
             Action::Picker(PickerAction::PickerAccept { how }) => {
                 self.accept_picker(cx, *how, Direction::Right)
             }
@@ -9242,6 +9649,44 @@ impl Editing {
                 // the statusline saying `idle` while claude works.
                 if cx.shell.turn.is_some_and(|(running, _)| running == *turn) {
                     cx.shell.turn = None;
+                }
+                done()
+            }
+            // -- `T059`: `4a`, claude asking mid-turn ------------------------
+            //
+            // **Armed in both appliers, and the write is one function.** A door
+            // lands in `AppHost::apply` and a keystroke lands here — `:ask` is
+            // an ex command and an ex command is a keystroke — so the arm has
+            // to exist twice or the verb works from one door and answers
+            // `not built yet` from the other. It did exactly that, measured at
+            // the terminal: `(enqueue-ask! …)` at the REPL raised `4a` and
+            // `:ask …` said *"not built yet — T060 builds it"*.
+            //
+            // What is *not* duplicated is what happens: both call
+            // [`Shell::enqueue_ask`], both mint from the same counter, and
+            // neither composes a float — the loop raises one by comparing
+            // `Shell::asking` against `Shell::asked`.
+            Action::Ask(AskAction::EnqueueAsk { prose, options }) => {
+                let id = cx.shell.mint_ask();
+                cx.shell.enqueue_ask(
+                    id,
+                    phosphor_ui::question::QuestionVm {
+                        prose: prose.clone(),
+                        options: options.clone(),
+                    },
+                );
+                Outcome::Done(Receipt {
+                    capability: name,
+                    value: Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)),
+                    note: None,
+                })
+            }
+            Action::Ask(AskAction::AnswerAsk { ask, digit, prose }) => {
+                if digit.is_none() && prose.is_none() {
+                    return declined("no answer given — a digit or prose, or :defer");
+                }
+                if !cx.shell.answer_ask(*ask, *digit, prose.as_deref()) {
+                    return Outcome::Refused(Refusal::NoSuchTarget);
                 }
                 done()
             }
@@ -9377,6 +9822,8 @@ impl Editing {
                 call,
                 verb,
                 target,
+                path,
+                line,
             }) => {
                 cx.shell
                     .transcript
@@ -9386,6 +9833,13 @@ impl Editing {
                         id: *call,
                         verb: verb.clone(),
                         target: target.clone(),
+                        // **The URI is built here and not in the widget**, for
+                        // the same reason every other resolved thing is: a
+                        // widget crate cannot know a workspace root, and
+                        // `file://` is a fact about this machine.
+                        link: path
+                            .as_deref()
+                            .map(|at| jump_uri(&cx.shell.workspace, at, *line)),
                         notes: Vec::new(),
                         outcome: None,
                     });
@@ -12663,6 +13117,11 @@ mod tests {
     fn shell() -> Shell {
         Shell {
             store: Arc::new(store::Shared::default()),
+            asks: BTreeMap::new(),
+            next_ask: Arc::new(std::sync::Mutex::new(1)),
+            asking: None,
+            asked: None,
+            workspace: PathBuf::new(),
             wake: Arc::new(|| {}),
             registers: BTreeMap::new(),
             picker: None,
@@ -15251,6 +15710,7 @@ mod tests {
             signature: None,
             picker: None,
             transcript: None,
+            asks: &BTreeMap::new(),
         };
 
         assert_eq!(

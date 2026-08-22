@@ -45,13 +45,16 @@
 //! | still deferred | widget | task |
 //! |---|---|---|
 //! | `diff` | `DiffBody` | `T063` |
-//! | `question` | `QuestionBody` | `T059` |
 //! | `watch` | `WatchOverlay` | `T076` |
 //!
-//! Every other kind draws. The most recent arrival is `picker`
-//! ([`crate::picker::Picker`], `T045`) — this table carried its row for a
-//! window after it started drawing, which is the drift the row-deletion rule
-//! above exists to make cheap and does not by itself prevent. Before it,
+//! Every other kind draws. The most recent arrival is `question`
+//! ([`crate::question::QuestionBody`], `T059`) — and the row-deletion rule
+//! worked exactly as designed: building it reddened two tests in this file, one
+//! of which is the fixture that *needs two deferred kinds* to prove the report
+//! is a list rather than a flag. Before it, `picker`
+//! ([`crate::picker::Picker`], `T045`) — this table carried *that* row for a
+//! window after it started drawing, which is the drift the rule exists to make
+//! cheap and does not by itself prevent. Before it,
 //! `completion` ([`crate::float::CompletionList`], `T038`) and `signature`
 //! ([`crate::float::SignatureBody`], `T039`); before them, `gutter`
 //! ([`crate::gutter`], `T031`), `virtual-text` ([`crate::virtual_text`],
@@ -101,6 +104,7 @@
 use core::cell::RefCell;
 use core::time::Duration;
 
+use phosphor_core::request::AskId;
 use phosphor_core::request::BufferId;
 use phosphor_core::request::SourceId;
 use phosphor_core::view::{
@@ -120,6 +124,7 @@ use crate::float::{
 };
 use crate::gutter::Fill;
 use crate::picker::{Picker, PickerVm};
+use crate::question::QuestionVm;
 use crate::status_line::{SessionState as UiSessionState, Spinner, format_elapsed};
 use crate::theme::Theme;
 use crate::transcript::TranscriptVm;
@@ -205,6 +210,22 @@ pub trait Resources: core::fmt::Debug {
 
     fn picker(&self, source: &SourceId) -> Option<&PickerVm> {
         let _ = source;
+        None
+    }
+
+    /// One queued question, by id (`T059`).
+    ///
+    /// **Keyed, unlike its four neighbours**, and that is `Node::Question`'s
+    /// own prop doing its job: a completion list or a transcript is *the*
+    /// current one, and a question is one of a queue that `T060` builds. A
+    /// float composed for ask 8 has to draw ask 8 even when a newer one has
+    /// arrived behind it, or answering the float would answer the wrong
+    /// question.
+    ///
+    /// `None` draws nothing — an ask that has been answered while its float was
+    /// still up is the ordinary case, not an error.
+    fn ask(&self, ask: AskId) -> Option<&QuestionVm> {
+        let _ = ask;
         None
     }
 
@@ -714,9 +735,19 @@ impl Ctx<'_> {
                     .render(area, buf);
             }
 
+            // `T059`, drawn by `crate::question`. The float around it is
+            // `T084`'s and the footer beside it is `key_hints` — this arm draws
+            // `4a`'s *inside*, which is claude's prose and the amber digits.
+            Node::Question { ask } => {
+                let Some(vm) = self.interp.resources.ask(*ask) else {
+                    return;
+                };
+                crate::question::QuestionBody::new(vm, theme).render(area, buf);
+            }
+
             // Deferred past Window D. Grouped, and split one kind at a time the
             // way the five above were, as each phase arrives.
-            Node::Diff { .. } | Node::Question { .. } | Node::Watch { .. } => {
+            Node::Diff { .. } | Node::Watch { .. } => {
                 self.defer(node.tag());
             }
         }
@@ -1105,7 +1136,48 @@ impl Ctx<'_> {
             Node::Picker { source, .. } => self.interp.resources.picker(source).map_or(0, |vm| {
                 u16::try_from(vm.rows.len().saturating_add(1)).unwrap_or(u16::MAX)
             }),
+            // `T059`. **The one node in the tree whose height depends on its
+            // width**, because `4a`'s prose is a paragraph and paragraphs wrap.
+            // This signature has no width, so this answer is the *unwrapped*
+            // one and [`Ctx::height_at`] is what a float body asks instead. A
+            // caller that lands here — a question composed into a sized slot
+            // rather than a float — gets the height it would have at its
+            // natural width, which is the same rule `Density::Grid` already
+            // works under one kind over.
+            Node::Question { ask } => self.interp.resources.ask(*ask).map_or(0, |vm| {
+                crate::question::QuestionBody::new(vm, self.theme())
+                    .desired_height(crate::question::natural_width(vm))
+            }),
             _ => 0,
+        }
+    }
+
+    /// Rows a node wants **at a known width** (`T059`).
+    ///
+    /// [`Ctx::height`]'s note says *"nothing in the tree reflows, so the width
+    /// does not enter into it"*, and that was true of all thirty node kinds
+    /// until `Node::Question`: `4a` is prose above its options, and prose that
+    /// did not wrap would be a float as wide as claude's longest sentence.
+    ///
+    /// **Only the kinds that can reflow are listed**, and everything else
+    /// delegates — so this cannot drift into a second height table. The
+    /// containers recur so a question inside a split still gets the width.
+    fn height_at(&self, node: &Node, width: u16) -> u16 {
+        match node {
+            Node::Question { ask } => self.interp.resources.ask(*ask).map_or(0, |vm| {
+                crate::question::QuestionBody::new(vm, self.theme()).desired_height(width)
+            }),
+            Node::Shed { child, .. } | Node::Pane { child, .. } => {
+                self.height_at(child.node(), width)
+            }
+            Node::Split { axis, slots } => slots
+                .iter()
+                .map(|slot| self.height_at(slot.child.node(), width))
+                .fold(0u16, |acc, h| match axis {
+                    Axis::Rows => acc.saturating_add(h),
+                    Axis::Columns => acc.max(h),
+                }),
+            other => self.height(other),
         }
     }
 
@@ -1129,6 +1201,13 @@ impl Ctx<'_> {
                 .resources
                 .signature()
                 .map_or(0, |vm| SignatureBody::new(vm).desired_width()),
+            // `T059`. The widest option row, or the prose up to a readable
+            // measure — see `question::natural_width`. The float clamps it.
+            Node::Question { ask } => self
+                .interp
+                .resources
+                .ask(*ask)
+                .map_or(0, crate::question::natural_width),
             other => self.natural(other).unwrap_or(0),
         }
     }
@@ -1215,10 +1294,13 @@ impl core::fmt::Debug for NodeBody<'_, '_> {
 }
 
 impl FloatBody for NodeBody<'_, '_> {
-    fn desired_height(&self, _width: u16) -> u16 {
-        // Nothing in the tree reflows, so the width does not enter into it —
-        // see `Ctx::height`.
-        self.ctx.height(self.node)
+    fn desired_height(&self, width: u16) -> u16 {
+        // **The width is used now, and `T059` is why.** This discarded it under
+        // a comment reading *"nothing in the tree reflows"*, which was true of
+        // every node kind until `4a` put a paragraph in a float body.
+        // `Ctx::height_at` lists the kinds that reflow and delegates the rest,
+        // so there is one height table and not two.
+        self.ctx.height_at(self.node, width)
     }
 
     fn desired_width(&self) -> u16 {
@@ -2139,7 +2221,6 @@ mod tests {
                 mode: DiffMode::Unified,
                 grouping: Grouping::Flat,
             },
-            Node::Question { ask: AskId(8) },
             Node::Watch { watch: WatchId(5) },
         ];
         for node in deferred {
@@ -2164,6 +2245,10 @@ mod tests {
                 text: String::new(),
                 anchor: None,
             },
+            // `T059`. `NoResources` answers no ask, so this draws an empty
+            // body — which is drawing, and is the distinction this half of the
+            // test is about.
+            Node::Question { ask: AskId(8) },
             // `T054`. `NoResources` hands back no transcript, so this draws
             // an empty pane — which is drawing, and is the distinction this
             // half of the test is about.
@@ -2206,15 +2291,6 @@ mod tests {
             [
                 Slot::new(
                     Constraint::Fill { weight: 1 },
-                    Node::Question { ask: AskId(3) },
-                ),
-                // `Node::Transcript` and `Node::Picker` both stood here in
-                // turn until `T054` and `T045` built them. `diff` replaces the
-                // second now; the test needs *two* deferred kinds to prove the
-                // report is a list and not a flag, which is the failure a
-                // single-entry fixture hides.
-                Slot::new(
-                    Constraint::Cells { cells: 1 },
                     Node::Diff {
                         source: DiffSource::Disk {
                             buffer: BufferId(1),
@@ -2223,10 +2299,23 @@ mod tests {
                         grouping: Grouping::Flat,
                     },
                 ),
+                // **This fixture keeps getting outlived by the build, which is
+                // the healthiest possible reason for a test to need editing.**
+                // `Node::Transcript` and `Node::Picker` both stood here until
+                // `T054` and `T045` built them; `Node::Question` replaced one of
+                // them and `T059` built that too. `diff` and `watch` are what is
+                // left. The test needs *two* deferred kinds to prove the report
+                // is a list and not a flag, which is the failure a single-entry
+                // fixture hides — so the day one of these ships, the other one
+                // moves up and something still-unbuilt takes this slot.
+                Slot::new(
+                    Constraint::Cells { cells: 1 },
+                    Node::Watch { watch: WatchId(3) },
+                ),
             ],
         ));
         let (_, report) = draw(&tree);
-        assert_eq!(report.deferred, vec!["question", "diff"]);
+        assert_eq!(report.deferred, vec!["diff", "watch"]);
     }
 
     #[test]

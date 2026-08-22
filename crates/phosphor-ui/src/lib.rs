@@ -24,6 +24,7 @@ pub mod key_hints;
 pub mod picker;
 pub mod prompt;
 pub mod prose;
+pub mod question;
 pub mod soft_wrap;
 pub mod status_line;
 pub mod tab_bar;

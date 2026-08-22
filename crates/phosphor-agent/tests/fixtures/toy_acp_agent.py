@@ -162,6 +162,12 @@ def main() -> int:
                         "title": "src/retry.rs",
                         "kind": "edit",
                         "status": "pending",
+                        # `T056`'s jump link. ACP keeps the *title* — what the
+                        # row says — apart from `locations`, which is where a
+                        # file actually is, and a real agent's title is a
+                        # sentence rather than a path. The two look alike here
+                        # only because `1b` happens to draw a path.
+                        "locations": [{"path": "/tmp/toy/src/retry.rs", "line": 19}],
                     },
                 },
             )

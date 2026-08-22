@@ -48,6 +48,9 @@
     "arch.scm"
     ;; `T057` — 7d/5d, the second surface built entirely from the spans hatch.
     "dashboard.scm"
+    ;; `T059` — 4a, and the first editor-layer surface built from ordinary
+    ;; chrome rather than from the spans hatch.
+    "asks.scm"
     "languages/typescript.scm"
     "languages/javascript.scm"
     "languages/rust.scm"

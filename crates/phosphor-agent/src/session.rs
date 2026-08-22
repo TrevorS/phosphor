@@ -640,6 +640,13 @@ async fn transcribe(shared: &Arc<Shared>, turn: TurnId, dispatch: Dispatch) {
                     }));
                 }
                 SessionUpdate::ToolCall(call) => {
+                    // **`T056` — the first location, and only the first.** ACP
+                    // carries a *list* of files a call touches; `1b` draws one
+                    // row per call and a row has one link. The rest are not
+                    // dropped so much as unaddressed: a row that could jump to
+                    // three places needs somewhere to put the choice, which is
+                    // a surface this screen does not have.
+                    let place = call.locations.first();
                     (shared.post)(Action::Session(SessionAction::ToolCallStarted {
                         turn,
                         call: shared.name(&call.tool_call_id.0),
@@ -649,6 +656,8 @@ async fn transcribe(shared: &Arc<Shared>, turn: TurnId, dispatch: Dispatch) {
                         // kind is the verb and the title is the target.
                         verb: format!("{:?}", call.kind).to_lowercase(),
                         target: Some(call.title),
+                        path: place.map(|at| at.path.display().to_string()),
+                        line: place.and_then(|at| at.line),
                     }));
                 }
                 SessionUpdate::ToolCallUpdate(update) => {
