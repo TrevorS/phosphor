@@ -90,18 +90,7 @@ NAMED = {
 # A row belongs here when a binding genuinely cannot be pressed by a test yet,
 # with the reason. It is not a place to park work: rule 2 fails the moment a
 # test does press it, so a row that stops being true stops being green.
-RECORDED = {
-    # `T058`. Both raise the prompt line and both work — they left the
-    # deferred table when the line was built. What has no test is the
-    # *keystroke*, and the reason is the harness rather than the editor:
-    # `press` counts frames, and a frame that opens the prompt is one the
-    # counting does not survive, so every subsequent press runs to its
-    # deadline. Probed against a real 100x30 pty and the editor is healthy —
-    # it draws the line and takes text into it. `docs/OPEN-QUESTIONS.md` §53
-    # carries the reproduction; the test lands with the fix.
-    "SPC c p": "T058 — prompt line is built; the pty harness cannot press it yet (§53)",
-    "SPC c s": "T058 — same binding, same reason",
-}
+RECORDED = {}
 
 # A Scheme string literal, escapes included. `"([^"]+)"` was the first version
 # and it was wrong twice in the same file: `(list "\"" …)` — the double-quote

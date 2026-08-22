@@ -33,7 +33,8 @@
 #     a keymap never names one, the machine turns keys into them;
 #   * a producer posts it (`ingest-*`) — nobody types an LSP answer;
 #   * a surface handles its own keys in Rust (`picker-accept`, `repl-history`,
-#     `float-select`) — `picker_key` and `repl_key` are those keymaps;
+#     `float-select`, `submit-prompt`) — `picker_key`, `repl_key` and `ex_key`
+#     are those keymaps;
 #   * it is the agent's door (`declare-regions`, `set-keybinding`) — a verb
 #     whose whole point is that something other than a person calls it.
 #
@@ -94,6 +95,14 @@ EMITTED = {
     "set-picker-query": "`picker_key` handles it, on every printable key",
     "cycle-picker-source": "`picker_key` handles it — `<tab>`",
     "toggle-picker-preview": "`picker_key` handles it",
+    # `T058`. The prompt line is the third surface with its own key handler in
+    # Rust: `ex_key` is its keymap, and the four verbs below are what those keys
+    # mean. `open-prompt` is the one a *keymap* names — `:` and `SPC c p` — and
+    # it is bound.
+    "set-prompt-text": "`ex_key` handles it, on every printable key",
+    "submit-prompt": "`ex_key` handles it — `<cr>`",
+    "cancel-prompt": "`ex_key` handles it — `esc`, and backspace off an empty line",
+    "prompt-history": "`ex_key`'s keymap is where `<up>` lands; the verb is the door's spelling",
     "float-select": "the float's own key handling",
     "float-select-row": "the float's own key handling",
     "float-accept": "the float's own key handling",

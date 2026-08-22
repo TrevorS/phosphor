@@ -3206,6 +3206,129 @@ mod driven {
         );
     }
 
+    /// **`T058`: screen `1c` reproduces from a keystroke.**
+    ///
+    /// The task's *Done when* — *"pressing `:` in the running binary raises the
+    /// line, anchor chip included"* — and `1c`'s caption is the mechanism:
+    /// *"visual-select, hit the prompt — file & range ride along
+    /// automatically"*.
+    ///
+    /// **`esc` before `ZQ`, and that is not politeness.** `leave_by` does a
+    /// `child.wait()` with no timeout, so a `ZQ` typed while the prompt is open
+    /// becomes *text on the prompt line* and the child never exits — the test
+    /// hangs in its own teardown, long after its assertions have passed. That
+    /// cost `docs/OPEN-QUESTIONS.md` §53 an entry blaming the harness for a bug
+    /// in the test that was reading it.
+    #[test]
+    fn the_prompt_line_reproduces_screen_1c_from_a_keystroke() {
+        let scratch = Scratch::new("prompt-anchor");
+        let runtime = copy_layer(&scratch.path);
+        // **`.txt`, not `.rs`.** A Rust file attaches a grammar and a language
+        // server, and both draw frames of their own — `press` asserts one frame
+        // per key, so the first press after `V` fails on a surplus that has
+        // nothing to do with the prompt. `1c` shows `src/retry.rs`; what this
+        // test is about is the chip naming *whatever* file rode along.
+        let file = scratch.path.join("retry.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // Lines 1 to 3 — `1c`'s three lines, started where the cursor already
+        // is. **`V` after a motion draws two frames** and `press` asserts one
+        // per key, so the sequence is the one
+        // `v_line_selects_whole_lines` already proves against this harness:
+        // select first, move after.
+        editor.press(b"V");
+        editor.press(b"j");
+        editor.press(b"j");
+        assert!(
+            shows(&editor.tail(), "V-LINE"),
+            "the selection is live; row was: {}",
+            editor.tail()
+        );
+
+        // **The keystroke.** `:` in visual mode carries the selection along —
+        // the binding is `open-prompt` with `key/at-selection`, and resolving
+        // it to a range *when the prompt opens* is what makes the chip name
+        // something that stays true after the selection is gone.
+        editor.press(b":");
+        // `tail()` is the last *non-empty* row, which is the prompt's — `1c`
+        // puts it above the statusline, so the two rows are read separately
+        // below.
+        let row = editor.screen().line(SCREEN.ws_row - 2);
+
+        // No trailing space in the needle: `⚓` is double-width, so the grid
+        // carries a continuation cell after it rather than the space the
+        // string has.
+        assert!(
+            row.contains('⚓'),
+            "the anchor chip is on screen; row was: {row:?}"
+        );
+        assert!(
+            row.contains("retry.txt:1–3"),
+            "and it names the file and the range that rode along; row was: {row:?}"
+        );
+
+        // **The statusline is still there, on its own row.** `1c` draws the
+        // prompt *below* it — asserted as rows rather than as text, which is
+        // the claim the layout actually makes.
+        let screen = editor.screen();
+        let last = screen.line(SCREEN.ws_row - 1);
+        assert!(
+            !last.contains('⚓') && !last.trim().is_empty(),
+            "the statusline keeps its own row under the prompt; row was: {last:?}"
+        );
+
+        // **Two `esc`s.** The first closes the prompt and leaves the selection
+        // live; the second leaves visual mode. `ZQ` typed in either of those
+        // states is not a quit, and `leave_by` waits on the child with no
+        // timeout — see this test's own note above.
+        editor.press(b"\x1b");
+        editor.press(b"\x1b");
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **`T058`: `SPC c p` and `SPC c s` raise the same line.**
+    ///
+    /// `3c`'s `+claude · prompt · steer`, both `open-prompt` with
+    /// `kind: claude`. They named `T058` on the notice row until the line was
+    /// built; this is what replaced that row in the deferred table.
+    #[test]
+    fn the_claude_prompt_raises_from_a_keystroke() {
+        let scratch = Scratch::new("claude-prompt");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // One literal, three keys: `press` waits for one frame per byte, and
+        // `scripts/key_coverage.py` reads the notation `SPC c p` out of the
+        // sequence — pressed as three separate calls it is three keys the lint
+        // cannot see as one binding.
+        editor.press(b" cp");
+        let raised = editor.tail();
+        assert!(
+            !shows(&raised, "T058"),
+            "the line is built, so nothing names the task; row was: {raised:?}"
+        );
+        assert!(
+            raised.contains(':'),
+            "and the prompt is up; row was: {raised:?}"
+        );
+
+        editor.press(b"\x1b");
+        editor.press(b" cs");
+        let steered = editor.tail();
+        assert!(
+            !shows(&steered, "T058"),
+            "steer raises the same line; row was: {steered:?}"
+        );
+
+        editor.press(b"\x1b");
+        editor.leave_by(b"ZQ");
+    }
+
     /// **`T053`: a declared block becomes markers and a notification.**
     ///
     /// The task's *Done when* is two things and they land in two places: the

@@ -34,8 +34,9 @@
 //!
 //! `1c` draws the prompt **below** the statusline, which every other mockup's
 //! prompt does not do because no other mockup draws one. The binary's
-//! `Geometry` decides: an anchored prompt gets its own row, an unanchored one
-//! borrows the statusline the way vim does. Both hand this widget one `Rect`.
+//! `Geometry` decides: an anchored prompt gets its own row (`Geometry::prompt`),
+//! an unanchored one borrows the statusline the way vim does. Both hand this
+//! widget one `Rect`.
 //!
 //! Owned by `surface`.
 

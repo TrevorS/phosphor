@@ -2895,6 +2895,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         told: 0,
         folded: Vec::new(),
         saying: None,
+        prompt_step: None,
+        history: Vec::new(),
+        recalled: None,
     };
     // `T088`'s step 4c: every buffer by id, every pane by id, one of each.
     // The maps are the wrong shape for one entry and that is what they are
@@ -3441,6 +3444,54 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             notice = Some(said);
         }
 
+        // `T058`'s four surface verbs, performed where `ex_line` lives.
+        match shell.prompt_step.take() {
+            Some(PromptStep::Set(text)) => {
+                ex_line = text;
+                shell.recalled = None;
+            }
+            Some(PromptStep::Cancel) => {
+                surface = Surface::Buffer;
+                ex_line.clear();
+                shell.recalled = None;
+            }
+            Some(PromptStep::Submit) => {
+                surface = Surface::Buffer;
+                if !ex_line.trim().is_empty() {
+                    shell.history.push(ex_line.clone());
+                }
+                shell.recalled = None;
+                notice = submit_ex(
+                    &mut layer,
+                    editing,
+                    &mut Cx::new(held, focus, &mut panes, &mut shell),
+                    &ex_line,
+                );
+            }
+            Some(PromptStep::History(delta)) => {
+                // **Positive walks back**, which is the row's own wording and
+                // vim's `<up>`. Clamped at both ends rather than wrapping: a
+                // history that wrapped would hand you the newest line when you
+                // asked for one older than the oldest, which is the opposite of
+                // what you asked for.
+                let depth = shell.history.len();
+                if depth > 0 {
+                    let at = shell.recalled.map_or(0, |at| at);
+                    let moved = i64::try_from(at).unwrap_or(i64::MAX) + delta;
+                    let clamped = moved.clamp(0, i64::try_from(depth).unwrap_or(i64::MAX));
+                    let at = usize::try_from(clamped).unwrap_or(0);
+                    if at == 0 {
+                        shell.recalled = None;
+                        ex_line.clear();
+                    } else {
+                        shell.recalled = Some(at);
+                        ex_line = shell.history[depth - at].clone();
+                    }
+                }
+            }
+            None => {}
+        }
+
         // `T058`. **Cloned out of the buffer, not borrowed from it.** The
         // chrome below outlives `editing`'s `&mut`, and a `FileSpan` is a path
         // and two positions — cheaper to copy once a frame than to restructure
@@ -3482,6 +3533,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // The rects a scroll and the wrap width were measured against above are
         // deliberately the ones from before this call — see [`Geometry`].
         geometry.take_strips(&leader, hint.is_some(), &theme);
+        // `T058`. After the two strips, so `1c`'s row sits directly above the
+        // statusline whatever else is up.
+        geometry.take_prompt(anchored.is_some());
 
         // `T045`. **Ticked here, once, before the draw** — the matcher needs
         // `&mut` and `Resources` has no `&mut` in it and must never grow one.
@@ -3685,10 +3739,18 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     // it a line editor rather than a mode of the machine.
                     Event::Key(key) if matches!(surface, Surface::Ex) => {
                         match ex_key(key, &mut ex_line) {
-                            ExStep::Typing => {}
+                            ExStep::Typing => shell.recalled = None,
                             ExStep::Cancel => surface = Surface::Buffer,
                             ExStep::Submit => {
                                 surface = Surface::Buffer;
+                                // `T058` — ex-style history. Recorded before it
+                                // runs, so a line that fails is still one you
+                                // can walk back to and fix, which is the whole
+                                // reason vim keeps one.
+                                if !ex_line.trim().is_empty() {
+                                    shell.history.push(ex_line.clone());
+                                }
+                                shell.recalled = None;
                                 notice = submit_ex(
                                     &mut layer,
                                     editing,
@@ -5203,6 +5265,16 @@ struct Geometry {
     hint: Option<Rect>,
     /// The statusline's row — the ex line and a notice borrow it.
     status: Rect,
+    /// `1c`'s anchored prompt row, below the statusline (`T058`).
+    ///
+    /// **Only when the prompt carries an anchor**, and the mockups are why.
+    /// `1c` is the *only* screen in the set that draws a prompt at all, and it
+    /// draws one with a chip, below a statusline that is still there. Every
+    /// other screen's `:` line is vim's — the last row, borrowed. So an
+    /// unanchored prompt keeps that and an anchored one gets its own row: the
+    /// chip plus the message does not fit in a row the statusline is also
+    /// using.
+    prompt: Option<Rect>,
     /// §5's tab bar, when there are two or more panes to name (`T089`).
     ///
     /// **Taken off [`Geometry::body`] as well as [`Geometry::pane`], which the
@@ -5237,6 +5309,7 @@ fn lay_out(area: Rect) -> Geometry {
         hint: None,
         status,
         tabs: None,
+        prompt: None,
     }
 }
 
@@ -5272,6 +5345,7 @@ impl Geometry {
             hint: self.hint.map(|rect| rect.intersection(area)),
             status: self.status.intersection(area),
             tabs: self.tabs.map(|rect| rect.intersection(area)),
+            prompt: self.prompt.map(|rect| rect.intersection(area)),
         }
     }
 
@@ -5301,6 +5375,18 @@ impl Geometry {
         if self.tabs.is_some() {
             take_top_rows(&mut self.body, 1);
         }
+    }
+
+    /// Takes `1c`'s prompt row off the bottom, when the prompt has an anchor.
+    ///
+    /// Below the leader grid and the hint row, which is to say **directly above
+    /// the statusline** — `1c` draws it there, and it is where vim's `:` line
+    /// lives too, one row further down.
+    fn take_prompt(&mut self, anchored: bool) {
+        if !anchored {
+            return;
+        }
+        self.prompt = take_rows(&mut self.pane, phosphor_ui::prompt::rows());
     }
 
     fn take_strips(&mut self, leader: &[KeyHint], hint: bool, theme: &Theme) {
@@ -5990,6 +6076,27 @@ fn draw(
         .buffer_mut()
         .set_style(geometry.status, Style::new().bg(theme.chrome.statusline));
 
+    // **`1c`'s anchored prompt, on its own row.** Drawn here rather than as a
+    // branch of the match below, so the statusline underneath takes exactly the
+    // path it takes on every other frame — one render, and nothing below has to
+    // know a prompt happened.
+    let chrome = match (geometry.prompt, chrome) {
+        (Some(row), Some(prompt)) if prompt.caret => {
+            let line = Tree::new(Node::Prompt {
+                prompt: PromptKind::Ex,
+                text: prompt
+                    .text
+                    .strip_prefix(':')
+                    .unwrap_or(prompt.text)
+                    .to_owned(),
+                anchor: prompt.anchor.cloned(),
+            });
+            Interpreter::new(theme, &NoResources).render(&line, row, frame.buffer_mut());
+            None
+        }
+        (_, chrome) => chrome,
+    };
+
     match chrome {
         // **A prompt is `Node::Prompt` now** (`T058`), which is the
         // demolition `docs/OPEN-QUESTIONS.md` §13 scheduled: this arm built the
@@ -6052,7 +6159,7 @@ fn draw(
             let chip = chrome
                 .anchor
                 .map_or(0, |anchor| phosphor_ui::prompt::chip_width(anchor) + 1);
-            let row = geometry.status;
+            let row = geometry.prompt.unwrap_or(geometry.status);
             let x = row
                 .x
                 .saturating_add(chip)
@@ -6818,6 +6925,22 @@ struct Shell {
     /// so *"claude is working"* is the client's report rather than the
     /// editor's guess.
     turn: Option<(TurnId, Instant)>,
+    /// What the prompt line has been asked to do, drained by the loop
+    /// (`T058`).
+    ///
+    /// **The four surface verbs are `Deny` on every door**, so nothing but a
+    /// key reaches them — and a key is handled in the loop, which is where
+    /// `ex_line` lives. An arm cannot touch that local, so it posts here and
+    /// the loop performs it, the same shape `Intent` has for the VM.
+    prompt_step: Option<PromptStep>,
+    /// Ex history, oldest first — `6d`'s `q:`, and `prompt-history` walks it.
+    ///
+    /// **One list for both kinds.** `prompt-history`'s own row says so:
+    /// *"prompts to claude are ex history too"*. What you typed is what you
+    /// want back, and which line it went down is not how anyone remembers it.
+    history: Vec<String>,
+    /// How far back `prompt-history` has walked, or [`None`] at the live line.
+    recalled: Option<usize>,
     /// A sentence a door asked the editor to say, waiting for a frame that
     /// has somewhere to put it (`T053`).
     ///
@@ -8468,6 +8591,39 @@ impl Editing {
                 }
                 PromptKind::Search => declined("search is T058's other half — :/ is not built yet"),
             },
+            // `T058`'s four surface verbs. Each posts a step the loop
+            // performs — see [`Shell::prompt_step`] for why an arm cannot do
+            // it here — and each refuses when there is no prompt open, because
+            // a verb that silently did nothing would be indistinguishable from
+            // one that is not built.
+            Action::Prompt(PromptAction::SetPromptText { text }) => {
+                if self.prompt.is_none() {
+                    return declined("no prompt is open");
+                }
+                cx.shell.prompt_step = Some(PromptStep::Set(text.clone()));
+                done()
+            }
+            Action::Prompt(PromptAction::SubmitPrompt {}) => {
+                if self.prompt.is_none() {
+                    return declined("no prompt is open");
+                }
+                cx.shell.prompt_step = Some(PromptStep::Submit);
+                done()
+            }
+            Action::Prompt(PromptAction::CancelPrompt {}) => {
+                if self.prompt.is_none() {
+                    return declined("no prompt is open");
+                }
+                cx.shell.prompt_step = Some(PromptStep::Cancel);
+                done()
+            }
+            Action::Prompt(PromptAction::PromptHistory { delta }) => {
+                if self.prompt.is_none() {
+                    return declined("no prompt is open");
+                }
+                cx.shell.prompt_step = Some(PromptStep::History(*delta));
+                done()
+            }
             Action::App(AppAction::Quit { force }) => {
                 if !*force && self.dirty.get() {
                     return Outcome::Refused(Refusal::WouldLoseWork);
@@ -11324,6 +11480,19 @@ fn ex_key(key: KeyEvent, line: &mut String) -> ExStep {
     ExStep::Typing
 }
 
+/// What the prompt line has been asked to do (`T058`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PromptStep {
+    /// `set-prompt-text` — replace what is typed.
+    Set(String),
+    /// `submit-prompt` — run it.
+    Submit,
+    /// `cancel-prompt` — close it, changing nothing.
+    Cancel,
+    /// `prompt-history` — walk back, or forward with a negative delta.
+    History(i64),
+}
+
 /// What one key did to an open picker (`T045`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PickerStep {
@@ -12240,6 +12409,9 @@ mod tests {
             told: 0,
             folded: Vec::new(),
             saying: None,
+            prompt_step: None,
+            history: Vec::new(),
+            recalled: None,
         }
     }
 

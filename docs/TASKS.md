@@ -3281,12 +3281,65 @@ live.
 
 ---
 
-- [ ] **T058 · PromptLine**
+- [x] **T058 · PromptLine**
   The `:` line. `⚓` anchor chip when a selection rides along — visual-select, hit the prompt,
   file and range ride automatically. Routes to command parse or Claude message. Ex-style
   history.
   *Done when:* screen `1c` reproduces **from a keystroke** — pressing `:` in the running binary
   raises the line, anchor chip included. *Needs:* T050
+
+  > **Built 2026-08-21.** `crates/phosphor-ui/src/prompt.rs` draws
+  > `Node::Prompt` — **the demolition [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)
+  > §13 scheduled.** That ruling let the ex row be built from `Node::Line` and
+  > `Node::Label` in the binary, *"scaffolding with a demolition date"*, and
+  > named this task as the date. `main.rs` composes no prompt out of primitives
+  > any more.
+  >
+  > **The anchor resolves when the prompt opens, not when it is submitted.**
+  > `Target::Selection {}` is a *question* — "whatever is selected" — and the
+  > selection is gone by the time you finish typing, so the chip has to name a
+  > range that will still be true. `1c`'s caption is the whole feature.
+  >
+  > **The range is inclusive**, because that is what a line range means. A
+  > line-wise selection of 2–4 ends at the offset that *begins* line 5, so the
+  > raw conversion reads `2–5` and names a line nobody selected; vim's `'<,'>`
+  > is inclusive and `1c` draws `19–21`.
+  >
+  > **`1c`'s two rows ship.** It is the only screen in the set that draws a
+  > prompt at all, and it draws one below a statusline that is still there —
+  > `Geometry::prompt` takes that row when the prompt carries an anchor, and an
+  > unanchored `:` keeps vim's borrowed last row, which is every other screen
+  > and every other pty test in the file.
+  >
+  > **`shown_path` is one rule with two callers now.** `T089`'s tab titles
+  > established it and the chip needed the same thing; its doc says why it is
+  > *not* `store::key_for`, which must keep an outside path absolute or it names
+  > a different file.
+  >
+  > **The line paints no ground**, unlike `tab_bar` and the leader grid: those
+  > *are* their strip, and a prompt borrows a row the caller has already
+  > painted. Caught by
+  > `the_chrome_strip_is_painted_under_the_statusline_and_the_ex_line`.
+  >
+  > **A day lost to a wrong diagnosis, recorded at §53.** Every pty test that
+  > opened the prompt ran to a deadline, four theories were ruled out by running
+  > them, and the entry blamed `press`'s frame accounting. It was `leave_by`'s
+  > `child.wait()` with no timeout: `ZQ` typed while the prompt is open is two
+  > characters on the prompt line, so the child never exits and the test hangs
+  > in its own teardown — *after* every assertion in it has passed. The timing
+  > said so and nobody did the arithmetic. Two real constraints surfaced on the
+  > way and are now written into the tests: `V` after a motion draws two frames,
+  > and a `.rs` fixture attaches a grammar and a server that draw their own.
+  >
+  > **Search is the half this task did not build**, and the refusal says which:
+  > a search prompt needs somewhere to search, which is the search machinery
+  > rather than the line.
+  >
+  > **Verification.** Two keystroke tests in the running binary — visual-select
+  > then `:` for `1c`'s chip and its two rows, and `SPC c p` / `SPC c s` for the
+  > claude prompt — plus four widget tests over the row itself. Planted and
+  > caught: an anchor that does not ride along, and a half-open range.
+  > `scripts/key_coverage.py`'s `RECORDED` is empty. `just gate` green.
 
 - [ ] **T059 · QuestionBody**
   Prose + amber digit options `[1]`–`[n]` + full-command footer. Digits answer only while
