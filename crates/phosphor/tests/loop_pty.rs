@@ -3450,6 +3450,274 @@ mod driven {
         editor.leave_by(b"ZQ");
     }
 
+    /// **`T060`: a question arriving while something else holds focus waits.**
+    ///
+    /// Q9, in one sentence: *"a question arriving while another float holds
+    /// focus sets the statusline `!` and waits. Surfaces when nothing else
+    /// holds focus."* Both halves, in order — and the acceptance's own wording
+    /// for the first is that asking while a picker is open **destroys
+    /// nothing**.
+    ///
+    /// **Asked from the REPL and not from `:ask`**, because the point is that
+    /// the ask arrives while a surface is up, and an ex line typed at a picker
+    /// goes into the picker's filter. The REPL is a surface that can also run
+    /// the producer, which makes it the one place a pty can stage this.
+    #[test]
+    fn a_question_that_arrives_behind_a_surface_waits_for_it() {
+        let scratch = Scratch::new("ask-queue");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        // Needled on the *receipt* — `enqueue-ask` answers the id it minted, so
+        // an agent can name the ask when the answer comes back. `steel` is in
+        // the REPL header, already drawn, and never in the delta.
+        editor.press_until(
+            b"(enqueue-ask! \"deploy to prod?\" (list (hash \"digit\" 1 \"label\" \"go\")))\r",
+            "⇒ 1",
+        );
+
+        // **It waited.** The REPL still owns the screen, and the question has
+        // not painted over what was being typed into it.
+        let behind = grid_of(&editor.shown_on_grid(b"", "REPL"));
+        assert!(
+            !shows(&behind, "needs input"),
+            "the question waits behind the surface; grid was:\n{behind}"
+        );
+        // And it said so. §5's `!` is the whole notification a queued ask gets,
+        // which is why `StatusLineVm::ask_pending` carries Q9's sentence in its
+        // own doc — and why it read `false` from the binary until this task.
+        assert!(
+            shows(&behind, "deploy to prod?") || behind.contains('!'),
+            "and the strip carries the flag; grid was:\n{behind}"
+        );
+
+        // **And it surfaces when nothing else holds focus.**
+        let surfaced = grid_of(&editor.shown_on_grid(b"(close-repl!)\r", "needs input"));
+        assert!(
+            shows(&surfaced, "deploy to prod?"),
+            "the question comes up on its own; grid was:\n{surfaced}"
+        );
+        assert!(
+            shows(&surfaced, "[1] go"),
+            "with its options intact — nothing was destroyed; grid was:\n{surfaced}"
+        );
+
+        editor.press_quietly(b"\x1b");
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **`T061`: screen `7a` reproduces, and always-allow writes a rule.**
+    ///
+    /// *"consequential command · exact invocation shown · always-allow writes a
+    /// legible rule"*, and the acceptance's two halves: **readable by a human**
+    /// and **takes effect next time**.
+    ///
+    /// **The rule is in the option's own label**, which is one better than the
+    /// mockup: `7a` puts `2 writes (allow "git push")` in the footer, and this
+    /// puts it on the thing you are pressing. A legible rule is one you read
+    /// before you agree to it.
+    #[test]
+    fn screen_7a_reproduces_and_always_allow_writes_a_legible_rule() {
+        let scratch = Scratch::new("permission");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let asked = grid_of(
+            &editor.shown_on_grid(b":permit git push origin retry-backoff\r", "wants to run"),
+        );
+        // **The invocation, as it will run.** A permission ask that paraphrased
+        // what it was asking about would be asking you to trust the paraphrase.
+        assert!(
+            shows(&asked, "$ git push origin retry-backoff"),
+            "`7a` shows the exact invocation; grid was:\n{asked}"
+        );
+        assert!(
+            shows(&asked, "allow once") && shows(&asked, "deny"),
+            "with `7a`'s three answers; grid was:\n{asked}"
+        );
+        // **The rule, spelled before you press it.** The verb is the first two
+        // words — `git push` from the whole command line — because a rule as
+        // specific as the invocation would never match again.
+        assert!(
+            shows(&asked, "always allow git push"),
+            "and the rule it would write; grid was:\n{asked}"
+        );
+
+        // `[2]` — always. The float closes and the strip says what happened.
+        let granted = editor.press_until(b"2", "allowing git push");
+        assert!(
+            shows(&granted, "allowing git push from now on"),
+            "the grant says what it did; session was: {granted}"
+        );
+
+        // **Takes effect next time**, which here is the next invocation of the
+        // same verb: a rule that already permits it is not a question, and that
+        // is checked on the path that would otherwise ask.
+        editor.press_quietly(b":permit git push origin somewhere-else\r");
+        let quiet = grid_of(&editor.shown_on_grid(b"j", "1:1"));
+        assert!(
+            !shows(&quiet, "wants to run"),
+            "a rule that covers it asks nothing; grid was:\n{quiet}"
+        );
+
+        // **And it is readable.** `:allowed` is the audit — a permission
+        // surface whose grants are invisible is one you stop trusting.
+        let listed = grid_of(&editor.shown_on_grid(b":allowed\r", "always allowed"));
+        editor.press_quietly(b"\x1b");
+        editor.leave_by(b"ZQ");
+        assert!(
+            shows(&listed, "git push"),
+            "the written rule reads back; grid was:\n{listed}"
+        );
+
+        // **And it reached disk**, which is what makes *next time* mean the
+        // next session rather than the next keystroke. `T101` put
+        // machine-written forms in the config home; `7a` still draws
+        // `init.scm`, and the entry in `TASKS.md` records that.
+        let persisted = scratch.persisted().join("persisted.scm");
+        let written = fs::read_to_string(&persisted).unwrap_or_default();
+        assert!(
+            written.contains("(allow \"git push\")"),
+            "the rule is a form a person can read; file was {written:?}"
+        );
+    }
+
+    /// **`T060`: a workspace edit reaches a file no pane was showing.**
+    ///
+    /// The arm this queue owed a task that is not its own.
+    /// `scripts/lint-action-arms.sh` has named `apply-workspace-edit` on every
+    /// run for two windows: `T036` built the reading half and the applying half
+    /// was blocked twice — nowhere to put the question, and files that are not
+    /// open.
+    ///
+    /// **`OPEN-QUESTIONS.md` §47's rules, exercised.** The file edited here is
+    /// never opened in a pane, so the buffer that receives the edit is one
+    /// nothing is pointing at — the container `T088` shipped and this task
+    /// inherited. It is dirty afterwards, and `:wall` is what writes it, which
+    /// is the same two steps a rename you typed yourself would take.
+    #[test]
+    fn a_workspace_edit_reaches_a_file_no_pane_is_showing() {
+        let scratch = Scratch::new("workspace-edit");
+        let runtime = copy_layer(&scratch.path);
+        let here = scratch.path.join("sample.txt");
+        fs::write(&here, "alpha\n").expect("a fixture");
+        let elsewhere = scratch.path.join("untouched.txt");
+        fs::write(&elsewhere, "before\n").expect("a second fixture");
+
+        let editor = Editor::open(&here, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        // Line 1 columns 1..7 — `before` — replaced. Spans are line/column, and
+        // the end is exclusive, which is what `1 7` says here.
+        let form = format!(
+            "(apply-workspace-edit! (list (hash \"path\" \"{}\" \"edits\" \
+             (list (hash \"span\" (hash \"start\" (hash \"line\" 1 \"column\" 1) \
+             \"end\" (hash \"line\" 1 \"column\" 7)) \"text\" \"after\")))))\r",
+            elsewhere.display()
+        );
+        editor.press_until(form.as_bytes(), "⇒");
+
+        // **It does not apply on the way in, and that is the rating doing its
+        // job.** `apply-workspace-edit` is the one `Lsp` capability rated
+        // `Ask`, and the rating is about the *action* rather than the door: a
+        // rename arriving from Steel needs the same yes as one from a server.
+        // So closing the REPL surfaces the question rather than the edit.
+        let asked = grid_of(&editor.shown_on_grid(b"(close-repl!)\r", "needs input"));
+        assert!(
+            shows(&asked, "let it"),
+            "the edit became a question; grid was:\n{asked}"
+        );
+        assert!(
+            shows(&asked, "steel"),
+            "which says who wants it; grid was:\n{asked}"
+        );
+        assert!(
+            fs::read_to_string(&elsewhere).expect("the file is there") == "before\n",
+            "and nothing was applied while it was being asked"
+        );
+
+        // `[1]` — let it. **Only now** does the edit run.
+        editor.press_until(b"1", "answered 1");
+
+        // **`:wall` writes it**, which is §47's second rule answered out loud:
+        // a rename whose files were not written by `:wall` is the surprise, not
+        // the safety.
+        // **`:wall` says nothing when it succeeds** — its notice is the list of
+        // buffers it *could not* write — so this is pressed quietly and settled
+        // rather than waited on. A needle on a sentence the command does not
+        // emit is a thirty-second deadline dressed as an assertion.
+        editor.press_quietly(b":wall\r");
+        editor.shown_on_grid(b"", "NORMAL");
+        editor.leave_by(b"ZQ");
+
+        let written = fs::read_to_string(&elsewhere).expect("the file is still there");
+        assert!(
+            written.contains("after"),
+            "the edit reached a file no pane was showing; file was {written:?}"
+        );
+        assert!(
+            !written.contains("before"),
+            "and replaced what was there; file was {written:?}"
+        );
+    }
+
+    /// **`T060`: `esc` defers, `]!` brings it back, and the `!` outlives both.**
+    ///
+    /// `4a`'s third way out — *"you answer when you get a chance, same
+    /// philosophy as unseen"*. The queue has to converge for this to be a
+    /// feature rather than a loop: without the deferral set, `esc` closes the
+    /// float and the very next pass finds the same head still pending and
+    /// raises it again.
+    #[test]
+    fn a_deferred_question_stays_queued_until_the_bracket_bang_recalls_it() {
+        let scratch = Scratch::new("ask-defer");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.shown_on_grid(b":ask migrate the schema?|now|later\r", "needs input");
+
+        // `esc later`. The float goes and does not come back on its own.
+        // **Needled on `2:1`, which is false before the keys and true after.**
+        // `1:1` was already on the grid, so waiting for it returned the frame
+        // *before* esc had been processed and the assertion below read a stale
+        // screen — a green test would have proved nothing and a red one, as
+        // here, proves the wrong thing. `shown_on_grid` cannot wait for an
+        // absence, so the wait is on what the keystroke makes true.
+        // **Two writes, not one.** `\x1b` immediately followed by `j` in the
+        // same write is the terminal's ESC-prefix ambiguity and arrives as
+        // `<A-j>` — the editor said so on its own hint row, which is how this
+        // was found.
+        editor.press_quietly(b"\x1b");
+        let after = grid_of(&editor.shown_on_grid(b"j", "2:1"));
+        assert!(
+            !shows(&after, "needs input"),
+            "esc puts the question away; grid was:\n{after}"
+        );
+        // **And the `!` is still there**, because deferring is a fact about the
+        // screen and the question is still pending. A flag that vanished when
+        // you pushed something back would be the editor forgetting for you.
+        assert!(
+            after.lines().any(|row| row.contains('!')),
+            "the strip still says a question is waiting; grid was:\n{after}"
+        );
+
+        // `]!`, pressed as one literal so `key_coverage.py` can see it.
+        let recalled = grid_of(&editor.shown_on_grid(b"]!", "needs input"));
+        assert!(
+            shows(&recalled, "migrate the schema?"),
+            "`]!` brings back what you pushed aside; grid was:\n{recalled}"
+        );
+
+        editor.press_quietly(b"\x1b");
+        editor.leave_by(b"ZQ");
+    }
+
     /// **`T059`: a digit over a buffer is still vim's count prefix.**
     ///
     /// The other half of *"digits answer only while it is focused"*, and the

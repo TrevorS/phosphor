@@ -3728,7 +3728,7 @@ live.
   > neither had a non-question float open. Pressing `1` at `:arch` now proves
   > the condition. Three planted defects, three caught. `just gate` green.
 
-- [ ] **T060 · The ask queue**
+- [x] **T060 · The ask queue**
   Per Q9: a question arriving while another float holds focus **sets the statusline `!` and
   waits**. Surfaces when nothing else holds focus; `]!` jumps to it. The queue is a **store
   query, not widget state**, so `]!`, the inbox, and the statusline read one truth.
@@ -3736,6 +3736,94 @@ live.
   40 columns. **And `apply-workspace-edit` applies**, which is the first arm this queue owes to a
   task that is not its own. *Needs:* T059, T041
 
+  > **Built 2026-08-21.** The queue is derived rather than stored, `esc later`
+  > converges, `]!` walks it, Q9's `!` is fed at last, and
+  > `apply-workspace-edit` applies — the debt the entry below has been carrying
+  > since `S4`.
+  >
+  > **The queue is a query because it is not a second collection.** Q9 asks that
+  > *"`]!`, the inbox and the statusline read one truth"*, and `T059` had a
+  > `Shell::asking` field beside the map — two things that must agree are one
+  > thing that can disagree. What wants the screen is now `Shell::head_ask`, the
+  > oldest ask you have not pushed back, computed from the map; `pending-asks`
+  > and `ask` are that same map published, the way `session` and `transcript`
+  > already are.
+  >
+  > **`esc later` needs a deferral set or it does not converge.** Deferring
+  > leaves the question *pending* — it still counts toward the `!`, still
+  > answers `pending-asks` — and what it stops doing is asking for the screen
+  > back. Without that, `esc` closes the float and the very next pass finds the
+  > same head still pending and raises it again. **The first version had exactly
+  > that bug** and the symptom read as a hang: the float would not close, and
+  > the condition at fault was checking only that the ask still existed.
+  >
+  > **`]!` is a motion and clears a deferral; it opens nothing.** The float
+  > follows the queue by the ordinary rule, so *"jump to the pending ask"* is
+  > the same thing as *"stop pushing it back"*. **No `[!` beside it**, unlike
+  > every other pair in that keymap block: those walk spans in a file and have
+  > two directions because a cursor does, and this walks a queue, which has the
+  > order you put things into.
+  >
+  > **`StatusLineVm::ask_pending` carried Q9's own sentence since `T017` and the
+  > binary handed it `false`.** *"It sets the statusline `!` flag immediately and
+  > waits"* was implemented on the drawing side and on nothing else — the widget
+  > had the field, the doc, the suppression rule beside `Waiting`, and no
+  > source. It is the queue now. Deferred asks count: pushing a question back
+  > does not answer it, and a `!` that vanished when you deferred one would be
+  > the editor forgetting on your behalf.
+  >
+  > **The rating became a mechanism.** `McpPolicy::Ask` means *only the keyboard
+  > says yes to this*, and `deliver` answered `needs an ask first — T060 builds
+  > the queue` for four windows because there was nowhere to put the question.
+  > Now an `Ask`-rated action from a producer becomes one: `held_question` names
+  > **who asked and what for**, the action waits in `Shell::held` keyed by the
+  > ask, and `[1]` releases it into `Shell::granted` for the loop to run. Keyed
+  > rather than a single slot, because two servers can each want a rename while
+  > you are reading something else — and for a rating whose whole point is
+  > consent, silently overwriting the first is the worst available failure.
+  >
+  > **The rating is about the action, not the door.** A rename arriving from
+  > Steel needs the same yes as one from an LSP client, so `AppHost::apply`
+  > queues a question too — the third entry on that applier's forwarding list
+  > and the first that does not apply.
+  >
+  > **§47's four rules, answered where the code is.** `apply-workspace-edit`
+  > records and the loop performs, because an `Editing` holds one rope and a
+  > rename is edits in several. **What attaches an entry:** this, and nothing
+  > else — a file a rename touches becomes a buffer whether or not you had
+  > opened it, since the alternative is an edit that silently skipped the files
+  > you were not looking at. **What an unattached buffer wraps to:** nothing,
+  > and it needed no invention — `soft_wrap::wrap_to` runs over
+  > `panes.tree.layout`, so an entry no pane points at is simply never wrapped,
+  > exactly as §47 predicted. **`:wall` and `:q`** were answered by `T088` on
+  > its way past, both over the map rather than the focused entry. **Nothing is
+  > written to disk here**: the edits land in buffers and the buffers are dirty,
+  > which is `[+]` and `:wall` — the same two steps a rename you typed yourself
+  > would take.
+  >
+  > **A test that asserted the old refusal is now the record of the debt.**
+  > `a_posted_action_the_mcp_door_asks_about_waits_for_the_ask_queue` checked for
+  > the sentence `deliver` no longer says; it asserts the question now, under
+  > its own name.
+  >
+  > **Verification.** Three keystroke tests — a question arriving behind the
+  > REPL waits and surfaces when the REPL closes with its options intact,
+  > `esc`/`]!` round-trip with the `!` outliving both, and a workspace edit that
+  > becomes a question, is granted with `1`, reaches a file **no pane was
+  > showing** and is written by `:wall`. Two unit tests over the hold/grant
+  > pair, and one widget test walking widths 40–60 for Q9's flag surviving every
+  > rung of the shed — the acceptance's own second clause. Three planted
+  > defects, three caught: a question that stops waiting, an `esc` that stops
+  > deferring, and a `[2]` that grants.
+  >
+  > **Two pty lessons, both mine and both recorded in the tests.** `\x1b`
+  > immediately followed by `j` in one write is the terminal's ESC-prefix
+  > ambiguity and arrives as `<A-j>` — the editor said so on its own hint row,
+  > which is how it was found. And `shown_on_grid` waiting for `1:1` returned
+  > the frame *before* the keys were processed, because `1:1` was already there:
+  > a wait has to be on what the keystroke makes **true**, since the grid reader
+  > cannot wait for an absence.
+  >
   > **`S4` made this task a creditor, and it is written here so the creditor knows.** `T036` built
   > the reading half of a server's rename — `phosphor_buffer::lsp::file_edits_from_lsp` turns a
   > `WorkspaceEdit` into `Vec<FileEdits>`, and it is tested — and the applying half is blocked on
@@ -3769,11 +3857,97 @@ live.
   > width is — `soft_wrap::wrap_to` takes a `Rect` and there is no pane to supply one. §47 carries
   > the evidence and the two options it was chosen over.
 
-- [ ] **T061 · Permission asks + rule writing**
+- [x] **T061 · Permission asks + rule writing**
   Screen `7a`: exact invocation shown; always-allow **writes a legible rule**.
   *Done when:* the written rule is readable by a human and takes effect next time. *Needs:*
   T059
 
+  > **Built 2026-08-21.** `runtime/permissions.scm` defines `allow` and draws
+  > `7a`; three arms carry the ask and the two grants; the rule takes effect in
+  > the same session and on the next one. **`OPEN-QUESTIONS.md` §35 is closed**
+  > and the check it asked for was made.
+  >
+  > **The rule is an option, and the option is a published copy.** The natural
+  > shape is to read the allow-list back and append to it, and this build has no
+  > reader: `(options)` is `T021` and unarmed, so `(hash-try-get (options) …)`
+  > answers `#raised · not built yet`. So the list lives in Steel and
+  > `set-option!` writes it out — one truth with a copy for whoever reads it,
+  > which is the shape `session` and `transcript` already have.
+  >
+  > **A rule is a verb, not a command line.** `(allow "git push")` has to cover
+  > `git push origin retry-backoff` or it is a rule that never applies twice —
+  > and it must not cover `gitleaks`, which is the difference between a prefix
+  > *rule* and a prefix *match*, and the way an allow-list quietly grants more
+  > than it says. The boundary is a space or the end of the string.
+  >
+  > **The rule is in the option's label, which is one better than the mockup.**
+  > `7a` puts `2 writes (allow "git push")` in the footer; here it is on the
+  > thing you are pressing. A legible rule is one you read *before* you agree to
+  > it, not one you go looking for afterwards.
+  >
+  > **`7a` is `4a`'s body under different chrome**, and that is the smallest true
+  > reading of two drawings that differ by a sentence at the top:
+  > *"needs input"* against *"wants to run"*. A second `view/question` would be
+  > the same node twice. Which surface a question raises is a fact the queue
+  > already holds — a permission ask is the one the editor is holding a verb for.
+  >
+  > **The three digits are three verbs, not three answers.** `[1]` and `[2]`
+  > both let it run and differ in what they *write*; `[3]` refuses.
+  > `grant-permission` and `deny-permission` exist because that distinction is a
+  > vocabulary fact, and routing a permission digit through `answer-ask` would
+  > lose it — `[2]` would be an answer of `2` and the rule would never be
+  > written.
+  >
+  > **A rule that already permits it is not a question**, checked on the path
+  > that would otherwise ask. That is *"takes effect next time"*, and it means
+  > a grant from a previous session is honoured by the same code as one from
+  > thirty seconds ago.
+  >
+  > **`persist!` is an identity function.** `runtime/repl.scm` defines it as
+  > `(define (persist! kept) kept)` — a *marker*, and what writes is the REPL
+  > noticing that head and routing the form. So evaluating `(persist! …)` from
+  > the loop returns the string and writes nothing; this calls `AppHost::persist`
+  > directly. The first version did the former and the test caught it by reading
+  > an empty file. §35 now records that too.
+  >
+  > **`:allowed` is the audit**, and it exposed a failure mode worth writing
+  > down: `open-float` takes `surface` **and** `args`, and leaving `args` out
+  > raises inside `phosphor/ex` — which the bridge reads as `Ex::Unknown`. So a
+  > command that *is* registered answers *"no such command"*.
+  > `(phosphor/ex-bound? "allowed")` said `#t` while the ex line said otherwise,
+  > which is how it was found.
+  >
+  > **A comment in `init.scm` silently truncated the load order.**
+  > `the_load_order_and_the_directory_agree` read the list by finding the first
+  > opening bracket and the first closing one, so the `T061` comment added
+  > beside `permissions.scm` — which quoted a form, brackets and all — cut the
+  > list at that point and hid the last six languages. **The failure named them
+  > as missing from a list they were in**, which is the worst kind: a true
+  > alarm with a false explanation. Scheme's own reader ignores comments, so the
+  > editor had loaded the whole list the entire time and only the test
+  > disagreed; it strips comments now, and the two readers agree about what the
+  > data is. The sentence first written to warn about the trap sprang it a
+  > second time.
+  >
+  > **`defer-ask`'s `ask` became optional**, and the vocabulary already had the
+  > idiom — *"absent means the focused one"*, which is what `set-cursor`'s
+  > `buffer` says. A door has to be able to name an ask; a person has one
+  > question in front of them and no id on screen to read off. Found by
+  > `every_ex_command_decodes`, which types every command with an empty
+  > argument: `(string->number "")` is `#false`, which raises inside `key/cmd`
+  > and reaches the ex bridge as `Ex::Unknown` — so `:defer` answered *no such
+  > command* about a command that exists, the same failure `:allowed` had for a
+  > different reason.
+  >
+  > **Verification.** One keystroke test end to end: `7a` shows the exact
+  > invocation and its three answers, `[2]` says what it did, the next
+  > invocation of the same verb asks nothing, `:allowed` reads the rule back,
+  > and `persisted.scm` holds `(allow "git push")` as a form a person can read.
+  > One unit test over the prefix rule, including the `gitleaks` boundary and
+  > the empty list. Three planted defects, three caught: a prefix match instead
+  > of a prefix rule, a written rule that stops taking effect, and a rule that
+  > never reaches disk.
+  >
   > **Two corrections from `T101`, both of which change what this task has to do.**
   >
   > **Where the rule lands.** This entry said `init.scm` until 2026-08-14, and `7a` still draws

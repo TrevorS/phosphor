@@ -135,6 +135,21 @@ fn the_shipped_layer_boots_without_a_single_fault() {
 fn the_load_order_and_the_directory_agree() {
     let init = std::fs::read_to_string(runtime_dir().join("init.scm")).expect("init.scm ships");
 
+    // **Comments first, and this cost two rounds to learn.** The reader below
+    // finds the first `(` and the first `)`, so a `;;` comment *inside* the
+    // list that quotes a form truncates it — and the failure is a lie: it names
+    // the last six languages as missing from a list they are in. A comment
+    // explaining that trap, written inside the list, sprang it a second time.
+    //
+    // Scheme's own reader ignores comments, so the editor loaded the whole list
+    // the entire time and only this test disagreed. Stripping them here makes
+    // the two readers agree about what the data is.
+    let init: String = init
+        .lines()
+        .map(|line| line.split_once(";;").map_or(line, |(code, _)| code))
+        .collect::<Vec<_>>()
+        .join("\n");
+
     let listed: Vec<String> = init
         .split_once("phosphor/boot-files")
         .and_then(|(_, rest)| rest.split_once('(').map(|(_, r)| r))

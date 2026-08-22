@@ -850,7 +850,12 @@ actions! {
         }
         DeferAsk = "defer-ask" [S6 / "T060" / Deny]
             "puts an ask back in the queue — esc later" {
-            ask: crate::request::AskId = "which ask",
+            // **Optional, and *"the focused one"* is the same idiom
+            // `set-cursor`'s `buffer` already uses.** A door has to be able to
+            // name an ask; a person has exactly one question in front of them
+            // and no id on screen to read off. Requiring the number would make
+            // `:defer` a command you cannot type.
+            ask: Option<crate::request::AskId> = "which ask; absent means the one on screen",
         }
         RequestPermission = "request-permission" [S6 / "T061" / Allow]
             "asks to run something, showing the exact invocation (7a)" {

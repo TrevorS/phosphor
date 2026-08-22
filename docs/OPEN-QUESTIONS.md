@@ -1164,7 +1164,7 @@ editor is inert, and killing it is still the way out. A rescue binding in Rust w
 deliberate exception to *"Rust holds no copy of the table"* and is a ruling, not a repair.
 → needs a ruling if anyone wants it.
 
-### 35 · `7a`'s always-allow writes a form that faults on the next boot until `T061`
+### 35 · ~~`7a`'s always-allow writes a form that faults on the next boot until `T061`~~ — closed by `T061`, 2026-08-21
 
 **The write half is intact and tested.** `a_head_the_layer_never_offered_is_written_as_given` puts
 `(allow "git push")` through `persist-form!` with the shipped policy loaded and reads the file
@@ -1190,6 +1190,21 @@ whatever `runtime/permissions.scm` defines has to load **before** the persisted 
 `Layer::load_persisted`'s *"last, after the whole load order"* already guarantees for anything in
 `phosphor/boot-files`. The thing to check when `T061` lands is that `allow` is defined there and
 not somewhere the boot reaches later. → `T061`.
+
+**Closed by `T061`, and the check the entry asked for was made.**
+`runtime/permissions.scm` defines `allow` and is the sixth name in
+`phosphor/boot-files`, so it is loaded before `Layer::load_persisted` runs
+anything — which was the whole of the constraint. A grant written by `7a`'s
+`[2]` now loads on the next start instead of opening a boot float, and the
+keystroke test asserts the round trip: press the digit, read the rule out of
+`persisted.scm`, and watch the next invocation of the same verb ask nothing.
+
+**One thing the entry did not anticipate, found by running it.** `persist!` in
+`runtime/repl.scm` is `(define (persist! kept) kept)` — an *identity function*
+and a marker; what writes is the REPL noticing that head and routing the form.
+So evaluating `(persist! …)` from the loop returns the string and writes
+nothing. `T061` calls `AppHost::persist` directly. The first version did the
+former, and what caught it was the test reading an empty file.
 
 ### 36 · ~~The whole capture library's references are a window or three old~~ — closed by measurement, 2026-08-20
 

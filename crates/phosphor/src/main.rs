@@ -165,7 +165,7 @@ use phosphor_core::language::{self, Languages};
 use phosphor_core::query::{Answer, Answers, Query, QueryError, RegionQuery, Revision};
 use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
-    AcceptHow, Actor, AnchorId, AskId, Binding, BufferId, CharRange as SignatureRange,
+    AcceptHow, Actor, AnchorId, AskId, AskOption, Binding, BufferId, CharRange as SignatureRange,
     Completion as WireCompletion, Direction, EditMode, FileSpan, FoldState, KeySeq, LanguageId,
     PaneId, PaneKind, PaneRef, Position, PromptKind, RegionFilter, RegionId, RegisterName, Seek,
     SelectionKind, Sequence, Signature as WireSignature, SourceId, Span, Target, TextObject,
@@ -775,6 +775,14 @@ enum Intent {
     /// back, and a receipt for an id the loop had not chosen yet would be a
     /// promise about the future.
     Enqueue(AskId, phosphor_ui::question::QuestionVm),
+    /// An `Ask`-rated action arriving through a door — the action and who sent
+    /// it (`T060`).
+    ///
+    /// **The door cannot enqueue it itself**, because the queue is on `Shell`
+    /// and this applier has no `Shell`. So the same three lines `deliver` runs
+    /// for a posted action run in the loop for a door's, which is what keeps
+    /// one rating from meaning two things depending on where the caller stood.
+    Hold(Box<Action>, String),
 
     /// An Action for the loop to apply to the focused buffer (`T052`).
     ///
@@ -896,6 +904,14 @@ struct HostState {
     /// `session` query and §5's chrome cannot disagree, because there is one
     /// derivation and it happens once per frame.
     session: Option<Value>,
+    /// `T060`'s queue, as the loop last published it.
+    ///
+    /// **Published rather than held, for `session`'s reason exactly**: the
+    /// queue lives on `Shell`, the loop owns `Shell`, and Q9 asks that `]!`,
+    /// the inbox and the statusline *"read one truth"*. Two collections would
+    /// be two truths however carefully they were kept in step, so this is a
+    /// copy of the one and never a second original.
+    asks: Vec<Value>,
 }
 
 /// The boot file's name, and it names two different files.
@@ -1481,6 +1497,14 @@ impl AppHost {
         }
     }
 
+    /// Publish the ask queue, so `pending-asks` and `ask` have an answer
+    /// (`T060`).
+    fn publish_asks(&self, asks: Vec<Value>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.asks = asks;
+        }
+    }
+
     /// Publish what the loop derived, so `picker-rows` has an answer
     /// (`T046`).
     fn publish_picker(&self, rows: Option<(String, Vec<phosphor_core::view::SpanRow>)>) {
@@ -1551,6 +1575,37 @@ impl Answers for AppHost {
                     .lock()
                     .ok()
                     .and_then(|state| state.session.clone())
+                    .unwrap_or(Value::Null),
+                revision: Revision::INITIAL,
+            }),
+            // `T060` — the queue, oldest first. **One list behind three
+            // readers**: `]!` walks it, the statusline's `!` counts it, and
+            // `T067`'s inbox will list it.
+            Query::Session(phosphor_core::query::SessionQuery::PendingAsks {}) => Ok(Answer {
+                value: Value::List(
+                    self.state
+                        .lock()
+                        .ok()
+                        .map(|state| state.asks.clone())
+                        .unwrap_or_default(),
+                ),
+                revision: Revision::INITIAL,
+            }),
+            // One of them, by id. **`Null` rather than an error for an id the
+            // queue does not have**, which is `region`'s rule and the same
+            // legitimate no: a surface holding an id across an answer asks it.
+            Query::Session(phosphor_core::query::SessionQuery::Ask { ask }) => Ok(Answer {
+                value: self
+                    .state
+                    .lock()
+                    .ok()
+                    .and_then(|state| {
+                        state
+                            .asks
+                            .iter()
+                            .find(|value| ask_id_of(value) == Some(ask.0))
+                            .cloned()
+                    })
                     .unwrap_or(Value::Null),
                 revision: Revision::INITIAL,
             }),
@@ -1808,6 +1863,20 @@ impl Host for AppHost {
             // way round.
             Action::Motion(MotionAction::GotoLocation { .. }) => {
                 self.ask(Intent::Act(Box::new(request.action.clone())));
+                done(Value::Null)
+            }
+            // `T060` — **the third line, and the first that does not apply.**
+            // `apply-workspace-edit` is rated `Ask`, and the rating is about the
+            // *action*, not about which door it came through: a rename arriving
+            // from Steel is as much a thing you have to say yes to as one
+            // arriving from an LSP client. So this queues a question rather
+            // than forwarding the edit, exactly as `deliver` does for a posted
+            // one.
+            Action::Lsp(LspAction::ApplyWorkspaceEdit { .. }) => {
+                self.ask(Intent::Hold(
+                    Box::new(request.action.clone()),
+                    format!("{:?}", request.door).to_lowercase(),
+                ));
                 done(Value::Null)
             }
             // -- `T059`: `4a`, claude asking mid-turn --------------------------
@@ -2980,7 +3049,13 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         store: Arc::clone(&host.store),
         asks: BTreeMap::new(),
         next_ask: Arc::clone(&host.next_ask),
-        asking: None,
+        held: BTreeMap::new(),
+        granted: Vec::new(),
+        asking_about: BTreeMap::new(),
+        writing: Vec::new(),
+        allowed: None,
+        edits: Vec::new(),
+        deferred: BTreeSet::new(),
         asked: None,
         // The directory the editor was started in — `Timeline::open_at`'s rule,
         // and the honest root until `T071` makes it the repository's.
@@ -3231,6 +3306,46 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // job: `:cn` sets `Shell::agent`, the option is unset, and a check
         // against `agent` then read "the option changed to nothing" on the very
         // next frame and stopped the session the verb had just started.
+        // **`T061` — the allow-list, read per pass.** `runtime/permissions.scm`
+        // publishes it through `set-option!`, so a grant made at the REPL, by a
+        // `[2]`, or by a `(allow …)` in `persisted.scm` at boot all arrive the
+        // same way. Read every pass for `agent-command`'s reason: a value
+        // cached at boot would make the rules a fact about the last restart.
+        shell.allowed = host.text(ALLOWED);
+
+        // **The rules an always-allow agreed to write.** Performed here because
+        // writing one is running scheme — `(allow "git push")` is evaluated so
+        // the rule takes effect *now* as well as next session, and `persist!`
+        // is what puts it in `persisted.scm`. Both, in that order: a rule that
+        // only landed on disk would leave the very next invocation asking again.
+        for verb in std::mem::take(&mut shell.writing) {
+            let form = format!("(allow {})", scheme_text(&verb));
+            if let Some(said) = phosphor_steel::answer::trouble(&layer.evaluate(&form)) {
+                notice = Some(said);
+                continue;
+            }
+            // **`AppHost::persist`, not `(persist! …)`.** The Steel binding is
+            // `(define (persist! kept) kept)` — an *identity function*, and a
+            // marker: what writes is the REPL noticing that head and routing
+            // the form. Evaluating it here would have returned the string and
+            // written nothing, which is exactly what the first version did and
+            // what the test caught by reading an empty file.
+            //
+            // **Ungated, which is what `7a`'s pressed digit earns.**
+            // `AppHost::persist` declines a head the layer *offers* to keep —
+            // that gate is on the REPL's auto-route, so you are taught the verb
+            // rather than surprised by a file — and `allow` is not on that
+            // list. `T061`'s own entry says so.
+            let written = phosphor_steel::answer::trouble(&host.persist(&form));
+            if let Some(said) = written {
+                // **Said out loud rather than swallowed.** A rule that took
+                // effect for this session and did not reach disk is precisely
+                // the surprise `7a` promises against — you would press it once,
+                // see it work, and be asked again tomorrow.
+                notice = Some(format!("allowed for this session only — {said}"));
+            }
+        }
+
         let wanted = host.text(agent::COMMAND);
         if wanted != shell.wanted {
             shell.wanted = wanted.clone();
@@ -3411,6 +3526,17 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             shell.turn.as_ref(),
             !shell.asks.is_empty(),
         ));
+        // **`T060` — the queue, published every pass beside the session.**
+        // Cheap for `session`'s reason and unlike `transcript`: a queue is
+        // bounded by how many questions are outstanding, and a transcript grows
+        // for as long as the editor is open.
+        host.publish_asks(
+            shell
+                .asks
+                .iter()
+                .map(|(id, question)| ask_value(*id, question, shell.deferred.contains(id)))
+                .collect(),
+        );
 
         // **`T054` — rebuilt and published only when the transcript moves.**
         // Its two neighbours above are a handful of fields and cost nothing per
@@ -3536,7 +3662,19 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             since: shell.turn.map(|(_, began)| {
                 Millis(u64::try_from(began.duration_since(started).as_millis()).unwrap_or(u64::MAX))
             }),
-            ask_pending: false,
+            // **`T060` — Q9's flag, fed at last.** The widget carried this
+            // field with Q9's own sentence in its doc since `T017`, and the
+            // binary handed it `false`: *"it sets the statusline `!` flag
+            // immediately and waits"* was implemented on the drawing side and
+            // on nothing else. It is the queue, not the float — a question
+            // waiting behind a picker is exactly the case the flag exists for,
+            // and that is the frame where no float is up.
+            //
+            // **Deferred asks count.** `esc later` is a fact about the screen
+            // and this is a fact about the queue: pushing a question back does
+            // not answer it, and a `!` that disappeared when you deferred one
+            // would be the editor forgetting on your behalf.
+            ask_pending: !shell.asks.is_empty(),
             // **`T041` — §5's `●n`, counted rather than zero.** Over the file
             // on screen, which is what `runtime/statusline.scm`'s own VM doc
             // says it is: *"unseen regions in this file"*. The workspace-wide
@@ -3922,7 +4060,27 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     // §9: esc closes top-down, and a float that is not a surface of its
                     // own is closed here before the machine ever sees the key. There is
                     // only ever one level (`Surface`).
-                    Event::Key(key) if closes_surface(key, surface) => surface = Surface::Buffer,
+                    //
+                    // **`T060` — closing `4a` is `defer-ask`, not just closing.**
+                    // The mockup's footer says `esc later`, and *later* is a
+                    // fact about the queue rather than about the screen: the
+                    // question is still pending, still counts toward the
+                    // statusline's `!`, and `]!` brings it back. Without the
+                    // deferral this key does not converge — the float closes,
+                    // the next pass finds the same head still pending, and
+                    // raises it again.
+                    Event::Key(key) if closes_surface(key, surface) => {
+                        if let Some(asked) = shell.asked {
+                            let outcome = editing.apply(
+                                &mut Cx::new(held, focus, &mut panes, &mut shell),
+                                &Action::Ask(AskAction::DeferAsk { ask: Some(asked) }),
+                            );
+                            if let Outcome::Refused(why) = outcome {
+                                notice = Some(phosphor_steel::answer::why(&why));
+                            }
+                        }
+                        surface = Surface::Buffer;
+                    }
                     // The ex line owns every key while it is open, which is what makes
                     // it a line editor rather than a mode of the machine.
                     Event::Key(key) if matches!(surface, Surface::Ex) => {
@@ -4249,6 +4407,92 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 }
             }
         }
+        // **`T060` — what you said yes to, run.** `Shell::granted` is filled by
+        // `Shell::answer_ask`, which is called from an arm and cannot reach
+        // `Buffers`; this is the loop, which can. One pass per grant, through
+        // the ordinary applier, so a granted action takes exactly the path it
+        // would have taken had it never needed asking about.
+        for action in std::mem::take(&mut shell.granted) {
+            let outcome = buffers
+                .at_mut(held)
+                .act(&mut Cx::new(held, focus, &mut panes, &mut shell), &action);
+            if let Outcome::Refused(why) = outcome {
+                notice = Some(phosphor_steel::answer::why(&why));
+            }
+        }
+
+        // **`T060` — `apply-workspace-edit`, performed across files.**
+        //
+        // §47 asked this task for four rules about a buffer no pane is looking
+        // at, and this is where three of them are answered. **What attaches
+        // one:** this, and nothing else — a file a rename touches becomes an
+        // entry whether or not you were reading it, because the alternative is
+        // an edit that silently skipped the files you had not opened. **What an
+        // unattached buffer's wrap width is:** it has none, and needs no
+        // invention — `soft_wrap::wrap_to` runs over `panes.tree.layout`, so an
+        // entry no pane points at is simply never wrapped, exactly as §47
+        // predicted. **What `:wall` counts:** every dirty buffer, these
+        // included; a rename whose files were not written by `:wall` is the
+        // surprise, not the safety. `:q`'s answer is `Buffers`' own and
+        // unchanged — an unattached dirty buffer is unsaved work, and where it
+        // is on screen is not what makes it work.
+        //
+        // **Nothing is written to disk here.** The edits land in buffers and the
+        // buffers are dirty, which is `[+]` and `:wall` — the same two steps a
+        // rename you typed yourself would take.
+        for file in std::mem::take(&mut shell.edits) {
+            let absolute = lsp::absolute(&file.path);
+            let existing = buffers.map.iter().find_map(|(id, open)| {
+                open.file
+                    .as_deref()
+                    .is_some_and(|held| lsp::absolute(held) == absolute)
+                    .then_some(*id)
+            });
+            let target = match existing {
+                Some(id) => id,
+                // **Opened, not skipped.** Built the same way `split-pane`
+                // above builds one, so a buffer a rename created is an ordinary
+                // buffer in every respect except that no pane is pointing at
+                // it — which is the container `T088` shipped and §47 said this
+                // task inherits.
+                None => match opening(&file.path) {
+                    Ok(found) => {
+                        let text = found.unwrap_or_default();
+                        let rope =
+                            buffer(grammar_of(&host.languages(), &file.path), &text, &theme)?;
+                        let (timeline, _) = Timeline::opened(&file.path);
+                        let mut fresh = Editing::with_timeline(
+                            rope,
+                            Some(file.path.clone()),
+                            Rc::new(Cell::new(false)),
+                            Rc::new(Cell::new(0)),
+                            timeline,
+                        );
+                        adopt(&mut fresh, &host.languages(), &servers);
+                        buffers.open(fresh)
+                    }
+                    Err(error) => {
+                        notice = Some(format!("{}: {error}", file.path.display()));
+                        continue;
+                    }
+                },
+            };
+            let outcome = buffers.at_mut(target).act(
+                &mut Cx::new(target, focus, &mut panes, &mut shell),
+                &Action::Buffer(BufferAction::ApplyEdits {
+                    edits: file.edits.clone(),
+                }),
+            );
+            if let Outcome::Refused(why) = outcome {
+                notice = Some(format!(
+                    "{}: {}",
+                    file.path.display(),
+                    phosphor_steel::answer::why(&why)
+                ));
+            }
+        }
+        let editing = buffers.at_mut(held);
+
         if editing.prompt.take().is_some() {
             ex_line.clear();
             surface = Surface::Ex;
@@ -4488,6 +4732,11 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 // question leaves, and *when* a float is raised over it is
                 // composition's business one layer up.
                 Intent::Enqueue(id, question) => shell.enqueue_ask(id, question),
+                Intent::Hold(action, source) => {
+                    let id = shell.mint_ask();
+                    shell.enqueue_ask(id, held_question(&action, &source));
+                    shell.held.insert(id, action);
+                }
                 Intent::OpenRepl => surface = Surface::Repl,
                 Intent::CloseRepl => surface = Surface::Buffer,
                 Intent::History(delta) => repl.history(delta),
@@ -4595,21 +4844,60 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             }
         }
 
-        // **`T059` — the question float follows the queue, in one place.**
+        // **`T059` / `T060` — the question float follows the queue, in one
+        // place, and Q9's whole rule is the three-way `wanted` below.**
         //
-        // Neither applier raises it: `Shell::asking` is *what should be asked*
-        // and `Shell::asked` is *what is on screen*, and this is the one line
-        // that makes them agree. So `enqueue-ask` from a key and from a door
-        // land on the same screen without either of them knowing what a float
-        // is, and answering one closes it without the arm reaching for
-        // composition.
-        if shell.asking != shell.asked {
-            shell.asked = shell.asking;
+        // No applier raises a float: the arms say what has been *asked* and
+        // this says what is on *screen*. So `enqueue-ask` from a key and from a
+        // door land on the same screen without either of them knowing what a
+        // float is.
+        //
+        // Q9: *"a question arriving while another float holds focus sets the
+        // statusline `!` and waits."* The `!` needs nothing here — it is
+        // `session_state` reading the same queue — and *waits* is the middle
+        // arm: nothing surfaces unless the buffer has the screen. A picker mid
+        // filter, a hover, `:arch`, the REPL: all of them keep it.
+        let wanted = {
+            // **Still queued *and* still asking.** Checking only that the ask
+            // exists made `esc later` a no-op that looked like a hang: deferring
+            // leaves the question in the queue, so this read `Some`, `wanted`
+            // matched `asked`, and the float it had just closed came straight
+            // back up. Deferring is precisely the case where a pending question
+            // is not the one on screen.
+            let showing = shell
+                .asked
+                .filter(|id| shell.asks.contains_key(id) && !shell.deferred.contains(id));
+            if showing.is_some() {
+                // A question is up and still unanswered. It stays up, even
+                // though an older one may have been deferred back ahead of it:
+                // replacing what you are reading mid-read is the one thing a
+                // queue must never do.
+                showing
+            } else if surface == Surface::Buffer || shell.asked.is_some() {
+                // Free to surface the next one — either nothing holds the
+                // screen, or what held it was the question just answered, and
+                // dropping to the buffer only to raise again next pass would
+                // flash the frame between two questions.
+                shell.head_ask()
+            } else {
+                None
+            }
+        };
+        if wanted != shell.asked {
+            shell.asked = wanted;
             match shell.asked {
                 Some(id) => {
                     let mut args = Args::new();
                     args.set("ask", Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)));
-                    editing.float = Some((QUESTION_SURFACE.to_owned(), Value::Record(args)));
+                    // Which surface is a fact about the *ask*, and the queue
+                    // knows it: a permission ask is the one the editor is
+                    // holding a verb for.
+                    let surface_id = if shell.asking_about.contains_key(&id) {
+                        PERMISSION_SURFACE
+                    } else {
+                        QUESTION_SURFACE
+                    };
+                    editing.float = Some((surface_id.to_owned(), Value::Record(args)));
                 }
                 // Answered or deferred. Leaving the float up over an ask that no
                 // longer exists would draw an empty box — `Resources::ask`
@@ -5111,6 +5399,141 @@ fn jump_uri(workspace: &Path, path: &str, line: Option<u32>) -> String {
         uri.push_str(&format!("#L{line}"));
     }
     uri
+}
+
+/// The option `runtime/permissions.scm`'s `allow` publishes (`T061`).
+///
+/// One `|`-separated string, because an option is one value. The list itself
+/// lives in Steel — see that file for why it is written out rather than read
+/// back — and this is the binary's copy of it.
+const ALLOWED: &str = "allowed-commands";
+
+/// Whether a rule already permits `invocation` (`T061`).
+///
+/// **By prefix, and the prefix is the whole design.** `7a`'s rule is
+/// `(allow "git push")` and what it has to permit is
+/// `git push origin retry-backoff` — the *verb*, not the exact command line. A
+/// list of exact invocations would never match twice, which is a permission
+/// system that asks you the same question forever.
+///
+/// **The boundary is a space or the end**, so `(allow "git")` does not permit
+/// `gitleaks`. That is the difference between a prefix rule and a prefix
+/// *match*, and getting it wrong is how an allow-list quietly grants more than
+/// it says.
+fn permitted(rules: Option<&str>, invocation: &str) -> bool {
+    rules.is_some_and(|rules| {
+        rules
+            .split('|')
+            .filter(|rule| !rule.is_empty())
+            .any(|rule| {
+                invocation == rule
+                    || invocation
+                        .strip_prefix(rule)
+                        .is_some_and(|rest| rest.starts_with(' '))
+            })
+    })
+}
+
+/// The question an `Ask`-rated action becomes (`T060`).
+///
+/// **It names the capability and who asked**, because that is the whole content
+/// of the consent: *"the language server wants to apply a workspace edit"* is
+/// answerable and *"something wants permission"* is not. `7a` takes this
+/// further — `T061`'s screen shows the **exact invocation** — and the shape
+/// there is this one with a longer sentence.
+///
+/// `[1]` is yes and `[2]` is no, in that order, and `Shell::answer_ask` reads
+/// the digit rather than the label: the options are built here and nowhere
+/// else, so the number and its meaning cannot drift apart.
+fn held_question(action: &Action, source: &str) -> phosphor_ui::question::QuestionVm {
+    phosphor_ui::question::QuestionVm {
+        prose: format!(
+            "{source} wants to {}. This one needs you to say so.",
+            action.spec().doc
+        ),
+        options: vec![
+            AskOption {
+                digit: 1,
+                label: "let it".to_owned(),
+            },
+            AskOption {
+                digit: 2,
+                label: "not now".to_owned(),
+            },
+        ],
+    }
+}
+
+/// `7a`'s question: the exact invocation, and the rule an always-allow writes.
+///
+/// **The invocation is shown as it will run**, which is the screen's own
+/// caption — *"consequential command · exact invocation shown"*. A permission
+/// ask that paraphrased what it was asking about would be asking you to trust
+/// the paraphrase.
+///
+/// **`[2]` names the rule it is about to write.** `7a`'s footer says
+/// `2 writes (allow "git push") to init.scm`, and the option's label carries
+/// the same sentence — a legible rule is one you read *before* you agree to it,
+/// not one you go looking for afterwards. The file is `persisted.scm` rather
+/// than `init.scm`; `T101` moved machine-written forms out of the shipped tree
+/// and `7a` still draws the old word.
+///
+/// The verb is the first two words, or the first — `git push` from
+/// `git push origin retry-backoff`, `cargo` from `cargo`. Two is what `7a`
+/// draws and what a subcommand needs; more would be a rule so specific it never
+/// matches again.
+fn permission_question(invocation: &str, files: &[PathBuf]) -> (String, String) {
+    let verb: Vec<&str> = invocation.split_whitespace().take(2).collect();
+    let verb = verb.join(" ");
+    let touching = match files.len() {
+        0 => String::new(),
+        1 => format!("\ntouches {}", files[0].display()),
+        many => format!("\ntouches {many} files"),
+    };
+    (format!("$ {invocation}{touching}"), verb)
+}
+
+/// One queued ask as plain data, for `pending-asks` and `ask` (`T060`).
+///
+/// **`deferred` is a field on the row rather than a second list**, because a
+/// caller asking *"what is waiting"* wants to know which of them you pushed
+/// back — `T067`'s inbox draws that difference and `]!` acts on it. The set on
+/// `Shell` is the storage; this is the answer.
+fn ask_value(id: AskId, question: &phosphor_ui::question::QuestionVm, deferred: bool) -> Value {
+    let mut fields = Args::new();
+    fields.set("ask", Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)));
+    fields.set("prose", Value::Text(question.prose.clone()));
+    fields.set("deferred", Value::Bool(deferred));
+    fields.set(
+        "options",
+        Value::List(
+            question
+                .options
+                .iter()
+                .map(|option| {
+                    let mut row = Args::new();
+                    row.set("digit", Value::Int(i64::from(option.digit)));
+                    row.set("label", Value::Text(option.label.clone()));
+                    Value::Record(row)
+                })
+                .collect(),
+        ),
+    );
+    Value::Record(fields)
+}
+
+/// The `ask` field of a row [`ask_value`] built, for the `ask` query's lookup.
+///
+/// **A reader beside the writer**, so the one field the lookup depends on
+/// cannot be renamed on one side only.
+fn ask_id_of(value: &Value) -> Option<u64> {
+    let Value::Record(fields) = value else {
+        return None;
+    };
+    match fields.get("ask") {
+        Some(Value::Int(id)) => u64::try_from(*id).ok(),
+        _ => None,
+    }
 }
 
 /// `7b`'s line under the seam: what a dropped turn left behind.
@@ -6027,6 +6450,16 @@ const DASHBOARD_SURFACE: &str = "dashboard";
 
 /// `runtime/asks.scm`'s float — `4a`, claude asking mid-turn (`T059`).
 const QUESTION_SURFACE: &str = "question";
+
+/// `runtime/permissions.scm`'s float — `7a`, claude asking to run something
+/// (`T061`).
+///
+/// **A second surface and not a second body.** The two screens differ by their
+/// chrome — *"needs input"* against *"wants to run"* — and share
+/// `view/question` for everything inside it, which is the smallest true reading
+/// of two drawings that are the same drawing with a different sentence at the
+/// top.
+const PERMISSION_SURFACE: &str = "permission";
 
 /// The start line of a region record, if it names `path` (`T049`).
 ///
@@ -7220,16 +7653,64 @@ struct Shell {
     asks: BTreeMap<AskId, phosphor_ui::question::QuestionVm>,
     /// The ask id counter, shared with [`AppHost::next_ask`] — see there.
     next_ask: Arc<Mutex<u64>>,
-    /// Which ask the float on screen is showing, if the float on screen is a
-    /// question (`T059`).
+    /// Actions waiting on an answer, by the ask that is asking (`T060`).
     ///
-    /// **This is what *"digits answer only while it is focused"* is made of.**
-    /// The node's own sentence is a rule about focus, and focus is the loop's;
-    /// a widget cannot know whether it is focused and must not try. So the
-    /// digit arm is gated on this being `Some` *and* the float surface holding
-    /// the screen — two conditions, both the loop's, and `1` over a buffer goes
-    /// on being vim's count prefix.
-    asking: Option<AskId>,
+    /// **This is what makes the queue a *mechanism* rather than a screen.**
+    /// `McpPolicy::Ask` is a rating on a capability — *"only the keyboard says
+    /// yes to this"* — and until there was somewhere to put the question the
+    /// only honest thing a producer could be told was
+    /// *"needs an ask first — T060 builds the queue"*. Now an `Ask`-rated
+    /// action arriving from a producer becomes a question, and answering it
+    /// runs the action it was asking about.
+    ///
+    /// Keyed by `AskId` rather than a single slot, because the queue is a queue:
+    /// two servers can each want a rename while you are reading something else.
+    held: BTreeMap<AskId, Box<Action>>,
+    /// Actions whose question you said yes to, waiting for the loop to run
+    /// them (`T060`).
+    ///
+    /// A field rather than a return value, because `Shell::answer_ask` is
+    /// called from an *arm* — which cannot reach `Buffers` — and the loop is
+    /// what performs an action across buffers.
+    granted: Vec<Action>,
+    /// Edits to apply across files, from `apply-workspace-edit` (`T060`).
+    ///
+    /// **The arm cannot do this itself and that is structural**: an `Editing`
+    /// holds *one* rope, and a rename is edits in several. So the arm records
+    /// and the loop performs, which is the shape `Editing::open` and
+    /// `Shell::closing` already have.
+    edits: Vec<phosphor_core::request::FileEdits>,
+    /// The verb each permission ask is about, by ask id (`T061`).
+    ///
+    /// **Beside `Shell::held` rather than inside it**, because the two hold
+    /// different kinds of thing: `held` is an *action* the editor will run, and
+    /// this is a *rule* it may write. `7a`'s `[2]` does both and `[1]` does one
+    /// of them, which is exactly why they are not one field.
+    asking_about: BTreeMap<AskId, String>,
+    /// Rules an always-allow has agreed to write (`T061`).
+    ///
+    /// A queue for the same reason `Shell::granted` is one: the arm that agrees
+    /// cannot reach the layer, and writing a form is running scheme.
+    writing: Vec<String>,
+    /// The allow-list, as `runtime/permissions.scm` last published it
+    /// (`T061`).
+    ///
+    /// Read from the option each pass, exactly as `agent-command` is, and for
+    /// the same reason: a grant made at the REPL has to reach the next
+    /// permission ask, and a value cached at boot would make the rules a fact
+    /// about the last restart.
+    allowed: Option<String>,
+    /// The asks you have pushed back — `4a`'s `esc later` (`T060`).
+    ///
+    /// **A set beside the queue rather than a flag inside it**, because Q9's
+    /// rule is about *the screen* and not about the question: a deferred ask is
+    /// still pending, still counts toward the statusline's `!`, and still
+    /// answers `pending-asks`. What it has stopped doing is asking for the
+    /// screen back. `]!` is what clears it.
+    ///
+    /// Without this the queue cannot converge: `esc` closes the float, the next
+    /// pass finds the same head still pending, and raises it again.
+    deferred: BTreeSet<AskId>,
     /// Which ask the float **currently on screen** is showing.
     ///
     /// **Two fields rather than one, and the pair is what raises the float.**
@@ -7434,11 +7915,59 @@ impl Shell {
     /// what a new question does to the screen.
     fn enqueue_ask(&mut self, id: AskId, question: phosphor_ui::question::QuestionVm) {
         self.asks.insert(id, question);
-        // **It becomes the asked one immediately, and `T060` is what makes it
-        // wait.** Q9's rule — *"a question arriving while another float holds
-        // focus sets the statusline `!` and waits"* — is that task's whole
-        // subject and needs a queue to wait in.
-        self.asking = Some(id);
+    }
+
+    /// Push a question back — `4a`'s `esc later` (`T060`).
+    ///
+    /// Answers [`false`] for an id the queue does not have, which is the
+    /// ordinary case for a float deferred after it was already answered.
+    fn defer_ask(&mut self, id: AskId) -> bool {
+        if !self.asks.contains_key(&id) {
+            return false;
+        }
+        self.deferred.insert(id);
+        true
+    }
+
+    /// Un-defer the oldest pushed-back question and hand back its id — `]!`
+    /// (`T060`).
+    ///
+    /// **`]!` is a *motion* and this is what makes it one.** Q9 says it *jumps
+    /// to* the pending ask, and the thing standing between you and a deferred
+    /// question is the deferral: clearing it is what puts the question back in
+    /// front of you, and the loop raises it on the same pass by the ordinary
+    /// rule. Nothing here opens a float.
+    ///
+    /// **The oldest deferred one, not the newest**, so `]!` walks the pushed-back
+    /// questions in the order you pushed them back rather than handing you the
+    /// same one twice.
+    fn recall_ask(&mut self) -> Option<AskId> {
+        let recalled = self
+            .asks
+            .keys()
+            .find(|id| self.deferred.contains(id))
+            .copied()?;
+        self.deferred.remove(&recalled);
+        Some(recalled)
+    }
+
+    /// The question that wants the screen: the oldest one you have not pushed
+    /// back (`T060`).
+    ///
+    /// **Derived, never stored**, which is what makes Q9's *"the queue is a
+    /// store query, not widget state, so `]!`, the inbox and the statusline
+    /// read one truth"* structural rather than remembered. `T059` had a
+    /// `Shell::asking` field beside the map; two things that must agree are one
+    /// thing that can disagree, and the map is the one that has to be right.
+    ///
+    /// Oldest first because ids are minted in order and a `BTreeMap` is
+    /// ordered: a queue that surfaced the newest would leave the first question
+    /// you were asked for last.
+    fn head_ask(&self) -> Option<AskId> {
+        self.asks
+            .keys()
+            .find(|id| !self.deferred.contains(id))
+            .copied()
     }
 
     /// Answer a question and take it out of the queue.
@@ -7449,11 +7978,19 @@ impl Shell {
     /// asked. Answers [`false`] for an id the queue does not have, which is the
     /// ordinary case for a float answered twice.
     fn answer_ask(&mut self, id: AskId, digit: Option<u32>, prose: Option<&str>) -> bool {
-        if self.asking == Some(id) {
-            self.asking = None;
-        }
+        self.deferred.remove(&id);
         if self.asks.remove(&id).is_none() {
+            self.held.remove(&id);
             return false;
+        }
+        // **The action the question was about, released or dropped.** `[1]` is
+        // yes by construction — `held_question` builds the options — and
+        // anything else is a no, which is the safe reading for a rating whose
+        // whole point is that a producer may not do this unasked.
+        if let Some(action) = self.held.remove(&id)
+            && digit == Some(1)
+        {
+            self.granted.push(*action);
         }
         // **The sentence goes through `Shell::saying`, which is `T053`'s
         // channel and exists for exactly this shape.** A `Receipt::note`
@@ -9530,6 +10067,33 @@ impl Editing {
                     // not noticed.
                     return declined(&format!("no option {digit} — press one that is offered"));
                 }
+                // **`T061` — a permission ask answers through its own verbs.**
+                // `7a`'s three digits are not three answers to one question:
+                // `[1]` and `[2]` both let it run and differ in what they
+                // *write*, and `[3]` is a refusal. `grant-permission` and
+                // `deny-permission` exist because that distinction is a
+                // vocabulary fact, and routing a permission digit through
+                // `answer-ask` would lose it — `[2]` would be an answer of `2`
+                // and the rule would never be written.
+                if cx.shell.asking_about.contains_key(&asked) {
+                    return match digit {
+                        1 => self.act(
+                            cx,
+                            &Action::Ask(AskAction::GrantPermission {
+                                ask: asked,
+                                scope: phosphor_core::request::GrantScope::Once,
+                            }),
+                        ),
+                        2 => self.act(
+                            cx,
+                            &Action::Ask(AskAction::GrantPermission {
+                                ask: asked,
+                                scope: phosphor_core::request::GrantScope::Always,
+                            }),
+                        ),
+                        _ => self.act(cx, &Action::Ask(AskAction::DenyPermission { ask: asked })),
+                    };
+                }
                 self.act(
                     cx,
                     &Action::Ask(AskAction::AnswerAsk {
@@ -9680,6 +10244,129 @@ impl Editing {
                     value: Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)),
                     note: None,
                 })
+            }
+            // **`T060` — `apply-workspace-edit`, the arm this queue owed a task
+            // that is not its own.** `T036` built the reading half two windows
+            // ago and `scripts/lint-action-arms.sh` has named this row on every
+            // run since.
+            //
+            // **Recorded, not applied, and that is structural.** An `Editing`
+            // holds one rope; a server's rename is edits in several files. So
+            // the arm says what to do and the loop does it — the shape
+            // `Editing::open` and `Shell::closing` already have, and the reason
+            // is the same in all three: `Buffers` is the loop's.
+            Action::Lsp(LspAction::ApplyWorkspaceEdit { files }) => {
+                if files.is_empty() {
+                    // Not `NoSuchTarget`: an empty edit is a server saying
+                    // there was nothing to do, which is a legitimate answer to
+                    // a rename that matched nothing.
+                    return done();
+                }
+                cx.shell.edits.extend(files.iter().cloned());
+                done()
+            }
+            // -- `T061`: `7a`, a permission ask ------------------------------
+            //
+            // **Rated `Allow` on purpose**: an agent asking permission is the
+            // agent behaving, and refusing the *asking* would leave it with
+            // nothing to do but not ask. What is `Deny` is granting — the two
+            // verbs below — which is the whole shape of consent.
+            Action::Ask(AskAction::RequestPermission { invocation, files }) => {
+                let (prose, verb) = permission_question(invocation, files);
+                // **A rule that already permits it is not a question.** This is
+                // the acceptance's second half — *"takes effect next time"* —
+                // and it is checked here rather than by the caller, so a grant
+                // written in a previous session is honoured by the same code
+                // path that would have asked.
+                if permitted(cx.shell.allowed.as_deref(), invocation) {
+                    return Outcome::Done(Receipt {
+                        capability: name,
+                        value: Value::Null,
+                        note: Some(format!("allowed by a rule — {verb}")),
+                    });
+                }
+                let id = cx.shell.mint_ask();
+                cx.shell.enqueue_ask(
+                    id,
+                    phosphor_ui::question::QuestionVm {
+                        prose,
+                        options: vec![
+                            AskOption {
+                                digit: 1,
+                                label: "allow once".to_owned(),
+                            },
+                            AskOption {
+                                digit: 2,
+                                // **The rule, in the option's own label.** `7a`
+                                // puts it in the footer; here it is the thing
+                                // you are pressing, which is one fewer place to
+                                // look and one fewer thing to keep in step.
+                                label: format!("always allow {verb} — writes (allow \"{verb}\")"),
+                            },
+                            AskOption {
+                                digit: 3,
+                                label: "deny".to_owned(),
+                            },
+                        ],
+                    },
+                );
+                cx.shell.asking_about.insert(id, verb);
+                Outcome::Done(Receipt {
+                    capability: name,
+                    value: Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)),
+                    note: None,
+                })
+            }
+            // `7a`'s `[1]` and `[2]`. **The scope is the difference and the
+            // only difference**: both let it run, and `Always` also writes the
+            // rule that stops it being asked again.
+            Action::Ask(AskAction::GrantPermission { ask, scope }) => {
+                let Some(verb) = cx.shell.asking_about.remove(ask) else {
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                };
+                let always = matches!(scope, phosphor_core::request::GrantScope::Always);
+                if !cx.shell.answer_ask(*ask, Some(1), None) {
+                    cx.shell.asking_about.insert(*ask, verb);
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                }
+                // **Said in the permission's own words, after the answer.**
+                // `Shell::answer_ask` writes `answered 1`, which is true of a
+                // digit and useless about a grant: what you want to read back
+                // is *what you just permitted*, and for `[2]` that it will hold
+                // next time. Overwritten rather than suppressed, because the
+                // answer really did happen.
+                cx.shell.saying = Some(if always {
+                    cx.shell.writing.push(verb.clone());
+                    format!("allowing {verb} from now on")
+                } else {
+                    format!("allowed once — {verb}")
+                });
+                done()
+            }
+            Action::Ask(AskAction::DenyPermission { ask }) => {
+                let Some(verb) = cx.shell.asking_about.remove(ask) else {
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                };
+                if !cx.shell.answer_ask(*ask, Some(3), None) {
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                }
+                cx.shell.saying = Some(format!("refused — {verb}"));
+                done()
+            }
+            // `T060`. **`esc later` — the third of `4a`'s three ways out**, and
+            // the one the design is actually built around: *"you answer when
+            // you get a chance — same philosophy as unseen."*
+            Action::Ask(AskAction::DeferAsk { ask }) => {
+                // Absent means the one on screen — which is `Shell::asked`, and
+                // falls back to the head so `:defer` works from a keyboard with
+                // no float up.
+                let Some(which) = ask.or(cx.shell.asked).or_else(|| cx.shell.head_ask()) else {
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                };
+                if !cx.shell.defer_ask(which) {
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                }
+                done()
             }
             Action::Ask(AskAction::AnswerAsk { ask, digit, prose }) => {
                 if digit.is_none() && prose.is_none() {
@@ -10436,7 +11123,28 @@ impl Editing {
             Sequence::BlockFile => Some("T053"),
             Sequence::Diagnostic => Some("T085"),
             Sequence::Thread => Some("T068"),
-            Sequence::Ask => Some("T060"),
+            // `T060`. **A motion over the queue, answered here rather than by
+            // walking a store of rows** — the sequences below this one are
+            // spans in a file and this one is a float, so what *"the next one"*
+            // means is which question comes back rather than where the cursor
+            // goes. `Seek` is not consulted for the same reason: a queue you
+            // pushed things onto has an order, and `[!` backwards through it
+            // would be a second order to keep in step with the first.
+            Sequence::Ask => {
+                return match cx.shell.recall_ask() {
+                    Some(recalled) => Outcome::Done(Receipt {
+                        capability: "goto-sequence",
+                        value: Value::Int(i64::try_from(recalled.0).unwrap_or(i64::MAX)),
+                        note: None,
+                    }),
+                    // **Declines by name rather than doing nothing**, and the
+                    // sentence distinguishes the two ways there is nothing to
+                    // recall: an empty queue and a queue you have not pushed
+                    // anything back from.
+                    None if cx.shell.asks.is_empty() => declined("no questions waiting"),
+                    None => declined("nothing pushed back — the question is already up"),
+                };
+            }
             Sequence::SearchMatch => Some("T058"),
             // A jumplist entry is an anchor and `jump` already walks them, so
             // this arm would be a second spelling of one behaviour.
@@ -11925,9 +12633,27 @@ const fn moves_cursor(action: &Action) -> bool {
 fn deliver(editing: &mut Editing, cx: &mut Cx<'_>, posted: &events::Posted) -> Option<String> {
     let outcome = match posted.action.spec().mcp {
         McpPolicy::Allow => editing.act(cx, &posted.action),
-        // Not applied and not dropped: the ask queue is where this goes when it
-        // exists, and until then a producer is told what it is waiting for.
-        McpPolicy::Ask => declined("needs an ask first — T060 builds the queue"),
+        // **`T060` — the queue exists now, and this is what it was for.**
+        // Neither applied nor dropped: an `Ask`-rated action becomes a
+        // question, and answering `[1]` runs it. This line read
+        // *"needs an ask first — T060 builds the queue"* for four windows, and
+        // it was the honest answer while there was nowhere to put the question.
+        //
+        // **The action is held under the ask's id, not beside it.** Two servers
+        // can each want a rename while you are reading something else, and a
+        // single slot would let the second overwrite the first — which for a
+        // rating whose whole point is consent is the worst possible failure.
+        McpPolicy::Ask => {
+            let id = cx.shell.mint_ask();
+            let question = held_question(&posted.action, posted.source);
+            cx.shell.enqueue_ask(id, question);
+            cx.shell.held.insert(id, Box::new(posted.action.clone()));
+            Outcome::Done(Receipt {
+                capability: posted.action.spec().name,
+                value: Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)),
+                note: Some("queued as a question — answer it when you get a chance".to_owned()),
+            })
+        }
         McpPolicy::Deny => declined("denied to a producer — only the keyboard asks for this"),
     };
     // `T100`: one reduction of an `Outcome` to a notice, shared with the ex line
@@ -13119,7 +13845,13 @@ mod tests {
             store: Arc::new(store::Shared::default()),
             asks: BTreeMap::new(),
             next_ask: Arc::new(std::sync::Mutex::new(1)),
-            asking: None,
+            held: BTreeMap::new(),
+            granted: Vec::new(),
+            asking_about: BTreeMap::new(),
+            writing: Vec::new(),
+            allowed: None,
+            edits: Vec::new(),
+            deferred: std::collections::BTreeSet::new(),
             asked: None,
             workspace: PathBuf::new(),
             wake: Arc::new(|| {}),
@@ -13307,11 +14039,16 @@ mod tests {
     }
 
     /// The middle rating, and the one an LSP client meets first: `T036`'s
-    /// `apply-workspace-edit` is `Ask`, so it waits for `T060`'s queue rather
-    /// than editing the buffer on a server's say-so. The producer is told what
-    /// it is waiting for, which is the same contract a missing arm gets.
+    /// `apply-workspace-edit` is `Ask`, so a server's say-so is not enough.
+    ///
+    /// **This test asserted the refusal for four windows and now asserts the
+    /// queue.** `deliver` answered *"needs an ask first — T060 builds the
+    /// queue"*, which was the honest thing to say while there was nowhere to
+    /// put the question. There is now: the action becomes a question, the
+    /// question carries who asked and what for, and nothing is applied until
+    /// you say so.
     #[test]
-    fn a_posted_action_the_mcp_door_asks_about_waits_for_the_ask_queue() {
+    fn a_posted_action_the_mcp_door_asks_about_becomes_a_question() {
         use phosphor_core::input::text::Text as _;
 
         let mut editing = editing("hello");
@@ -13326,15 +14063,112 @@ mod tests {
                 }),
             },
         );
-        assert_eq!(
-            note.as_deref(),
-            Some("lsp: needs an ask first — T060 builds the queue"),
-        );
+        assert_eq!(note, None, "a queued question is not trouble to report");
         assert_eq!(
             editing.text().line(1).as_deref(),
             Some("hello"),
-            "nothing was applied"
+            "and nothing was applied on the server's say-so"
         );
+
+        let queued: Vec<_> = editing.shell.asks.values().collect();
+        assert_eq!(queued.len(), 1, "the question is in the queue");
+        // **It names who asked and what for.** *"Something wants permission"*
+        // is not an answerable question; this is the same content `7a` takes
+        // further with the exact invocation (`T061`).
+        assert!(
+            queued[0].prose.contains("lsp") && queued[0].prose.contains("edit"),
+            "and says who wants what; prose was {:?}",
+            queued[0].prose
+        );
+        assert_eq!(
+            queued[0].options.len(),
+            2,
+            "with a yes and a no, which is the whole of the consent"
+        );
+        assert_eq!(
+            editing.shell.held.len(),
+            1,
+            "and the action is held against the ask that is asking"
+        );
+    }
+
+    /// **`T061`: a rule matches a verb, not a command line — and not a word it
+    /// merely starts.**
+    ///
+    /// The whole reason `7a`'s always-allow is worth pressing: `(allow "git
+    /// push")` has to cover `git push origin retry-backoff` or it is a rule
+    /// that never applies twice. And it must not cover `gitleaks`, which is the
+    /// difference between a prefix *rule* and a prefix *match* — the way an
+    /// allow-list quietly grants more than it says.
+    #[test]
+    fn a_rule_covers_the_invocations_it_names_and_no_others() {
+        let rules = Some("git push|cargo test");
+        for covered in [
+            "git push",
+            "git push origin retry-backoff",
+            "cargo test",
+            "cargo test --workspace",
+        ] {
+            assert!(super::permitted(rules, covered), "{covered:?} is covered");
+        }
+        for not in [
+            // The boundary. A rule is a whole verb.
+            "gitleaks scan",
+            "git pushx",
+            // A different verb entirely.
+            "git commit -am wip",
+            "rm -rf /",
+        ] {
+            assert!(!super::permitted(rules, not), "{not:?} is not covered");
+        }
+        // And an empty list permits nothing, which is the state every session
+        // starts in.
+        assert!(
+            !super::permitted(None, "git push"),
+            "no rules, no permission"
+        );
+        assert!(
+            !super::permitted(Some(""), "git push"),
+            "and neither does an empty one"
+        );
+    }
+
+    /// **Answering `[1]` releases what the question was about; `[2]` drops it.**
+    ///
+    /// The other half of the rating, and the half that makes it a mechanism
+    /// rather than a screen. `Shell::granted` is what the loop runs.
+    #[test]
+    fn granting_a_held_question_releases_its_action_and_denying_drops_it() {
+        for (digit, released) in [(1, 1), (2, 0)] {
+            let mut editing = editing("hello");
+            let (buffer, mut cx) = editing.split();
+            drop(deliver(
+                buffer,
+                &mut cx,
+                &super::events::Posted {
+                    source: "lsp",
+                    action: Action::Lsp(phosphor_core::action::LspAction::ApplyWorkspaceEdit {
+                        files: Vec::new(),
+                    }),
+                },
+            ));
+            let asked = *editing
+                .shell
+                .asks
+                .keys()
+                .next()
+                .expect("the question is queued");
+            assert!(editing.shell.answer_ask(asked, Some(digit), None));
+            assert_eq!(
+                editing.shell.granted.len(),
+                released,
+                "digit {digit} releases {released} action(s)"
+            );
+            assert!(
+                editing.shell.held.is_empty(),
+                "and the question stops holding one either way"
+            );
+        }
     }
 
     /// What an LSP client posts on day one, and what it gets back today:

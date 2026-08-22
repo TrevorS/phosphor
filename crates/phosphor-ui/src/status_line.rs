@@ -979,6 +979,58 @@ mod tests {
         }
     }
 
+    /// **`T060`: Q9's `!` survives the shed at 40 columns.**
+    ///
+    /// The acceptance in its own words. The flag is *the only notification a
+    /// queued ask gets* — a question waits rather than interrupting, so a strip
+    /// that dropped the `!` to fit would be an editor that had stopped
+    /// mentioning it at all. `SHED_ORDER` has no rung for it, and this is the
+    /// test that says so at the width where every rung has been spent.
+    ///
+    /// **Adversarially wide inputs**, because a `!` that survives 40 columns
+    /// with a short path proves nothing about one that has to shed everything
+    /// first.
+    #[test]
+    fn q9s_flag_survives_every_rung_of_the_shed() {
+        let vm = StatusLineVm {
+            file: Some(FileVm {
+                path: "a/very/deeply/nested/path/far/longer/than/any/terminal.rs",
+                dirty: true,
+            }),
+            // **Not `Waiting`.** That state's own glyph *is* `!`, and the flag
+            // is suppressed beside it — so drawing this case at `Idle` is what
+            // makes the `!` on screen the flag's and nobody else's.
+            session: SessionState::Idle,
+            ask_pending: true,
+            unseen: 999,
+            vcs: Some("jj ✓ 3 ahead"),
+            cursor: Some(CursorVm {
+                line: 12_345,
+                col: 678,
+            }),
+            ..full_vm()
+        };
+        for width in 40..=60 {
+            let line = row_text(&render(&vm, width, 1), 2, 2, width);
+            assert!(
+                line.contains('!'),
+                "the queued-ask flag survives {width} columns; row was {line:?}"
+            );
+        }
+
+        // And it is not there when nothing is queued — otherwise the loop above
+        // would pass against a strip that always drew one.
+        let quiet = StatusLineVm {
+            ask_pending: false,
+            ..vm
+        };
+        let line = row_text(&render(&quiet, 40, 1), 2, 2, 40);
+        assert!(
+            !line.contains('!'),
+            "and only when one is; row was {line:?}"
+        );
+    }
+
     #[test]
     fn every_width_from_40_to_200_is_one_row() {
         // The deterministic half of `T017`'s criterion: the property below

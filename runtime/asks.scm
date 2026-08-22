@@ -27,11 +27,10 @@
                         (view/key-hint ":claude" "reply in prose")
                         (view/key-hint "esc" "later"))))
 
-;; **`esc later` is honest and incomplete, and the incompleteness is T060's.**
-;; esc closes the float and the ask stays queued — which is what "later" means —
-;; but nothing yet brings it back: `]!` is the queue's key and the queue is that
-;; task. the hint is what 4a draws and what this build does; what it does not
-;; yet do is offer a way back.
+;; **`esc later` means the queue, not the screen** — T060. esc defers: the
+;; question stays pending, still counts toward the statusline's `!`, and `]!`
+;; brings it back. this paragraph said "nothing yet brings it back" for exactly
+;; one task.
 ;; **the body is a helper and not an expression inside the surface string**, and
 ;; that is a rule this file learned from a lint rather than from taste.
 ;; `scripts/lint-node-kinds.sh` proves every node kind is composed by the shipped
@@ -76,6 +75,23 @@
         (loop (cdr left)
               (+ digit 1)
               (cons (hash "digit" digit "label" (car left)) out)))))
+
+;; `:defer` — 4a's `esc later` said as a command. **esc is the key and this is
+;; the door**: a person presses esc, and the verb has to be reachable from a
+;; place a test and an agent can name.
+;;
+;; **bare means the one you are looking at**, and that is not a convenience:
+;; `defer-ask` takes an id because a *door* has to name one, and a person has
+;; exactly one question in front of them. an ex command that required the number
+;; would be asking you to read an id off a screen that does not draw one — and
+;; `(string->number "")` is `#false`, which raises inside `key/cmd` and reaches
+;; the ex bridge as *"no such command"*. `every_ex_command_decodes` types every
+;; name with an empty argument and is what caught it.
+(ex-set! "defer" "push the focused question back — :defer"
+         (lambda (rest bang)
+           (if (equal? rest "")
+               (key/run (key/cmd "defer-ask"))
+               (key/run (key/cmd "defer-ask" "ask" (string->number rest))))))
 
 (ex-set! "ask" "ask a question — :ask prose|option|option"
          (lambda (rest bang)

@@ -111,27 +111,11 @@ RECORDED = {
                             "`host.flag(\"soft-wrap\")` — but the verb is not applied, so it "
                             "cannot be toggled from Steel, MCP or the CLI door. `T081` is ticked; "
                             "this is `T016`'s shape and was found by the same audit."),
-    "ApplyWorkspaceEdit": ("T060", "A server's rename or code action, across files. `T036` built "
-                                   "the reading half — `lsp::file_edits_from_lsp` turns a "
-                                   "`WorkspaceEdit` into `Vec<FileEdits>` and is tested — and "
-                                   "the applying half is blocked twice over. It is the one `Lsp` "
-                                   "capability rated `Ask`, and `deliver` answers it *needs an "
-                                   "ask first — T060 builds the queue*: there is nowhere to put "
-                                   "the question, so the only arm that could exist today would "
-                                   "be one that skipped asking. The second blocker is that it "
-                                   "also edits files that are **not open**, and this row used to "
-                                   "name `T088` for that — a reading, since `T088` is splits and "
-                                   "focus. It is filed as OPEN-QUESTIONS.md §47 now: `T088` "
-                                   "ships a `BufferId`-keyed map and nothing that puts an entry "
-                                   "in it with no pane pointing at one, so `T060` inherits the "
-                                   "container and owes the rules. **Two of those `T088` "
-                                   "answered on its way past**: `:wall` writes every dirty "
-                                   "buffer and `:quit` counts unsaved work in all of them, both "
-                                   "over the map rather than the focused entry, so an "
-                                   "unattached buffer is already counted by each. What is left "
-                                   "for `T060` is attach/detach and what an unattached buffer "
-                                   "wraps to — it has no pane, so it has no width. The ask is "
-                                   "still the nearer of the two."),
+    # `ApplyWorkspaceEdit` was recorded here against `T060` and is gone: that task
+    # built the queue, so `deliver` turns an `Ask`-rated action into a question
+    # instead of refusing it, and the arm applies the edits across files. §47's
+    # four rules about an unattached buffer are answered in the loop, beside the
+    # code that creates one.
     # `SetVirtualTextVisible` was recorded here against `T041` and is gone: the
     # store landed, so a rail can be named by its owning region and the arm is
     # in `Editing::collapse`. It is per-owner without a fork patch — the host

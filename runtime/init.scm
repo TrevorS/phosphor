@@ -51,6 +51,18 @@
     ;; `T059` — 4a, and the first editor-layer surface built from ordinary
     ;; chrome rather than from the spans hatch.
     "asks.scm"
+    ;; `T061` — 7a's rule. **this one has to be in this list**, not loaded
+    ;; later: `Layer::load_persisted` runs every persisted form after the whole
+    ;; boot order, so `allow` being free at that point is a boot float on every
+    ;; start. OPEN-QUESTIONS.md ss35.
+    ;;
+    ;; a comment here used to be able to truncate this list: the test that
+    ;; checks it against the directory found the first opening bracket and the
+    ;; first closing one, so a comment quoting a form hid the six languages
+    ;; after it — and the sentence explaining that did it again. the test strips
+    ;; comments now, the way scheme's own reader always did, so this paragraph
+    ;; is prose rather than a hazard.
+    "permissions.scm"
     "languages/typescript.scm"
     "languages/javascript.scm"
     "languages/rust.scm"

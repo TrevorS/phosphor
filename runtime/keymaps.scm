@@ -685,6 +685,13 @@
         "next unseen region")
   (list "[u" (key/run (key/cmd "goto-sequence" "sequence" "unseen-region" "seek" "prev"))
         "previous unseen region")
+  ;; `T060` — Q9's `]!`. **no `[!` beside it**, unlike every other pair in this
+  ;; block: the others walk spans in a file and have two directions because a
+  ;; cursor does. this one walks a *queue*, which has an order you put things
+  ;; into, and a backwards `]!` would be a second order to keep in step with the
+  ;; first.
+  (list "]!" (key/run (key/cmd "goto-sequence" "sequence" "ask" "seek" "next"))
+        "bring back a question you pushed aside")
   (list "]b" (key/run (key/cmd "goto-sequence" "sequence" "block-file" "seek" "next"))
         "next file in the review block")
   (list "[b" (key/run (key/cmd "goto-sequence" "sequence" "block-file" "seek" "prev"))

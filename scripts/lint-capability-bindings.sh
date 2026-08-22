@@ -154,6 +154,18 @@ EMITTED = {
     "set-keybinding": "the agent's door; the shipped layer keeps its own table",
     "remove-keybinding": "the agent's door, the same way",
     "set-register": "the agent's door — a person yanks into one",
+    # `T060`. A *server* emits it — a rename or a code action comes back as a
+    # `WorkspaceEdit`, which `lsp::file_edits_from_lsp` reads. It is the one
+    # `Lsp` capability rated `Ask`, so it does not apply on arrival: it becomes
+    # a question in the queue and the answer is the binding a person has.
+    "apply-workspace-edit": "a language server emits it; the queue asks you",
+    # `T061`. 7a's `[1]`/`[2]`/`[3]`, and the keymap for a digit is Rust for
+    # `float-answer`'s reason: a digit means different things depending on what
+    # holds the screen. `float-answer` resolves the focused ask and emits these
+    # two when it is a permission — which is the distinction that makes them
+    # separate verbs, since `[2]` writes a rule and an `answer-ask` cannot.
+    "grant-permission": "float-answer emits it for 7a's [1] and [2]",
+    "deny-permission": "float-answer emits it for 7a's [3]",
     # `T056`. The capability's own sentence names its three callers — "a picker
     # accept, a transcript tool row, an OSC 8 link" — and none of them is a
     # person naming a file. A click lands in the *terminal*, which resolves the
