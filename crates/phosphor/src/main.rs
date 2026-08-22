@@ -756,6 +756,16 @@ enum Intent {
     /// is expressible now, so *"close them all"* and *"close the focused one"*
     /// are two verbs rather than one under two names.
     CloseAllFloats,
+    /// Something for the editor to say on the notice row (`T053`).
+    ///
+    /// **A door can already answer its caller and could not tell the *editor*
+    /// anything.** `Receipt::note` reaches whoever made the call — the shell
+    /// that ran `phosphor declare-review-block`, the agent that called the
+    /// tool — and a review block's whole point is that it is news to the person
+    /// at the terminal, who made no call at all. §6 puts that kind of sentence
+    /// on the notice row, and this is how something on the other side of the
+    /// VM reaches it.
+    Say(String),
     /// An Action for the loop to apply to the focused buffer (`T052`).
     ///
     /// **The one intent that carries a mutation rather than a request**, and it
@@ -1538,6 +1548,13 @@ impl Answers for AppHost {
                     revision: Revision::INITIAL,
                 })
             }
+            // `T053` — every declared block, oldest first. Off the same
+            // store the markers came from, so a block and its regions cannot
+            // disagree about what landed.
+            Query::Review(phosphor_core::query::ReviewQuery::ReviewBlocks {}) => Ok(Answer {
+                value: Value::List(self.store.blocks().iter().map(block_value).collect()),
+                revision: self.store.revision(),
+            }),
             // `T040`. Answered off the same store the gutter draws from.
             Query::Review(phosphor_core::query::ReviewQuery::Diagnostics { path }) => Ok(Answer {
                 value: Value::List(self.store.answer_diagnostics(path.as_deref())),
@@ -1791,6 +1808,61 @@ impl Host for AppHost {
                 // for the ones a person declared by hand.
                 self.fingerprint_declared(regions);
                 Outcome::Done(answer)
+            }
+            // `T053` — Q6's review-block signal. **The agent's door and only
+            // the agent's**: nobody types a file-and-span list, which is why
+            // this is armed here rather than in `Editing::act` and why
+            // `lint-capability-bindings` carries it as emitted.
+            Action::Review(phosphor_core::action::ReviewAction::DeclareReviewBlock {
+                title,
+                files,
+                annotation,
+            }) => {
+                // **`Actor::Claude`, whoever called it**, and that is the
+                // capability rather than a shortcut. §7 rules that *"your own
+                // edits never create regions: the machine tracks claude only"*,
+                // and `FileGroup` carries no author to disagree with — unlike
+                // `RegionSpec`, which does, because `declare-regions` is the
+                // general verb. A review block *is* the claim that claude wrote
+                // these spans; declaring one with `request.actor` would make
+                // the same call from `:repl` produce zero markers and a
+                // notification about them, which is the worst of both.
+                let block =
+                    self.store
+                        .declare_block(title, files, annotation.as_deref(), Actor::Claude);
+                // `T043`'s door half, the same one `declare-regions` does: a
+                // region declared through a door has to survive a rewrite too,
+                // and the fingerprint is taken against the text it was declared
+                // against rather than whatever has since moved onto that line.
+                let specs: Vec<phosphor_core::request::RegionSpec> = files
+                    .iter()
+                    .flat_map(|file| {
+                        file.spans
+                            .iter()
+                            .map(|span| phosphor_core::request::RegionSpec {
+                                path: file.path.clone(),
+                                span: *span,
+                                author: Actor::Claude,
+                            })
+                    })
+                    .collect();
+                self.fingerprint_declared(&specs);
+                // **The notification, in `1b`'s own words.** The mockup draws
+                // the seam as `✻ review ready · retry logic — 2 files, 6
+                // regions`, and this is that sentence: §6's midline dot inside
+                // one fact, an em dash before the count.
+                let regions: usize = block.groups.iter().map(|group| group.regions.len()).sum();
+                let said = format!(
+                    "review ready · {} — {} file(s), {regions} region(s)",
+                    block.title,
+                    block.groups.len(),
+                );
+                self.ask(Intent::Say(said));
+                Outcome::Done(Receipt {
+                    capability: name,
+                    value: Value::Int(i64::try_from(block.id.0).unwrap_or(i64::MAX)),
+                    note: block.annotation.clone(),
+                })
             }
             Action::Region(RegionAction::MarkSeen { target }) => {
                 self.mark(name, target, SeenState::Seen)
@@ -2822,6 +2894,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         transcript: Transcript::default(),
         told: 0,
         folded: Vec::new(),
+        saying: None,
     };
     // `T088`'s step 4c: every buffer by id, every pane by id, one of each.
     // The maps are the wrong shape for one entry and that is what they are
@@ -3354,6 +3427,19 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             Err(_) => !matches!(status_cache.tree().root, Node::Empty { .. }),
         };
         let status_tree = composed.then(|| status_cache.tree());
+
+        // `T053`. A parked sentence, on the first frame with a notice row to
+        // put it on. `Surface::Repl` owns its whole frame — `draw` returns
+        // early for `Composed::Frame`, statusline included — so a sentence set
+        // while it is open would be drawn to nobody; this waits instead of
+        // being spent. Immediately before the chrome is built, which is the
+        // last point `notice` is still free.
+        if !matches!(surface, Surface::Repl)
+            && notice.is_none()
+            && let Some(said) = shell.saying.take()
+        {
+            notice = Some(said);
+        }
 
         // What is on the statusline's row instead of the statusline. The ex
         // line takes it while it is open — vim's own placement — and a notice
@@ -4171,6 +4257,19 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         notice = Some(said);
                     }
                 }
+                // `T053`. **Parked, not drawn.** The notice row is the
+                // statusline's, and `6b`'s REPL owns its whole frame — `draw`
+                // returns early for `Composed::Frame`, statusline included — so
+                // a sentence set while the REPL is up is drawn to nobody.
+                // Measured: the pty test asserted markers and the query and
+                // went green with `Intent::Say` deleted, because the notice it
+                // was named for had never been visible to assert.
+                //
+                // Held until a frame that has a notice row, which is every
+                // frame the REPL is not on. §6's sentences are not urgent
+                // enough to interrupt a surface and are too useful to throw
+                // away.
+                Intent::Say(said) => shell.saying = Some(said),
                 Intent::OpenPicker(id, query) => {
                     shell.picker = Some(PickerSession::open(SourceId(id), query, &shell.wake));
                     editing.open_picker = true;
@@ -4414,6 +4513,56 @@ fn session_state(life: &SessionLife, turn: Option<&(TurnId, Instant)>) -> Sessio
         SessionLife::Attached { .. } if turn.is_some() => SessionState::Working,
         SessionLife::Attached { .. } => SessionState::Idle,
     }
+}
+
+/// One review block as plain data, for the `review-blocks` query (`T053`).
+///
+/// Region **ids**, not spans — see [`store::Block`] for why a block that
+/// carried its own copy of the spans would drift from the markers after a
+/// rewrite. A caller that wants the spans asks `region` for them, which is the
+/// same store at the same revision.
+fn block_value(block: &store::Block) -> Value {
+    let mut fields = Args::new();
+    fields.set(
+        "block",
+        Value::Int(i64::try_from(block.id.0).unwrap_or(i64::MAX)),
+    );
+    fields.set("title", Value::Text(block.title.clone()));
+    fields.set(
+        "annotation",
+        block.annotation.clone().map_or(Value::Null, Value::Text),
+    );
+    fields.set(
+        "files",
+        Value::List(
+            block
+                .groups
+                .iter()
+                .map(|group| {
+                    let mut row = Args::new();
+                    row.set("path", Value::Text(group.path.display().to_string()));
+                    row.set(
+                        "annotation",
+                        group.annotation.clone().map_or(Value::Null, Value::Text),
+                    );
+                    row.set(
+                        "regions",
+                        Value::List(
+                            group
+                                .regions
+                                .iter()
+                                .map(|region| {
+                                    Value::Int(i64::try_from(region.0).unwrap_or(i64::MAX))
+                                })
+                                .collect(),
+                        ),
+                    );
+                    Value::Record(row)
+                })
+                .collect(),
+        ),
+    );
+    Value::Record(fields)
 }
 
 /// Everything the session has said, as `1b` shows it (`T054`).
@@ -6601,6 +6750,12 @@ struct Shell {
     /// so *"claude is working"* is the client's report rather than the
     /// editor's guess.
     turn: Option<(TurnId, Instant)>,
+    /// A sentence a door asked the editor to say, waiting for a frame that
+    /// has somewhere to put it (`T053`).
+    ///
+    /// See `Intent::Say` for why it waits: `6b`'s REPL owns its whole frame, so
+    /// a notice set while it is open would be drawn to nobody.
+    saying: Option<String>,
     /// Everything the session has said (`T054`).
     ///
     /// On the shell for [`Shell::session`]'s reason: the arms that write it
@@ -11954,6 +12109,7 @@ mod tests {
             transcript: super::Transcript::default(),
             told: 0,
             folded: Vec::new(),
+            saying: None,
         }
     }
 

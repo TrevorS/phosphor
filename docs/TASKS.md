@@ -2881,11 +2881,55 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   > panics on the first `tools/call` — *after* the handshake, so the server looks
   > healthy right until it is asked to do something. `just gate` green.
 
-- [ ] **T053 · `phosphor/declare-review-block`**
+- [x] **T053 · `phosphor/declare-review-block`**
   The review-block signal as an MCP tool call carrying file+range list and per-group annotations
   (Q6). Routed through the registry, so Steel and CLI can declare one too.
   *Done when:* a declared block becomes a grouped set of unseen markers + a notification.
   *Needs:* T052, T041
+
+  > **Built 2026-08-21.** `store::Shared::declare_block` declares each group's
+  > spans through the same `declare` `declare-regions` uses — so a block's
+  > markers *are* §7 regions, counted by the statusline and drawn by the gutter,
+  > with no second path — and records which regions arrived together under a
+  > `BlockId`. `review-blocks` answers off the same store at the same revision,
+  > so a block and its markers cannot disagree about what landed.
+  >
+  > **Ids, not spans.** A block holds `RegionId`s; the region *is* the span.
+  > A block carrying its own copy would drift from the markers the first time
+  > `T043`'s reanchor moves one.
+  >
+  > **`Actor::Claude` whoever calls it, and that is the capability rather than
+  > a shortcut.** §7 rules that *"your own edits never create regions"*, and
+  > `FileGroup` carries no author to disagree with — unlike `RegionSpec`, which
+  > does, because `declare-regions` is the general verb. A review block *is* the
+  > claim that claude wrote these spans. Declaring one with `request.actor`
+  > would make the same call from `:repl` produce zero markers and a
+  > notification about them, which is the worst of both — measured, since that
+  > is exactly what the first version did.
+  >
+  > **The notification needed a channel that did not exist.** A door answers its
+  > *caller*: `Receipt::note` reaches the shell that ran the verb or the agent
+  > that called the tool. A review block is news to the person at the terminal,
+  > who made no call at all. `Intent::Say` is that channel — a sentence from the
+  > far side of the VM onto §6's notice row, in `1b`'s own words: `review ready
+  > · retry logic — 1 file(s), 2 region(s)`.
+  >
+  > **And it had to be parked rather than drawn.** `6b`'s REPL owns its whole
+  > frame — `draw` returns early for `Composed::Frame`, statusline included — so
+  > a notice set while the REPL is up is drawn to nobody, which is every
+  > declaration a `:repl` test can make. It waits on `Shell::saying` for the
+  > first frame with a notice row. **Measured**: the pty test asserted markers
+  > and the query, was named *"and a notice"*, and went green with
+  > `Intent::Say` deleted — because the notification it was named for had never
+  > been visible to assert. Two more things that finding cost, both now written
+  > into the test: a notice borrows the *whole* statusline row, so waiting for
+  > `NORMAL` after it lands waits for a mode chip that is not drawn, and the
+  > unseen counter has nowhere to go until a keystroke clears the sentence.
+  >
+  > **Verification.** One pty test driving the Steel door — the point being that
+  > the capability is *routed through the registry*, one row and three doors —
+  > asserting the query, the notice and the markers. Two planted defects caught:
+  > a block that declares no regions, and a block that says nothing.
 
 - [x] **T088 · Pane manager — splits and focus** 📌
   `T054` calls the transcript *"a pane, not a float — splits, holds focus like a window, survives

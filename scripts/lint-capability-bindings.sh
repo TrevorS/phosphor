@@ -122,6 +122,10 @@ EMITTED = {
     "tool-call-progress": "the ACP session client posts it as a tool call reports progress",
     "tool-call-completed": "the ACP session client posts it when a tool call ends",
     "drop-regions": "the agent's door",
+    # `T053`. Q6's review-block signal, and the row's own subject: a file and
+    # span list with per-group annotations is something an agent emits after a
+    # turn, not something a person types. `1b`'s seam is what a person sees.
+    "declare-review-block": "the agent's door — Q6's review-block signal",
     "mark-unseen": "the agent's door",
     "reanchor": "the agent's door",
     "define-picker-source": "the Steel API — `runtime/pickers.scm` defines with it",

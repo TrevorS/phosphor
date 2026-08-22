@@ -43,17 +43,61 @@ use std::sync::Mutex;
 
 use phosphor_core::journal;
 use phosphor_core::query::Revision;
-use phosphor_core::request::{Actor, AnchorId, Diagnostic, RegionId, RegionSpec, Span};
+use phosphor_core::request::{
+    Actor, AnchorId, BlockId, Diagnostic, FileGroup, RegionId, RegionSpec, Span,
+};
 use phosphor_core::store::{
     Anchor, Declared, Fingerprint, Lens, Reanchored, Region, Scope, SeenLog, SeenState, Snapshot,
     Store, persist,
 };
 use phosphor_core::value::Value;
 
+/// One declared review block (`T053`).
+///
+/// **Regions grouped by the declaration that made them**, which is the whole
+/// of what a block adds: `declare-regions` already creates markers one span at
+/// a time, and `8b`'s review surface needs to know which of them arrived
+/// together and what claude said about each file. So a block holds ids, not
+/// spans — the region *is* the span, and a block that carried its own copy
+/// would be a second place for the two to disagree after a rewrite moves one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Block {
+    /// Which block.
+    pub(crate) id: BlockId,
+    /// What this block is — `1b`'s `review ready · retry logic`.
+    pub(crate) title: String,
+    /// Claude's note about the block as a whole.
+    pub(crate) annotation: Option<String>,
+    /// One entry per file, in the order declared.
+    pub(crate) groups: Vec<Group>,
+}
+
+/// One file's contribution to a block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Group {
+    /// Workspace-relative, through [`key_for`] like every other path here.
+    pub(crate) path: PathBuf,
+    /// Claude's own annotation for this group — `8b`'s *"mechanical"* versus
+    /// *"the meat"*.
+    pub(crate) annotation: Option<String>,
+    /// The regions this group declared.
+    pub(crate) regions: Vec<RegionId>,
+}
+
 /// The store, shared.
 #[derive(Debug, Default)]
 pub(crate) struct Shared {
     store: Mutex<Store>,
+    /// Declared review blocks (`T053`).
+    ///
+    /// **Beside the region store rather than inside it, and not journalled.**
+    /// `phosphor_core::store` is the *seen-state* machine — §7's one mutable
+    /// flag, persisted so a marker survives a restart — and a block is a
+    /// statement claude made once. The regions it created are journalled like
+    /// any others; the grouping is not, because `T067`'s inbox is the surface
+    /// for what claude said that outlives a session, and duplicating it here
+    /// would be two records of one sentence.
+    blocks: Mutex<Vec<Block>>,
     /// The seen-state journal (`T044`), or [`None`] when there is nowhere to
     /// put one.
     ///
@@ -91,6 +135,9 @@ impl Shared {
         Ok(Self {
             store: Mutex::new(Store::restore(log.state().clone())),
             log: Mutex::new(Some(log)),
+            // Not restored: a block is a statement, not seen-state. See the
+            // field's own note.
+            blocks: Mutex::new(Vec::new()),
         })
     }
 
@@ -175,6 +222,76 @@ impl Shared {
         };
         self.write(records);
         declared
+    }
+
+    /// **`declare-review-block`.** Declares every group's spans and records
+    /// what arrived together (`T053`).
+    ///
+    /// One `declare` per group rather than one for all of them, because the
+    /// answer has to say *which* regions belong to *which* file — and
+    /// [`Declared`] reports ids without saying which spec produced them. Per
+    /// group, that ambiguity does not arise.
+    ///
+    /// **`revised` counts as belonging to the block, not just `created`.** An
+    /// agent that touches the same span twice in one session has revised a
+    /// region rather than made a second one, and a block that listed only the
+    /// new ones would under-report exactly the files claude worked hardest on.
+    pub(crate) fn declare_block(
+        &self,
+        title: &str,
+        files: &[FileGroup],
+        annotation: Option<&str>,
+        asked_by: Actor,
+    ) -> Block {
+        let groups: Vec<Group> = files
+            .iter()
+            .map(|file| {
+                let specs: Vec<RegionSpec> = file
+                    .spans
+                    .iter()
+                    .map(|span| RegionSpec {
+                        path: file.path.clone(),
+                        span: *span,
+                        author: asked_by,
+                    })
+                    .collect();
+                let declared = self.declare(&specs, asked_by);
+                Group {
+                    path: key_for(&file.path),
+                    annotation: file.annotation.clone(),
+                    regions: declared
+                        .created
+                        .iter()
+                        .chain(&declared.revised)
+                        .copied()
+                        .collect(),
+                }
+            })
+            .collect();
+
+        let mut blocks = self
+            .blocks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Minted from the count, so ids are stable within a session and never
+        // reused — the same rule `Buffers::open` and `Panes::mint` follow.
+        let block = Block {
+            id: BlockId(blocks.len() as u64),
+            title: title.to_owned(),
+            annotation: annotation.map(str::to_owned),
+            groups,
+        };
+        blocks.push(block.clone());
+        block
+    }
+
+    /// Every declared block, oldest first — the `review-blocks` query
+    /// (`T053`).
+    pub(crate) fn blocks(&self) -> Vec<Block> {
+        self.blocks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// **`mark-seen` and `mark-unseen`.** Answers how many regions were in

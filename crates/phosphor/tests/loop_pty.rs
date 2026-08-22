@@ -3207,6 +3207,98 @@ mod driven {
         );
     }
 
+    /// **`T053`: a declared block becomes markers and a notification.**
+    ///
+    /// The task's *Done when* is two things and they land in two places: the
+    /// spans become §7 unseen regions in the store — the same ones the gutter
+    /// draws and the statusline counts, because `declare_block` goes through
+    /// the same `declare` `declare-regions` does — and the block itself becomes
+    /// a sentence on the notice row.
+    ///
+    /// **The notification is why `Intent::Say` exists.** A door answers its
+    /// *caller*: `Receipt::note` reaches the shell that ran the verb or the
+    /// agent that called the tool. A review block is news to the person at the
+    /// terminal, who made no call at all, so it needed a way from the far side
+    /// of the VM onto §6's notice row.
+    ///
+    /// Declared through the REPL rather than over MCP because the point is that
+    /// it is *routed through the registry* — one capability, three doors — and
+    /// the Steel one is the one a pty can drive.
+    #[test]
+    fn a_declared_review_block_becomes_markers_and_a_notice() {
+        let scratch = Scratch::new("review-block");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("retry.rs");
+        fs::write(&file, "one\ntwo\nthree\nfour\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+
+        // Two spans in one file, with claude's own annotation for the group.
+        let form = format!(
+            "(declare-review-block! \"retry logic\" (list (hash \"path\" \"{}\" \
+             \"spans\" (list (hash \"start\" (hash \"line\" 1 \"column\" 1) \
+             \"end\" (hash \"line\" 2 \"column\" 1)) \
+             (hash \"start\" (hash \"line\" 3 \"column\" 1) \
+             \"end\" (hash \"line\" 4 \"column\" 1))) \
+             \"annotation\" \"the meat\")) \"the whole change\")\r",
+            file.display()
+        );
+        // The receipt is the block's id with claude's own annotation as the
+        // note — `Receipt::note` reaching the caller, which is exactly the
+        // channel a *person* at the terminal is not on. Hence the notice below.
+        editor.press_until(form.as_bytes(), "the whole change");
+
+        // The query sees it, with its groups and their annotations. Needled on
+        // the *group's* note rather than the block's title: the record prints
+        // in field order and the title sits past the right edge of an 80-column
+        // repl pane, so a needle on it would be waiting for a string the screen
+        // cannot show.
+        let listed = editor.press_until(b"(review-blocks)\r", "the meat");
+        assert!(
+            shows(&listed, "the whole change"),
+            "and the block's own annotation; session was: {listed}"
+        );
+
+        // **Not `"NORMAL"`.** A notice borrows the whole statusline row — vim's
+        // own placement, and `Chrome`'s — so the mode chip is not on screen on
+        // the frame this is waiting for. Waiting for the notice itself is both
+        // the correct needle and the assertion.
+        let said = editor.press_until(b"(close-repl!)\r", "review ready");
+
+        // **The notification**, in `1b`'s own words — the seam sentence, on the
+        // notice row, reaching the person who made no call. It was parked while
+        // the REPL owned the frame and lands on the first frame that has a
+        // notice row.
+        //
+        // **This assertion is the whole reason `Intent::Say` is testable.** The
+        // first version of this test asserted markers and the query only, and
+        // went green with the notification deleted — a test named for a notice
+        // that never looked at one.
+        assert!(
+            shows(&said, "review ready · retry logic"),
+            "the notice names the block; session was: {said}"
+        );
+        assert!(
+            shows(&said, "1 file(s), 2 region(s)"),
+            "and counts what landed; session was: {said}"
+        );
+
+        // **The markers.** Two spans declared, so the statusline counts two —
+        // the same store the gutter draws from.
+        //
+        // One harmless key first: a notice holds the statusline row until the
+        // next keystroke, so the counter has nowhere to be drawn until the
+        // sentence above has been read.
+        editor.press_quietly(b"0");
+        let counted = shown(&editor, "2 unseen");
+        assert!(
+            shows(&counted, "2 unseen"),
+            "the block's spans became unseen regions; session was: {counted}"
+        );
+        editor.leave_by(b"ZQ");
+    }
+
     /// **`T054`: screen `1b` reproduces from a keystroke.**
     ///
     /// The task's *Done when* names the keystroke specifically — *"the binding
