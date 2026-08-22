@@ -2568,6 +2568,45 @@ Focus makes the surface navigable and makes `1b`'s own footer true, at the price
 of a second selection model in a pane. **Teej's call**; the footer says what is
 bound until it is made.
 
+### 57 · `7e` puts `PAUSED` in the mode chip, which is the editor's mode and not the session's
+
+**Raised by `T062`, 2026-08-21. Flagged rather than folded in, the same way §55
+was.**
+
+`7e` draws `PAUSED` in the bottom-left cell where every other screen draws
+`NORMAL`, `INSERT` or `VISUAL`. That cell is the **mode chip** — Design Language
+§5 calls it *"the only inverted text on screen"* — and what it carries is the
+*editor's* mode.
+
+While a turn is paused the buffer is in normal mode. You can move, you can edit,
+you can `:w`. A chip reading `PAUSED` would be the one inverted thing on screen
+telling you about something other than the keys you are about to press, and the
+consequence is concrete: with `PAUSED` in that cell there is nothing left to say
+whether `dd` is about to delete a line or start an operator.
+
+**What `T062` built instead.** The session state is on the strip, which is where
+§5 puts it: `⏸ claude paused`, in the same cell that says `✻ claude idle` and
+`✕ session lost`. `SessionState::Paused` and its `⏸` glyph were already in
+`status_line.rs` waiting for a source, and the shed ladder already keeps the
+glyph through every rung.
+
+**What is actually open.** Three readings, and the choice is Teej's.
+
+1. **The drawing is shorthand.** `7e` needed to show *paused* somewhere and the
+   chip is the most visible cell; the strip is where it belongs and the build is
+   right. This is the reading `T062` took.
+2. **The chip carries the mode that is in charge**, and while a turn is paused
+   the thing in charge is the pause. That is a coherent design — it makes the
+   chip *"what happens if you type"* rather than *"which vim mode"* — but it is
+   a different design from the one every other screen draws, and it would want
+   saying in §5 rather than being inferred from one mockup.
+3. **A fourth chip colour**, with the mode word beside it. Costs a cell on the
+   narrowest terminals, which is what the shed ladder is for.
+
+Nothing about the build changes under (1). Under (2) or (3) the chip's own
+contract moves, which is a Design Language edit rather than a code one — and the
+mockups are `docs/design/*.dc.html`, which are edited at claude.ai and not here.
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

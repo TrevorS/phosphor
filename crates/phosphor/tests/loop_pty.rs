@@ -2142,7 +2142,10 @@ mod driven {
             (b"[b", "previous file in the review block", "T053"),
             // `SPC c p` and `SPC c s` left this table when `T058` built the
             // claude prompt — they raise the line now rather than refusing.
-            (b" ci", "interrupt the session", "T062"),
+            // `SPC c i` left it when `T062` built the interrupt: it declines by
+            // *name* now — `no turn to interrupt` — which is the difference
+            // this table exists to make visible, and the row going is the
+            // record shrinking as designed.
             (b" rr", "reload from disk", "T069"),
             (b" rd", "diff against disk", "T070"),
             (b" j", "the jj timeline", "T073"),
@@ -2160,6 +2163,19 @@ mod driven {
             );
             editor.press_quietly(b"\x1b");
         }
+
+        // **And the row that left says what took its place.** A key dropping
+        // out of this table because its task landed is the good case; a key
+        // dropping out because nobody noticed it stopped refusing is the
+        // failure the table is for. `SPC c i` with no turn running declines by
+        // name, which is `T098`'s claim one rung up: a bound key that cannot
+        // act says *what is missing* rather than *which task*.
+        let named = editor.press_until(b" ci", "no turn to interrupt");
+        assert!(
+            shows(&named, "no turn to interrupt"),
+            "`SPC c i` is built and refuses by name; frame was: {named}"
+        );
+        editor.press_quietly(b"\x1b");
         editor.quit();
     }
 
@@ -3507,6 +3523,166 @@ mod driven {
 
         editor.press_quietly(b"\x1b");
         editor.leave_by(b"ZQ");
+    }
+
+    /// **`T062`: screen `7e` reproduces — `esc` stops the turn at a boundary.**
+    ///
+    /// *"`esc` pauses at the next tool boundary · steer, resume, or abort · the
+    /// seam is recorded"*, and the acceptance's own words: **from a keystroke**,
+    /// and it **reaches the next tool boundary**.
+    ///
+    /// **The `dawdle` fixture mode exists for this and only this.** `esc` has to
+    /// arrive while a turn is running and *before* the agent's next tool call;
+    /// every other mode reaches that boundary in microseconds, so a test would
+    /// pass or fail on scheduling. `dawdle` puts two seconds between the prose
+    /// and the call, which is the window `7e` is about.
+    #[test]
+    fn screen_7e_reproduces_and_esc_stops_at_the_next_tool_boundary() {
+        let scratch = Scratch::new("interrupt");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let started = format!(":cn python3 {} dawdle\r", agent.display());
+        editor.shown_on_grid(started.as_bytes(), "claude attached");
+
+        // **Waited for, not slept through.** The turn has to be *running* when
+        // `esc` lands, and `claude working` on the strip is the editor saying
+        // so — which is what `SessionState::Working` is for.
+        editor.press_quietly(b":claude rewrite the retry loop\r");
+        editor.shown_on_grid(b"", "claude working");
+
+        // The keystroke. It says what it is going to do, because the pause has
+        // not happened yet — the boundary may be a second away, and an `esc`
+        // with nothing on the strip reads as a key that did nothing.
+        let asked = editor.press_until(b"\x1b", "pausing at the next");
+        assert!(
+            shows(&asked, "pausing at the next tool boundary"),
+            "`esc` says what it asked for; session was: {asked}"
+        );
+
+        // **And then it reaches one.** Nothing is pressed to make this happen:
+        // the agent gets there on its own schedule and the boundary is where
+        // the editor stops.
+        // **A harmless key first.** A notice borrows the whole statusline row,
+        // so `pausing at the next tool boundary` sits where the session chip
+        // goes until a keystroke retires it — waiting for `claude paused` with
+        // the notice still up is a thirty-second deadline on a screen that is
+        // already right.
+        let paused = grid_of(&editor.shown_on_grid(b"j", "claude paused"));
+        assert!(
+            shows(&paused, "claude paused"),
+            "the strip says nothing is moving; grid was:\n{paused}"
+        );
+
+        let stopped = grid_of(&editor.shown_on_grid(b" t", "paused at tool boundary"));
+        assert!(
+            shows(&stopped, "acp · paused"),
+            "`7e`'s header says what is running, and nothing is; grid was:\n{stopped}"
+        );
+        // **The held call, drawn and not run.** A pause you cannot see the edge
+        // of is indistinguishable from a hang; this row is the boundary made
+        // visible.
+        assert!(
+            shows(&stopped, "next: edit"),
+            "the call it stopped before is on screen; grid was:\n{stopped}"
+        );
+        assert!(
+            shows(&stopped, "paused at tool boundary"),
+            "and the seam is recorded; grid was:\n{stopped}"
+        );
+        // **The pause outranks the stop reason.** The toy agent finishes its
+        // turn regardless — it does not honour `session/cancel`, which a real
+        // one would — and `✻ EndTurn` used to overwrite this seam, leaving a
+        // screen that had forgotten the pause it was still in.
+        assert!(
+            !shows(&stopped, "EndTurn"),
+            "and is not overwritten by the turn ending; grid was:\n{stopped}"
+        );
+        // `7e`'s three ways on.
+        assert!(
+            shows(&stopped, "steer and resume") && shows(&stopped, "abandon the turn"),
+            "with the three ways on from here; grid was:\n{stopped}"
+        );
+
+        // `:abort` — the held call does not run, and the seam says so.
+        let abandoned = editor.press_until(b":abort\r", "turn abandoned");
+        assert!(
+            shows(&abandoned, "turn abandoned"),
+            "aborting says so; session was: {abandoned}"
+        );
+
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **`T062`: the other two ways on from a boundary — steer, and resume.**
+    ///
+    /// `:abort` is proven beside `7e` above; these are its siblings, and they
+    /// differ in exactly one thing each. **`:resume` runs the held call**, so
+    /// the row moves out of `next:` and into the transcript proper. **`:steer`
+    /// does that *and* sends the correction**, which is what makes it steering
+    /// rather than a note — the agent gets a prompt and what it does next is a
+    /// turn that heard you.
+    #[test]
+    fn steering_and_resuming_both_run_the_held_call_and_only_one_speaks() {
+        let scratch = Scratch::new("steer");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let started = format!(":cn python3 {} dawdle\r", agent.display());
+        editor.shown_on_grid(started.as_bytes(), "claude attached");
+
+        // Pause once, resume, and the held call is a call again.
+        editor.press_quietly(b":claude first go\r");
+        editor.shown_on_grid(b"", "claude working");
+        editor.press_until(b"\x1b", "pausing at the next");
+        editor.shown_on_grid(b"j", "claude paused");
+        let resumed = editor.press_until(b":resume\r", "resumed");
+        assert!(
+            shows(&resumed, "resumed"),
+            "`:resume` says so; session was: {resumed}"
+        );
+        let after = grid_of(&editor.shown_on_grid(b" t", "retry.rs"));
+        assert!(
+            !shows(&after, "next: edit"),
+            "and the held call is no longer held; grid was:\n{after}"
+        );
+        assert!(
+            !shows(&after, "paused at tool boundary"),
+            "and the pause seam is gone with it; grid was:\n{after}"
+        );
+        editor.press_quietly(b"\x1b");
+
+        // **Pause again and steer.** The correction goes out as a prompt, which
+        // is observable: the toy agent echoes what it heard.
+        editor.press_quietly(b":claude second go\r");
+        editor.shown_on_grid(b"", "claude working");
+        editor.press_until(b"\x1b", "pausing at the next");
+        editor.shown_on_grid(b"j", "claude paused");
+        let steered = editor.press_until(b":steer leave the tests alone\r", "steered");
+        assert!(
+            shows(&steered, "steered — carrying on"),
+            "`:steer` says so; session was: {steered}"
+        );
+        let heard = grid_of(&editor.shown_on_grid(b" t", "leave the tests alone"));
+        editor.press_quietly(b"\x1b");
+        editor.leave_by(b"ZQ");
+        // **The agent heard it**, which is the whole difference from `:resume`.
+        assert!(
+            shows(&heard, "heard: leave the tests alone"),
+            "the correction reached the agent; grid was:\n{heard}"
+        );
     }
 
     /// **`T061`: screen `7a` reproduces, and always-allow writes a rule.**

@@ -3055,6 +3055,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         writing: Vec::new(),
         allowed: None,
         edits: Vec::new(),
+        steering: None,
+        pausing: false,
+        paused: None,
         deferred: BTreeSet::new(),
         asked: None,
         // The directory the editor was started in — `Timeline::open_at`'s rule,
@@ -3346,6 +3349,23 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             }
         }
 
+        // **`T062` — the steer, sent and resumed in one place.** The arm holds
+        // the correction because it has no session handle; this has both, and
+        // resuming *after* the prompt is what makes it steering rather than two
+        // unrelated things that happened in a row.
+        if let Some(body) = shell.steering.take()
+            && let Some((turn, held)) = shell.paused.take()
+        {
+            shell.pausing = false;
+            let steered = shell.transcript.at(turn);
+            steered.next = None;
+            steered.ended = None;
+            steered.calls.push(held);
+            shell.transcript.revision += 1;
+            shell.session.prompt(body);
+            notice = Some("steered — carrying on".to_owned());
+        }
+
         let wanted = host.text(agent::COMMAND);
         if wanted != shell.wanted {
             shell.wanted = wanted.clone();
@@ -3511,7 +3531,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 shell.transcript.at(running).ended = Some(phosphor_ui::transcript::Seam {
                     text: "connection lost mid-turn".to_owned(),
                     detail: Some(survived(unseen)),
-                    trouble: true,
+                    tone: phosphor_ui::transcript::SeamTone::Trouble,
                 });
                 // The turn is over, whatever the agent thought. Leaving it open
                 // would leave the statusline saying `working` about a session
@@ -3525,6 +3545,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             &life,
             shell.turn.as_ref(),
             !shell.asks.is_empty(),
+            shell.paused.is_some(),
         ));
         // **`T060` — the queue, published every pass beside the session.**
         // Cheap for `session`'s reason and unlike `transcript`: a queue is
@@ -3553,7 +3574,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     .map(Transcript::describe)
                     .collect(),
             ));
-            transcript_vm = Some(shell.transcript.vm(&life));
+            transcript_vm = Some(shell.transcript.vm(&life, shell.paused.is_some()));
         }
         // The turn in flight carries the mark its spinner counts from, and it
         // moves without the transcript moving — a turn that has said nothing
@@ -3654,6 +3675,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 &shell.session.life(),
                 shell.turn.as_ref(),
                 !shell.asks.is_empty(),
+                shell.paused.is_some(),
             ),
             // Where the elapsed counter counts from, in the app's own epoch.
             // A turn's `Instant` is converted here rather than stored as
@@ -4069,6 +4091,26 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     // deferral this key does not converge — the float closes,
                     // the next pass finds the same head still pending, and
                     // raises it again.
+                    // **`T062` — `esc` mid-turn pauses, and only when nothing
+                    // is over the buffer.** §9's `esc` closes top-down, so a
+                    // float, a picker or the ex line gets it first and this
+                    // never sees the key; what is left is `esc` in a buffer
+                    // while a turn is running, which is `7e`'s own gesture. An
+                    // `esc` with no turn goes on meaning what it always did.
+                    Event::Key(key)
+                        if matches!(key.code, KeyCode::Esc)
+                            && matches!(surface, Surface::Buffer)
+                            && shell.turn.is_some()
+                            && shell.paused.is_none() =>
+                    {
+                        let outcome = editing.apply(
+                            &mut Cx::new(held, focus, &mut panes, &mut shell),
+                            &Action::Session(SessionAction::InterruptSession {}),
+                        );
+                        if let Outcome::Refused(why) = outcome {
+                            notice = Some(phosphor_steel::answer::why(&why));
+                        }
+                    }
                     Event::Key(key) if closes_surface(key, surface) => {
                         if let Some(asked) = shell.asked {
                             let outcome = editing.apply(
@@ -5093,10 +5135,17 @@ fn session_state(
     life: &SessionLife,
     turn: Option<&(TurnId, Instant)>,
     asking: bool,
+    paused: bool,
 ) -> SessionState {
     match life {
         SessionLife::None | SessionLife::Starting => SessionState::None,
         SessionLife::Lost(_) => SessionState::Lost,
+        // **`T062` — paused outranks waiting and working both.** `7e`'s strip
+        // says `⏸ claude paused` while a turn is open and a question may be
+        // queued behind it, and what it means is *nothing is moving until you
+        // say so*, which is the most useful thing a strip can say when it is
+        // true.
+        SessionLife::Attached { .. } if paused => SessionState::Paused,
         // **`T059` — waiting outranks working, and that is the point of the
         // state.** `4a`'s strip says `! claude waiting` while a turn is very
         // much still running: what the `!` means is *the next move is yours*,
@@ -5218,6 +5267,7 @@ impl Transcript {
             return &mut self.turns[index];
         }
         self.turns.push(phosphor_ui::transcript::Turn {
+            next: None,
             id: turn,
             prompt: None,
             prose: String::new(),
@@ -5243,7 +5293,7 @@ impl Transcript {
     }
 
     /// This transcript as the widget wants it.
-    fn vm(&self, life: &SessionLife) -> phosphor_ui::transcript::TranscriptVm {
+    fn vm(&self, life: &SessionLife, paused: bool) -> phosphor_ui::transcript::TranscriptVm {
         phosphor_ui::transcript::TranscriptVm {
             // `1b`'s `claude code · acp · 4f2a` — what is running, the
             // protocol, and the session's own id shortened to the last four,
@@ -5254,6 +5304,10 @@ impl Transcript {
             // anybody's. A transcript you are reading after a drop is the one
             // time the header is load-bearing.
             header: match life {
+                // `7e` — the header says `paused` where `1b` says the session's
+                // id, because *what is running* is the header's subject and
+                // nothing is.
+                SessionLife::Attached { .. } if paused => "claude code · acp · paused".to_owned(),
                 SessionLife::Attached { session } => {
                     let tail: String = session.chars().rev().take(4).collect();
                     format!(
@@ -5265,7 +5319,7 @@ impl Transcript {
                 SessionLife::None | SessionLife::Starting => String::new(),
             },
             turns: self.turns.clone(),
-            hints: transcript_hints(life),
+            hints: transcript_hints(life, paused),
         }
     }
 
@@ -5336,9 +5390,17 @@ impl Transcript {
 /// see [`HostState::session`]. `since` rides along because §5's `Working` is
 /// *"working+elapsed"*: a caller that has the state and not the mark can render
 /// five of the six and not the sixth.
-fn session_value(life: &SessionLife, turn: Option<&(TurnId, Instant)>, asking: bool) -> Value {
+fn session_value(
+    life: &SessionLife,
+    turn: Option<&(TurnId, Instant)>,
+    asking: bool,
+    paused: bool,
+) -> Value {
     let mut fields = Args::new();
-    fields.set("state", session_state(life, turn, asking).to_value());
+    fields.set(
+        "state",
+        session_state(life, turn, asking, paused).to_value(),
+    );
     fields.set(
         "turn",
         turn.map_or(Value::Null, |(turn, _)| {
@@ -5563,9 +5625,23 @@ fn ask_id_of(value: &Value) -> Option<u64> {
 /// build follows the rule, the same way `status_line` already says
 /// `session lost — :reattach`. Recorded at `OPEN-QUESTIONS.md` §55 rather than
 /// resolved here.
-fn transcript_hints(life: &SessionLife) -> Vec<KeyHint> {
+fn transcript_hints(life: &SessionLife, paused: bool) -> Vec<KeyHint> {
     let mut hints = Vec::new();
-    if matches!(life, SessionLife::Lost(_)) {
+    // `7e` — three ways on from a boundary, and they are the screen's own.
+    if paused {
+        hints.push(KeyHint {
+            key: KeySeq("<cr>".to_owned()),
+            verb: "steer and resume".to_owned(),
+        });
+        hints.push(KeyHint {
+            key: KeySeq(":resume".to_owned()),
+            verb: "resume as-was".to_owned(),
+        });
+        hints.push(KeyHint {
+            key: KeySeq(":abort".to_owned()),
+            verb: "abandon the turn".to_owned(),
+        });
+    } else if matches!(life, SessionLife::Lost(_)) {
         hints.push(KeyHint {
             key: KeySeq(":reattach".to_owned()),
             verb: "reattach".to_owned(),
@@ -7700,6 +7776,27 @@ struct Shell {
     /// permission ask, and a value cached at boot would make the rules a fact
     /// about the last restart.
     allowed: Option<String>,
+    /// A correction to send when the paused turn resumes (`7e`, `T062`).
+    ///
+    /// Held rather than sent by the arm, because sending is the session's and
+    /// the arm has no session handle — the same seam `Shell::wanted` and
+    /// `Shell::writing` sit on.
+    steering: Option<String>,
+    /// Whether `esc` has asked the turn to stop at the next tool boundary
+    /// (`7e`, `T062`).
+    ///
+    /// **A request, not a state.** *"`esc` pauses at the next tool boundary"* is
+    /// the screen's own caption, and the gap between asking and stopping is the
+    /// feature: an interrupt that took effect *now* would land in the middle of
+    /// whatever the agent was doing, which is the thing a tool boundary exists
+    /// to avoid. [`Shell::paused`] is the state this becomes.
+    pausing: bool,
+    /// The turn that stopped at a boundary, and the call it stopped before.
+    ///
+    /// The pair, because they arrive together and mean nothing apart: a paused
+    /// turn with no held call has not reached a boundary, and a held call
+    /// belonging to no turn is a call nothing can resume.
+    paused: Option<(TurnId, phosphor_ui::transcript::ToolCall)>,
     /// The asks you have pushed back — `4a`'s `esc later` (`T060`).
     ///
     /// **A set beside the queue rather than a flag inside it**, because Q9's
@@ -10200,12 +10297,25 @@ impl Editing {
             Action::Session(SessionAction::TurnEnded { turn, summary }) => {
                 // `T054` — `1b`'s seam marker, which is the row that says a
                 // turn is over and what came of it.
+                // **A pause outranks the end, and this is not a preference.**
+                // `7e`'s seam says *where* the turn stopped and why; the stop
+                // reason that follows a `session/cancel` — or that an agent
+                // sends anyway, having not honoured one — would replace it with
+                // `✻ EndTurn`, and the screen would forget the pause it is
+                // still in. Measured: the probe drew exactly that.
+                let paused_here = cx
+                    .shell
+                    .paused
+                    .as_ref()
+                    .is_some_and(|(held, _)| held == turn);
                 let ended = cx.shell.transcript.at(*turn);
-                ended.ended = Some(phosphor_ui::transcript::Seam {
-                    text: summary.clone().unwrap_or_else(|| "turn ended".to_owned()),
-                    detail: None,
-                    trouble: false,
-                });
+                if !paused_here {
+                    ended.ended = Some(phosphor_ui::transcript::Seam {
+                        text: summary.clone().unwrap_or_else(|| "turn ended".to_owned()),
+                        detail: None,
+                        tone: phosphor_ui::transcript::SeamTone::Ended,
+                    });
+                }
                 // **Only the turn that is running ends.** A stop reason for a
                 // turn the editor has already forgotten is not an error — a
                 // session replaced mid-turn produces exactly one — and clearing
@@ -10263,6 +10373,86 @@ impl Editing {
                     return done();
                 }
                 cx.shell.edits.extend(files.iter().cloned());
+                done()
+            }
+            // -- `T062`: `7e`, interrupt and steer ---------------------------
+            //
+            // **Four verbs over one pair of fields**, and the pair is the whole
+            // design: `Shell::pausing` is the *request* and `Shell::paused` is
+            // what it becomes when the agent reaches a boundary. An interrupt
+            // that took effect immediately would land in the middle of whatever
+            // the agent was doing, which is the thing a tool boundary exists to
+            // avoid.
+            Action::Session(SessionAction::InterruptSession {}) => {
+                let Some((turn, _)) = cx.shell.turn else {
+                    return declined("no turn to interrupt");
+                };
+                if cx.shell.paused.is_some() {
+                    return declined("already paused — ↵ steers, :resume carries on");
+                }
+                cx.shell.pausing = true;
+                // **Over the wire as well as in the editor.** A pause that
+                // stopped *drawing* the agent's work while the agent went on
+                // doing it would be a strip saying `⏸ claude paused` about
+                // something that is not — and it is what the first version did:
+                // the toy agent finished its turn and `✻ EndTurn` overwrote the
+                // seam that had just been written. ACP's own note is that final
+                // updates may still arrive after a cancel, which is why the
+                // boundary below is still what decides where it stopped.
+                cx.shell.session.interrupt();
+                // **Said out loud, because the pause has not happened yet.**
+                // The seam appears when the agent reaches a boundary, which may
+                // be a second away; `esc` with nothing on the strip would read
+                // as a key that did nothing.
+                cx.shell.saying = Some("pausing at the next tool boundary".to_owned());
+                let _ = turn;
+                done()
+            }
+            // `↵ steer & resume`. **The correction is a prompt**, which is what
+            // makes it steering rather than a note: the agent gets it, and what
+            // it does next is a turn that heard you.
+            Action::Session(SessionAction::SteerSession { body }) => {
+                if cx.shell.paused.is_none() {
+                    return declined("nothing is paused — esc pauses at the next boundary");
+                }
+                cx.shell.steering = Some(body.clone());
+                done()
+            }
+            // `:resume` — carry on as it was. The held call runs; nothing is
+            // said to the agent.
+            Action::Session(SessionAction::ResumeSession {}) => {
+                let Some((turn, held)) = cx.shell.paused.take() else {
+                    return declined("nothing is paused");
+                };
+                cx.shell.pausing = false;
+                cx.shell.transcript.at(turn).next = None;
+                cx.shell.transcript.at(turn).ended = None;
+                cx.shell.transcript.at(turn).calls.push(held);
+                cx.shell.transcript.revision += 1;
+                cx.shell.saying = Some("resumed".to_owned());
+                done()
+            }
+            // `:abort` — the turn is over. **The held call does not run**, which
+            // is the difference from `:resume` and the reason a boundary is
+            // where this is offered: aborting between calls leaves nothing
+            // half-done.
+            Action::Session(SessionAction::AbortTurn {}) => {
+                let Some((turn, _)) = cx.shell.paused.take() else {
+                    return declined("nothing is paused");
+                };
+                cx.shell.pausing = false;
+                let ended = cx.shell.transcript.at(turn);
+                ended.next = None;
+                ended.ended = Some(phosphor_ui::transcript::Seam {
+                    text: "turn abandoned".to_owned(),
+                    detail: Some("the held call did not run".to_owned()),
+                    tone: phosphor_ui::transcript::SeamTone::Trouble,
+                });
+                cx.shell.transcript.revision += 1;
+                if cx.shell.turn.is_some_and(|(running, _)| running == turn) {
+                    cx.shell.turn = None;
+                }
+                cx.shell.saying = Some("turn abandoned".to_owned());
                 done()
             }
             // -- `T061`: `7a`, a permission ask ------------------------------
@@ -10485,7 +10675,11 @@ impl Editing {
                 cx.shell.transcript.at(turn).ended = Some(phosphor_ui::transcript::Seam {
                     text: said,
                     detail: trouble.then(|| survived(unseen)),
-                    trouble,
+                    tone: if trouble {
+                        phosphor_ui::transcript::SeamTone::Trouble
+                    } else {
+                        phosphor_ui::transcript::SeamTone::Paused
+                    },
                 });
                 done()
             }
@@ -10512,24 +10706,46 @@ impl Editing {
                 path,
                 line,
             }) => {
-                cx.shell
-                    .transcript
-                    .at(*turn)
-                    .calls
-                    .push(phosphor_ui::transcript::ToolCall {
-                        id: *call,
-                        verb: verb.clone(),
-                        target: target.clone(),
-                        // **The URI is built here and not in the widget**, for
-                        // the same reason every other resolved thing is: a
-                        // widget crate cannot know a workspace root, and
-                        // `file://` is a fact about this machine.
-                        link: path
-                            .as_deref()
-                            .map(|at| jump_uri(&cx.shell.workspace, at, *line)),
-                        notes: Vec::new(),
-                        outcome: None,
+                let arriving = phosphor_ui::transcript::ToolCall {
+                    id: *call,
+                    verb: verb.clone(),
+                    target: target.clone(),
+                    // **The URI is built here and not in the widget**, for
+                    // the same reason every other resolved thing is: a
+                    // widget crate cannot know a workspace root, and
+                    // `file://` is a fact about this machine.
+                    link: path
+                        .as_deref()
+                        .map(|at| jump_uri(&cx.shell.workspace, at, *line)),
+                    notes: Vec::new(),
+                    outcome: None,
+                };
+                // **`T062` — this is the tool boundary.** `esc` asked the turn
+                // to stop at one, and *one* is here: the agent has said what it
+                // is about to do and has not done it. The call is held rather
+                // than recorded, so `7e`'s `▸ next:` row is the thing that was
+                // caught rather than a description of it.
+                //
+                // **The seam is written here and not by the verb**, for `7b`'s
+                // reason exactly: the pause is a fact about a moment the verb
+                // cannot see, and a transcript whose honesty depended on the
+                // asker guessing when to write it would not be one.
+                if cx.shell.pausing && cx.shell.paused.is_none() {
+                    cx.shell.pausing = false;
+                    cx.shell.paused = Some((*turn, arriving));
+                    let paused = cx.shell.transcript.at(*turn);
+                    paused.next = cx.shell.paused.as_ref().map(|(_, call)| call.clone());
+                    paused.ended = Some(phosphor_ui::transcript::Seam {
+                        text: "paused at tool boundary · esc".to_owned(),
+                        detail: Some(
+                            "↵ steers and resumes · :resume carries on · :abort ends the turn"
+                                .to_owned(),
+                        ),
+                        tone: phosphor_ui::transcript::SeamTone::Paused,
                     });
+                    return done();
+                }
+                cx.shell.transcript.at(*turn).calls.push(arriving);
                 done()
             }
             Action::Session(SessionAction::ToolCallProgress { call, note }) => {
@@ -10539,6 +10755,21 @@ impl Editing {
                 // hang from and a progress line has only a call, so a made-up
                 // one would be a row with no verb and no target, which is a
                 // row that says nothing.
+                // **A held call's progress is dropped, not refused** (`T062`).
+                // `7e` pauses *before* the call runs, so an agent that has not
+                // yet honoured the cancel — or has already sent its updates —
+                // reports progress on something that did not happen. Refusing
+                // put `acp: no such tool call` on the notice row of a screen
+                // that was otherwise correct, which is the editor complaining
+                // about its own decision.
+                if cx
+                    .shell
+                    .paused
+                    .as_ref()
+                    .is_some_and(|(_, held)| held.id == *call)
+                {
+                    return done();
+                }
                 let Some(running) = cx.shell.transcript.call(*call) else {
                     return declined("no such tool call");
                 };
@@ -10551,6 +10782,15 @@ impl Editing {
                 added,
                 removed,
             }) => {
+                // Held, not run — see `tool-call-progress` above.
+                if cx
+                    .shell
+                    .paused
+                    .as_ref()
+                    .is_some_and(|(_, held)| held.id == *call)
+                {
+                    return done();
+                }
                 let Some(finished) = cx.shell.transcript.call(*call) else {
                     return declined("no such tool call");
                 };
@@ -13851,6 +14091,9 @@ mod tests {
             writing: Vec::new(),
             allowed: None,
             edits: Vec::new(),
+            steering: None,
+            pausing: false,
+            paused: None,
             deferred: std::collections::BTreeSet::new(),
             asked: None,
             workspace: PathBuf::new(),

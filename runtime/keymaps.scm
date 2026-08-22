@@ -1539,6 +1539,20 @@
          (lambda (rest bang)
            (key/run (key/cmd "open-disk-diff" "target" (key/at-cursor)))))
 
+;; `T062` — 7e's three ways on from a tool boundary. **all three are ex
+;; commands and only one of them is also a key**: `esc` pauses, which is the key
+;; you already have, and what to do next is a decision rather than a reflex.
+(ex-set! "resume" "carry on from the tool boundary, unchanged"
+         (lambda (rest bang) (key/run (key/cmd "resume-session"))))
+
+(ex-set! "abort" "abandon the paused turn; the held call does not run"
+         (lambda (rest bang) (key/run (key/cmd "abort-turn"))))
+
+;; `:steer` — 7e's `↵ steer & resume` said as a command. the correction is a
+;; prompt, which is what makes it steering rather than a note.
+(ex-set! "steer" "correct claude and carry on — :steer <what you meant>"
+         (lambda (rest bang) (key/run (key/cmd "steer-session" "body" rest))))
+
 (ex-set! "reat[tach]" "reattach to a running session"
          (lambda (rest bang) (key/run (key/cmd "reattach-session"))))
 

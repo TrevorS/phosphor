@@ -50,7 +50,9 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use agent_client_protocol::schema::{ProtocolVersion, v1::InitializeRequest};
+use agent_client_protocol::schema::{
+    ProtocolVersion, v1::CancelNotification, v1::InitializeRequest,
+};
 use agent_client_protocol::util::MatchDispatch;
 use agent_client_protocol::{ByteStreams, Client, Dispatch, SessionMessage};
 use phosphor_core::action::{Action, SessionAction};
@@ -201,6 +203,13 @@ enum Ask {
         cwd: PathBuf,
     },
     Prompt(String),
+    /// `7e`'s `esc` — tell the agent to stop the turn it is running (`T062`).
+    ///
+    /// **Over the wire and not only in the editor.** A client-side pause that
+    /// stopped *drawing* the agent's work while the agent went on doing it
+    /// would be a strip saying `⏸ claude paused` about something that is not,
+    /// which is §5's *"always truthful"* failing in the moment it matters most.
+    Interrupt,
     Stop,
 }
 
@@ -335,6 +344,15 @@ impl Session {
         });
     }
 
+    /// Asks the agent to stop the turn it is running (`7e`, `T062`).
+    ///
+    /// Returns immediately. **The turn does not end here** — ACP's own note is
+    /// that an agent may send final updates after a cancel — and what ends it
+    /// is the stop reason arriving like any other.
+    pub fn interrupt(&self) {
+        self.send(Ask::Interrupt);
+    }
+
     /// Sends a prompt, beginning a turn.
     ///
     /// **Queued rather than refused when nothing is attached.** The channel is
@@ -403,7 +421,7 @@ fn supervise(shared: &Arc<Shared>, mut asks: UnboundedReceiver<Ask>) {
                 // A prompt or a stop with nothing attached: there is no session
                 // to send it to and no state to change. Dropped rather than
                 // queued forever, which is what `Life::None` already says.
-                Ask::Prompt(_) | Ask::Stop => pending = asks.recv().await,
+                Ask::Prompt(_) | Ask::Interrupt | Ask::Stop => pending = asks.recv().await,
             }
         }
     });
@@ -552,6 +570,18 @@ async fn serve(
                         return Ok(());
                     }
                     Step::Asked(Some(Ask::Prompt(body))) => queued.push_back(body),
+                    // **`session/cancel`, and the queue emptied with it.** A
+                    // prompt still waiting behind the interrupted turn is one
+                    // you asked for before you changed your mind; sending it
+                    // anyway would be the editor arguing with `esc`.
+                    Step::Asked(Some(Ask::Interrupt)) => {
+                        queued.clear();
+                        if turn.is_some() {
+                            cx.send_notification(CancelNotification::new(
+                                session.session_id().clone(),
+                            ))?;
+                        }
+                    }
                     Step::Heard(heard) => match *heard {
                         Err(error) => return Err(error),
                         Ok(SessionMessage::StopReason(reason)) => {

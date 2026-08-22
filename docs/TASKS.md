@@ -3973,11 +3973,85 @@ live.
   > already guarantees "after the whole load order" for anything in that list, so satisfying the
   > constraint is a matter of *where* the definition goes rather than of new machinery.
 
-- [ ] **T062 · Interrupt and steer**
+- [x] **T062 · Interrupt and steer**
   `esc` pauses at the next tool boundary → steer / resume / abort. The seam is recorded in the
   transcript.
   *Done when:* screen `7e` reproduces **from a keystroke** — `esc` mid-turn in the running
   binary reaches the next tool boundary. *Needs:* T057
+
+  > **Built 2026-08-21.** Four verbs over one pair of fields, a third seam tone,
+  > and `session/cancel` on the wire.
+  >
+  > **`Shell::pausing` is the request and `Shell::paused` is what it becomes.**
+  > That pair is the whole design: an interrupt that took effect *now* would
+  > land in the middle of whatever the agent was doing, which is the thing a
+  > tool boundary exists to avoid. The boundary is `tool-call-started` — the
+  > agent has said what it is about to do and has not done it — and the seam is
+  > written there rather than by the verb, for `7b`'s reason exactly: the pause
+  > is a fact about a moment the verb cannot see.
+  >
+  > **The held call is drawn and not run.** `▸ next: edit tests/ws_test.rs` is
+  > `7e`'s own row, and it is what makes the boundary a thing on screen: a pause
+  > you cannot see the edge of is indistinguishable from a hang.
+  >
+  > **`Seam::trouble` was a `bool` and is now three tones.** `1b` ends a turn in
+  > claude-green, `7b` stops one in trouble-red, and `7e` stops one in §1's
+  > attention-amber — because a pause is a thing *you* did, and amber is the
+  > palette's word for waiting on you. The flag was honest about two cases and
+  > became a lie at three.
+  >
+  > **The cancel goes over the wire, and the first version did not.** A pause
+  > that stopped *drawing* the agent's work while the agent went on doing it is a
+  > strip saying `⏸ claude paused` about something that is not — §5's *"always
+  > truthful"* failing in the moment it matters most. Measured at the terminal:
+  > the toy agent finished its turn and `✻ EndTurn` overwrote the seam that had
+  > just been written. `Ask::Interrupt` sends `session/cancel` and empties the
+  > prompt queue with it, because a prompt still waiting behind an interrupted
+  > turn is one you asked for before you changed your mind.
+  >
+  > **A pause outranks the stop reason.** ACP's own note is that an agent may
+  > send final updates after a cancel, and an agent that has not honoured one
+  > sends the whole turn — so `turn-ended` leaves a paused seam alone. Otherwise
+  > the screen forgets the pause it is still in.
+  >
+  > **A held call's progress and completion are dropped, not refused.** The same
+  > run put `acp: no such tool call` on the notice row of an otherwise correct
+  > screen — the editor complaining about its own decision, since the call was
+  > held on purpose and never entered the transcript.
+  >
+  > **`esc` is the only one of the four that is a key**, and it is scoped: §9's
+  > `esc` closes top-down, so a float, a picker or the ex line takes it first,
+  > and what is left is `esc` in a buffer while a turn is running — `7e`'s own
+  > gesture. What to do next is `:resume`, `:steer` or `:abort`, which are
+  > decisions rather than reflexes.
+  >
+  > **`:steer` differs from `:resume` in one thing**: it sends the correction as
+  > a *prompt*, which is what makes it steering rather than a note. The arm
+  > holds the body because it has no session handle; the loop sends it and
+  > resumes in one place, and the order is what makes the two one gesture.
+  >
+  > **The `dawdle` fixture mode exists for this and only this.** `esc` has to
+  > arrive while a turn is running and *before* the agent's next tool call;
+  > every other mode reaches the boundary in microseconds, so a test would pass
+  > or fail on scheduling.
+  >
+  > **`7e`'s `PAUSED` mode chip is not built, deliberately.** The mockup draws it
+  > where `NORMAL` goes, and that cell is the *editor's* mode: the buffer is
+  > still in normal mode while a turn is paused, and a chip that said otherwise
+  > would be the one inverted thing on screen telling you about something else.
+  > The session state is on the strip, which is where §5 puts it —
+  > `⏸ claude paused`. Recorded at `OPEN-QUESTIONS.md` §57 rather than folded in.
+  >
+  > **Verification.** Two keystroke tests. `7e` from a keystroke: `esc` says what
+  > it asked for, the boundary arrives with nothing pressed, the strip says
+  > `claude paused`, and the transcript carries `acp · paused`, the held
+  > `next: edit` row, the seam, and the three ways on — and the seam is *not*
+  > overwritten by the turn ending. Then `:abort`, whose held call does not run.
+  > The second test proves the other two: `:resume` moves the held call into the
+  > transcript and takes the seam with it, and `:steer` does that *and* is heard
+  > — the toy agent echoes the correction back. Three planted defects, three
+  > caught: a boundary that never fires, a stop reason that overwrites the seam,
+  > and a steer that resumes silently.
 
 ### ✋ CP-7 — The directing loop
 

@@ -81,6 +81,9 @@ mod glyph {
     /// `✕` — §2's trouble glyph, which a seam wears when the turn did not end
     /// so much as stop. `7b` draws `✕ connection lost mid-turn`.
     pub(super) const TROUBLE: &str = "✕";
+    /// `⏸` — §2's paused glyph. `7e` draws `⏸ paused at tool boundary`, and it
+    /// is amber rather than red because a pause is a thing *you* did.
+    pub(super) const PAUSED: &str = "⏸";
     /// `⋯` — turns that did not fit (§11's drop, made visible).
     ///
     /// §2's `✓` is deliberately **not** here: `1b` draws `✓ 34 passed` as a
@@ -131,14 +134,19 @@ pub struct Outcome {
     pub removed: u32,
 }
 
-/// How a turn ended (`T054`, `7b` under `T057`).
+/// How a turn ended, or stopped (`T054`, `7b` under `T057`, `7e` under `T062`).
 ///
-/// **One row in two tones**, which is what the two mockups draw: `1b` ends a
+/// **One row in three tones**, which is what the three mockups draw: `1b` ends a
 /// turn with `✻ review ready · retry logic — 2 files, 6 regions` in claude's
-/// green, and `7b` ends one with `✕ connection lost mid-turn · 14:47` in
-/// trouble-red. The difference is not a different row — it is the same seam
-/// saying a different thing about the same turn, so it is one type with a flag
-/// rather than two variants that would each need their own place in `rows`.
+/// green, `7b` ends one with `✕ connection lost mid-turn · 14:47` in trouble-red,
+/// and `7e` stops one with `⏸ paused at tool boundary · esc · 14:52` in §1's
+/// attention-amber. The difference is not a different row — it is the same seam
+/// saying a different thing about the same turn.
+///
+/// **This was a `bool` until `T062` and the third tone is why it is not.**
+/// `trouble: bool` was honest about two cases and became a lie at three: a pause
+/// is neither claude's nor trouble's, and amber is the palette's word for
+/// *waiting on you*.
 ///
 /// The [`detail`](Seam::detail) line is `7b`'s and is the reason this is a
 /// struct at all. *"the transcript shows the seam honestly"* is the screen's
@@ -154,9 +162,24 @@ pub struct Seam {
     /// What survived, drawn under it in meta. [`None`] for a turn that ended
     /// the ordinary way, which has nothing to reassure anybody about.
     pub detail: Option<String>,
-    /// Whether this is `7b`'s seam rather than `1b`'s — `✕` in trouble-red
-    /// instead of `✻` in claude-green.
-    pub trouble: bool,
+    /// Which of the three this is.
+    pub tone: SeamTone,
+}
+
+/// Whose seam it is (`T062`).
+///
+/// Not [`Tone`](phosphor_core::view::Tone), which is the whole palette: a seam
+/// has exactly three readings and naming them is what stops a fourth being
+/// invented at a call site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SeamTone {
+    /// `1b` — the turn ended and claude produced something. `✻`, claude-green.
+    #[default]
+    Ended,
+    /// `7e` — you stopped it. `⏸`, attention-amber.
+    Paused,
+    /// `7b` — it stopped. `✕`, trouble-red.
+    Trouble,
 }
 
 /// One turn (`T054`).
@@ -174,6 +197,14 @@ pub struct Turn {
     pub calls: Vec<ToolCall>,
     /// How the turn ended, or [`None`] while it is running.
     pub ended: Option<Seam>,
+    /// The call the agent was about to make when you paused it (`7e`, `T062`).
+    ///
+    /// **Drawn as `▸ next: edit tests/ws_test.rs` and not run.** *"`esc` pauses
+    /// at the next tool boundary"* is a promise about *where* it stops, and a
+    /// pause you cannot see the edge of is indistinguishable from a hang — this
+    /// row is what makes the boundary a thing on screen rather than a claim in
+    /// a doc.
+    pub next: Option<ToolCall>,
     /// When it began, for the elapsed counter. Absent for a turn read back
     /// from a log rather than watched.
     pub since: Option<phosphor_core::view::Millis>,
@@ -282,6 +313,12 @@ impl<'a> TranscriptPane<'a> {
                 rows.push(Row::Note(note.clone()));
             }
         }
+        // Before the seam, because that is the order `7e` draws them in and the
+        // order they happened: the agent reached for something, and the pause
+        // caught it there.
+        if let Some(next) = &turn.next {
+            rows.push(Row::Next(next.clone()));
+        }
         match (&turn.ended, turn.since) {
             (Some(seam), _) => {
                 rows.push(Row::Seam(seam.clone()));
@@ -318,6 +355,8 @@ enum Row {
     Seam(Seam),
     /// The spinner and elapsed counter of a turn still running.
     Running(phosphor_core::view::Millis),
+    /// `▸ next: edit tests/ws_test.rs` — held, not run (`7e`).
+    Next(ToolCall),
 }
 
 impl Widget for TranscriptPane<'_> {
@@ -433,6 +472,20 @@ impl TranscriptPane<'_> {
                 buf.set_line(x, y, line, room);
             }
             Row::Call(call) => self.call(call, area, y, buf),
+            // **The same row as a call, prefixed and dimmed.** It is a tool
+            // call in every respect except that it has not happened, so drawing
+            // it as anything else would be inventing a second row shape for the
+            // same fact. `next:` is the whole of the difference and `7e` writes
+            // exactly that.
+            Row::Next(call) => {
+                let meta = Style::new().fg(self.theme.neutrals.meta);
+                let after = write(buf, area, x, y, glyph::FOLDED, meta);
+                let after = write(buf, area, after + 1, y, "next:", meta);
+                let after = write(buf, area, after + 1, y, &call.verb, meta);
+                if let Some(target) = &call.target {
+                    write(buf, area, after + GAP, y, target, meta);
+                }
+            }
             Row::Note(note) => {
                 write(
                     buf,
@@ -448,10 +501,10 @@ impl TranscriptPane<'_> {
             // together because a red sentence behind a green glyph is the kind
             // of half-truth §5 spends its rules on.
             Row::Seam(seam) => {
-                let (mark, tone) = if seam.trouble {
-                    (glyph::TROUBLE, self.theme.actors.trouble)
-                } else {
-                    (glyph::CLAUDE, self.theme.actors.claude)
+                let (mark, tone) = match seam.tone {
+                    SeamTone::Ended => (glyph::CLAUDE, self.theme.actors.claude),
+                    SeamTone::Paused => (glyph::PAUSED, self.theme.actors.attention),
+                    SeamTone::Trouble => (glyph::TROUBLE, self.theme.actors.trouble),
                 };
                 let after = write(buf, area, x, y, mark, Style::new().fg(tone));
                 write(buf, area, after + 1, y, &seam.text, Style::new().fg(tone));
@@ -684,6 +737,7 @@ mod tests {
         TranscriptVm {
             header: String::new(),
             turns: vec![Turn {
+                next: None,
                 id: TurnId(1),
                 prompt: None,
                 prose: String::new(),

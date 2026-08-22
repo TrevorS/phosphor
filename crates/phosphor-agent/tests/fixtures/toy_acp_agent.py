@@ -34,6 +34,11 @@ survive:
               set it up, so the editor has already redrawn by the time such a
               test stops typing, and it passes with the wake removed. Measured
               — the planted defect went green.
+  `dawdle`    prose, then a pause of `SLOW_SECONDS`, *then* the tool call. The
+              mode `7e` needs: `esc` has to arrive while a turn is running and
+              **before** the next tool boundary, and every other mode reaches
+              the boundary in microseconds — a test pressing `esc` would always
+              be too late, and would pass or fail on scheduling.
   `drop`      answers the handshake, then dies **mid-turn**: a prompt gets one
               chunk of prose and the process exits before any stop reason. This
               is screen `7b` exactly — "acp gone mid-turn" — and it is the one
@@ -142,6 +147,11 @@ def main() -> int:
                     },
                 },
             )
+            if mode == "dawdle":
+                # Long enough for a keystroke to land between the prose and the
+                # call, which is the whole window `7e` is about.
+                sys.stdout.flush()
+                time.sleep(SLOW_SECONDS)
             if mode == "drop":
                 # Prose out, then gone — no stop reason, ever. `os._exit` and
                 # not `return`, so nothing gets a chance to flush a tidy
