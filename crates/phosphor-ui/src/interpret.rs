@@ -46,7 +46,6 @@
 //! |---|---|---|
 //! | `diff` | `DiffBody` | `T063` |
 //! | `question` | `QuestionBody` | `T059` |
-//! | `prompt` | `PromptLine` | `T058` |
 //! | `watch` | `WatchOverlay` | `T076` |
 //!
 //! Every other kind draws. The most recent arrival is `picker`
@@ -701,12 +700,25 @@ impl Ctx<'_> {
                     .render(area, buf);
             }
 
+            // `T058`, drawn by `crate::prompt`. **The demolition
+            // `docs/OPEN-QUESTIONS.md` §13 scheduled**: that ruling let the ex
+            // row be drawn from `Node::Line` and `Node::Label` in the binary
+            // because this arm deferred, and named this task as the date.
+            Node::Prompt {
+                prompt,
+                text,
+                anchor,
+            } => {
+                crate::prompt::PromptLine::new(*prompt, text, theme)
+                    .anchor(anchor.as_ref())
+                    .render(area, buf);
+            }
+
             // Deferred past Window D. Grouped, and split one kind at a time the
             // way the five above were, as each phase arrives.
-            Node::Diff { .. }
-            | Node::Question { .. }
-            | Node::Prompt { .. }
-            | Node::Watch { .. } => self.defer(node.tag()),
+            Node::Diff { .. } | Node::Question { .. } | Node::Watch { .. } => {
+                self.defer(node.tag());
+            }
         }
     }
 
@@ -2128,11 +2140,6 @@ mod tests {
                 grouping: Grouping::Flat,
             },
             Node::Question { ask: AskId(8) },
-            Node::Prompt {
-                prompt: PromptKind::Ex,
-                text: String::new(),
-                anchor: None,
-            },
             Node::Watch { watch: WatchId(5) },
         ];
         for node in deferred {
@@ -2150,6 +2157,13 @@ mod tests {
         // strip and an empty list — which is drawing, and is what `deferred`
         // distinguishes from it.
         let drawn = [
+            // `T058`. An empty ex line still draws its ground and its
+            // caret, which is drawing.
+            Node::Prompt {
+                prompt: PromptKind::Ex,
+                text: String::new(),
+                anchor: None,
+            },
             // `T054`. `NoResources` hands back no transcript, so this draws
             // an empty pane — which is drawing, and is the distinction this
             // half of the test is about.

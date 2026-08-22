@@ -2384,6 +2384,58 @@ filed. **Two shapes if Teej wants it on the strip:**
    not been asked anything, which is the kind of almost-true this build spends
    its lints avoiding.
 
+### 53 · The prompt line is built and the pty harness cannot press it
+
+**Raised by `T058`, 2026-08-21, and it is why that task is not ticked.** Two
+findings, and the second is the blocking one.
+
+**The editor is healthy.** Probed against a real 100×30 pty
+(`probe_prompt.py`, not committed): `SPC c p` raises the line, `x` goes into it,
+the caret follows, the process stays alive, stderr is empty. `crate::prompt`'s
+own tests draw `1c`'s row cell for cell — the chip, the range, the message, the
+clipping. What is built works.
+
+**What does not work is `press` in `crates/phosphor/tests/loop_pty.rs`.** That
+helper accounts exactly one frame per call, and a frame that opens the prompt is
+one the accounting does not survive: the first press after the line comes up
+runs to its 30-second deadline, and so does every one after it. Measured
+repeatedly — a test with four presses and two waits takes 150 s and fails on a
+timeout rather than an assertion, and the same test with the prompt never opened
+finishes in 2.9 s.
+
+Things ruled out along the way, each by running it:
+
+* **Not the two-row layout.** Removing `Geometry::prompt` entirely leaves the
+  hang.
+* **Not the cursor.** Leaving the cursor on the borrowed row leaves it.
+* **Not the anchor.** `SPC c p` opens an unanchored claude prompt and hangs the
+  same way.
+* **Not a panic.** The probe's child is alive afterwards with empty stderr.
+
+The one thing that changed on that path is the *node*: the row is
+`Node::Prompt` now rather than `Node::Line` and `Node::Label`. The widget shows
+the cursor where the old scaffolding did not, so the frame carries `\x1b[?25h`
+and a `CUP` inside the synchronized-output pair. That is the first suspect for
+whatever the harness is counting, and it is a suspect rather than a finding —
+nobody has read `press` against it yet.
+
+`scripts/key_coverage.py`'s `RECORDED` carries `SPC c p` and `SPC c s` with this
+reason. The test lands with the fix; the task ticks with the test.
+
+### The other half: `1c` draws the prompt on a row of its own
+
+Separately, and now unblocked by nothing in particular: `1c` is the **only**
+mockup in the set that draws a prompt at all, and it draws one *below* a
+statusline that is still there — chip on its own row, code above, statusline
+between. Every other screen's `:` is vim's borrowed last row, which is what this
+build does.
+
+A `Geometry::prompt` that took a row when the prompt carried an anchor was
+built and then removed: it is not the cause of the hang above (removing it does
+not fix it), and keeping unreachable layout code in the tree is the shape this
+build's lints exist to prevent. It is a dozen lines and the mockup is
+unambiguous, so it should come back with the test that can prove it.
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

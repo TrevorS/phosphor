@@ -166,8 +166,8 @@ use phosphor_core::query::{Answer, Answers, Query, QueryError, RegionQuery, Revi
 use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
     AcceptHow, Actor, AnchorId, Binding, BufferId, CharRange as SignatureRange,
-    Completion as WireCompletion, Direction, EditMode, FoldState, KeySeq, LanguageId, PaneId,
-    PaneKind, PaneRef, Position, PromptKind, RegionFilter, RegionId, RegisterName, Seek,
+    Completion as WireCompletion, Direction, EditMode, FileSpan, FoldState, KeySeq, LanguageId,
+    PaneId, PaneKind, PaneRef, Position, PromptKind, RegionFilter, RegionId, RegisterName, Seek,
     SelectionKind, Sequence, Signature as WireSignature, SourceId, Span, Target, TextObject,
     ToolCallId, TurnId,
 };
@@ -3441,6 +3441,14 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             notice = Some(said);
         }
 
+        // `T058`. **Cloned out of the buffer, not borrowed from it.** The
+        // chrome below outlives `editing`'s `&mut`, and a `FileSpan` is a path
+        // and two positions — cheaper to copy once a frame than to restructure
+        // the borrow around a row that is usually not there.
+        let anchored = matches!(surface, Surface::Ex)
+            .then(|| editing.anchor.clone())
+            .flatten();
+
         // What is on the statusline's row instead of the statusline. The ex
         // line takes it while it is open — vim's own placement — and a notice
         // borrows it until the next key.
@@ -3449,9 +3457,14 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             Some(Chrome {
                 text: &typed,
                 caret: true,
+                anchor: anchored.as_ref(),
             })
         } else {
-            notice.as_deref().map(|text| Chrome { text, caret: false })
+            notice.as_deref().map(|text| Chrome {
+                text,
+                caret: false,
+                anchor: None,
+            })
         };
 
         // `R17` — which-key. **Composed here, from the live table**, which is
@@ -4417,11 +4430,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                             Value::List(
                                 references
                                     .lock()
-                                    .map(|held| {
-                                        held.iter()
-                                            .map(phosphor_core::request::FileSpan::to_value)
-                                            .collect()
-                                    })
+                                    .map(|held| held.iter().map(FileSpan::to_value).collect())
                                     .unwrap_or_default(),
                             ),
                         ),
@@ -4966,16 +4975,33 @@ fn tab_title(pane: &Pane, buffers: &Buffers, root: &Path) -> String {
                 // §6's voice: lowercase and factual. vim's `[No Name]`, said
                 // the way this editor says things.
                 || "[no name]".to_owned(),
-                |path| {
-                    path.strip_prefix(root)
-                        .ok()
-                        .or_else(|| path.file_name().map(Path::new))
-                        .unwrap_or(&path)
-                        .to_string_lossy()
-                        .into_owned()
-                },
+                |path| shown_path(&path, root),
             ),
     }
+}
+
+/// A path as a **surface** shows it: workspace-relative, or the basename.
+///
+/// Two callers and one rule, which is the point of it being a function.
+/// `T089`'s tab titles established it and `T058`'s anchor chip needed the same
+/// thing — `1c` draws `src/retry.rs`, and both surfaces have a row to share.
+///
+/// **Not [`store::key_for`]**, and the difference matters. That one is the
+/// *store's* rule: it strips the working directory so a door declaring
+/// `src/retry.rs` and an editor showing `/work/src/retry.rs` agree about which
+/// file they mean, and a path outside the workspace has to keep its absolute
+/// form or it would name a different file. This one is about **reading**: a
+/// path nobody can shorten honestly is still fifty cells of `/private/tmp/…`
+/// before it says anything, so a surface falls back to the basename, which is
+/// vim's own answer for a tab label. Being wrong here costs a reader a moment;
+/// being wrong there costs a marker.
+fn shown_path(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root)
+        .ok()
+        .or_else(|| path.file_name().map(Path::new))
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn compose_panes(
@@ -5490,7 +5516,7 @@ fn answering(
 /// stay where it is, which is what every editor does.
 fn jumping(post: &Post) -> phosphor_buffer::lsp::Locations {
     let post = Arc::clone(post);
-    Arc::new(move |places: Vec<phosphor_core::request::FileSpan>| {
+    Arc::new(move |places: Vec<FileSpan>| {
         let Some(place) = places.into_iter().next() else {
             return;
         };
@@ -5517,7 +5543,7 @@ fn jumping(post: &Post) -> phosphor_buffer::lsp::Locations {
 /// The alternative is a capability whose payload is a list of places, which is
 /// a vocabulary change to carry one answer to one surface. If a second consumer
 /// ever wants the list, that is the moment to make it one.
-type References = Arc<Mutex<Vec<phosphor_core::request::FileSpan>>>;
+type References = Arc<Mutex<Vec<FileSpan>>>;
 
 /// The `Locations` callback for `request-references`.
 ///
@@ -5527,7 +5553,7 @@ type References = Arc<Mutex<Vec<phosphor_core::request::FileSpan>>>;
 fn referencing(post: &Post, slot: &References) -> phosphor_buffer::lsp::Locations {
     let post = Arc::clone(post);
     let slot = Arc::clone(slot);
-    Arc::new(move |places: Vec<phosphor_core::request::FileSpan>| {
+    Arc::new(move |places: Vec<FileSpan>| {
         if let Ok(mut held) = slot.lock() {
             *held = places;
         }
@@ -5965,17 +5991,45 @@ fn draw(
         .set_style(geometry.status, Style::new().bg(theme.chrome.statusline));
 
     match chrome {
-        // The ex line and the notice both take the statusline's row rather
-        // than a row of their own: `8d`'s ladder is about a line that has to
-        // fit, and two lines of chrome is a different frame.
+        // **A prompt is `Node::Prompt` now** (`T058`), which is the
+        // demolition `docs/OPEN-QUESTIONS.md` §13 scheduled: this arm built the
+        // row from `Node::Line` and `Node::Label` because `phosphor-ui`
+        // deferred `prompt`, and said so in a comment naming this task.
+        //
+        // A **notice** is still a label, and that is not scaffolding — it is a
+        // sentence the editor is saying, not a line you are typing into, and
+        // `Node::Prompt` would draw it a caret it has no business having.
+        //
+        // **Both take the statusline's row**, chip and all. `1c` draws the
+        // anchored prompt on a row of its own *below* a statusline that is
+        // still there, and this build does not — see
+        // `docs/OPEN-QUESTIONS.md` §53 for the hang that stopped it, which is
+        // recorded with a reproduction rather than worked around. The chip
+        // shares the row for now, which is vim's placement and every other
+        // screen's.
         Some(chrome) => {
-            let row = Tree::new(Node::Line {
-                children: vec![Child::new(Node::Label {
-                    text: chrome.text.to_owned(),
-                    tone: Tone::Text,
-                    emphasis: Emphasis::Plain,
-                })],
-            });
+            let row = if chrome.caret {
+                Tree::new(Node::Prompt {
+                    prompt: PromptKind::Ex,
+                    // The text arrives with its `:` already on it, and
+                    // `PromptLine` adds the prefix its *kind* implies — so the
+                    // one the caller typed is stripped rather than doubled.
+                    text: chrome
+                        .text
+                        .strip_prefix(':')
+                        .unwrap_or(chrome.text)
+                        .to_owned(),
+                    anchor: chrome.anchor.cloned(),
+                })
+            } else {
+                Tree::new(Node::Line {
+                    children: vec![Child::new(Node::Label {
+                        text: chrome.text.to_owned(),
+                        tone: Tone::Text,
+                        emphasis: Emphasis::Plain,
+                    })],
+                })
+            };
             Interpreter::new(theme, &NoResources).render(&row, geometry.status, frame.buffer_mut());
         }
         None => {
@@ -5992,12 +6046,19 @@ fn draw(
     match chrome.filter(|chrome| chrome.caret) {
         Some(chrome) => {
             let typed = u16::try_from(chrome.text.chars().count()).unwrap_or(u16::MAX);
-            let x = geometry
-                .status
+            // Past the chip, when there is one — the widget draws it first and
+            // the terminal's own cursor has to agree with where the text
+            // started, or it sits inside the anchor.
+            let chip = chrome
+                .anchor
+                .map_or(0, |anchor| phosphor_ui::prompt::chip_width(anchor) + 1);
+            let row = geometry.status;
+            let x = row
                 .x
+                .saturating_add(chip)
                 .saturating_add(typed)
-                .min(geometry.status.right().saturating_sub(1));
-            frame.set_cursor_position((x, geometry.status.y));
+                .min(row.right().saturating_sub(1));
+            frame.set_cursor_position((x, row.y));
         }
         None => {
             // **The focused pane's rect, not the frame's.** `geometry.pane`
@@ -6058,6 +6119,13 @@ struct Chrome<'a> {
     text: &'a str,
     /// Whether the cursor belongs at the end of it.
     caret: bool,
+    /// What the prompt is about, when it is a prompt and something rides along
+    /// (`T058`, `1c`).
+    ///
+    /// **[`None`] for a notice**, which is not a prompt and anchors nothing —
+    /// the `caret` flag above already separates the two and this is the second
+    /// thing that does.
+    anchor: Option<&'a FileSpan>,
 }
 
 /// The `12:1` counter, 1-based, as `1a` and `8e` draw it.
@@ -7535,6 +7603,12 @@ struct Editing {
     open_at: Option<Position>,
     /// A prompt `open-prompt` asked for, drained the same way.
     prompt: Option<PromptKind>,
+    /// What that prompt is about (`T058`, `1c`), resolved when it opened.
+    ///
+    /// Drained with [`Editing::prompt`], because a chip belongs to the prompt
+    /// that raised it and a stale one would name a range the next `:` has
+    /// nothing to do with.
+    anchor: Option<FileSpan>,
     /// A `:help` `open-help` asked for (`T097`), drained the same way — the
     /// page is composed from the live keymap and the keymap is the layer's.
     help: Option<Help>,
@@ -7795,6 +7869,7 @@ impl Editing {
             open: None,
             open_at: None,
             prompt: None,
+            anchor: None,
             help: None,
             refused: None,
             note: None,
@@ -8376,14 +8451,22 @@ impl Editing {
             // The ex line. `T058` builds the message and search prompts and the
             // anchor chip that rides with them; the ex half is `T033`'s, because
             // an editor you cannot type `:write` into is not one CP-3 can judge.
-            Action::Prompt(PromptAction::OpenPrompt { kind, .. }) => match kind {
-                PromptKind::Ex => {
-                    self.prompt = Some(PromptKind::Ex);
+            Action::Prompt(PromptAction::OpenPrompt { kind, anchor, .. }) => match kind {
+                PromptKind::Ex | PromptKind::Claude => {
+                    self.prompt = Some(*kind);
+                    // `T058` — `1c`'s whole caption: *"visual-select, hit the
+                    // prompt — file & range ride along automatically"*.
+                    //
+                    // **Resolved here and not carried as a `Target`**, because
+                    // a target is a *question* — `Target::Selection {}` means
+                    // "whatever is selected", and the selection is gone by the
+                    // time the prompt is submitted. The chip has to name a
+                    // range that will still be true, so the answer is taken
+                    // now.
+                    self.anchor = anchor.as_ref().and_then(|target| self.file_span(target));
                     done()
                 }
-                PromptKind::Claude | PromptKind::Search => declined(
-                    "only the ex line exists yet — T058 builds the message and search prompts",
-                ),
+                PromptKind::Search => declined("search is T058's other half — :/ is not built yet"),
             },
             Action::App(AppAction::Quit { force }) => {
                 if !*force && self.dirty.get() {
@@ -9193,6 +9276,53 @@ impl Editing {
             self.editor.set_cursor(from + text.chars().count());
         }
         self.commit();
+    }
+
+    /// A target as a file and range, for `1c`'s chip (`T058`).
+    ///
+    /// **Only the two focus-relative arms**, which is [`Editing::target_range`]'s
+    /// own rule one layer up: everything else is the store's to resolve, and a
+    /// chip naming a region or a hunk is `T068`'s and `T063`'s to draw. [`None`]
+    /// for a buffer with no file — there is nothing to anchor *to*.
+    fn file_span(&mut self, target: &Target) -> Option<FileSpan> {
+        // **As a surface shows it, which is what `1c` draws** —
+        // `src/retry.rs`, not `/private/tmp/…/retry.rs`. [`shown_path`] is the
+        // same rule `T089`'s tab titles use, and its own doc says why it is not
+        // `store::key_for`.
+        let held = self.file.clone()?;
+        let path = PathBuf::from(shown_path(
+            &held,
+            &std::env::current_dir().unwrap_or_default(),
+        ));
+        let (from, to) = self.target_range(target)?;
+        // The fork's own offset-to-point conversion, which is what
+        // `cursor_of` uses for the statusline — so a chip and the `12:1` beside
+        // it cannot disagree about which line you are on. Both are 1-based on
+        // screen and 0-based inside, converted in one place each.
+        let at = |offset: usize| {
+            let (row, col) = self.editor.code_ref().point(offset);
+            Position {
+                line: u32::try_from(row.saturating_add(1)).unwrap_or(u32::MAX),
+                column: u32::try_from(col.saturating_add(1)).unwrap_or(u32::MAX),
+            }
+        };
+        let (start, mut end) = (at(from), at(to));
+        // **Half-open to inclusive, which is what a line range *means*.** A
+        // line-wise selection of lines 2–4 ends at the offset that begins line
+        // 5, so the raw conversion reads `2–5` and names a line nobody
+        // selected. vim's `'<,'>` is inclusive and `1c` draws `19–21`; the chip
+        // says what was selected.
+        //
+        // Only when the end sits at column 1 *and* there is a line to step
+        // back to — a character-wise selection ending mid-line is already
+        // inclusive of the character it covers.
+        if end.column == 1 && end.line > start.line {
+            end.line -= 1;
+        }
+        Some(FileSpan {
+            path,
+            span: Some(Span { start, end }),
+        })
     }
 
     /// What a target covers, in character offsets.
@@ -14547,10 +14677,27 @@ mod tests {
             Some(phosphor_core::request::PromptKind::Ex),
             "the loop reads this and gives the ex line the frame"
         );
+        // **A message to claude opens the same line**, which is what `T058`
+        // built: `1c` is a prompt with a chip, and the chip is the *anchor*
+        // rather than the kind. This asserted a refusal naming `T058` until
+        // `T058` was the task doing the asserting.
+        assert!(
+            matches!(
+                editing.apply(&open(phosphor_core::request::PromptKind::Claude)),
+                Outcome::Done(_)
+            ),
+            "a message to claude raises the prompt line too"
+        );
+        assert_eq!(
+            editing.prompt,
+            Some(phosphor_core::request::PromptKind::Claude),
+        );
+        // Search is the half `T058` did not build: a search prompt needs
+        // somewhere to search, which is the search machinery and not the line.
         let Outcome::Refused(Refusal::Declined { reason }) =
-            editing.apply(&open(phosphor_core::request::PromptKind::Claude))
+            editing.apply(&open(phosphor_core::request::PromptKind::Search))
         else {
-            panic!("a message to claude needs a session and a transcript");
+            panic!("search has no machinery behind it yet");
         };
         assert!(reason.contains("T058"), "{reason}");
     }

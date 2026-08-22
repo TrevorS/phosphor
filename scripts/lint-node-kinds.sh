@@ -161,12 +161,6 @@ RECORDED = {
                          "store query, and an ask that nothing has room for renders as the "
                          "statusline's `!` flag alone — which `runtime/statusline.scm` composes "
                          "as a `view/glyph`, not as this."),
-    "Prompt": ("T058", "The ex line is on screen and does not go through this kind: `draw` "
-                       "builds it from `Node::Line` and `Node::Label` because the interpreter "
-                       "defers `prompt`. Recorded at `docs/OPEN-QUESTIONS.md` §13 as "
-                       "scaffolding with a demolition date at `T058` — a second draw path for a "
-                       "surface that has a node kind. `main.rs` names `view::Node::Prompt` in a "
-                       "comment at that draw site, which is why this lint strips comments."),
     "Watch": ("T076", "`WatchOverlay` — the `◉ ⇒` stream, which renders *through* a "
                       "`VirtualText` row. That kind is composed (the unknown-key hint); this "
                       "one is the watch's own formatting and is deferred in the interpreter."),

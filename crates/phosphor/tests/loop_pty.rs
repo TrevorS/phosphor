@@ -1681,16 +1681,15 @@ mod driven {
         fs::write(&file, "one\ntwo\n").expect("a fixture");
 
         let editor = Editor::open(&file, &scratch.state(), &runtime);
-        // `/` is vim's search. It is bound to the search prompt, which `T058`
-        // builds, and the ex line already declines the same capability.
+        // `/` is vim's search. It is bound to the search prompt, and `T058`
+        // built the *ex* and *claude* kinds without it: a search prompt needs
+        // somewhere to search, which is the search machinery rather than the
+        // line. The refusal names the same task and says which half.
         let before = editor.mark();
         editor.press(b"/");
         let frame = editor.since(before);
         assert!(
-            shows(
-                &frame,
-                "only the ex line exists yet — T058 builds the message and search prompts"
-            ),
+            shows(&frame, "search is T058's other half"),
             "a deferred key names its task on the statusline; frame was: {frame}"
         );
 
@@ -2126,8 +2125,8 @@ mod driven {
             // names `T053` for `BlockFile`, and both directions are bound.
             (b"]b", "next file in the review block", "T053"),
             (b"[b", "previous file in the review block", "T053"),
-            (b" cp", "prompt claude", "T058"),
-            (b" cs", "steer the turn", "T058"),
+            // `SPC c p` and `SPC c s` left this table when `T058` built the
+            // claude prompt — they raise the line now rather than refusing.
             (b" ci", "interrupt the session", "T062"),
             (b" rr", "reload from disk", "T069"),
             (b" rd", "diff against disk", "T070"),
