@@ -34,6 +34,12 @@ survive:
               set it up, so the editor has already redrawn by the time such a
               test stops typing, and it passes with the wake removed. Measured
               — the planted defect went green.
+  `drop`      answers the handshake, then dies **mid-turn**: a prompt gets one
+              chunk of prose and the process exits before any stop reason. This
+              is screen `7b` exactly — "acp gone mid-turn" — and it is the one
+              mode where the turn is still open at the moment the connection
+              goes. `deaf` and `linger` both die with nothing running, so
+              neither can produce a seam.
   `gibberish` answers `initialize` with a line that is not JSON at all.
 
 Nothing here imports the ACP SDK on purpose: a fixture built from the same
@@ -136,6 +142,12 @@ def main() -> int:
                     },
                 },
             )
+            if mode == "drop":
+                # Prose out, then gone — no stop reason, ever. `os._exit` and
+                # not `return`, so nothing gets a chance to flush a tidy
+                # goodbye the client could mistake for one.
+                sys.stdout.flush()
+                os._exit(0)
             # A tool call that starts and completes — the row `1b` is mostly
             # made of, and the only way to prove the client turns one into
             # `tool-call-started` / `tool-call-completed` rather than dropping

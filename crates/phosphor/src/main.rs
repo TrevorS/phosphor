@@ -3291,6 +3291,27 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             if let Some(said) = session_notice(&life) {
                 notice = Some(said);
             }
+            // **`7b`'s seam is written by the drop, not by a verb.** `:seam` is
+            // the manual form and it exists for a session that paused or
+            // resumed — things nothing observes. A connection that goes while a
+            // turn is running is observed *here*, and a transcript that showed
+            // the seam only if you thought to ask for it would be a transcript
+            // whose honesty was your job.
+            if let (SessionLife::Lost(_), Some((running, _))) = (&life, shell.turn) {
+                let unseen = shell
+                    .store
+                    .unseen_count(&phosphor_core::store::Scope::Everywhere);
+                shell.transcript.at(running).ended = Some(phosphor_ui::transcript::Seam {
+                    text: "connection lost mid-turn".to_owned(),
+                    detail: Some(survived(unseen)),
+                    trouble: true,
+                });
+                // The turn is over, whatever the agent thought. Leaving it open
+                // would leave the statusline saying `working` about a session
+                // that is gone — §5's *"always truthful"* failing in the one
+                // moment it is being read.
+                shell.turn = None;
+            }
             shell.life = life.clone();
         }
         host.publish_session(session_value(&life, shell.turn.as_ref()));
@@ -4736,6 +4757,11 @@ impl Transcript {
             // `1b`'s `claude code · acp · 4f2a` — what is running, the
             // protocol, and the session's own id shortened to the last four,
             // which is what the mockup draws and what a person can read back.
+            // **`7b` changes the last field and nothing else** — `claude code
+            // · acp · disconnected`, which is the header still telling you what
+            // it was rather than blanking and pretending the stream was never
+            // anybody's. A transcript you are reading after a drop is the one
+            // time the header is load-bearing.
             header: match life {
                 SessionLife::Attached { session } => {
                     let tail: String = session.chars().rev().take(4).collect();
@@ -4744,9 +4770,11 @@ impl Transcript {
                         tail.chars().rev().collect::<String>()
                     )
                 }
-                _ => String::new(),
+                SessionLife::Lost(_) => "claude code · acp · disconnected".to_owned(),
+                SessionLife::None | SessionLife::Starting => String::new(),
             },
             turns: self.turns.clone(),
+            hints: transcript_hints(life),
         }
     }
 
@@ -4762,7 +4790,12 @@ impl Transcript {
             turn.prompt.clone().map_or(Value::Null, Value::Text),
         );
         fields.set("prose", Value::Text(turn.prose.clone()));
-        fields.set("ended", turn.ended.clone().map_or(Value::Null, Value::Text));
+        fields.set(
+            "ended",
+            turn.ended
+                .as_ref()
+                .map_or(Value::Null, |seam| Value::Text(seam.text.clone())),
+        );
         fields.set(
             "calls",
             Value::List(
@@ -4848,6 +4881,72 @@ fn session_value(life: &SessionLife, turn: Option<&(TurnId, Instant)>) -> Value 
 /// the thirty a `npx` first run takes. Saying it here instead keeps §5's list
 /// intact: the strip carries the state, and the row below carries the fact that
 /// something is happening.
+/// `7b`'s line under the seam: what a dropped turn left behind.
+///
+/// *"disk state preserved · 2 regions arrived before the drop, marked unseen ·
+/// turn may be incomplete"* — the mockup's own sentence, and the reason `7b`'s
+/// caption ends *"the transcript shows the seam honestly"*. All three clauses
+/// are claims this build can actually make: the buffers are on disk because
+/// nothing in the session path writes them, the regions are the store's own
+/// unseen count, and *may be* is the truthful modal — the client cannot know
+/// whether an agent that stopped answering had finished.
+///
+/// **The middle clause is dropped when the count is zero** rather than drawn as
+/// `0 regions`, because a reassurance about nothing is noise on a row that
+/// exists to reassure.
+/// The transcript pane's footer strip (`1b`, `7b`).
+///
+/// **`7b` is the only screen in the set whose footer changes with state**, and
+/// it changes because the remedy does: an attached session's transcript offers
+/// you the rows, and a dropped one offers you the session back. Both end with
+/// `q close`, which is the one thing true of a transcript either way.
+///
+/// **The verbs are spelled in full and the mockup is not.** `7b` draws
+/// `:ca reattach · :cn new session`, and Design Language §6 — quoted in
+/// [`phosphor_core::view::KeyHint`]'s own doc — says *"never cryptic
+/// contractions like `:ca`"* by name. The drawing and the rule disagree; the
+/// build follows the rule, the same way `status_line` already says
+/// `session lost — :reattach`. Recorded at `OPEN-QUESTIONS.md` §55 rather than
+/// resolved here.
+fn transcript_hints(life: &SessionLife) -> Vec<KeyHint> {
+    let mut hints = Vec::new();
+    if matches!(life, SessionLife::Lost(_)) {
+        hints.push(KeyHint {
+            key: KeySeq(":reattach".to_owned()),
+            verb: "reattach".to_owned(),
+        });
+        hints.push(KeyHint {
+            key: KeySeq(":cn".to_owned()),
+            verb: "new session".to_owned(),
+        });
+    } else {
+        // `1b`'s own footer. The jump is `T056`'s and the row it lands on is
+        // already drawn, so the hint names a verb this pane has and the OSC 8
+        // that makes it clickable arrives with that task.
+        hints.push(KeyHint {
+            key: KeySeq("<cr>".to_owned()),
+            verb: "jump to file".to_owned(),
+        });
+    }
+    hints.push(KeyHint {
+        key: KeySeq("q".to_owned()),
+        verb: "close".to_owned(),
+    });
+    hints
+}
+
+fn survived(unseen: usize) -> String {
+    let mut said = String::from("disk state preserved");
+    if unseen > 0 {
+        let plural = if unseen == 1 { "" } else { "s" };
+        said.push_str(&format!(
+            " · {unseen} region{plural} arrived before the drop, marked unseen"
+        ));
+    }
+    said.push_str(" · turn may be incomplete");
+    said
+}
+
 fn session_notice(life: &SessionLife) -> Option<String> {
     match life {
         // §6: lowercase, telegraphic, factual.
@@ -9131,7 +9230,11 @@ impl Editing {
                 // `T054` — `1b`'s seam marker, which is the row that says a
                 // turn is over and what came of it.
                 let ended = cx.shell.transcript.at(*turn);
-                ended.ended = Some(summary.clone().unwrap_or_else(|| "turn ended".to_owned()));
+                ended.ended = Some(phosphor_ui::transcript::Seam {
+                    text: summary.clone().unwrap_or_else(|| "turn ended".to_owned()),
+                    detail: None,
+                    trouble: false,
+                });
                 // **Only the turn that is running ends.** A stop reason for a
                 // turn the editor has already forgotten is not an error — a
                 // session replaced mid-turn produces exactly one — and clearing
@@ -9239,7 +9342,19 @@ impl Editing {
                     }
                     .to_owned()
                 });
-                cx.shell.transcript.at(turn).ended = Some(said);
+                // **Only a lost seam is trouble.** A pause is a thing you did
+                // and a resume is a thing that worked; painting either of them
+                // §2's `✕` would make the transcript louder than the event.
+                let trouble = matches!(kind, phosphor_core::request::SeamKind::Lost);
+                let unseen = cx
+                    .shell
+                    .store
+                    .unseen_count(&phosphor_core::store::Scope::Everywhere);
+                cx.shell.transcript.at(turn).ended = Some(phosphor_ui::transcript::Seam {
+                    text: said,
+                    detail: trouble.then(|| survived(unseen)),
+                    trouble,
+                });
                 done()
             }
 

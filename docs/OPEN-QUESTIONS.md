@@ -2425,51 +2425,88 @@ change, not five 30-second deadlines. The arithmetic was there to be done.
 `scripts/key_coverage.py`'s `RECORDED` is empty again. Both keystroke tests run
 in under four seconds.
 
-### 54 · `:cn` reaches the session client and the handshake never completes; the option with the same command works
+### 54 · ~~`:cn` reaches the session client and the handshake never completes~~ — wrong instrument, closed 2026-08-21
 
-**Raised by `T057`, 2026-08-21, and it is why that task is not ticked.**
+**Filed by `T057` as the reason it was not ticked, and answered the next
+session.** `:cn` was never broken. The probe that said it was searched the wrong
+thing.
 
-`:cn python3 <toy agent> turn` runs `start-session`, which calls
-`Session::attach` — and it *does*: the client records `Life::Starting` and the
-notice row says `starting claude`. Then nothing. Probed against a real 120×30
-pty for eight seconds: no `claude attached`, no `claude idle`, no
-`session would not start`, no `session lost`. It sits in `Starting`.
+**The claim.** `:cn python3 <toy agent> turn` recorded `Life::Starting`, said
+`starting claude` on the notice row, and then never reached `claude attached` or
+`claude idle` — probed against a real 120×30 pty for eight seconds, no attach and
+no failure. The identical command through `(set-option! "agent-command" …)`
+reached `claude idle` inside a second. Four things were ruled out by running
+them, one of which — the loop's option check comparing against `Shell::agent`,
+which the verb had just set, so the next frame read *"the option changed to
+nothing"* and stopped the session — **was a real bug and is fixed**. The entry
+concluded that the remaining difference was *where* `attach` is called from: the
+loop for the option, `Editing::act` for the verb.
 
-The same command through the option — `(set-option! "agent-command" "python3
-<toy agent> turn")` — reaches `claude idle` inside a second, in the same probe,
-against the same binary.
+**What it actually was.** The probe did `needle in raw_pty_bytes`. A settled
+statusline is written by ratatui's *diff* renderer, which emits the changed cells
+in pieces separated by cursor-move escapes — so `claude idle` is on the screen
+and is not a substring of the stream that drew it. Decoding the same capture into
+a grid shows `✻ claude idle`, and a temporary trace through the client shows the
+whole handshake running from the verb:
 
-**What has been ruled out.**
+```
+arm: start-session agent="python3 …/toy_acp_agent.py turn"
+attach cmd="python3" args=[…] cwd=… sender=true
+supervise: serving an Attach → serve: spawned → initialized → session started
+```
 
-* Not the ex command: `:cn` resolves, and neither *"no such command"* nor
-  *"ambiguous"* appears.
-* Not the argument: both paths hand `agent::spec_from` the identical string, and
-  the option path's spec spawns.
-* Not the loop's option check racing the verb. That *was* a real bug — the check
-  compared against `Shell::agent`, which the verb had just set, so it read "the
-  option changed to nothing" and stopped the session on the next frame. Fixed by
-  splitting `Shell::wanted` (the last option seen) from `Shell::agent` (what is
-  attached), and the symptom survives the fix.
-* Not a spawn failure: those record `Failure::Spawn` and say so on the notice
-  row.
+The give-away was in the capture the whole time: the decoded dump reads
+`clude attached`, with the `a` sitting on the far side of an escape.
 
-**The one difference left is where `attach` is called from.** The option path
-calls it from the loop; the verb path calls it from inside `Editing::act`, which
-runs during event handling before the frame is drawn. Both send on the same
-channel to the same supervisor thread. Why one completes and the other does not
-is the question.
+**The harness already knew.** `Editor::shown_on_grid` exists precisely because
+the byte delta and the composed grid are different readers, and its own doc block
+says the delta *"can only wait for text that is **newly** written"* while the grid
+is the reader for state. The probe was hand-rolled Python that used neither.
+`the_dashboard_reproduces_screen_7d_and_cn_starts_a_session` now asserts `:cn`
+off the grid, in two waits rather than one — the `claude attached` notice holds
+the whole row until a keystroke retires it, and only then is the strip beneath it
+readable.
 
-The `cwd` argument differs in spelling and not in value — the loop passes the
-`workspace` captured at boot, the arm passes `std::env::current_dir()` — and
-both are the same directory in the probe. Worth eliminating first anyway, since
-it is one line.
+**The shape of the mistake, which is why this is recorded rather than deleted.**
+Every ruled-out theory was ruled out correctly, and the conclusion was still
+wrong, because all five theories were about the *build* and none was about the
+*instrument*. §53 was the same mistake five days earlier — a harness accused of a
+defect it did not have — and the tell is identical both times: a claim that one
+path works and an almost identical path does not, resting entirely on a reading
+taken outside the test harness. **When a probe and a test disagree, suspect the
+probe.**
 
-**What ships meanwhile.** `7d` renders and is tested: the dashboard says
-`none running`, offers its three verbs, and is drawn entirely through the spans
-hatch. `5d`'s discovery list is written in `runtime/dashboard.scm` against a
-`discover-sessions` that answers empty and will until v1.5's tmux control mode.
-Editing through a mid-turn drop is tested. Sessions still start the way `T050`
-shipped them, through the option.
+### 55 · `7b` and `2d` draw `:ca`, `:tr` and `:c`; Design Language §6 forbids exactly that
+
+**Raised by `T057`, 2026-08-21. Flagged rather than folded in — the build follows
+the rule and the drawings disagree with it.**
+
+Design Language §6, quoted verbatim in `phosphor_core::view::KeyHint`'s own doc
+comment, says a verb *"spells the whole command"* and gives its counter-example
+by name: *"never cryptic contractions like `:ca`"*.
+
+Three mockups draw the contraction anyway:
+
+* `7b`'s transcript footer — `:ca reattach · :cn new session · q close`
+* `7b`'s statusline — `✕ session lost · :ca`
+* `2d`'s footer — `]u next unseen · :tr transcript · :c claude · :e edit`
+
+`status_line.rs` resolved its half before this task, drawing
+`session lost — :reattach`, and `T057` has now resolved the other two the same
+way: the transcript footer reads `:reattach · :cn · q`, and the dashboard's
+mid-task footer reads `:transcript` and `:claude`. Both are still *typable*
+short — `:reat`, `:tr`, `:cl` — because vim's one-field abbreviation rule is
+what `keymaps.scm` implements, and §6 is explicit that abbreviation is a
+keyboard affordance and never a label.
+
+**What is actually open.** `:cn` survives in full in both the drawings and the
+build, and it is not obviously less cryptic than `:ca` — it is a command *name*
+rather than an abbreviation of one, which is the distinction that saves it, and
+that distinction is thin. Either the mockups' footers are shorthand for the
+reader and the rule governs, or `:cn` is a fourth violation nobody has called
+one. **The design is Teej's and the ruling is his**; the build has taken the
+reading that keeps §6 true, and this entry exists so the divergence is on the
+record rather than discovered later as a bug in the screens.
 
 ## Repair pass — queued work, not questions
 

@@ -1,10 +1,25 @@
-;; dashboard.scm — `:cn` and the session dashboard, screens 7d and 5d (T057).
+;; dashboard.scm — `:cn` and the session dashboard, screens 7d, 5d and 2d (T057).
 ;;
 ;; **the second proof that the escape hatch is sufficient**, after arch.scm.
 ;; every row here is `view/spans`, so this whole surface adds zero lines to
 ;; phosphor-ui — and it is a better test of the claim than `:arch` was, because
 ;; this one is *live*: the rows change with the session where the diagram's
 ;; numbers only change with the store.
+;;
+;; **2d is the same screen a third time.** "opening mid-task — what you see
+;; attaching to a repo where claude's been busy · state, not splash" is 7d with
+;; a session attached and something unseen: the session row says what is running
+;; instead of "none running", an unseen row appears because there is something
+;; to be unseen, and the footer offers `]u` first because the next unseen region
+;; is what you came back for. one `dash/rows` answers all three, which is the
+;; claim the three mockups make by being the same layout.
+;;
+;; **two of 2d's five rows are not this task's to draw.** `vcs  jj · trunk@a4f2
+;; · clean` needs `vcs-status`, which is T071, and `last  cargo test ✓ 34
+;; passed` needs the timeline, which is T073 — both answer `NotYetImplemented`
+;; today. the same is true of 7d's `repo` and `history` rows. they are absent
+;; rather than stubbed: a row reading `vcs —` would be this file claiming to
+;; have looked.
 ;;
 ;; 7d and 5d are one screen with different data, and that is not a shortcut —
 ;; it is what the two drawings say. 7d is "session / none running" and 5d is
@@ -54,10 +69,31 @@
    [(equal? state "lost") "lost — :reattach"]
    [else "none running"]))
 
+;; 2d's unseen row — "6 regions in 2 files — ✻ retry logic, review ready".
+;;
+;; the count is the store's; the file count and the title come from the newest
+;; review block, because "review ready" is a claim about a *block* and 2d draws
+;; the two together. with regions but no block the row says what it knows and
+;; stops, which is the honest half: something arrived, nobody has said it is a
+;; review yet.
+(define (dash/plural n one many)
+  (string-append (number->string n) " " (if (= n 1) one many)))
+
+(define (dash/unseen-line count blocks)
+  (if (null? blocks)
+      (dash/plural count "region" "regions")
+      (let* ([block (car (reverse blocks))]
+             [files (length (hash-ref block "files"))])
+        (string-append (dash/plural count "region" "regions")
+                       " in " (dash/plural files "file" "files")
+                       " — ✻ " (hash-ref block "title")
+                       ", review ready"))))
+
 (define (dash/rows)
   (let* ([session (session)]
          [state (if (hash? session) (hash-try-get session "state") "none")]
          [attached (if (hash? session) (hash-try-get session "attached") #false)]
+         [unseen (hash-ref (arch) "unseen")]
          [found (discover-sessions!)])
     (append
      (list
@@ -67,6 +103,11 @@
       ;; build spends its lints avoiding.
       (dash/field "phosphor" "v0.1")
       (dash/field "session" (dash/session-line state attached)))
+     ;; 2d's third row, and only when there is one. an `unseen  0 regions` row
+     ;; on a cold start would be 7d claiming a fact 7d does not draw.
+     (if (> unseen 0)
+         (list (dash/field "unseen" (dash/unseen-line unseen (review-blocks))))
+         (list))
      ;; 5d's list, when there is one.
      (if (null? found)
          (list)
@@ -78,11 +119,19 @@
                     found)))
      (list
       (dash/row (dash/run "" 'meta))
-      ;; 7d's three verbs. the caption is "three verbs, then out of the way",
-      ;; and `dismiss-dashboard-hint` is the "then".
-      (dash/row (dash/run ":e" 'you) (dash/run " edit · " 'meta)
-                (dash/run ":cn" 'you) (dash/run " start claude · " 'meta)
-                (dash/run ":f" 'you) (dash/run " find file" 'meta))))))
+      ;; **the footer follows the screen.** 7d's caption is "three verbs, then
+      ;; out of the way" and 2d's is "state, not splash", and the difference
+      ;; shows up here: with nothing running the verbs are how you start, and
+      ;; with a session already busy the first thing offered is the unseen work
+      ;; you came back to. `dismiss-dashboard-hint` is the "then" in both.
+      (if (equal? state "none")
+          (dash/row (dash/run ":e" 'you) (dash/run " edit · " 'meta)
+                    (dash/run ":cn" 'you) (dash/run " start claude · " 'meta)
+                    (dash/run ":f" 'you) (dash/run " find file" 'meta))
+          (dash/row (dash/run "]u" 'you) (dash/run " next unseen · " 'meta)
+                    (dash/run ":transcript" 'you) (dash/run " transcript · " 'meta)
+                    (dash/run ":claude" 'you) (dash/run " claude · " 'meta)
+                    (dash/run ":e" 'you) (dash/run " edit" 'meta)))))))
 
 ;; the float. informational — 7d is not in front of anything and asks nothing —
 ;; and 5d's own footer sentence, which is the thesis of the whole screen: the

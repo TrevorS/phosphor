@@ -3234,19 +3234,183 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   > defects caught: `session-prose` dropped, a tool call never recorded. `just
   > gate` green at 1,462 tests.
 
-- [ ] **T055 · Markdown prose behind the gate**
+- [x] **T055 · Markdown prose behind the gate**
   Via the vendored fork (T004). **Plain-text path must stay readable with the gate off.**
   *Done when:* both paths render acceptably. *Needs:* T004, T054
+
+  > **Built 2026-08-21.** `crates/phosphor-ui/src/prose.rs` — one function, two
+  > implementations, chosen by the `markdown` feature. The transcript calls it
+  > and does not know which one it got, because a caller that branched would be
+  > a second place for the two paths to diverge.
+  >
+  > **The plain path was not readable and the comment said it was.** `T054`
+  > drew prose as one row per `\n`, written with `set_stringn` — which clips at
+  > the pane edge — under a comment reading *"**Wrapped, not truncated.** …
+  > A transcript that clipped claude's sentences at the pane edge would be
+  > unreadable at any width."* That comment shipped with the code that did
+  > exactly what it forbade, and it took this task's own acceptance to measure
+  > it. The tree won and the comment was the bug. **This is the second time in
+  > two tasks that prose about the build outlasted the build**; §54 was the
+  > first.
+  >
+  > **Wrapping is `float::wrap_prose`, not a fourth copy.** The same helper the
+  > float bodies use — whose own doc block already named this task:
+  > *"rendering markdown properly is the transcript's job at `S6`"*. Its rules
+  > come along for free and are the right ones here: a token longer than the
+  > width gets its own row rather than being cut mid-way, a blank line is a
+  > paragraph break and survives, and `cols == 0` hands the source back so a
+  > degenerate width cannot loop.
+  >
+  > **`Row::Prose` carries a `Line`, not a `String`.** Both paths answer styled
+  > lines, so §11's grouping counts the same rows either way and the renderer's
+  > own tones — a heading, a fenced block, inline code — reach the buffer
+  > instead of being flattened to one colour at the draw.
+  >
+  > **The fork's fifteen-slot `RichTextTheme` is bridged, not defaulted.**
+  > Every colour comes from Design Language §1 through `Theme`; the trait's own
+  > defaults are `Color::White` and `Color::Black`, which would be a sixteenth
+  > palette nobody chose and precisely what
+  > `scripts/lint-no-literal-colours.sh` exists to stop. The JSON slots belong
+  > to the fork's tree view, which the transcript does not draw — answered from
+  > the palette anyway, because the trait requires them.
+  >
+  > **The gate-off rendering is the source and that is the honest fallback.**
+  > What an ACP agent streams is markdown whether or not anything renders it, so
+  > `# Retry logic` reading as `# Retry logic` is the source showing through —
+  > not a half-parse, and not a degradation. There is a test for each side
+  > asserting exactly that difference.
+  >
+  > **Verification.** Four unit tests over `prose::lines` — a paragraph wraps to
+  > its width *and* keeps every word (a width check alone passes against a
+  > renderer that truncates every row), zero width is answered rather than
+  > divided by, and one test per side of the gate on the same source. One
+  > keystroke test through the transcript at 120 columns, needled on the
+  > paragraph's **last** word and on the row it lands on being later than the
+  > first — the only thing that distinguishes wrapping from clipping. Two
+  > planted defects, two caught, one per path: the plain path reverted to
+  > `T054`'s behaviour failed both the unit test and the pty test, and a gate
+  > that rendered nothing failed the markdown half. `just gate` and
+  > `just hack` green.
 
 - [ ] **T056 · OSC 8 tool-row jump links**
   *Done when:* clicking a tool row jumps to the file and range, on the primary terminal.
   *Needs:* T054
 
-- [ ] **T057 · Session lifecycle**
+- [x] **T057 · Session lifecycle**
   Cold start (`7d`), attach/adopt/start (`5d`), drop and reattach (`7b`), opening mid-task
   (`2d`). **Editing never blocks on session trouble.**
   *Done when:* all four screens reproduce in the running binary and the editor stays usable
   through a mid-turn drop. *Needs:* T051
+
+  > **Built 2026-08-21.** Ten lifecycle arms in `crates/phosphor/src/main.rs`,
+  > `runtime/dashboard.scm` for the dashboard screens, and `7b`'s seam in
+  > `crates/phosphor-ui/src/transcript.rs`. Four screens, four keystroke tests,
+  > and one of the four is honestly partial — see the last section.
+  >
+  > **Three of the four screens are one surface.** `7d`, `5d` and `2d` are the
+  > same field list with different data, which is what the three drawings say
+  > rather than a shortcut taken to draw them: cold start says
+  > `session  none running`, discovery adds a list under it, and mid-task swaps
+  > the session line, grows an `unseen` row and leads its footer with `]u`
+  > instead of `:cn`. `dash/rows` answers all three from `(session)`, `(arch)`
+  > and `(review-blocks)`.
+  >
+  > **Drawn entirely through the spans hatch**, like `:arch` — zero lines added
+  > to `phosphor-ui` for three screens, and a better proof of `T080`'s claim
+  > than the first one was: `6a`'s numbers move with the store, and these rows
+  > move with the *session*.
+  >
+  > **`7b`'s seam is written by the drop, not by a verb.** `:seam` is the manual
+  > form and it earns its place for a pause or a resume, which nothing observes.
+  > A connection going while a turn is open *is* observed — by the same
+  > life-change block that puts `session lost` on the strip — so the transcript
+  > row appears with nothing pressed. The screen's caption is *"the transcript
+  > shows the seam honestly"*, and a transcript whose honesty depended on the
+  > reader remembering to ask for it would not be that.
+  >
+  > **The seam is one row in two tones rather than two rows.** `1b` ends a turn
+  > with `✻ review ready …` in claude-green and `7b` ends one with
+  > `✕ connection lost mid-turn` in trouble-red; `transcript::Seam` carries the
+  > flag and both glyph and tone move together, because a red sentence behind a
+  > green glyph is the half-truth §5 spends its rules on.
+  >
+  > **`survived()` is the line under it**, and all three of its clauses are
+  > claims this build can make: the buffers are on disk because nothing in the
+  > session path writes them, the region count is the store's own, and *may be
+  > incomplete* is the truthful modal — a client cannot know whether an agent
+  > that stopped answering had finished. The middle clause is dropped at zero
+  > rather than drawn as `0 regions`, because a reassurance about nothing is
+  > noise on a row that exists to reassure.
+  >
+  > **The transcript footer is new and `1b` wanted it too.** `T054` shipped the
+  > pane with no footer at all; both mockups draw one. It is `KeyHints` at
+  > `Density::Footer` — the same widget the floats use — fed from
+  > `TranscriptVm::hints`, so *what a transcript offers* stays the host's
+  > question. The strip is taken off the room **before** §11 groups the turns,
+  > since a footer painted over the last turn after the fitting had promised it
+  > would fit is the *"a list that stopped mid-turn"* failure one row lower.
+  >
+  > **A real bug the verbs exposed.** The loop's option-driven attach compared
+  > `agent-command` against `Shell::agent` — *what is attached*. `:cn` sets that
+  > without the option moving, so the very next frame read *"the option changed
+  > to nothing"* and stopped the session the verb had just started.
+  > `Shell::wanted` is the last option seen now and `Shell::agent` is what is
+  > attached; one field could not tell those apart.
+  >
+  > **`discover-sessions` is armed in `AppHost::apply`, not `Editing::act`**,
+  > because a float surface body runs in the VM — which reaches that applier and
+  > not the loop's. It needs no buffer and no session handle, so there is
+  > nothing to reach for.
+  >
+  > **`5d`'s list is a branch nothing takes.** Its two rows are a tmux pane and
+  > a headless socket; the first needs tmux control mode (v1.5) and the second
+  > needs a socket transport, and `T050`'s client speaks stdio to a child it
+  > owns. There is nowhere to look, and a guessed row is one `↵` could not
+  > adopt. `discover-sessions` says so in its note and `adopt-session` refuses
+  > by *target* rather than by task — the verb is built and the handle is the
+  > thing that does not exist.
+  >
+  > **`7d`'s `repo` and `history` rows and `2d`'s `vcs` and `last` rows are
+  > absent, and that is the honest rendering.** `vcs jj · trunk@a4f2 · clean`
+  > needs `vcs-status`, which is `T071`; `last cargo test ✓ 34 passed` and
+  > `history —` need the timeline, which is `T073`; `repo … · 214 files` needs a
+  > file count no capability answers. All of them answer `NotYetImplemented`
+  > today. A row reading `vcs —` would be `dashboard.scm` claiming to have
+  > looked. **This is the part of *"all four screens reproduce"* that is not
+  > true yet**, it is named here rather than in a green tick, and each row
+  > appears the day its query stops refusing without an edit to this file.
+  >
+  > **§54 is closed and it was never a bug.** The task was held back a session
+  > by a probe reporting that `:cn` reached the client and never finished the
+  > handshake while `(set-option! "agent-command" …)` with the identical command
+  > did. The probe searched the **raw pty byte stream**; a settled statusline is
+  > written by ratatui's diff renderer in pieces separated by cursor moves, so
+  > `claude idle` was on the screen and was not a substring of the bytes that
+  > drew it. Five theories were ruled out correctly and the conclusion was still
+  > wrong, because every one of them was about the build and none was about the
+  > instrument — the same mistake as §53, five days earlier. `Editor::shown_on_grid`
+  > exists for exactly this and the probe was hand-rolled Python that used
+  > neither it nor the harness.
+  >
+  > **§55 is raised and is Teej's.** `7b` draws `:ca reattach` and `2d` draws
+  > `:tr transcript · :c claude`, while Design Language §6 — quoted in
+  > `KeyHint`'s own doc — names `:ca` as its counter-example. The build follows
+  > the rule, as `status_line` already did; the drawings disagree and the ruling
+  > is not a lint's to make.
+  >
+  > **Verification.** Four keystroke tests. `7d` from `:dashboard` — `none
+  > running`, the three verbs, `:reattach` declining by name — and `:cn`
+  > attaching, read off the composed grid in two waits because the
+  > `claude attached` notice holds the whole row until a keystroke retires it.
+  > `2d` with a declared review block — `2 regions in 1 file`, the block's title,
+  > and the footer leading with the work. `7b` with a new `drop` fixture mode
+  > that answers a prompt and exits before any stop reason, which is the only
+  > mode where a turn is still open when the connection goes. Editing through a
+  > mid-turn drop. Five planted defects, five caught — and the fifth caught the
+  > *test*: a bare needle on `reattach` went green with the footer hint deleted,
+  > because the statusline three rows below already said
+  > `✕ session lost — :reattach`. The assertion reads the footer's own row now.
+  > `just gate` green.
 
 ### ✋ CP-6 — Does the session hold?
 

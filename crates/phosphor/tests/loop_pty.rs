@@ -3219,13 +3219,16 @@ mod driven {
     /// because these rows change with the session where the diagram's numbers
     /// only change with the store.
     ///
-    /// **`:cn` is not asserted here.** It reaches the client — the session goes
-    /// to `Starting` and the notice says `starting claude` — and then never
-    /// completes the handshake, while `(set-option! "agent-command" …)` with
-    /// the identical command does. `docs/OPEN-QUESTIONS.md` §54 records the
-    /// difference; the assertion lands with the fix.
+    /// **`:cn` is read off the composed grid and not off the byte delta**, and
+    /// that distinction is the whole of `OPEN-QUESTIONS.md` §54. The verb was
+    /// recorded there as reaching the client and never finishing the handshake,
+    /// on the evidence of a probe that searched the raw pty stream for
+    /// `claude idle`. It finishes: diff rendering writes a settled statusline in
+    /// pieces separated by cursor moves, so the needle is on the screen and
+    /// never in the bytes. [`Editor::shown_on_grid`] already says which reader
+    /// is which; the probe was not using it.
     #[test]
-    fn the_dashboard_reproduces_screen_7d() {
+    fn the_dashboard_reproduces_screen_7d_and_cn_starts_a_session() {
         let scratch = Scratch::new("dashboard");
         let runtime = copy_layer(&scratch.path);
         let file = scratch.path.join("sample.txt");
@@ -3257,6 +3260,236 @@ mod driven {
             "the remedy says what it needs; session was: {nothing}"
         );
 
+        // **`:cn` — the verb `7d` names.** The one-off form of
+        // `(set-option! "agent-command" …)`, and `7d` draws it because a
+        // dashboard whose only remedy is an option is not a remedy.
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+        let started = format!(":cn python3 {} turn\r", agent.display());
+        // **The notice first, then the state.** `claude attached` is written
+        // fresh on the whole statusline row and holds it; the strip underneath
+        // only becomes readable once a keystroke has retired the notice, which
+        // is why this is two waits and not one.
+        editor.shown_on_grid(started.as_bytes(), "claude attached");
+        let running = editor.shown_on_grid(b"\x1bj", "claude idle");
+        assert!(
+            shows(&grid_of(&running), "claude idle"),
+            "`:cn` attaches and the strip settles to idle; grid was:\n{}",
+            grid_of(&running)
+        );
+
+        // And `7d` redraws from the live session rather than from what it said
+        // the first time — `none running` is gone.
+        let warm = editor.shown_on_grid(b":dashboard\r", "phosphor");
+        let warm = grid_of(&warm);
+        editor.press_quietly(b"\x1b");
+        editor.leave_by(b"ZQ");
+        assert!(
+            !shows(&warm, "none running"),
+            "the dashboard follows the session it started; grid was:\n{warm}"
+        );
+    }
+
+    /// **`T055`: claude's prose wraps rather than stopping at the pane edge.**
+    ///
+    /// The task's guardrail is *"the plain-text path must stay readable with
+    /// the gate off"*, and this is the default build, so this is that path. A
+    /// paragraph wider than the pane used to be one row written with
+    /// `set_stringn` — cut at the edge, with the sentence's end simply gone —
+    /// under a comment claiming it was *"Wrapped, not truncated"*. The comment
+    /// had been there since `T054` and nothing measured it.
+    ///
+    /// **Needled on the paragraph's last word.** A wrap check that looked at
+    /// row widths would pass against a renderer that truncated every row; the
+    /// only thing that distinguishes wrapping from clipping is whether the tail
+    /// is on the screen at all.
+    #[test]
+    fn claudes_prose_wraps_in_the_transcript_rather_than_clipping() {
+        let scratch = Scratch::new("prose-wrap");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let started = format!(":cn python3 {} turn\r", agent.display());
+        editor.shown_on_grid(started.as_bytes(), "claude attached");
+
+        // Wider than the 120-column harness, so the tail is off the row unless
+        // something wrapped it. The toy agent answers `heard: <prompt>`, which
+        // makes the prose row this sentence plus a prefix.
+        let paragraph = "adding a retry policy struct and a generic backoff              helper then wiring the whole fetch layer through it so that every              call site inherits the same jittered schedule finis";
+        assert!(
+            paragraph.len() > usize::from(SCREEN.ws_col),
+            "the fixture has to overrun the pane or it proves nothing"
+        );
+        editor.press_quietly(format!(":claude {paragraph}\r").as_bytes());
+
+        let read = grid_of(&editor.shown_on_grid(b" t", "jittered"));
+        assert!(
+            shows(&read, "finis"),
+            "the paragraph's last word is on screen; grid was:\n{read}"
+        );
+        // And it is on a *different row* from its beginning, which is what
+        // wrapping means and what a wider pane would hide.
+        let first = read
+            .lines()
+            .position(|row| row.contains("adding a retry"))
+            .expect("the paragraph starts somewhere");
+        let last = read
+            .lines()
+            .position(|row| row.contains("finis"))
+            .expect("and ends somewhere");
+        assert!(
+            last > first,
+            "the tail is on a later row than the head; grid was:\n{read}"
+        );
+
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **`T057`: screen `7b` reproduces — the transcript shows the seam.**
+    ///
+    /// `7b`'s caption is *"acp gone mid-turn · editing never blocks · the
+    /// transcript shows the seam honestly"*, and the third clause is what this
+    /// asserts. The agent takes a prompt, says one thing, and dies before any
+    /// stop reason — the `drop` fixture mode, which exists for this and only
+    /// this, because `deaf` and `linger` both die with no turn running and so
+    /// can produce no seam at all.
+    ///
+    /// **The seam is not typed.** `:seam` is the manual form for a pause or a
+    /// resume, which nothing observes; a connection going while a turn is open
+    /// is observed by the loop, so the row appears without a keystroke asking
+    /// for it. A transcript whose honesty depended on the reader remembering to
+    /// request it would not be the thing the caption claims.
+    #[test]
+    fn the_transcript_shows_screen_7bs_seam_when_the_agent_dies_mid_turn() {
+        let scratch = Scratch::new("seam-7b");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let started = format!(":cn python3 {} drop\r", agent.display());
+        editor.shown_on_grid(started.as_bytes(), "claude attached");
+
+        // The prompt starts a turn; the agent answers once and goes. Both the
+        // prose and the drop arrive with nothing else pressed.
+        editor.shown_on_grid(b":claude fix the retry loop\r", "session lost");
+
+        // **`SPC t`, pressed as one literal.** `scripts/key_coverage.py` reads
+        // the bytes a test sends, so a leader binding split across two presses
+        // is a binding nothing proves anybody can reach.
+        let seam = grid_of(&editor.shown_on_grid(b" t", "connection lost"));
+        assert!(
+            shows(&seam, "connection lost mid-turn"),
+            "`7b`'s seam is in the transcript; grid was:\n{seam}"
+        );
+        assert!(
+            shows(&seam, "disk state preserved"),
+            "and says what survived it; grid was:\n{seam}"
+        );
+        assert!(
+            shows(&seam, "turn may be incomplete"),
+            "and does not overclaim the turn; grid was:\n{seam}"
+        );
+        // The header keeps saying whose stream this was. Blanking it would make
+        // a transcript you are reading *after* a drop anonymous, which is the
+        // one moment the header is load-bearing.
+        assert!(
+            shows(&seam, "acp · disconnected"),
+            "the header follows the session; grid was:\n{seam}"
+        );
+        // `7b`'s footer offers the session back. Spelled in full, not as the
+        // mockup's `:ca` — Design Language §6 and the drawing disagree, and
+        // `OPEN-QUESTIONS.md` §55 records it rather than folding it in.
+        //
+        // **Read off the footer's own row, not off the grid.** A bare needle on
+        // `reattach` went green with the hint deleted, because the statusline
+        // three rows below already says `✕ session lost — :reattach` — the
+        // remedy was on screen and the footer was empty, and the assertion
+        // could not tell those apart. `new session` is the `:cn` hint and
+        // nothing else on the screen draws it, so it locates the strip; the row
+        // it is on is then the row that has to carry the rest.
+        let footer = seam
+            .lines()
+            .find(|row| row.contains("new session"))
+            .unwrap_or_else(|| panic!("`7b`'s footer is not on screen; grid was:\n{seam}"));
+        assert!(
+            footer.contains("reattach") && footer.contains("close"),
+            "and offers the remedy beside the way out; footer row was: {footer:?}"
+        );
+
+        editor.press_quietly(b"\x1b");
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **`T057`: screen `2d` reproduces — the dashboard opened mid-task.**
+    ///
+    /// *"what you see attaching to a repo where claude's been busy · state, not
+    /// splash"*. Same surface as `7d`, three differences: the session row names
+    /// what is running, an `unseen` row appears because there is something to
+    /// be unseen, and the footer leads with `]u` instead of `:cn` — you did not
+    /// come back to start a session, you came back to the work.
+    ///
+    /// **Two of `2d`'s five rows are absent and that is the honest rendering.**
+    /// `vcs jj · trunk@a4f2 · clean` is `vcs-status` (`T071`) and
+    /// `last cargo test ✓ 34 passed` is the timeline (`T073`); both answer
+    /// `NotYetImplemented` today, so `runtime/dashboard.scm` draws neither. A
+    /// row reading `vcs —` would be the file claiming to have looked.
+    #[test]
+    fn the_dashboard_reproduces_screen_2d_when_claude_has_been_busy() {
+        let scratch = Scratch::new("dashboard-2d");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("retry.rs");
+        fs::write(&file, "one\ntwo\nthree\nfour\n").expect("a fixture");
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let started = format!(":cn python3 {} mute\r", agent.display());
+        editor.shown_on_grid(started.as_bytes(), "claude attached");
+
+        // Claude has been busy: one review block over two spans in this file,
+        // declared through the registry the same way `T053`'s test does.
+        editor.press_until(b":repl\r", "steel");
+        let form = format!(
+            "(declare-review-block! \"retry logic\" (list (hash \"path\" \"{}\"              \"spans\" (list (hash \"start\" (hash \"line\" 1 \"column\" 1)              \"end\" (hash \"line\" 2 \"column\" 1))              (hash \"start\" (hash \"line\" 3 \"column\" 1)              \"end\" (hash \"line\" 4 \"column\" 1)))              \"annotation\" \"the meat\")) \"the whole change\")\r",
+            file.display()
+        );
+        editor.press_until(form.as_bytes(), "the whole change");
+        editor.press_until(b"(close-repl!)\r", "review ready");
+
+        let busy = grid_of(&editor.shown_on_grid(b":dashboard\r", "unseen"));
+        assert!(
+            shows(&busy, "2 regions in 1 file"),
+            "`2d`'s unseen row counts what arrived; grid was:\n{busy}"
+        );
+        assert!(
+            shows(&busy, "retry logic, review ready"),
+            "and names the block it belongs to; grid was:\n{busy}"
+        );
+        assert!(
+            !shows(&busy, "none running"),
+            "the session row is not `7d`'s any more; grid was:\n{busy}"
+        );
+        assert!(
+            shows(&busy, "next unseen"),
+            "and `2d`'s footer leads with the work; grid was:\n{busy}"
+        );
+
+        editor.press_quietly(b"\x1b");
         editor.leave_by(b"ZQ");
     }
 

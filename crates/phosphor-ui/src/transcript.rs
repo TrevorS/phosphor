@@ -55,9 +55,11 @@
 //! Owned by `surface`.
 
 use phosphor_core::request::{ToolCallId, TurnId};
+use phosphor_core::view::Density;
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
 use ratatui_core::style::Style;
+use ratatui_core::text::Line;
 use ratatui_core::widgets::Widget;
 
 use crate::interpret::cells;
@@ -73,6 +75,9 @@ mod glyph {
     pub(super) const OPEN: &str = "▾";
     /// `✻` — claude, and anything he produced. The seam marker's own glyph.
     pub(super) const CLAUDE: &str = "✻";
+    /// `✕` — §2's trouble glyph, which a seam wears when the turn did not end
+    /// so much as stop. `7b` draws `✕ connection lost mid-turn`.
+    pub(super) const TROUBLE: &str = "✕";
     /// `⋯` — turns that did not fit (§11's drop, made visible).
     ///
     /// §2's `✓` is deliberately **not** here: `1b` draws `✓ 34 passed` as a
@@ -115,6 +120,34 @@ pub struct Outcome {
     pub removed: u32,
 }
 
+/// How a turn ended (`T054`, `7b` under `T057`).
+///
+/// **One row in two tones**, which is what the two mockups draw: `1b` ends a
+/// turn with `✻ review ready · retry logic — 2 files, 6 regions` in claude's
+/// green, and `7b` ends one with `✕ connection lost mid-turn · 14:47` in
+/// trouble-red. The difference is not a different row — it is the same seam
+/// saying a different thing about the same turn, so it is one type with a flag
+/// rather than two variants that would each need their own place in `rows`.
+///
+/// The [`detail`](Seam::detail) line is `7b`'s and is the reason this is a
+/// struct at all. *"the transcript shows the seam honestly"* is the screen's
+/// caption, and honesty here is specifically **what survived**: the sentence
+/// under the seam names the disk state, the regions that had already arrived,
+/// and the fact that the turn may be incomplete. A seam without it is a
+/// statement that something went wrong and no statement about what you still
+/// have.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Seam {
+    /// The sentence beside the glyph.
+    pub text: String,
+    /// What survived, drawn under it in meta. [`None`] for a turn that ended
+    /// the ordinary way, which has nothing to reassure anybody about.
+    pub detail: Option<String>,
+    /// Whether this is `7b`'s seam rather than `1b`'s — `✕` in trouble-red
+    /// instead of `✻` in claude-green.
+    pub trouble: bool,
+}
+
 /// One turn (`T054`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Turn {
@@ -129,7 +162,7 @@ pub struct Turn {
     /// The tool calls, in the order they started.
     pub calls: Vec<ToolCall>,
     /// How the turn ended, or [`None`] while it is running.
-    pub ended: Option<String>,
+    pub ended: Option<Seam>,
     /// When it began, for the elapsed counter. Absent for a turn read back
     /// from a log rather than watched.
     pub since: Option<phosphor_core::view::Millis>,
@@ -145,6 +178,16 @@ pub struct TranscriptVm {
     pub header: String,
     /// The turns, oldest first.
     pub turns: Vec<Turn>,
+    /// The footer strip — `1b`'s `↵ jump to file · q close`, and `7b`'s
+    /// `:reattach · :cn · q close` when the session is gone.
+    ///
+    /// **A prop, not a policy.** What a transcript offers depends on whether
+    /// there is a session to offer it about, and that is the host's question;
+    /// a widget that decided it would be deciding when `:reattach` is worth
+    /// suggesting. Empty draws no strip, which is what
+    /// [`KeyHints::desired_height`](crate::key_hints::KeyHints::desired_height)
+    /// already says an empty table means.
+    pub hints: Vec<phosphor_core::view::KeyHint>,
 }
 
 impl phosphor_core::vm::ViewModel for TranscriptVm {}
@@ -198,7 +241,7 @@ impl<'a> TranscriptPane<'a> {
     /// Built as data rather than painted directly, because §11's grouping rule
     /// needs to know how tall a turn is *before* deciding which turns fit — and
     /// a widget that measured by drawing would have to draw twice.
-    fn rows(&self, turn: &Turn) -> Vec<Row> {
+    fn rows(&self, turn: &Turn, width: u16) -> Vec<Row> {
         let mut rows = Vec::new();
         let folded = self.folded.contains(&turn.id);
         if let Some(prompt) = &turn.prompt {
@@ -211,9 +254,17 @@ impl<'a> TranscriptPane<'a> {
         // that is a paragraph rather than a datum, and §5's *"never wraps"* is
         // a rule about the statusline. A transcript that clipped claude's
         // sentences at the pane edge would be unreadable at any width.
-        for line in turn.prose.lines() {
-            rows.push(Row::Prose(line.to_owned()));
-        }
+        //
+        // **This comment was false until `T055`.** It said what it says now and
+        // the loop under it was `turn.prose.lines()` — one row per `\n`, drawn
+        // with `set_stringn`, which cuts at the pane edge. The tree won and the
+        // comment was the bug. [`crate::prose::lines`] is where the two paths
+        // are now, and it wraps in both.
+        rows.extend(
+            crate::prose::lines(&turn.prose, width, self.theme)
+                .into_iter()
+                .map(Row::Prose),
+        );
         for call in &turn.calls {
             rows.push(Row::Call(call.clone()));
             for note in &call.notes {
@@ -221,7 +272,15 @@ impl<'a> TranscriptPane<'a> {
             }
         }
         match (&turn.ended, turn.since) {
-            (Some(seam), _) => rows.push(Row::Seam(seam.clone())),
+            (Some(seam), _) => {
+                rows.push(Row::Seam(seam.clone()));
+                // Measured as its own row, because §11 fits turns by height and
+                // a detail line that appeared only at paint time would make
+                // every seam one row taller than the grouping believed.
+                if let Some(detail) = &seam.detail {
+                    rows.push(Row::Note(detail.clone()));
+                }
+            }
             // §8's two animations, and the reason this surface composes them:
             // a turn that is still going says so where it is happening.
             (None, Some(since)) => rows.push(Row::Running(since)),
@@ -236,14 +295,16 @@ impl<'a> TranscriptPane<'a> {
 enum Row {
     /// `❯ add retry with exponential backoff …`, and whether its turn is folded.
     Prompt(String, bool),
-    /// One line of claude's prose.
-    Prose(String),
+    /// One line of claude's prose, styled — rendered markdown behind the gate
+    /// and the wrapped source without it (`T055`).
+    Prose(Line<'static>),
     /// `▸ edit  src/retry.rs                     +42 −0`.
     Call(ToolCall),
     /// A progress line under an open call.
     Note(String),
-    /// `✻ review ready · retry logic — 2 files, 6 regions`.
-    Seam(String),
+    /// `✻ review ready · retry logic — 2 files, 6 regions`, or `7b`'s
+    /// `✕ connection lost mid-turn`.
+    Seam(Seam),
     /// The spinner and elapsed counter of a turn still running.
     Running(phosphor_core::view::Millis),
 }
@@ -262,16 +323,34 @@ impl Widget for TranscriptPane<'_> {
             y += 1;
         }
 
+        // **The footer is taken off the top of the room, before grouping.**
+        // `1b` and `7b` both draw one, and a strip painted over the last turn
+        // after the fitting had already promised it would fit is exactly the
+        // *"a list that stopped mid-turn"* failure §11 is about — one row
+        // lower down. `KeyHints` answers zero for an empty table, so a
+        // transcript with nothing to offer loses no room to this.
+        let footer = crate::key_hints::KeyHints::new(&self.vm.hints, Density::Footer, self.theme);
+        let strip = footer.desired_height(area.width).min(area.height);
+        let floor = area.bottom().saturating_sub(strip);
+
         // **§11: scale is grouping, not scrolling.** The turns that fit are
         // kept whole from the newest end, and the count of the rest is one row
         // — the same shape `key_hints`' `Density::Help` body uses, and the same
         // reason: a list that stopped mid-turn would read as a transcript that
         // ended there.
-        let room = usize::from(area.bottom().saturating_sub(y));
-        let blocks: Vec<Vec<Row>> = self.vm.turns.iter().map(|turn| self.rows(turn)).collect();
+        let room = usize::from(floor.saturating_sub(y));
+        // The room a *row* has, which is what prose wraps to — the pane inset
+        // on both sides, not the pane.
+        let text_width = area.width.saturating_sub(2 * PAD_COLS);
+        let blocks: Vec<Vec<Row>> = self
+            .vm
+            .turns
+            .iter()
+            .map(|turn| self.rows(turn, text_width))
+            .collect();
         let (from, dropped) = fit(&blocks, room, self.follow);
 
-        if dropped > 0 && y < area.bottom() {
+        if dropped > 0 && y < floor {
             write(
                 buf,
                 area,
@@ -284,12 +363,24 @@ impl Widget for TranscriptPane<'_> {
         }
         for block in blocks.iter().skip(from) {
             for row in block {
-                if y >= area.bottom() {
-                    return;
+                if y >= floor {
+                    break;
                 }
                 self.row(row, area, y, buf);
                 y += 1;
             }
+        }
+
+        if strip > 0 {
+            footer.render(
+                Rect {
+                    x: area.x,
+                    y: floor,
+                    width: area.width,
+                    height: strip,
+                },
+                buf,
+            );
         }
     }
 }
@@ -324,16 +415,11 @@ impl TranscriptPane<'_> {
                 );
             }
             // §6: *"his prose is `#9aa39a`"*, as distinct from the facts he
-            // produced.
-            Row::Prose(text) => {
-                write(
-                    buf,
-                    area,
-                    x,
-                    y,
-                    text,
-                    Style::new().fg(self.theme.neutrals.prose),
-                );
+            // produced — and the tones inside a rendered heading or a fenced
+            // block, which the row carries rather than the caller choosing.
+            Row::Prose(line) => {
+                let room = area.right().saturating_sub(x);
+                buf.set_line(x, y, line, room);
             }
             Row::Call(call) => self.call(call, area, y, buf),
             Row::Note(note) => {
@@ -346,24 +432,18 @@ impl TranscriptPane<'_> {
                     Style::new().fg(self.theme.neutrals.meta),
                 );
             }
-            // The seam is claude's, glyph and all.
-            Row::Seam(text) => {
-                let after = write(
-                    buf,
-                    area,
-                    x,
-                    y,
-                    glyph::CLAUDE,
-                    Style::new().fg(self.theme.actors.claude),
-                );
-                write(
-                    buf,
-                    area,
-                    after + 1,
-                    y,
-                    text,
-                    Style::new().fg(self.theme.actors.claude),
-                );
+            // The seam is claude's, glyph and all — unless it is trouble's,
+            // in which case §2's `✕` and the trouble tone, and both move
+            // together because a red sentence behind a green glyph is the kind
+            // of half-truth §5 spends its rules on.
+            Row::Seam(seam) => {
+                let (mark, tone) = if seam.trouble {
+                    (glyph::TROUBLE, self.theme.actors.trouble)
+                } else {
+                    (glyph::CLAUDE, self.theme.actors.claude)
+                };
+                let after = write(buf, area, x, y, mark, Style::new().fg(tone));
+                write(buf, area, after + 1, y, &seam.text, Style::new().fg(tone));
             }
             Row::Running(since) => {
                 let elapsed = self.now.0.saturating_sub(since.0);
