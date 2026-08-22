@@ -169,7 +169,7 @@ use phosphor_core::request::{
     Completion as WireCompletion, Direction, EditMode, FoldState, KeySeq, LanguageId, PaneId,
     PaneKind, PaneRef, Position, PromptKind, RegionFilter, RegionId, RegisterName, Seek,
     SelectionKind, Sequence, Signature as WireSignature, SourceId, Span, Target, TextObject,
-    TurnId,
+    ToolCallId, TurnId,
 };
 // `Scope` is already the input table's (`keymaps.scm`'s normal/insert/visual),
 // and a second one under the same name in a 9,000-line file is a trap rather
@@ -851,6 +851,13 @@ struct HostState {
     /// thread, and a query that borrowed the live tree would be the re-entrant
     /// routing that pattern exists to avoid.
     panes: Option<Value>,
+    /// The transcript, as the loop last published it (`T054`).
+    ///
+    /// **Published only when it moves**, unlike its two neighbours here: a
+    /// transcript grows for as long as the editor is open, so a clone per frame
+    /// would make an idle editor's cost a function of how much claude has said
+    /// to it. `Transcript::revision` is what the loop compares.
+    transcript: Option<Value>,
     /// The session, as the loop last saw it (`T051`).
     ///
     /// Published for [`HostState::panes`]' reason: the session client belongs
@@ -1403,6 +1410,25 @@ impl AppHost {
         }
     }
 
+    /// The turns the loop last published, oldest first (`T054`).
+    fn turns(&self) -> Vec<Value> {
+        self.state
+            .lock()
+            .ok()
+            .and_then(|state| state.transcript.clone())
+            .map_or_else(Vec::new, |turns| match turns {
+                Value::List(turns) => turns,
+                _ => Vec::new(),
+            })
+    }
+
+    /// Publish the transcript, so `turns` and `turn` have an answer (`T054`).
+    fn publish_transcript(&self, turns: Value) {
+        if let Ok(mut state) = self.state.lock() {
+            state.transcript = Some(turns);
+        }
+    }
+
     /// Publish the session, so `session` has an answer (`T051`).
     fn publish_session(&self, session: Value) {
         if let Ok(mut state) = self.state.lock() {
@@ -1483,6 +1509,35 @@ impl Answers for AppHost {
                     .unwrap_or(Value::Null),
                 revision: Revision::INITIAL,
             }),
+            // `T054` — the transcript, newest last, as the loop last
+            // published it. [`HostState::transcript`] for why it is published
+            // rather than reached for.
+            Query::Session(phosphor_core::query::SessionQuery::Turns { limit, offset }) => {
+                let turns = self.turns();
+                let skipped = offset.map_or(0, |offset| offset as usize);
+                let kept: Vec<Value> = turns
+                    .into_iter()
+                    .skip(skipped)
+                    .take(limit.map_or(usize::MAX, |limit| limit as usize))
+                    .collect();
+                Ok(Answer {
+                    value: Value::List(kept),
+                    revision: Revision::INITIAL,
+                })
+            }
+            Query::Session(phosphor_core::query::SessionQuery::Turn { turn }) => {
+                // Matched on the turn's own id rather than by position: the
+                // list is *"newest last"* and a caller that had paged through
+                // it would otherwise index into a list that grew underneath.
+                let wanted = i64::try_from(turn.0).unwrap_or(i64::MAX);
+                let found = self.turns().into_iter().find(|held| {
+                    matches!(held, Value::Record(fields) if fields.get("turn") == Some(&Value::Int(wanted)))
+                });
+                Ok(Answer {
+                    value: found.unwrap_or(Value::Null),
+                    revision: Revision::INITIAL,
+                })
+            }
             // `T040`. Answered off the same store the gutter draws from.
             Query::Review(phosphor_core::query::ReviewQuery::Diagnostics { path }) => Ok(Answer {
                 value: Value::List(self.store.answer_diagnostics(path.as_deref())),
@@ -2764,6 +2819,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         turn: None,
         agent: None,
         life: phosphor_agent::session::Life::None,
+        transcript: Transcript::default(),
+        told: 0,
+        folded: Vec::new(),
     };
     // `T088`'s step 4c: every buffer by id, every pane by id, one of each.
     // The maps are the wrong shape for one entry and that is what they are
@@ -2888,6 +2946,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // `Node::Spinner` nor `Node::Elapsed` could move — which was honest while
     // there was no session to wait on and is not any more.
     let started = Instant::now();
+    // `T054`. Held across passes because it is rebuilt only when the transcript
+    // moves — see the publish below.
+    let mut transcript_vm: Option<phosphor_ui::transcript::TranscriptVm> = None;
     // Where a session is rooted. The workspace is the directory the editor was
     // started in — `Timeline::open_at`'s rule, and the honest root until `T071`
     // makes it the repository's — read once, because a session outlives a frame
@@ -2911,10 +2972,30 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // panes need, and nothing below this line can reach a buffer except
         // through the pane that shows it.
         let focus = panes.focus;
-        let held = panes
-            .at(focus)
-            .buffer
-            .expect("the focused pane holds a buffer until step 11 gives it anything else to hold");
+        // **A focused pane does not have to hold a buffer, as of `T054`.** This
+        // was an `expect` whose message read *"the focused pane holds a buffer
+        // until step 11 gives it anything else to hold"* — and `T054` is what
+        // gave it something else. `SPC t` focused a transcript pane and the
+        // editor exited with the promise it had made to itself.
+        //
+        // The fallback is *another pane's* buffer before any open buffer,
+        // because a key pressed while the transcript has focus should act on
+        // the file you can still see. `Buffers` is never empty — `Buffers::new`
+        // takes one — so the last arm is total rather than hopeful.
+        let held = panes.at(focus).buffer.or_else(|| {
+            panes
+                .tree
+                .leaves()
+                .into_iter()
+                .find_map(|id| panes.at(id).buffer)
+        });
+        let Some(held) = held.or_else(|| buffers.map.keys().next().copied()) else {
+            // Unreachable: `Buffers::new` is the only constructor and it takes
+            // an `Editing`. A `break` rather than a panic anyway, because the
+            // one thing worse than an editor with no buffer is an editor that
+            // aborts a terminal it has put into raw mode.
+            break;
+        };
 
         // The size the *next* frame will be laid out at, and the layout itself.
         // **`draw` used to re-split `frame.area()`**, so the wrap width and the
@@ -3107,6 +3188,34 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         }
         host.publish_session(session_value(&life, shell.turn.as_ref()));
 
+        // **`T054` — rebuilt and published only when the transcript moves.**
+        // Its two neighbours above are a handful of fields and cost nothing per
+        // frame; this one grows for as long as the editor is open, so a clone
+        // per pass would make an idle editor's cost a function of how much
+        // claude has said to it. One `u64` compare is the whole guard.
+        if shell.transcript.revision != shell.told {
+            shell.told = shell.transcript.revision;
+            host.publish_transcript(Value::List(
+                shell
+                    .transcript
+                    .turns
+                    .iter()
+                    .map(Transcript::describe)
+                    .collect(),
+            ));
+            transcript_vm = Some(shell.transcript.vm(&life));
+        }
+        // The turn in flight carries the mark its spinner counts from, and it
+        // moves without the transcript moving — a turn that has said nothing
+        // for ten seconds is still a turn that has been running for ten.
+        if let (Some(vm), Some((running, began))) = (transcript_vm.as_mut(), shell.turn)
+            && let Some(turn) = vm.turns.iter_mut().find(|turn| turn.id == running)
+        {
+            turn.since = Some(Millis(
+                u64::try_from(began.duration_since(started).as_millis()).unwrap_or(u64::MAX),
+            ));
+        }
+
         // **The screen's shape, published for the `panes` query** (`T088`).
         // Once per frame, on `picker-rows`' terms: the panes are the loop's
         // and a query answering on another thread cannot borrow them, so the
@@ -3159,7 +3268,13 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 (Surface::Buffer, _) => passive_float(editing),
                 _ => None,
             };
-            let tree = Tree::new(compose_panes(&panes.tree, &panes, focus, soft_wrap));
+            let tree = Tree::new(compose_panes(
+                &panes.tree,
+                &panes,
+                focus,
+                soft_wrap,
+                &shell.folded,
+            ));
             Composed::Pane(match float {
                 Some(float) => tree.with_float(float),
                 None => tree,
@@ -3309,6 +3424,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             completion: editing.completion.as_ref(),
             signature: editing.signature.as_ref(),
             picker: picker_vm.as_ref(),
+            transcript: transcript_vm.as_ref(),
             tabs: &tab_bar,
             now: Millis(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)),
         };
@@ -4300,6 +4416,145 @@ fn session_state(life: &SessionLife, turn: Option<&(TurnId, Instant)>) -> Sessio
     }
 }
 
+/// Everything the session has said, as `1b` shows it (`T054`).
+///
+/// **Not in [`store`], and the difference is what a transcript *is*.** The
+/// region store is persisted, keyed on the workspace, and outlives the editor —
+/// seen-state is *"the only mutable flag the user owns"* (§7) and is written to
+/// a journal. A transcript belongs to one session: it is gone when the agent
+/// is, and `T067`'s inbox is the surface for what survives. So it lives beside
+/// the session that produced it, on [`Shell`].
+///
+/// Published to [`HostState`] when it moves rather than every frame — see
+/// [`Transcript::revision`].
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Transcript {
+    /// The turns, oldest first.
+    turns: Vec<phosphor_ui::transcript::Turn>,
+    /// Bumped on every change.
+    ///
+    /// **The whole reason this is not published per frame.** `panes` and
+    /// `session` are a handful of fields and cloning them each pass costs
+    /// nothing; a transcript grows without bound for as long as you leave the
+    /// editor open, and a clone per frame would make an idle editor's cost a
+    /// function of how much claude has said to it.
+    revision: u64,
+}
+
+impl Transcript {
+    /// The turn with this id, created if the transcript has not seen it.
+    ///
+    /// **Created rather than refused**, because the alternative loses prose:
+    /// `session-prose` is `Allow`, so it can arrive for a turn this editor
+    /// missed the beginning of — an adopted session (`5d`) is exactly that —
+    /// and dropping it would leave a transcript that silently disagrees with
+    /// the agent.
+    fn at(&mut self, turn: TurnId) -> &mut phosphor_ui::transcript::Turn {
+        self.revision = self.revision.saturating_add(1);
+        if let Some(index) = self.turns.iter().position(|held| held.id == turn) {
+            return &mut self.turns[index];
+        }
+        self.turns.push(phosphor_ui::transcript::Turn {
+            id: turn,
+            prompt: None,
+            prose: String::new(),
+            calls: Vec::new(),
+            ended: None,
+            since: None,
+        });
+        self.turns.last_mut().expect("just pushed")
+    }
+
+    /// The tool call with this id, wherever it is.
+    ///
+    /// **By id across every turn, not within one.** `tool-call-progress` and
+    /// `tool-call-completed` carry only the call — the vocabulary says so —
+    /// because a call belongs to one turn and repeating that on every message
+    /// would be a second place for the two to disagree.
+    fn call(&mut self, call: ToolCallId) -> Option<&mut phosphor_ui::transcript::ToolCall> {
+        self.revision = self.revision.saturating_add(1);
+        self.turns
+            .iter_mut()
+            .flat_map(|turn| turn.calls.iter_mut())
+            .find(|held| held.id == call)
+    }
+
+    /// This transcript as the widget wants it.
+    fn vm(&self, life: &SessionLife) -> phosphor_ui::transcript::TranscriptVm {
+        phosphor_ui::transcript::TranscriptVm {
+            // `1b`'s `claude code · acp · 4f2a` — what is running, the
+            // protocol, and the session's own id shortened to the last four,
+            // which is what the mockup draws and what a person can read back.
+            header: match life {
+                SessionLife::Attached { session } => {
+                    let tail: String = session.chars().rev().take(4).collect();
+                    format!(
+                        "claude code · acp · {}",
+                        tail.chars().rev().collect::<String>()
+                    )
+                }
+                _ => String::new(),
+            },
+            turns: self.turns.clone(),
+        }
+    }
+
+    /// One turn as plain data, for the `turn` and `turns` queries.
+    fn describe(turn: &phosphor_ui::transcript::Turn) -> Value {
+        let mut fields = Args::new();
+        fields.set(
+            "turn",
+            Value::Int(i64::try_from(turn.id.0).unwrap_or(i64::MAX)),
+        );
+        fields.set(
+            "prompt",
+            turn.prompt.clone().map_or(Value::Null, Value::Text),
+        );
+        fields.set("prose", Value::Text(turn.prose.clone()));
+        fields.set("ended", turn.ended.clone().map_or(Value::Null, Value::Text));
+        fields.set(
+            "calls",
+            Value::List(
+                turn.calls
+                    .iter()
+                    .map(|call| {
+                        let mut row = Args::new();
+                        row.set(
+                            "call",
+                            Value::Int(i64::try_from(call.id.0).unwrap_or(i64::MAX)),
+                        );
+                        row.set("verb", Value::Text(call.verb.clone()));
+                        row.set(
+                            "target",
+                            call.target.clone().map_or(Value::Null, Value::Text),
+                        );
+                        row.set(
+                            "summary",
+                            call.outcome
+                                .as_ref()
+                                .map_or(Value::Null, |done| Value::Text(done.summary.clone())),
+                        );
+                        row.set(
+                            "added",
+                            call.outcome
+                                .as_ref()
+                                .map_or(Value::Null, |done| Value::Int(i64::from(done.added))),
+                        );
+                        row.set(
+                            "removed",
+                            call.outcome
+                                .as_ref()
+                                .map_or(Value::Null, |done| Value::Int(i64::from(done.removed))),
+                        );
+                        Value::Record(row)
+                    })
+                    .collect(),
+            ),
+        );
+        Value::Record(fields)
+    }
+}
+
 /// The session, as plain data for the `session` query (`T051`).
 ///
 /// **The same `SessionState` the statusline draws**, so the two cannot drift —
@@ -4574,7 +4829,13 @@ fn tab_title(pane: &Pane, buffers: &Buffers, root: &Path) -> String {
     }
 }
 
-fn compose_panes(tree: &PaneTree, panes: &Panes, focus: PaneId, soft_wrap: bool) -> Node {
+fn compose_panes(
+    tree: &PaneTree,
+    panes: &Panes,
+    focus: PaneId,
+    soft_wrap: bool,
+    folded: &[TurnId],
+) -> Node {
     match tree {
         PaneTree::Leaf(id) => {
             let pane = panes.at(*id);
@@ -4582,10 +4843,27 @@ fn compose_panes(tree: &PaneTree, panes: &Panes, focus: PaneId, soft_wrap: bool)
                 pane: *id,
                 holds: pane.holds(),
                 focused: *id == focus,
-                child: Child::new(
-                    pane.buffer
+                // **What a pane holds decides its child, and that is the whole
+                // of `set-pane-content`** (`T054`): `:transcript` writes
+                // `Pane::holds` and the next composition draws a different
+                // kind. There is no second pane model for a surface that is
+                // not a buffer.
+                child: Child::new(match pane.holds() {
+                    PaneKind::Transcript => Node::Transcript {
+                        // `1b` is a transcript you are watching, so it holds
+                        // the newest turn. `T056`'s jump links are what will
+                        // want this false.
+                        follow: true,
+                        folded: folded.to_vec(),
+                    },
+                    // v1.5's agent-built pane. Empty rather than a refusal:
+                    // `split-pane` will not make one, so a tree carrying this
+                    // came from somewhere that is not the loop.
+                    PaneKind::Custom => Node::Empty {},
+                    PaneKind::Buffer => pane
+                        .buffer
                         .map_or(Node::Empty {}, |buffer| Node::Buffer { buffer, soft_wrap }),
-                ),
+                }),
             }
         }
         PaneTree::Split {
@@ -4603,7 +4881,7 @@ fn compose_panes(tree: &PaneTree, panes: &Panes, focus: PaneId, soft_wrap: bool)
                     Constraint::Percent {
                         percent: u32::from(*first_share),
                     },
-                    compose_panes(first, panes, focus, soft_wrap),
+                    compose_panes(first, panes, focus, soft_wrap, folded),
                 ),
                 // **The remainder, not the complement.** `Percent { 100 - n }`
                 // would round independently and leave a column nothing owns at
@@ -4612,7 +4890,7 @@ fn compose_panes(tree: &PaneTree, panes: &Panes, focus: PaneId, soft_wrap: bool)
                 // fix: `Fill` takes what is left.
                 Slot::new(
                     Constraint::Fill { weight: 1 },
-                    compose_panes(second, panes, focus, soft_wrap),
+                    compose_panes(second, panes, focus, soft_wrap, folded),
                 ),
             ],
         },
@@ -5253,6 +5531,10 @@ struct Painted<'a> {
     /// needs `&mut` to tick and `Resources` has no `&mut` in it and must never
     /// grow one, so the loop ticks once per frame and lends the answer.
     picker: Option<&'a PickerVm>,
+    /// `T054`. Built when the transcript moves rather than per frame, for
+    /// [`Transcript::revision`]'s reason, and lent here for the same one
+    /// [`Painted::picker`] is: `Resources` has no `&mut` in it.
+    transcript: Option<&'a phosphor_ui::transcript::TranscriptVm>,
 }
 
 impl<'a> Overlay<'a> {
@@ -5312,6 +5594,13 @@ impl Resources for Painted<'_> {
     fn picker(&self, _source: &SourceId) -> Option<&PickerVm> {
         self.picker
     }
+
+    /// `T054`. One session, so — like the picker above — no id is consulted:
+    /// `Node::Transcript` names none, because there is one transcript and it
+    /// is the session's.
+    fn transcript(&self) -> Option<&phosphor_ui::transcript::TranscriptVm> {
+        self.transcript
+    }
 }
 
 /// What rides over the buffer on this frame, and what claims the chrome row.
@@ -5363,6 +5652,8 @@ struct Overlay<'a> {
     /// [`Geometry::tabs`]. `Node::Empty` below two panes, which is the frame
     /// where [`Geometry::tabs`] is [`None`] and nothing asks for this at all.
     tabs: &'a Tree,
+    /// `T054`'s transcript, when the session has said anything.
+    transcript: Option<&'a phosphor_ui::transcript::TranscriptVm>,
     /// This frame's reading of the app clock (`T050`).
     ///
     /// The whole animation budget: `Node::Spinner` and `Node::Elapsed` render
@@ -5420,6 +5711,7 @@ fn draw(
         completion: overlay.completion,
         signature: overlay.signature,
         picker: overlay.picker,
+        transcript: overlay.transcript,
     };
 
     // **§8's degradation, asked for once for the whole tree.** It reached
@@ -6309,6 +6601,16 @@ struct Shell {
     /// so *"claude is working"* is the client's report rather than the
     /// editor's guess.
     turn: Option<(TurnId, Instant)>,
+    /// Everything the session has said (`T054`).
+    ///
+    /// On the shell for [`Shell::session`]'s reason: the arms that write it
+    /// reach it through [`Cx`], and a producer's `session-prose` is an Action
+    /// like any other.
+    transcript: Transcript,
+    /// The transcript revision the host was last told about (`T054`).
+    told: u64,
+    /// Which turns are collapsed, for `Node::Transcript`'s `folded` prop.
+    folded: Vec<TurnId>,
     /// The session's state as of the last frame (`T051`).
     ///
     /// **Kept so a transition can be told from a state.** §5 wants the
@@ -7848,16 +8150,28 @@ impl Editing {
                 let Some(at) = cx.panes.resolve(pane) else {
                     return Outcome::Refused(Refusal::NoSuchTarget);
                 };
-                if !matches!(kind, PaneKind::Buffer) {
-                    // `Transcript` is `T054`'s and `Custom` is v1.5's. Naming
-                    // the task is what this build does instead of pretending.
-                    return Outcome::Refused(Refusal::NotYetImplemented { task: "T054" });
+                if matches!(kind, PaneKind::Custom) {
+                    // v1.5's agent-built pane. `Transcript` used to be refused
+                    // here beside it and is `T054`'s now.
+                    return Outcome::Refused(Refusal::NotYetImplemented { task: "v1.5" });
                 }
                 // **The new pane shows the same buffer**, which is what vim's
                 // `:split` does. Opening a *different* file into it is
                 // `open-file` with a `PaneRef`, and that is a second Action
                 // rather than an argument here.
-                let fresh = Pane::new(cx.buffer);
+                //
+                // **A transcript pane holds no buffer**, which is what
+                // `Pane::buffer`'s [`Option`] has always been for: *"a pane
+                // holding something that is not one — the transcript, or a view
+                // tree claude emitted"*. `1b` is a split and not a takeover —
+                // the code stays above it — so this is one call rather than
+                // `split-pane` followed by `set-pane-content`, and `T054`'s
+                // binding is one line because of it.
+                let mut fresh = Pane::new(cx.buffer);
+                fresh.holds = *kind;
+                if matches!(kind, PaneKind::Transcript) {
+                    fresh.buffer = None;
+                }
                 match cx.panes.split(at, fresh, *direction) {
                     Some(id) => Outcome::Done(Receipt {
                         capability: "split-pane",
@@ -8346,11 +8660,21 @@ impl Editing {
             // about the session. The alternative — the loop intercepting two
             // Actions before `act` ever sees them — is a second applier, and
             // this build has spent a window making sure there is one.
-            Action::Session(SessionAction::TurnBegan { turn, .. }) => {
+            Action::Session(SessionAction::TurnBegan { turn, prompt }) => {
                 cx.shell.turn = Some((*turn, Instant::now()));
+                // `T054`. The transcript's turn is opened here rather than by
+                // the first chunk of prose, so a turn that produces none still
+                // has a row — which is what `1b`'s prompt line is: what you
+                // asked, whether or not he has answered yet.
+                let began = cx.shell.transcript.at(*turn);
+                began.prompt.clone_from(prompt);
                 done()
             }
-            Action::Session(SessionAction::TurnEnded { turn, .. }) => {
+            Action::Session(SessionAction::TurnEnded { turn, summary }) => {
+                // `T054` — `1b`'s seam marker, which is the row that says a
+                // turn is over and what came of it.
+                let ended = cx.shell.transcript.at(*turn);
+                ended.ended = Some(summary.clone().unwrap_or_else(|| "turn ended".to_owned()));
                 // **Only the turn that is running ends.** A stop reason for a
                 // turn the editor has already forgotten is not an error — a
                 // session replaced mid-turn produces exactly one — and clearing
@@ -8361,6 +8685,92 @@ impl Editing {
                 }
                 done()
             }
+            // -- `T054`: the transcript ---------------------------------------
+            //
+            // Four producer verbs and one surface verb. All four are `Allow` —
+            // an agent says what it is doing — and none of them touches a
+            // buffer, which is why they are `Cx`'s the way `T050`'s two are.
+            Action::Session(SessionAction::SessionProse { turn, chunk }) => {
+                // **Appended, not replaced.** `session-prose` is *"a chunk"*,
+                // and a chunk boundary is a fact about the wire rather than
+                // about the paragraph — §8's *"streaming transcript text"* is
+                // one of the three things allowed to animate, and it animates
+                // by growing.
+                cx.shell.transcript.at(*turn).prose.push_str(chunk);
+                done()
+            }
+            Action::Session(SessionAction::ToolCallStarted {
+                turn,
+                call,
+                verb,
+                target,
+            }) => {
+                cx.shell
+                    .transcript
+                    .at(*turn)
+                    .calls
+                    .push(phosphor_ui::transcript::ToolCall {
+                        id: *call,
+                        verb: verb.clone(),
+                        target: target.clone(),
+                        notes: Vec::new(),
+                        outcome: None,
+                    });
+                done()
+            }
+            Action::Session(SessionAction::ToolCallProgress { call, note }) => {
+                // **A call this transcript has never heard of is refused, not
+                // invented.** The opposite choice is right for `session-prose`
+                // — see `Transcript::at` — and wrong here: prose has a turn to
+                // hang from and a progress line has only a call, so a made-up
+                // one would be a row with no verb and no target, which is a
+                // row that says nothing.
+                let Some(running) = cx.shell.transcript.call(*call) else {
+                    return declined("no such tool call");
+                };
+                running.notes.push(note.clone());
+                done()
+            }
+            Action::Session(SessionAction::ToolCallCompleted {
+                call,
+                summary,
+                added,
+                removed,
+            }) => {
+                let Some(finished) = cx.shell.transcript.call(*call) else {
+                    return declined("no such tool call");
+                };
+                finished.outcome = Some(phosphor_ui::transcript::Outcome {
+                    summary: summary.clone(),
+                    added: *added,
+                    removed: *removed,
+                });
+                done()
+            }
+            // `:transcript` is this, *"not a separate capability"* — the row
+            // says so. A pane is a place and what it holds is a field, so
+            // showing the transcript is a write to that field rather than a
+            // verb of its own, which is what keeps `T088`'s pane model one
+            // model.
+            Action::Pane(PaneAction::SetPaneContent { pane, kind }) => {
+                let Some(at) = cx.panes.resolve(pane) else {
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                };
+                let held = cx.buffer;
+                let pane = cx.panes.at_mut(at);
+                pane.holds = *kind;
+                // **Going back needs a buffer to go back to.** A pane split
+                // *as* a transcript never had one (`Pane::buffer` is `None` by
+                // design there), so `:transcript buffer` on it would otherwise
+                // draw `Node::Empty` — a pane that is neither the transcript
+                // nor a file. The focused buffer is what a caller that named
+                // none means.
+                if matches!(kind, PaneKind::Buffer) && pane.buffer.is_none() {
+                    pane.buffer = Some(held);
+                }
+                done()
+            }
+
             // `T058`'s capability, armed here because `T050`'s *Done when* is
             // *"a session attaches and **a turn completes**"* and nothing can
             // complete a turn nobody can start. What `T058` owns is the
@@ -11541,6 +11951,9 @@ mod tests {
             turn: None,
             agent: None,
             life: phosphor_agent::session::Life::None,
+            transcript: super::Transcript::default(),
+            told: 0,
+            folded: Vec::new(),
         }
     }
 
@@ -14081,6 +14494,7 @@ mod tests {
             completion: None,
             signature: None,
             picker: None,
+            transcript: None,
         };
 
         assert_eq!(
@@ -14133,7 +14547,7 @@ mod tests {
 
         let tree = panes.tree.clone();
         let phosphor_core::view::Node::Split { axis, slots } =
-            crate::compose_panes(&tree, &panes, right, false)
+            crate::compose_panes(&tree, &panes, right, false, &[])
         else {
             panic!("two panes are a split");
         };
@@ -15977,7 +16391,7 @@ mod tests {
         panes.map.insert(pane, held);
         panes.tree = PaneTree::Leaf(pane);
         panes.focus = pane;
-        crate::compose_panes(&panes.tree.clone(), &panes, pane, soft_wrap)
+        crate::compose_panes(&panes.tree.clone(), &panes, pane, soft_wrap, &[])
     }
 
     /// §8's degradation, at the binary's end of it.

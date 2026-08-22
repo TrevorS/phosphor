@@ -1121,9 +1121,16 @@
              ":mark-seen — mark this region seen" "normal")
 
 ;; t transcript — a leaf, as 3c draws it.
+;; T054 — 1b, and it is a *split*: the caption is "session stream as a pane"
+;; and the drawing keeps your code above it. one call rather than split-then-
+;; set-content, because `split-pane` takes what the new pane holds.
+;;
+;; down, not beside: 1b stacks them, and a transcript is a stream you read
+;; downward while the code stays where it was.
 (keymap-set! "SPC t"
-             (key/run (key/cmd "set-pane-content" "pane" (key/focused-pane)
-                               "kind" "transcript"))
+             (key/run (key/cmd "split-pane" "pane" (key/focused-pane)
+                               "direction" "down" "kind" "transcript")
+                      (key/cmd "focus-pane" "pane" (key/pane-toward "down")))
              "transcript" "normal")
 
 ;; +disk — "refresh · diff". the two exits from a file that changed under you,
@@ -1503,10 +1510,17 @@
 (ex-set! "repl" "a steel prompt — 6b"
          (lambda (rest bang) (begin (open-repl!) 'ran)))
 
-(ex-set! "tr[anscript]" "what claude has said"
+;; T054. `set-pane-content` and not a split, because the capability's own row
+;; says so: "changes what a pane holds — :transcript is this, not a separate
+;; capability". this pane becomes the transcript and `:transcript buffer` puts
+;; it back, which is 1b's "closes back to full buffer" from the other end.
+;;
+;; `SPC t` is the *split* — 1b's drawing, where the code stays above — and it
+;; composes two capabilities the way `<C-w>v` does rather than adding a third.
+(ex-set! "tr[anscript]" "what claude has said — :transcript buffer goes back"
          (lambda (rest bang)
            (key/run (key/cmd "set-pane-content" "pane" (key/focused-pane)
-                             "kind" "transcript"))))
+                             "kind" (if (equal? rest "buffer") "buffer" "transcript")))))
 
 (ex-set! "ti[meline]" "agent turns are changes — 3b"
          (lambda (rest bang) (key/run (key/cmd "open-timeline"))))

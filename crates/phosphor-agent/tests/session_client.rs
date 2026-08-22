@@ -83,13 +83,22 @@ fn a_session_attaches_and_a_turn_completes() {
     assert_eq!(attached, "toy-session-1", "the agent's own session id");
 
     session.prompt("what is 2 + 2?");
+    // `turn-began`, then whatever `T054`'s transcript carries — the fixture's
+    // `turn` mode sends prose and one tool call that starts and completes —
+    // then `turn-ended`. **The count grew when `T054` landed**, which is what
+    // this comment used to promise rather than assert: it read *"and nothing
+    // else — `T054` owns the prose"* and stopped being true the moment that
+    // task did. The order is what the test actually needs, not the count.
     let actions = until("the turn to end", || {
         let seen = heard.actions();
-        (seen.len() >= 2).then_some(seen)
+        seen.iter()
+            .any(|action| matches!(action, Action::Session(SessionAction::TurnEnded { .. })))
+            .then_some(seen)
     });
 
     // **The order is the claim.** A `turn-ended` before its `turn-began` would
-    // leave a transcript that cannot group by turn.
+    // leave a transcript that cannot group by turn, and a `turn-ended` before
+    // the prose it introduces would leave prose with nowhere to land.
     match &actions[0] {
         Action::Session(SessionAction::TurnBegan { turn, prompt }) => {
             assert_eq!(prompt.as_deref(), Some("what is 2 + 2?"));
@@ -97,8 +106,8 @@ fn a_session_attaches_and_a_turn_completes() {
         }
         other => panic!("the first Action is turn-began, not {other:?}"),
     }
-    match &actions[1] {
-        Action::Session(SessionAction::TurnEnded { turn, summary }) => {
+    match actions.last() {
+        Some(Action::Session(SessionAction::TurnEnded { turn, summary })) => {
             assert_eq!(turn.0, 0, "and it ends the turn it began");
             assert!(
                 summary
@@ -107,9 +116,21 @@ fn a_session_attaches_and_a_turn_completes() {
                 "the stop reason rides along; summary was {summary:?}"
             );
         }
-        other => panic!("the second Action is turn-ended, not {other:?}"),
+        other => panic!("the last Action is turn-ended, not {other:?}"),
     }
-    assert_eq!(actions.len(), 2, "and nothing else — `T054` owns the prose");
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, Action::Session(SessionAction::SessionProse { .. }))),
+        "the fixture's prose arrived: {actions:?}"
+    );
+    assert!(
+        actions.iter().any(|action| matches!(
+            action,
+            Action::Session(SessionAction::ToolCallStarted { .. })
+        )),
+        "and its tool call did too: {actions:?}"
+    );
 }
 
 /// **Two turns get two ids, and they do not collide.**

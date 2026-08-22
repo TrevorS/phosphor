@@ -111,6 +111,16 @@ EMITTED = {
     # through"*. Nobody types a list of spans and replacement texts; an agent
     # emits one over MCP, and `Intent::Act` is what carries it to the rope.
     "apply-edits": "the agent's door — the batch an agent writes through",
+    # `T054`. `session-prose` is bound through `send-message` and `open-prompt`
+    # only in the sense that a person triggers the *turn* — the verb itself is
+    # never typed, because the ACP client's own `transcribe` is what turns an
+    # `AgentMessageChunk` into one. The three tool-call verbs are the same
+    # shape one level down: `ToolCall`/`ToolCallUpdate` are the agent narrating
+    # its own tool use, and there is no key for narration.
+    "session-prose": "the ACP session client posts it as claude's prose streams in",
+    "tool-call-started": "the ACP session client posts it when the agent starts a tool call",
+    "tool-call-progress": "the ACP session client posts it as a tool call reports progress",
+    "tool-call-completed": "the ACP session client posts it when a tool call ends",
     "drop-regions": "the agent's door",
     "mark-unseen": "the agent's door",
     "reanchor": "the agent's door",

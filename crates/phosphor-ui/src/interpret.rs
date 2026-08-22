@@ -46,7 +46,6 @@
 //! |---|---|---|
 //! | `diff` | `DiffBody` | `T063` |
 //! | `question` | `QuestionBody` | `T059` |
-//! | `transcript` | `TranscriptPane` | `T054` |
 //! | `prompt` | `PromptLine` | `T058` |
 //! | `watch` | `WatchOverlay` | `T076` |
 //!
@@ -124,9 +123,10 @@ use crate::gutter::Fill;
 use crate::picker::{Picker, PickerVm};
 use crate::status_line::{SessionState as UiSessionState, Spinner, format_elapsed};
 use crate::theme::Theme;
+use crate::transcript::TranscriptVm;
 
 /// §8: the spinner advances one frame every 80ms.
-const SPINNER_PERIOD_MS: u64 = 80;
+pub(crate) const SPINNER_PERIOD_MS: u64 = 80;
 
 /// What the host lends the interpreter for the duration of one frame.
 ///
@@ -190,6 +190,20 @@ pub trait Resources: core::fmt::Debug {
     /// A tree that names a source this answers `None` for draws nothing, which
     /// is `query.rs`'s *"an absent thing answers empty"*. That is the ordinary
     /// case for one frame after `open-picker`, not an error.
+    /// The session's turns, or `None` when this host has no session (`T054`).
+    ///
+    /// **A door for [`Resources::picker`]'s reason**, and the division is the
+    /// one `Node::Transcript`'s props already draw: the tree says whether the
+    /// pane follows the newest turn and which turns are folded — both
+    /// composition's — and this says what the session actually said. A widget
+    /// crate cannot read a session.
+    ///
+    /// `None` draws nothing, which is `query.rs`'s *"an absent thing answers
+    /// empty"* and is the ordinary case before anything has been asked.
+    fn transcript(&self) -> Option<&TranscriptVm> {
+        None
+    }
+
     fn picker(&self, source: &SourceId) -> Option<&PickerVm> {
         let _ = source;
         None
@@ -671,11 +685,26 @@ impl Ctx<'_> {
                 crate::tab_bar::TabBar::new(tabs, theme).render(area, buf);
             }
 
+            // `T054`, drawn by `crate::transcript`. The props are
+            // composition's — whether the newest turn is held on screen, which
+            // turns are collapsed — and the turns come through the
+            // `Resources` door beside them, which is `Node::Picker`'s division
+            // exactly.
+            Node::Transcript { follow, folded } => {
+                let Some(vm) = self.interp.resources.transcript() else {
+                    return;
+                };
+                crate::transcript::TranscriptPane::new(vm, theme)
+                    .follow(*follow)
+                    .folded(folded)
+                    .at(self.interp.now)
+                    .render(area, buf);
+            }
+
             // Deferred past Window D. Grouped, and split one kind at a time the
             // way the five above were, as each phase arrives.
             Node::Diff { .. }
             | Node::Question { .. }
-            | Node::Transcript { .. }
             | Node::Prompt { .. }
             | Node::Watch { .. } => self.defer(node.tag()),
         }
@@ -1371,9 +1400,7 @@ mod tests {
     use crate::frame::FrameCache;
     use crate::theme::Theme;
     use phosphor_core::query::Revision;
-    use phosphor_core::request::{
-        AskId, BufferId, DiffMode, Grouping, PaneId, PaneKind, PromptKind, WatchId,
-    };
+    use phosphor_core::request::{AskId, BufferId, DiffMode, Grouping, PromptKind, WatchId};
     use phosphor_core::view::{
         Axis, Child, Constraint, Density, DiffSource, Emphasis, Float, FloatHeader, Glyph, Millis,
         Mood, Node, Run, SessionState, Slot, SpanRow, Tone, Tree,
@@ -2101,10 +2128,6 @@ mod tests {
                 grouping: Grouping::Flat,
             },
             Node::Question { ask: AskId(8) },
-            Node::Transcript {
-                follow: false,
-                folded: Vec::new(),
-            },
             Node::Prompt {
                 prompt: PromptKind::Ex,
                 text: String::new(),
@@ -2127,6 +2150,13 @@ mod tests {
         // strip and an empty list — which is drawing, and is what `deferred`
         // distinguishes from it.
         let drawn = [
+            // `T054`. `NoResources` hands back no transcript, so this draws
+            // an empty pane — which is drawing, and is the distinction this
+            // half of the test is about.
+            Node::Transcript {
+                follow: false,
+                folded: Vec::new(),
+            },
             // `T089`. An empty tab list draws the strip's ground and nothing
             // else, which is drawing — the same distinction the four below
             // stand for.
@@ -2162,28 +2192,27 @@ mod tests {
             [
                 Slot::new(
                     Constraint::Fill { weight: 1 },
-                    Node::Pane {
-                        pane: PaneId(1),
-                        holds: PaneKind::Transcript,
-                        focused: true,
-                        child: Child::new(Node::Transcript {
-                            follow: true,
-                            folded: Vec::new(),
-                        }),
-                    },
+                    Node::Question { ask: AskId(3) },
                 ),
-                // `Node::Picker` stood here until `T045` built it. Replaced
-                // with `question` rather than dropped: the test needs *two*
-                // deferred kinds to prove the report is a list and not a
-                // flag, which is the failure a single-entry fixture hides.
+                // `Node::Transcript` and `Node::Picker` both stood here in
+                // turn until `T054` and `T045` built them. `diff` replaces the
+                // second now; the test needs *two* deferred kinds to prove the
+                // report is a list and not a flag, which is the failure a
+                // single-entry fixture hides.
                 Slot::new(
                     Constraint::Cells { cells: 1 },
-                    Node::Question { ask: AskId(3) },
+                    Node::Diff {
+                        source: DiffSource::Disk {
+                            buffer: BufferId(1),
+                        },
+                        mode: DiffMode::Unified,
+                        grouping: Grouping::Flat,
+                    },
                 ),
             ],
         ));
         let (_, report) = draw(&tree);
-        assert_eq!(report.deferred, vec!["transcript", "question"]);
+        assert_eq!(report.deferred, vec!["question", "diff"]);
     }
 
     #[test]

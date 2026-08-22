@@ -2113,6 +2113,11 @@ mod driven {
         // beside it. Each is the `since` on that capability's own row in
         // `action.rs` — checked there, because the whole point of the assertion
         // is that a user is told the truth.
+        // `SPC t` left this table when `T054` built the transcript pane —
+        // the row it left behind is what `a_deferred_binding_names_the_task_
+        // that_builds_it`'s failure looked like: `T054` was passed as the
+        // wanted needle and the frame it got back was `1b` itself, splitting
+        // open rather than refusing.
         let deferred: &[(&[u8], &str, &str)] = &[
             (b"?", "search backward", "T058"),
             (b"N", "previous search match", "T058"),
@@ -2124,7 +2129,6 @@ mod driven {
             (b" cp", "prompt claude", "T058"),
             (b" cs", "steer the turn", "T058"),
             (b" ci", "interrupt the session", "T062"),
-            (b" t", "the transcript pane", "T054"),
             (b" rr", "reload from disk", "T069"),
             (b" rd", "diff against disk", "T070"),
             (b" j", "the jj timeline", "T073"),
@@ -3203,6 +3207,80 @@ mod driven {
         );
     }
 
+    /// **`T054`: screen `1b` reproduces from a keystroke.**
+    ///
+    /// The task's *Done when* names the keystroke specifically — *"the binding
+    /// that opens the pane opens it in the running binary"* — because `T016`
+    /// and `Density::Help` both shipped a surface a golden frame proved and no
+    /// key could reach. So this presses `SPC t` and reads the screen.
+    ///
+    /// **A split, not a takeover.** `1b` keeps the code above the transcript,
+    /// which is why the binding is `split-pane` with `kind: transcript` rather
+    /// than `set-pane-content` — one call, because the capability takes what the
+    /// new pane holds. `:transcript` is the other one, and it is the *same*
+    /// capability the row says it is: it turns this pane into the transcript
+    /// and `:transcript buffer` puts it back.
+    ///
+    /// Every row of `1b` that a toy agent can produce is asserted: the header,
+    /// the `❯` prompt line, claude's prose, and a tool row. The `+42 −0` counts
+    /// are not — ACP does not carry them, `1b` draws them from a diff, and
+    /// `T063` is the task that supplies one.
+    #[test]
+    fn the_transcript_pane_reproduces_screen_1b_from_a_keystroke() {
+        let scratch = Scratch::new("transcript");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\nbravo\n").expect("a fixture");
+        let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
+            .canonicalize()
+            .expect("the toy agent is in the sibling crate");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let form = format!(
+            "(set-option! \"agent-command\" \"python3 {} turn\")\r",
+            agent.display()
+        );
+        editor.press_until(form.as_bytes(), "()");
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+        shown(&editor, "claude idle");
+
+        // A turn, so there is something to transcribe.
+        editor.press_quietly(b":claude add retry with backoff\r");
+        shown(&editor, "claude idle");
+
+        // **The keystroke.** `SPC t` splits below and focuses the new pane.
+        let opened = grid_of(&editor.after(b" t"));
+        editor.leave_by(b"ZQ");
+
+        // `1b`'s header — what is running, the protocol, the session's tail.
+        assert!(
+            opened.contains("claude code · acp"),
+            "the transcript header is `1b`'s; grid was: {opened}"
+        );
+        // The prompt line, and it is what was actually asked.
+        assert!(
+            opened.contains("❯ add retry with backoff"),
+            "the prompt line carries what you said; grid was: {opened}"
+        );
+        // Claude's prose.
+        assert!(
+            opened.contains("heard: add retry with backoff"),
+            "claude's prose is on the pane; grid was: {opened}"
+        );
+        // A tool row — `1b`'s `▸ edit  src/retry.rs`.
+        assert!(
+            opened.contains("edit") && opened.contains("src/retry.rs"),
+            "the tool call became a row; grid was: {opened}"
+        );
+        // And the code is still there, because this is a split.
+        assert!(
+            opened.contains("alpha"),
+            "`1b` keeps the buffer above the transcript; grid was: {opened}"
+        );
+    }
+
     /// **`T051`: the statusline is never stale — it changes with no keystroke.**
     ///
     /// The half of *"always present and truthful"* (§5) that a keystroke-driven
@@ -3689,8 +3767,9 @@ mod driven {
 
         // `(command, the task its refusal must name)`, each read off that
         // capability's own row in `action.rs`.
+        // `:transcript` left this table with `SPC t` — same task, same
+        // capability, same reason.
         let deferred: &[(&str, &str)] = &[
-            ("transcript", "T054"),
             ("inbox", "T067"),
             ("diff-disk", "T070"),
             ("reattach", "T057"),

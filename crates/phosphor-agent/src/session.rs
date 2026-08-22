@@ -51,9 +51,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use agent_client_protocol::schema::{ProtocolVersion, v1::InitializeRequest};
-use agent_client_protocol::{ByteStreams, Client, SessionMessage};
+use agent_client_protocol::util::MatchDispatch;
+use agent_client_protocol::{ByteStreams, Client, Dispatch, SessionMessage};
 use phosphor_core::action::{Action, SessionAction};
-use phosphor_core::request::TurnId;
+use phosphor_core::request::{ToolCallId, TurnId};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 // ---------------------------------------------------------------------------
@@ -209,6 +210,9 @@ struct Shared {
     /// The next turn id. Monotonic for the life of the process, never reused —
     /// a transcript that reused one would fold two turns into one row.
     next_turn: Mutex<u64>,
+    /// The agent's tool-call names, mapped to this editor's ids — see
+    /// [`Shared::name`].
+    names: Mutex<BTreeMap<String, ToolCallId>>,
     post: Post,
     woke: Woke,
 }
@@ -229,6 +233,29 @@ impl Shared {
         *held = life;
         drop(held);
         (self.woke)();
+    }
+
+    /// This editor's number for an agent's tool-call name.
+    ///
+    /// **ACP names a call with a string and the vocabulary with an id**, and
+    /// neither side can adopt the other's: `request.rs`'s ids are *"an opaque
+    /// non-negative integer"* by construction — every one of the fourteen is —
+    /// and an agent's call name is whatever it wants. So the seam is a map, and
+    /// it lives here because the client is the only thing that sees both.
+    ///
+    /// Stable for the life of the session, so `tool-call-progress` and
+    /// `tool-call-completed` reach the row `tool-call-started` created.
+    fn name(&self, called: &str) -> ToolCallId {
+        let mut names = self
+            .names
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(known) = names.get(called) {
+            return *known;
+        }
+        let id = ToolCallId(names.len() as u64);
+        names.insert(called.to_owned(), id);
+        id
     }
 
     fn mint(&self) -> TurnId {
@@ -271,6 +298,7 @@ impl Session {
         let shared = Arc::new(Shared {
             life: Mutex::new(Life::None),
             next_turn: Mutex::new(0),
+            names: Mutex::new(BTreeMap::new()),
             post,
             woke,
         });
@@ -539,8 +567,22 @@ async fn serve(
                                 }));
                             }
                         }
-                        // `T054`'s. Read and dropped — see the module header
-                        // for why that is a decision rather than an omission.
+                        // `T054` — what the agent is saying, as it says it.
+                        Ok(SessionMessage::SessionMessage(dispatch)) => {
+                            // The turn a chunk belongs to is the one running:
+                            // ACP correlates a prompt with its response and
+                            // says nothing about turns, so the editor's own id
+                            // is the only answer — see the module header.
+                            if let Some(running) = turn {
+                                transcribe(shared, running, dispatch).await;
+                            }
+                        }
+                        // **Last, and that placement is the whole of it.** This
+                        // arm exists because `SessionMessage` is
+                        // `#[non_exhaustive]` — the protocol reserving room —
+                        // and it was written *above* the two real arms first,
+                        // where a wildcard silently ate every notification. The
+                        // transcript came out with a prompt line and no prose.
                         Ok(_) => {}
                     },
                 }
@@ -562,6 +604,87 @@ async fn serve(
         Some(ask) => Some(ask),
         None => asks.recv().await,
     }
+}
+
+/// Turns one `session/update` into the Actions the transcript is built from.
+///
+/// **Prose and tool calls only.** The protocol carries plans, modes, available
+/// commands and token usage as well; each of those is a surface this build has
+/// not drawn, and inventing an Action for one would be vocabulary nobody asked
+/// for. What is here is exactly what `1b` shows.
+///
+/// A thought chunk is prose too. §6 draws no distinction — *"his prose is
+/// `#9aa39a`"* — and an agent that thinks out loud is still saying something;
+/// hiding it would make the transcript disagree with what the agent believes it
+/// told you.
+async fn transcribe(shared: &Arc<Shared>, turn: TurnId, dispatch: Dispatch) {
+    use agent_client_protocol::schema::v1::{
+        ContentBlock, ContentChunk, SessionNotification, SessionUpdate, ToolCallStatus,
+    };
+
+    let shared = Arc::clone(shared);
+    let matched = MatchDispatch::new(dispatch)
+        .if_notification(async move |notification: SessionNotification| {
+            match notification.update {
+                SessionUpdate::AgentMessageChunk(ContentChunk {
+                    content: ContentBlock::Text(text),
+                    ..
+                })
+                | SessionUpdate::AgentThoughtChunk(ContentChunk {
+                    content: ContentBlock::Text(text),
+                    ..
+                }) => {
+                    (shared.post)(Action::Session(SessionAction::SessionProse {
+                        turn,
+                        chunk: text.text,
+                    }));
+                }
+                SessionUpdate::ToolCall(call) => {
+                    (shared.post)(Action::Session(SessionAction::ToolCallStarted {
+                        turn,
+                        call: shared.name(&call.tool_call_id.0),
+                        // The agent's own word for what it is doing. `1b` draws
+                        // `edit`, `bash`, `read`; the protocol calls that the
+                        // *kind* and puts the sentence in the title, so the
+                        // kind is the verb and the title is the target.
+                        verb: format!("{:?}", call.kind).to_lowercase(),
+                        target: Some(call.title),
+                    }));
+                }
+                SessionUpdate::ToolCallUpdate(update) => {
+                    let named = shared.name(&update.tool_call_id.0);
+                    match update.fields.status {
+                        // A finished call, with whatever it had to say. The
+                        // counts are zero because ACP does not carry them —
+                        // `1b` draws `+42 −0` from a *diff*, which is `T063`'s
+                        // to supply, and a guess here would be a number on
+                        // screen that came from nowhere.
+                        Some(ToolCallStatus::Completed | ToolCallStatus::Failed) => {
+                            (shared.post)(Action::Session(SessionAction::ToolCallCompleted {
+                                call: named,
+                                summary: update.fields.title.unwrap_or_default(),
+                                added: 0,
+                                removed: 0,
+                            }));
+                        }
+                        _ => {
+                            if let Some(note) = update.fields.title {
+                                (shared.post)(Action::Session(SessionAction::ToolCallProgress {
+                                    call: named,
+                                    note,
+                                }));
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        })
+        .await;
+    // A dispatch that is not a session notification is not this client's
+    // business — the connection has already answered it.
+    drop(matched.otherwise_ignore());
 }
 
 /// One iteration of the session loop, so the `&mut session` borrow ends with

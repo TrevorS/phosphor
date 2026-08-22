@@ -27,5 +27,6 @@ pub mod status_line;
 pub mod tab_bar;
 pub mod theme;
 pub mod tints;
+pub mod transcript;
 pub mod unknown_key;
 pub mod virtual_text;

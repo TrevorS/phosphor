@@ -17,7 +17,8 @@ stdin/stdout — and answers exactly three requests:
 Modes, chosen by `argv[1]`, each standing for one thing the client has to
 survive:
 
-  `turn`      the whole exchange above. The happy path.
+  `turn`      the whole exchange above, plus one tool call that starts and
+              completes. The happy path.
   `mute`      answers `initialize` and `session/new`, then never answers a
               prompt. The client must stay attached and stay responsive; a
               turn that never ends is not a hang.
@@ -124,13 +125,43 @@ def main() -> int:
             )
             if mode == "slow":
                 time.sleep(SLOW_SECONDS)
+            session_id = params.get("sessionId", SESSION)
             notify(
                 "session/update",
                 {
-                    "sessionId": params.get("sessionId", SESSION),
+                    "sessionId": session_id,
                     "update": {
                         "sessionUpdate": "agent_message_chunk",
                         "content": {"type": "text", "text": f"heard: {spoken}"},
+                    },
+                },
+            )
+            # A tool call that starts and completes — the row `1b` is mostly
+            # made of, and the only way to prove the client turns one into
+            # `tool-call-started` / `tool-call-completed` rather than dropping
+            # it beside the prose.
+            notify(
+                "session/update",
+                {
+                    "sessionId": session_id,
+                    "update": {
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "call-1",
+                        "title": "src/retry.rs",
+                        "kind": "edit",
+                        "status": "pending",
+                    },
+                },
+            )
+            notify(
+                "session/update",
+                {
+                    "sessionId": session_id,
+                    "update": {
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "call-1",
+                        "title": "src/retry.rs",
+                        "status": "completed",
                     },
                 },
             )

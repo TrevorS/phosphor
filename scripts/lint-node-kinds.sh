@@ -138,29 +138,29 @@ RECORDED = {
                    "renders `BufferView` with its own `.state_column(…)`, so the pane got the "
                    "column without composing this kind, and composing one beside it would draw "
                    "the column twice."),
-    "Spinner": ("T054", "Composed by nothing, and yet a spinner does turn — it turns on the "
-                        "shipped statusline as of `T051`, measured at "
-                        "`\u26cb claude working \u00b7 0:00`. `Interpreter::session` renders it inside "
-                        "`Node::Session`'s own arm, off that node's `since` and the frame clock, "
-                        "so the statusline reaches it the way `Node::Buffer` reaches `Gutter`: "
-                        "through a bigger kind, not by composing this one. **This row was "
-                        "recorded against `T051` and that was the wrong creditor** — ticking "
-                        "`T051` made the lint demand a composition that would draw a *second* "
-                        "spinner beside the session segment. What the standalone kind wants is a "
-                        "surface that shows progress without a session segment, and `T054`'s "
-                        "transcript is the one the graph names: *\"streams during Working\"* is a "
-                        "turn row that has to say it is still going."),
-    "Elapsed": ("T054", "The other half of `Interpreter::session`: the elapsed counter is "
-                        "rendered from `Node::Session`'s `since`, not from a node of its own. "
-                        "Same reader, same re-recording, same creditor — a streaming turn row "
-                        "wants both."),
+    "Spinner": ("", "Same shape as `Gutter` and it has no creditor either. A spinner turns "
+                    "twice over in the shipped editor — the statusline (`T051`, "
+                    "`Interpreter::session`, off `Node::Session`'s own `since`) and now the "
+                    "transcript (`T054`, `crate::transcript::TranscriptPane::row`, off "
+                    "`Turn::since`, the same `SPINNER_PERIOD_MS` cadence read through "
+                    "`status_line::Spinner` so the two cannot drift into two rhythms) — and "
+                    "neither composes this tag. **Recorded against `T051`, then re-recorded "
+                    "against `T054` when the first excuse expired, and both were the wrong "
+                    "creditor**: ticking either task turned out to add a second inline arm "
+                    "rather than a first composition, because a `Node::Spinner` nested inside "
+                    "`Node::Session` or `Node::Transcript` would draw a spinner beside the "
+                    "thing already drawing one. No surface in the graph wants a *standalone* "
+                    "spinner with no session and no turn behind it, so there is no third task "
+                    "to guess at. If one appears, this is where its name goes."),
+    "Elapsed": ("", "The other half, and the same finding: `T051`'s statusline and `T054`'s "
+                    "transcript both render an elapsed counter inline off a `since` they "
+                    "already carry, and neither composes this tag. No creditor for the same "
+                    "reason `Spinner` has none."),
     "Diff": ("T063", "`DiffBody`. Deferred in the interpreter."),
     "Question": ("T059", "`QuestionBody`. Deferred in the interpreter. Q9's queued asks are a "
                          "store query, and an ask that nothing has room for renders as the "
                          "statusline's `!` flag alone — which `runtime/statusline.scm` composes "
                          "as a `view/glyph`, not as this."),
-    "Transcript": ("T054", "`TranscriptPane`. Deferred in the interpreter, and *\"a pane, not a "
-                           "float\"*, so it needs `T088` under it as well."),
     "Prompt": ("T058", "The ex line is on screen and does not go through this kind: `draw` "
                        "builds it from `Node::Line` and `Node::Label` because the interpreter "
                        "defers `prompt`. Recorded at `docs/OPEN-QUESTIONS.md` §13 as "

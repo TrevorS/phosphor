@@ -3120,11 +3120,75 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   > at one pane (unit — the composition half draws nothing, so only a test of the tree sees it).
   > `just gate` green at 1,432 tests.
 
-- [ ] **T054 · TranscriptPane**
+- [x] **T054 · TranscriptPane**
   **A pane, not a float** — splits, holds focus, survives float churn. Turn list, prompt lines
   `❯`, prose, tool rows, seam markers. Folds by turn. Streams during Working.
   *Done when:* screen `1b` reproduces **from a keystroke** — the binding that opens the pane
   opens it in the running binary. *Needs:* T050, T088
+
+  > **Built 2026-08-21.** `crates/phosphor-ui/src/transcript.rs` is the widget —
+  > a header, then one block per turn: the `❯` prompt, claude's prose, tool
+  > rows right-aligned on their counts, and the seam. `Node::Transcript` composes
+  > as `SPC t`'s split (below `T088`'s `split-pane`, one call, because the
+  > capability takes what the new pane holds) and reproduces `1b` in the running
+  > binary — asserted keystroke to grid, header through tool row.
+  >
+  > **`Node::Spinner`/`Node::Elapsed` are re-recorded again, and this time
+  > with no creditor.** `T051` had recorded them against `T054` on the guess
+  > that *"a streaming turn row is the surface that composes them
+  > standalone"* — and ticking `T054` showed that guess wrong the same way
+  > `T051`'s own creditor was wrong: the transcript animates a running turn's
+  > spinner and elapsed counter inline, off `Turn::since`, through the shared
+  > `SPINNER_PERIOD_MS` cadence so it cannot drift from the statusline's — but
+  > that is a second *arm*, `TranscriptPane::row`'s own, not a composition of
+  > the tag `Node::Spinner` nests. Two tasks in a row guessed a creditor and
+  > were wrong for the identical reason `Gutter` has none: the capability
+  > ships twice over and the node kind ships never. Recorded with no task now,
+  > which is the honest answer until a surface actually wants a *standalone*
+  > spinner with no session and no turn behind it.
+  >
+  > **The seam this task's own arms had to close.** `AcpAgent` spawns an agent
+  > with its own connection; the SDK's `SessionMessage` from `read_update()`
+  > carries the raw `Dispatch` for everything but the stop reason, and nothing
+  > before this turned one into an Action. `transcribe` is that turn — prose and
+  > thought chunks become `session-prose`, `ToolCall`/`ToolCallUpdate` become the
+  > three tool-call verbs — and a real defect surfaced in getting it right: the
+  > catch-all arm for `SessionMessage`'s `#[non_exhaustive]` growth was written
+  > *above* the two real ones, where a wildcard silently ate every notification
+  > before the specific arms could see it. The transcript came out with a prompt
+  > line and no prose. Order, not logic, and caught by the pty test rather than
+  > a unit test — the crate-level tests build the Actions directly and never
+  > exercised the match order that mattered.
+  >
+  > **A tool call's name is the agent's problem and its id is this editor's.**
+  > `request.rs`'s ids are opaque non-negative integers by construction; an
+  > agent's tool-call name is a string it invents. `Shared::name` is the map,
+  > stable for the session, and it is why `tool-call-progress` and
+  > `tool-call-completed` — which the wire correlates by the agent's string —
+  > can still reach the row `tool-call-started` created under this editor's own
+  > number.
+  >
+  > **A focused pane no longer has to hold a buffer, and that was a real crash
+  > waiting for this task.** The loop's own line read
+  > `panes.at(focus).buffer.expect("… until step 11 gives it anything else to
+  > hold")`, and `SPC t` is exactly that something else: pressing it took the
+  > editor down mid-test with an I/O error on the next keystroke, the shape a
+  > `.unwrap()` panic takes against a pty that has already gone. `held` resolves
+  > to the nearest pane that *does* hold one now, falling back to any open
+  > buffer, and stays total.
+  >
+  > **`:transcript` and `SPC t` are the one capability the row already
+  > names** — *"`:transcript` is this, not a separate capability"* — reached two
+  > ways: `set-pane-content` alone turns the focused pane into the transcript
+  > and `:transcript buffer` turns it back (`1b`'s *"closes back to full
+  > buffer"*), and `SPC t` composes it with `split-pane` the way `<C-w>v`
+  > composes `split-pane` with `focus-pane`, so the code stays on screen the way
+  > `1b`'s drawing does.
+  >
+  > **Verification.** The transcript widget's own row/column arithmetic, the
+  > pty test pressing `SPC t` and reading `1b` off the grid, and two planted
+  > defects caught: `session-prose` dropped, a tool call never recorded. `just
+  > gate` green at 1,462 tests.
 
 - [ ] **T055 · Markdown prose behind the gate**
   Via the vendored fork (T004). **Plain-text path must stay readable with the gate off.**
