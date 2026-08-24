@@ -762,9 +762,12 @@ pub fn object_span(
             .unseen_at(at_position)
             .map(|span| (span, SelectionKind::Line)),
         // A markup tag needs the grammar (`T037`); the other three need a store
-        // that does not exist yet — hunks are `T063`, threads `T068`, review
-        // blocks `T053`. They stay `None` rather than guessing, which is what
-        // makes `vih` select nothing instead of selecting something wrong.
+        // that does not exist yet — hunks are `T064`, threads `T068`, review
+        // blocks `T053`. `T063` drew the hunk *widget* and is ticked, which
+        // moves nothing here: a hunk this can select is one with an id and a
+        // seen bit, and that is the store `T064` builds. They stay `None`
+        // rather than guessing, which is what makes `vih` select nothing
+        // instead of selecting something wrong.
         TextObject::Tag | TextObject::Hunk | TextObject::Thread | TextObject::Block => None,
     }
 }

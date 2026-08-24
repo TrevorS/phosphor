@@ -2299,6 +2299,7 @@ dependencies = [
  "ratatui-code-editor",
  "ratatui-core",
  "ratatui-markdown",
+ "similar",
 ]
 
 [[package]]

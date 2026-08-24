@@ -448,7 +448,7 @@ queries! {
             "one block: its files, groups and annotations" {
             block: BlockId = "which block",
         }
-        Hunks = "hunks" [S7 / "T063"] -> ParamType::List(&ParamType::Any),
+        Hunks = "hunks" [S7 / "T064"] -> ParamType::List(&ParamType::Any),
             "a block's hunks, with each one's seen state" {
             block: BlockId = "which block",
         }

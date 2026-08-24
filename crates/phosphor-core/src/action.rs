@@ -786,11 +786,11 @@ actions! {
             "opens a review block" {
             block: crate::request::BlockId = "which block",
         }
-        SetDiffMode = "set-diff-mode" [S7 / "T063" / Allow]
+        SetDiffMode = "set-diff-mode" [S7 / "T066" / Allow]
             "switches a diff between unified and side-by-side" {
             mode: DiffMode = "which mode",
         }
-        ExpandDiffContext = "expand-diff-context" [S7 / "T063" / Allow]
+        ExpandDiffContext = "expand-diff-context" [S7 / "T066" / Allow]
             "expands a folded context run — 4b's ⋯ 13 lines" {
             hunk: crate::request::HunkId = "which hunk",
             lines: u32 = "how many more lines",

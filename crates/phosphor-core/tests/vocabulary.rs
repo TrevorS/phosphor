@@ -81,6 +81,16 @@ const NO_CAPABILITY: &[(&str, &str)] = &[
          already delivers",
     ),
     (
+        "T063",
+        "DiffBody — a widget, and the same answer `T031` got. It draws rows a host hands it \
+         through `Resources::diff`; it computes no diff, holds no hunk and mutates nothing. \
+         The three capabilities that used to cite this task all moved on the day it was \
+         ticked, because a refusal saying \"T063 builds it\" would name a task that is done: \
+         `set-diff-mode` and `expand-diff-context` act on a diff that is on screen and went \
+         to `T066` beside `open-review-block`, and `hunks` answers \"a block's hunks, with \
+         each one's seen state\" — which is `T064`'s sentence, not this one's",
+    ),
+    (
         "T072",
         "git adapter — the same VCS trait as jj behind the same capabilities",
     ),

@@ -156,7 +156,20 @@ RECORDED = {
                     "transcript both render an elapsed counter inline off a `since` they "
                     "already carry, and neither composes this tag. No creditor for the same "
                     "reason `Spinner` has none."),
-    "Diff": ("T063", "`DiffBody`. Deferred in the interpreter."),
+    "Diff": ("T066", "`crate::diff::DiffBody`, and **it is no longer deferred** — `T063` is "
+                     "ticked and the interpreter draws the tag through `Resources::diff`. What "
+                     "is missing is a source. `DiffSource`'s four arms are the four surfaces "
+                     "the mockups draw and each carries its own creditor "
+                     "(`crates/phosphor-core/src/view/props.rs:601`): `ReviewBlock` is `T053`'s "
+                     "and `T053` is ticked, but it shipped `declare_block` — grouped unseen "
+                     "markers and a notification — and no surface that draws the block, which "
+                     "is why re-recording against it would be the wrong creditor a third time "
+                     "in this table. `Hunk` is `T066`'s, `Disk` is `T070`'s, `Change` is "
+                     "`T073`'s. **`T066` is the first unticked task whose acceptance names a "
+                     "screen that draws one** — `4b` and `2b`. `T064` and `T065` sit between it "
+                     "and here, and their acceptance is about seen-state and about grouping "
+                     "rather than about a composed surface; if either composes one first, this "
+                     "row goes, which this lint fails on and says to do."),
     "Watch": ("T076", "`WatchOverlay` — the `◉ ⇒` stream, which renders *through* a "
                       "`VirtualText` row. That kind is composed (the unknown-key hint); this "
                       "one is the watch's own formatting and is deferred in the interpreter."),

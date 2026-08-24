@@ -4133,11 +4133,82 @@ mockup screen ids of the same name, which mean entirely different things.
 
 ### S7.1 — Review surfaces
 
-- [ ] **T063 · DiffBody** — **built on `similar`, not on a bought widget.** The T008 spike found
+- [x] **T063 · DiffBody** — **built on `similar`, not on a bought widget.** The T008 spike found
   `mod diff` private and the diff implemented as a *mode of the Editor*, so there is nothing to
   restyle. Unified and side-by-side; fold rows for unchanged spans. `similar` already arrives
   transitively via the vendored crate, so this adds no dependency.
   *Done when:* renders a real diff correctly. *Needs:* T041, T084
+
+  > **Built and ticked 2026-08-23.** `crates/phosphor-ui/src/diff.rs` — `Change`/`Line`/`Hunk`/
+  > `File`/`DiffVm` as the ViewModel and `DiffBody` as the widget, drawn from the interpreter's
+  > `Node::Diff` arm through a new `Resources::diff(&DiffSource)` door.
+  >
+  > **`similar` is a dev-dependency and not a dependency**, which is the entry's own claim read
+  > exactly: *"adds no dependency"* is true because **the widget does not compute a diff**. It
+  > draws one. The rows arrive already classified through `Resources`, the same division
+  > `Node::Transcript` has — a host that has a rope and a disk copy computes; a widget that has a
+  > `Buffer` paints. What needed `similar` was the *test*, because `T063`'s acceptance is
+  > *"renders a real diff correctly"* and a hand-written `Vec<Line>` proves the renderer against
+  > the test author's idea of a diff rather than against one. So the tests run `similar::TextDiff`
+  > over `4b`'s own before-and-after and render what comes back. It adds a line to a manifest and
+  > no crate to the shipped graph — `just deny` and the dependency tree agree.
+  >
+  > **Three planted defects, three catches, each by the test whose claim it breaks.** Making
+  > side-by-side context one-sided failed only the pairing test; swapping `−` (U+2212) for an
+  > ASCII hyphen failed only the three-kinds test; making the fold cosmetic — drawing a folded
+  > hunk's lines anyway — failed only the fold test.
+  >
+  > **Side by side is not half as tall, and one test exists because of it.** A run of three
+  > removals against one addition does not pair three times, so the measured height and the drawn
+  > rows can disagree and a float would size itself wrong. `the_measured_height_is_the_height_it_draws`
+  > asks both in both modes.
+  >
+  > **`paired()` needed a nested `fn`, not a closure.** The flush that empties the removal and
+  > addition runs into the row list while the two `Vec`s are still borrowed; a closure captures
+  > them and a `fn flush<'l>(…)` taking all three does not.
+  >
+  > **`Node::Diff` is no longer deferred, and the two lints that watch that both moved.**
+  > `interpret.rs`'s module table is down to a single row (`watch`) for the first time, and the
+  > fixture in `an_unbuilt_primitive_is_reported_not_silently_blank` has now been outlived by the
+  > build four times over — `Transcript`, `Picker`, `Question`, `Diff` — and this time there was
+  > **nothing unbuilt left to pair it with**. It used two deferred kinds to prove the report is a
+  > list rather than a flag; it now proves that a deferred kind is named *once* however many are
+  > on screen and that a drawing sibling stays out of the list. Both are `Report::defer`'s
+  > `contains` guard and neither was tested before.
+  >
+  > **All three capabilities declared against this task have moved, and it now declares none.**
+  > `lint-action-arms` said so about two of them the moment it was ticked; the third has no lint
+  > and was found by asking the same question. A refusal reads *"not built yet — {task} builds
+  > it"* (`crates/phosphor-core/src/action.rs:1511`), so a capability citing a **ticked** task
+  > tells a user a falsehood. `set-diff-mode` and `expand-diff-context` act on a diff that is *on
+  > screen* and went to `T066`, beside the `open-review-block` already there — so the task that
+  > opens a review block is the task where switching its mode and expanding its context become
+  > reachable. `hunks` answers *"a block's hunks, with each one's seen state"*
+  > (`crates/phosphor-core/src/query.rs:451`), which is `T064`'s sentence word for word, and went
+  > there. This is `jump` → `T042` and `apply-edits` → `T052` exactly, and that table's own note on
+  > those two says why it beats a RECORDED row: **the attribution was the bug, not the absent
+  > arm.** `crates/phosphor-core/tests/surfaces.txt` was regenerated and its diff is the record.
+  >
+  > **So `T063` is a task with no capability, and that is a decision on the record rather than an
+  > omission**: `vocabulary.rs`'s `NO_CAPABILITY` gains an entry, and the answer it gets is the one
+  > `T031` got — *"a widget. It renders … state the store already holds; nothing about it is a
+  > mutation"*. This widget draws rows a host hands it; it computes no diff, holds no hunk and
+  > mutates nothing. `every_mutating_task_in_s3_to_s8_has_a_capability` is what forced the entry to
+  > be written rather than the absence to be silent.
+  >
+  > **One comment moved with them.** `crates/phosphor-core/src/input/text.rs:765` told `vih` that
+  > hunks were `T063`'s, which would have read as *built* the moment this line was ticked. A hunk
+  > `vih` can select is one with an id and a seen bit, and that is `T064`'s store.
+  >
+  > **`lint-node-kinds.sh`'s `Diff` row is re-pointed at `T066`, not deleted.** Nothing composes
+  > a `Node::Diff` in the shipped configuration, because nothing yet resolves a `DiffSource`.
+  > Its four arms carry four creditors (`crates/phosphor-core/src/view/props.rs:601`):
+  > `ReviewBlock` is `T053`'s and `T053` **is ticked** — but it shipped `declare_block`, grouped
+  > unseen markers and a notification, and no surface that draws the block, so recording against
+  > it would be the wrong creditor a third time in that table. `T066` is the first unticked task
+  > whose acceptance names a screen that draws one (`4b`, `2b`). `T064` and `T065` sit between,
+  > and their acceptance is about seen-state and about grouping rather than about a composed
+  > surface — if either composes one first, the lint reddens and says to delete the row.
 - [ ] **T064 · Per-hunk seen state** — `s`/`S` compose over any group.
   *Done when:* marking one hunk seen leaves the rest unseen. *Needs:* T063, T041
 - [ ] **T065 · Directory grouping + annotations** — `tui-tree-widget`; Claude's group

@@ -44,14 +44,17 @@
 //!
 //! | still deferred | widget | task |
 //! |---|---|---|
-//! | `diff` | `DiffBody` | `T063` |
 //! | `watch` | `WatchOverlay` | `T076` |
 //!
-//! Every other kind draws. The most recent arrival is `question`
-//! ([`crate::question::QuestionBody`], `T059`) — and the row-deletion rule
-//! worked exactly as designed: building it reddened two tests in this file, one
-//! of which is the fixture that *needs two deferred kinds* to prove the report
-//! is a list rather than a flag. Before it, `picker`
+//! **One row left, and the table is down to a single kind for the first time.**
+//! Every other kind draws. The most recent arrival is `diff`
+//! ([`crate::diff::DiffBody`], `T063`) — and the row-deletion rule worked
+//! exactly as designed again, reddening the same two tests: this table's own,
+//! and the fixture that *used* two deferred kinds to prove the report is a list
+//! rather than a flag. That fixture has now run out of unbuilt kinds to pair
+//! and proves a different pair of properties instead; its comment says which
+//! and why. Before it, `question`
+//! ([`crate::question::QuestionBody`], `T059`). Before it, `picker`
 //! ([`crate::picker::Picker`], `T045`) — this table carried *that* row for a
 //! window after it started drawing, which is the drift the rule exists to make
 //! cheap and does not by itself prevent. Before it,
@@ -107,6 +110,7 @@ use core::time::Duration;
 use phosphor_core::request::AskId;
 use phosphor_core::request::BufferId;
 use phosphor_core::request::SourceId;
+use phosphor_core::view::DiffSource;
 use phosphor_core::view::{
     Axis, Child, Constraint, Density, Emphasis, Float as ViewFloat, Glyph, Millis,
     Mood as ViewMood, Node, SessionState as ViewSessionState, SpanRow, Tint, Tone, Tree,
@@ -118,6 +122,7 @@ use ratatui_core::text::Span;
 use ratatui_core::widgets::Widget;
 
 use crate::buffer_view::{BufferView, Editor, StateMark};
+use crate::diff::DiffVm;
 use crate::float::{
     Anchor, CompletionList, CompletionVm, Float as UiFloat, FloatBody, FloatFooter, FloatHeader,
     FloatSlot, FooterHint, Mood as UiMood, SignatureBody, SignatureVm,
@@ -209,6 +214,21 @@ pub trait Resources: core::fmt::Debug {
     }
 
     fn picker(&self, source: &SourceId) -> Option<&PickerVm> {
+        let _ = source;
+        None
+    }
+
+    /// The diff a source names (`T063`).
+    ///
+    /// **Keyed, like [`Resources::ask`] and unlike the rest**, and for the same
+    /// reason: `Node::Diff` carries a `DiffSource`, and a block diff, a peeked
+    /// hunk and `:diff-disk` are three different diffs that can be on screen at
+    /// once. A host that answered *the* diff would draw the wrong one into
+    /// `2b`'s float the moment `4b` was open behind it.
+    ///
+    /// `None` draws nothing — a source with nothing to compare is the ordinary
+    /// case for a buffer that matches its disk copy.
+    fn diff(&self, source: &DiffSource) -> Option<&DiffVm> {
         let _ = source;
         None
     }
@@ -745,9 +765,23 @@ impl Ctx<'_> {
                 crate::question::QuestionBody::new(vm, theme).render(area, buf);
             }
 
-            // Deferred past Window D. Grouped, and split one kind at a time the
-            // way the five above were, as each phase arrives.
-            Node::Diff { .. } | Node::Watch { .. } => {
+            // `T063`, drawn by `crate::diff`. The *mode* is composition's — a
+            // caller decides whether two columns fit — and the rows come
+            // through the `Resources` door beside it, which is
+            // `Node::Transcript`'s division exactly. `grouping` is `T065`'s and
+            // is the host's: what the widget receives is already grouped.
+            Node::Diff { source, mode, .. } => {
+                let Some(vm) = self.interp.resources.diff(source) else {
+                    return;
+                };
+                crate::diff::DiffBody::new(vm, theme)
+                    .mode(*mode)
+                    .render(area, buf);
+            }
+
+            // The last deferred kind. It was a group of two until `T063` drew
+            // the other one, and one at a time is how the group emptied.
+            Node::Watch { .. } => {
                 self.defer(node.tag());
             }
         }
@@ -1147,6 +1181,14 @@ impl Ctx<'_> {
             Node::Question { ask } => self.interp.resources.ask(*ask).map_or(0, |vm| {
                 crate::question::QuestionBody::new(vm, self.theme())
                     .desired_height(crate::question::natural_width(vm))
+            }),
+            // `T063`. **The mode changes the height**, because side by side
+            // pairs a removal with the addition that replaced it — so the two
+            // are asked together rather than the rows being counted here.
+            Node::Diff { source, mode, .. } => self.interp.resources.diff(source).map_or(0, |vm| {
+                crate::diff::DiffBody::new(vm, self.theme())
+                    .mode(*mode)
+                    .desired_height()
             }),
             _ => 0,
         }
@@ -2213,16 +2255,7 @@ mod tests {
     fn the_deferred_set_is_exactly_the_kinds_named_here() {
         // Payloads are the emptiest legal ones — this test is about which arm
         // runs, and every one of these arms ignores its props entirely.
-        let deferred = [
-            Node::Diff {
-                source: DiffSource::Disk {
-                    buffer: BufferId(1),
-                },
-                mode: DiffMode::Unified,
-                grouping: Grouping::Flat,
-            },
-            Node::Watch { watch: WatchId(5) },
-        ];
+        let deferred = [Node::Watch { watch: WatchId(5) }];
         for node in deferred {
             let tag = node.tag();
             let (_, report) = draw(&Tree::new(node));
@@ -2249,6 +2282,19 @@ mod tests {
             // body — which is drawing, and is the distinction this half of the
             // test is about.
             Node::Question { ask: AskId(8) },
+            // `T063`, and it arrives here with the same shape `question` has:
+            // the arm asks `Resources` for the rows and returns when there are
+            // none. **A kind whose host has no answer is not a kind with no
+            // widget** — that is the whole distinction `deferred` draws, and
+            // the two ways of painting nothing look identical on the screen
+            // and different in the report.
+            Node::Diff {
+                source: DiffSource::Disk {
+                    buffer: BufferId(1),
+                },
+                mode: DiffMode::Unified,
+                grouping: Grouping::Flat,
+            },
             // `T054`. `NoResources` hands back no transcript, so this draws
             // an empty pane — which is drawing, and is the distinction this
             // half of the test is about.
@@ -2286,36 +2332,41 @@ mod tests {
 
     #[test]
     fn an_unbuilt_primitive_is_reported_not_silently_blank() {
+        // **The build finally outlived this fixture's premise.**
+        // `Node::Transcript` and `Node::Picker` both stood here until `T054`
+        // and `T045` built them; `Node::Question` replaced one of them and
+        // `T059` built that too; `Node::Diff` replaced *that* and `T063` has
+        // now built it. The comment here used to say the day one of the last
+        // two shipped, "something still-unbuilt takes this slot" — and there
+        // is nothing left to take it. `watch` is the only kind in the module
+        // docs' table.
+        //
+        // So the pair proved *"the report is a list and not a flag"* and the
+        // singleton cannot. What replaces it is not a weaker claim but a
+        // different one, and one nothing else in this file tested: a deferred
+        // kind is named **once** however many of it are on screen, and a
+        // sibling that draws does not put itself in the list. Both are
+        // properties of `Report::defer`'s `contains` guard, and a `bool` could
+        // satisfy neither.
         let tree = Tree::new(Node::split(
             Axis::Rows,
             [
                 Slot::new(
                     Constraint::Fill { weight: 1 },
-                    Node::Diff {
-                        source: DiffSource::Disk {
-                            buffer: BufferId(1),
-                        },
-                        mode: DiffMode::Unified,
-                        grouping: Grouping::Flat,
-                    },
+                    Node::Watch { watch: WatchId(3) },
                 ),
-                // **This fixture keeps getting outlived by the build, which is
-                // the healthiest possible reason for a test to need editing.**
-                // `Node::Transcript` and `Node::Picker` both stood here until
-                // `T054` and `T045` built them; `Node::Question` replaced one of
-                // them and `T059` built that too. `diff` and `watch` are what is
-                // left. The test needs *two* deferred kinds to prove the report
-                // is a list and not a flag, which is the failure a single-entry
-                // fixture hides — so the day one of these ships, the other one
-                // moves up and something still-unbuilt takes this slot.
                 Slot::new(
                     Constraint::Cells { cells: 1 },
-                    Node::Watch { watch: WatchId(3) },
+                    Node::Watch { watch: WatchId(4) },
+                ),
+                Slot::new(
+                    Constraint::Cells { cells: 1 },
+                    label("this one draws", Tone::Text),
                 ),
             ],
         ));
         let (_, report) = draw(&tree);
-        assert_eq!(report.deferred, vec!["diff", "watch"]);
+        assert_eq!(report.deferred, vec!["watch"]);
     }
 
     #[test]

@@ -16,6 +16,7 @@
 pub mod buffer_view;
 pub mod csv;
 pub mod diagnostics;
+pub mod diff;
 pub mod float;
 pub mod frame;
 pub mod gutter;

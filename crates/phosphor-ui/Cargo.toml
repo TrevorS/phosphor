@@ -79,6 +79,16 @@ ratatui-markdown = { workspace = true, optional = true, features = ["markdown"] 
 # ever takes it.
 insta = { version = "1.48.0", default-features = false }
 proptest = "1.11.0"
+# `T063`. **A dev dependency and not a real one**, which is the whole shape of
+# `DiffBody`: this crate draws a diff and does not compute one — the two sides
+# are a buffer and a disk copy, which a widget crate cannot read. What the tests
+# need is a *real* diff to draw, because a hand-written `Vec<Line>` proves the
+# renderer against the test author's idea of a diff rather than against one.
+#
+# `similar` is already in the tree through `vendor/ratatui-code-editor`, so this
+# adds a line and no crate — which is what T008's spike found and T063's entry
+# repeats.
+similar = "^2.7"
 # T015's tests assert that tree-sitter highlighting actually reaches the cells,
 # which needs a grammar. Rust only, and dev-only: every mockup CP-1 checks is a
 # Rust slice, and a widget crate has no business linking eleven C grammars into
