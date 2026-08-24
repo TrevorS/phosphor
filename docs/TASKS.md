@@ -19,9 +19,9 @@ never executed and says so at the task.
 rulings came out of the manual half; three amend design docs and are tabled in
 [§5](IMPLEMENTATION-PLAN.md#5-decisions).
 
-**Window C is built and its mechanical half is green.** The `Action` vocabulary is 219
+**Window C is built and its mechanical half is green.** The `Action` vocabulary is 220
 capabilities generated from one table, the three doors are total functions over it, and the
-parity test walks all 657 door checks end to end. (`208`/`624` until `S3` added
+parity test walks all 660 door checks end to end. (`208`/`624` until `S3` added
 `Buffer::SetCase`, `209`/`627` until the repair window added `set-macro-recording`, `register`
 and `place-anchor`, `212`/`636` until `S4` added the three `ingest-` verbs the asynchronous
 LSP transport needs, `215`/`645` until `T104` added `insert-indent`, and `216`/`648` until
@@ -4368,7 +4368,99 @@ mockup screen ids of the same name, which mean entirely different things.
   > fixture, because with one file per directory the right answer and the wrong one are the same
   > number. The fixture is two files in one directory now — which is also the first fixture in which
   > the grouping does anything — and it catches it.
-- [ ] **T066 · Review block + hunk peek** — screens `4b`, `2b`. *Needs:* T065, T053
+- [x] **T066 · Review block + hunk peek** — screens `4b`, `2b`. *Needs:* T065, T053
+
+  > **Built and ticked 2026-08-23.** `4b` opens over `8b` — the same float, deeper: `s`/`S`
+  > mark a hunk, its file or its directory; `]]` jumps to the next file; `za` folds a hunk
+  > (added to what `T065` already folded — a directory) or unfolds it. `2b` opens with `gh` at
+  > the cursor, without leaving the buffer, and closes with `q` or `esc` like every float now
+  > does — `Surface::Float` learned `q` here, the way `Surface::Help` already had it.
+  >
+  > **§59 ruled first: the before-side is claude's to state.** Neither screen can draw a `−`
+  > line without knowing what a hunk replaced, and nothing in the graph produced one for a
+  > review block. Ruled (2): a VCS's copy answers a different question and `T071` may not
+  > assume a repo exists; the file itself has lost the prior text; only claude's own declaration
+  > knows it. `FileGroup::spans` changed from `Vec<Span>` to `Vec<ChangedSpan>` — a wire change
+  > to a ticked task's own verb, taken rather than worked around, with a record per span rather
+  > than a parallel array beside it. `store::Change` is the one place the before-text lives, and
+  > `store::Hunk::was` is `None` for a pure insertion — which `4b` draws as `+` lines and no `−`
+  > at all, the truthful reading and not a fallback.
+  >
+  > **The after-side is read live, buffer first.** `hunk_lines`/`span_text` slice whichever
+  > text is current — the open rope if the file is a buffer, disk otherwise — so `s` on a hunk
+  > moves the counts without recomposing, and an unsaved edit shows on the screen rather than
+  > what was last written. One scan of the open buffers (`open_texts`) is shared by `4b`/`8b`
+  > and `2b` rather than run twice.
+  >
+  > **A real store bug, found by a test that was already there.** `hunk_of`'s first version
+  > scanned every declared block for a region id, so a span two blocks both declared came back
+  > attributed to whichever block declared it *first* — for *both* blocks' `hunks()` calls.
+  > `group_ids_are_minted_across_blocks_not_within_one` (`T064`'s own test) caught it:
+  > `GroupId(0) != GroupId(0)` failed with both sides equal. Fixed by keeping `hunks(block)`
+  > scoped to that block's own groups — it already has the answer in hand — and reserving
+  > `hunk_of`'s global scan for the one caller that has an id and no block, `2b`'s peek, where
+  > the same ambiguity is a real but narrower case now pinned by its own test and documented as
+  > a stated convention rather than an accident.
+  >
+  > **`S` widens by one level, whatever the row is — hunk → file, file → directory, directory →
+  > block.** `4b` draws `s seen · S all` beside a hunk; `8b` draws `S here marks all 12` beside a
+  > directory. A single fixed meaning would make `S` on a hunk do the same thing as `S` on a
+  > directory, which is a key that stops telling you where you are.
+  >
+  > **A two-key prefix machine, because `za` and `]]` are each two keys and the real input
+  > machine does not run over a float.** `Review::pending` holds the first key; a bare `a` no
+  > longer folds and a lone `]` no longer jumps — both were live bugs the first version of the
+  > `4b` key test caught by pressing the actual sequences rather than one key at a time.
+  >
+  > **Both notes draw together, and the module doc was wrong about that.** `4b` draws
+  > `@@ 9–14 · tests   ⋯ folded · 6 lines   seen ✓` on one row — a folded hunk that has also
+  > been read says both, because they answer different questions: *how much is hidden* and
+  > *have you read it*. The comment claiming they were *"one of two and never both"* sounded
+  > right and was checked against the mockup rather than trusted.
+  >
+  > **`2b`'s `s` reuses `mark-seen` with an explicit `Target::Hunk`, built at `T041` and resolved
+  > through the same `review_scope` both doors already share** — no new capability for the peek's
+  > one verb. `open-hunk-peek`'s own target resolution covers `Target::Hunk`/`Target::Region`
+  > (an agent's spelling) and `Target::Cursor` (the keyboard's), the latter needing the editor
+  > and so living in `Editing::act`, the same seam `open-review-block` already crossed at `T065`.
+  >
+  > **One surface, one session — a probe found the gap before a test did.** `gh` pressed while
+  > a review float held the screen fired anyway, because `review_key` doesn't claim `g` and
+  > unclaimed keys fall through to the buffer's ordinary keymap even while a float is up. Left
+  > unhandled, `shell.review` would survive a peek opening over it, and the next `s` would read
+  > whichever session's guard happened to match first — silently wrong rather than refused.
+  > Both arms now clear the other session on open;
+  > `opening_a_peek_while_a_review_is_open_replaces_it_not_layers_it` pins it.
+  >
+  > **`SetDiffMode` and `ExpandDiffContext` also went unbuilt, and both by the same kind of
+  > check.** Neither has a key on any screen this task or the ones after it draw. `4b`'s own
+  > design-brief line says the block diff is *"one unified diff"*, full stop — the side-by-side
+  > mode `DiffBody` already draws (`T063`) belongs to `:dv`, `T070`'s screen, whose own line is
+  > *"a side-by-side of buffer vs disk"* — so `SetDiffMode` is recorded against `T070`.
+  > `ExpandDiffContext` has no home at all yet; recorded with no creditor, the same shape
+  > `Gutter`/`Spinner`/`Elapsed` take in the other lint's table.
+  >
+  > **`revert-hunk` stays unbuilt, and this time by a finding rather than a deferral.** The
+  > before-side this task built made the *rich* revert buildable, which is what made it worth
+  > checking against the mockups instead of assuming: the only "revert" key any screen draws is
+  > `6d`'s `dih  delete inner hunk — revert claude's edit, plain vim delete` — `T026`'s delete
+  > operator over `T064`'s hunk text object, already reachable before this task started. `4b`'s
+  > footer has no revert key; `2b`'s `u undo (jj)` is `T073`'s different verb over a different
+  > store. `dih` deletes; `revert-hunk` would restore what claude's edit replaced; nothing asks
+  > for the difference. Recorded with no creditor rather than re-pointed at a task that would
+  > never close it, the same shape `lint-node-kinds.sh` uses for `Gutter`/`Spinner`/`Elapsed`.
+  > `a_declared_hunks_dih_reverts_it_plain_vim_delete_style` proves `dih` against a declared
+  > hunk that *has* a before-side, and proves it is not written back — the exact distinction the
+  > record turns on.
+  >
+  > **Nine planted defects across the two screens, nine catches** — six against `T065`'s carried
+  > forward (folded-group leak, wrong unseen count, wrong file count, indented arrow, flat
+  > grouping keeping rows, an annotation that didn't clear), plus three found and closed this
+  > task: `hunk_of`'s cross-block attribution (a store test), `peek_vm` forgetting to slice its
+  > after-text to the hunk's span (draws the whole file), and the one-surface-one-session gap
+  > (the probe-then-test pattern above).
+  >
+  > `just gate` green.
 - [ ] **T067 · Inbox** — one list of everything Claude said; severity is a single MCP flag;
   unread = unseen. Screen `5c`. *Needs:* T053, T041
 - [ ] **T068 · Anchored exchange / threads** — your comment and Claude's reply as virtual text

@@ -2640,7 +2640,7 @@ reaching for `q` and getting the register menu. The cost is one keystroke in a
 place where the alternative is a rule in the resolver that every other binding
 would then have to be read against.
 
-### 59 · `revert-hunk` needs a *before* side, and nothing in the graph produces one for a review block
+### 59 · ~~`revert-hunk` needs a *before* side, and nothing in the graph produces one for a review block~~ — ruled 2026-08-23
 
 **Found by `T064`.** `revert-hunk` is declared *"reverts one hunk; it lowers to edits, so your
 undo tree has it"* (`crates/phosphor-core/src/action.rs:807`). Lowering to edits means writing the
@@ -2685,6 +2685,49 @@ Recorded rather than ruled because the answer is `T066`'s to make with the scree
 and because taking (1) or (2) here would put a dependency or a payload into a task that has not
 been read yet. `revert-hunk` is recorded in `scripts/lint-action-arms.sh` against `T066` with this
 section named.
+
+**Ruled 2026-08-23, with `4b` and `2b` in front of me: (2), and the screens are what settle it.**
+
+**The before-side is claude's to state, because claude is the only thing that knows what it
+replaced.** A VCS's copy answers a different question — *"what changed since the last commit"* —
+which is all of claude's edits and yours together, not this block's; and the task list rules
+`T071` may not assume a repo exists, so (1) would make `4b` blank in a directory that is not one.
+Reading the file cannot answer it at all: the prior text is gone.
+
+**What made (2) look like a snapshot was a misreading of the rule it seemed to break.**
+`store::Block`'s doc says *"a block holds ids, not spans — the region **is** the span, and a block
+that carried its own copy would be a second place for the two to disagree after a rewrite moves
+one."* That is about **locations**, which drift because a rewrite moves them. Replaced text is not
+a location; it is history, and history does not drift. A block carrying what it replaced is the
+same kind of statement as its title.
+
+**The two sides come from two places, and that is the whole design:**
+
+* **After** — the region's text *now*, read live from the buffer if the file is open and from disk
+  if it is not. Nothing stores it; `4b` shows what is there.
+* **Before** — what claude says it replaced, carried on the declaration.
+
+**A hunk with no before-side is not a degradation — `4b` draws one.** Its first hunk is
+`@@ 4` with a single `+ use crate::util::jitter;` and no `−` line at all, because that edit
+inserted and removed nothing. So *"claude did not state a before-side"* and *"this hunk removed
+nothing"* draw identically, and that is the truthful reading rather than a fallback.
+
+**`FileGroup::spans` therefore stops being `Vec<Span>`** and becomes a record per span carrying the
+span and, optionally, the text it replaced. A wire change to a ticked task's verb, taken rather
+than worked around: `declare-review-block` is our own tool, the parallel-array alternative
+(`spans` beside `replaced`, matched by index) is the kind of shape that goes wrong silently, and
+the vocabulary's tests recompute from the declaration.
+
+`revert-hunk` follows from the same place: the before-side it writes back is the one on the hunk.
+
+**Addendum, `T066`.** The wire capability stayed unbuilt anyway — checked against the mockups
+rather than assumed, the only "revert" key any screen draws is `6d`'s `dih  delete inner hunk —
+revert claude's edit, plain vim delete`, which is `T026`'s delete operator over `T064`'s hunk text
+object and was already reachable before this task started. `4b`'s footer has no revert key; `2b`'s
+`u undo (jj)` is `T073`'s different verb over a different store. `revert-hunk`'s richer promise —
+restore the before-side, not delete the current text — is recorded in `scripts/lint-action-arms.sh`
+with no creditor, because nothing asks for the difference between a delete and a restore. If a
+screen ever does, the before-side this section rules is exactly the field it would read.
 
 ## Repair pass — queued work, not questions
 

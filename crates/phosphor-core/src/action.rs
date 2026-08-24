@@ -618,6 +618,11 @@ actions! {
             "answers the focused ask by digit — 4a's amber option digits" {
             digit: u32 = "which option, 1-based",
         }
+        FloatMark = "float-mark" [S7 / "T066" / Deny]
+            "marks the focused float row — 4b's s seen and S all" {
+            seen: bool = "seen, or unseen",
+            all: bool = "widen to what this row is inside — 4b's S, 8b's S here",
+        }
         FloatToggleFold = "float-toggle-fold" [S7 / "T065" / Deny]
             "folds or unfolds a row inside a float body — za in a diff or a group list" {
             row: u32 = "1-based row",

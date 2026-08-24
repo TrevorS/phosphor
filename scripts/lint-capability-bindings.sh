@@ -122,6 +122,13 @@ EMITTED = {
     # gates on the surface and on the key, and answers `None` for everything it
     # does not name — which is what keeps `:annotate` and `:grouping`, the two
     # commands that only make sense while 8b is up, typeable from 8b.
+    # `T066`. `4b`'s `s seen · S all`, Rust-side for `float-answer`'s reason —
+    # over a buffer `s` is an ordinary character and `S` a shift of it, and
+    # `keymaps.scm` has no way to ask what surface holds the screen. The peek's
+    # own `s` is a *separate* Rust handler (`mark-seen` with an explicit
+    # `Target::Hunk`, T041's verb) rather than this one, because a peek has one
+    # row and no `all` to widen into.
+    "float-mark": "the review float's own key handling — 4b's `s`/`S`",
     "float-toggle-fold": "the review float's own key handling — 8b's `za`",
     "close-float": "`closes_surface` handles `esc` for every float",
     "close-all-floats": "`closes_surface` handles `esc` for every float",

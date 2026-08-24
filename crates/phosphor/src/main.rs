@@ -55,7 +55,7 @@
 //! # `T023` — the CLI door, alongside the host
 //!
 //! [`door`] is the other half of this file's job and does not touch the loop at
-//! all. `phosphor --eval '(…)'` and the 219 generated capability verbs return
+//! all. `phosphor --eval '(…)'` and the 220 generated capability verbs return
 //! **before** [`Term`] is constructed: no alternate screen, no raw mode, no
 //! frame. That is a requirement, not an accident — `V006` seeds tape fixtures
 //! through `--eval` with no test-only backdoor, which needs the door to work
@@ -167,7 +167,7 @@ use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
     AcceptHow, Actor, AnchorId, AskId, AskOption, Binding, BlockId, BufferId,
     CharRange as SignatureRange, Completion as WireCompletion, Direction, EditMode, FileSpan,
-    FoldState, GroupId, Grouping, KeySeq, LanguageId, PaneId, PaneKind, PaneRef, Position,
+    FoldState, GroupId, Grouping, HunkId, KeySeq, LanguageId, PaneId, PaneKind, PaneRef, Position,
     PromptKind, RegionFilter, RegionId, RegisterName, Seek, SelectionKind, Sequence,
     Signature as WireSignature, SourceId, Span, Target, TextObject, ToolCallId, TurnId,
 };
@@ -2173,9 +2173,9 @@ impl Host for AppHost {
                     .flat_map(|file| {
                         file.spans
                             .iter()
-                            .map(|span| phosphor_core::request::RegionSpec {
+                            .map(|changed| phosphor_core::request::RegionSpec {
                                 path: file.path.clone(),
-                                span: *span,
+                                span: changed.span,
                                 author: Actor::Claude,
                             })
                     })
@@ -3240,10 +3240,11 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // rather than inside it. One, until step 4c gives the loop a map of them.
     // Step 4b: what the session owns, once rather than once per buffer.
     let mut shell = Shell {
-        // No review is open at boot. A block declared before one is opened is
-        // still there — `blocks` outlives the surface, which is what makes
-        // `:review` a thing you can type after the fact.
+        // No review or peek is open at boot. A block declared before one is
+        // opened is still there — `blocks` outlives the surface, which is what
+        // makes `:review` a thing you can type after the fact.
         review: None,
+        peek: None,
         store: Arc::clone(&host.store),
         asks: BTreeMap::new(),
         next_ask: Arc::clone(&host.next_ask),
@@ -4105,10 +4106,49 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // reading the picker takes and the opposite of the float itself, which
         // is a snapshot. The float's composed `Node::Diff` names the block; this
         // answers it.
-        let review_vm = shell
-            .review
-            .as_ref()
-            .and_then(|review| review_vm(&shell.store, review).map(|vm| (review.block, vm)));
+        // **The after-side of every hunk in the open block, buffer first.**
+        //
+        // A block spans files that are mostly not open, so most of these come
+        // off disk — which is `AppHost::parse`'s ruling for anchors, *"the
+        // honest source for a door"*, arriving at a surface. What is open comes
+        // out of the rope instead, because `4b` reviews the file you are
+        // editing and a disk read would show it as it was before your last
+        // unsaved keystroke.
+        // **The same buffer-first map, spent by both `4b`/`8b` and `2b`** — one
+        // scan of the open buffers rather than two, and one place where
+        // *"buffer beats disk"* is stated.
+        let open_texts: BTreeMap<PathBuf, String> = buffers
+            .map
+            .values()
+            .filter_map(|buffer| {
+                let path = buffer.file.as_ref()?;
+                let code = buffer.editor.code_ref();
+                Some((store::key_for(path), code.slice(0, code.len_chars())))
+            })
+            .collect();
+        let review_after: BTreeMap<PathBuf, String> =
+            shell.review.as_ref().map_or_else(BTreeMap::new, |review| {
+                shell
+                    .store
+                    .hunks(review.block)
+                    .into_iter()
+                    .map(|hunk| hunk.path)
+                    .collect::<BTreeSet<PathBuf>>()
+                    .into_iter()
+                    .filter_map(|path| text_for(&path, &open_texts).map(|text| (path, text)))
+                    .collect()
+            });
+        let review_vm = shell.review.as_ref().and_then(|review| {
+            review_vm(&shell.store, review, &review_after).map(|vm| (review.block, vm))
+        });
+        // `T066`. Rebuilt every frame off the store, the same live-query
+        // reading `review_vm` takes — so `s` on the peek moves `2b`'s own
+        // `seen ✓` without recomposing the float.
+        let peek_vm = shell.peek.and_then(|hunk_id| {
+            let hunk = shell.store.hunk_of(store::Hunk::region_of(hunk_id))?;
+            let after = text_for(&hunk.path, &open_texts);
+            Some((hunk_id, peek_vm(&hunk, after.as_deref())))
+        });
         let overlay = Overlay {
             review: review_vm.as_ref().map(|(block, vm)| (*block, vm)),
             asks: &shell.asks,
@@ -4124,6 +4164,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             transcript: transcript_vm.as_ref(),
             tabs: &tab_bar,
             now: Millis(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)),
+            peek: peek_vm.as_ref().map(|(id, vm)| (*id, vm)),
         };
         term.draw(|frame| {
             draw(
@@ -4268,7 +4309,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     Event::Key(key)
                         if matches!(surface, Surface::Float)
                             && shell.review.is_some()
-                            && review_key(key).is_some() =>
+                            && review_key(key, shell.review.as_ref().and_then(|it| it.pending))
+                                .is_some() =>
                     {
                         // **Guarded on the keys it uses, not on the surface.**
                         // The first version guarded on *"a review is open"* and
@@ -4278,7 +4320,25 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // way and always did.
                         let selected = shell.review.as_ref().map_or(0, |it| it.selected);
                         let row = u32::try_from(selected.saturating_add(1)).unwrap_or(1);
-                        match review_key(key) {
+                        // Not `held` — that is the focused buffer in this
+                        // scope, and shadowing it here made `Cx::new` take a
+                        // `char` where a `BufferId` belongs.
+                        let prefix = shell.review.as_ref().and_then(|it| it.pending);
+                        let read = review_key(key, prefix);
+                        // **Cleared before the verb runs, always.** A prefix
+                        // that survived its own sequence would make the next
+                        // key the third of a two-key press.
+                        if let Some(review) = shell.review.as_mut() {
+                            review.pending = match read {
+                                Some(ReviewKey::Prefix) => match key.code {
+                                    KeyCode::Char(character) => Some(character),
+                                    _ => None,
+                                },
+                                _ => None,
+                            };
+                        }
+                        match read {
+                            Some(ReviewKey::Prefix) => {}
                             Some(ReviewKey::Close) => {
                                 shell.review = None;
                                 surface = Surface::Buffer;
@@ -4291,6 +4351,18 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                     }
                                     ReviewVerb::Fold => {
                                         Action::Float(FloatAction::FloatToggleFold { row })
+                                    }
+                                    ReviewVerb::Mark { all } => {
+                                        Action::Float(FloatAction::FloatMark { seen: true, all })
+                                    }
+                                    // **A `delta` and not a row**, so the one
+                                    // clamp stays in `float-select` — the same
+                                    // reason `float-select-row` delegates to it.
+                                    ReviewVerb::NextFile => {
+                                        let delta = shell.review.as_ref().map_or(1, |review| {
+                                            next_file_delta(&shell.store, review)
+                                        });
+                                        Action::Float(FloatAction::FloatSelect { delta })
                                     }
                                 };
                                 let outcome = editing.apply(
@@ -4394,11 +4466,41 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                             notice = Some(phosphor_steel::answer::why(&why));
                         }
                     }
+                    // `T066` — `2b`'s `s mark seen`, guarded on the keys it
+                    // uses and not on the surface, the way `review_key` is.
+                    // There is one row and one verb, so there is no machinery
+                    // here beyond the guard: `s` is `mark-seen` with the peek's
+                    // own hunk as an explicit `Target::Hunk`, which `T041`
+                    // already built and `T066`'s `open-hunk-peek` arm resolves
+                    // identically.
+                    Event::Key(key)
+                        if matches!(surface, Surface::Float)
+                            && matches!(key.code, KeyCode::Char('s'))
+                            && shell.peek.is_some() =>
+                    {
+                        if let Some(hunk) = shell.peek {
+                            let outcome = editing.apply(
+                                &mut Cx::new(held, focus, &mut panes, &mut shell),
+                                &Action::Region(RegionAction::MarkSeen {
+                                    target: Target::Hunk { id: hunk },
+                                }),
+                            );
+                            if let Outcome::Refused(why) = outcome {
+                                notice = Some(phosphor_steel::answer::why(&why));
+                            }
+                        }
+                    }
                     Event::Key(key) if closes_surface(key, surface) => {
                         // `T065`. A review closed by `esc` is closed, not
                         // hidden: the fold state is the *reader's* place in a
                         // block and reopening is a fresh read.
                         shell.review = None;
+                        // `T066`. Same for the peek — a stale id costs nothing
+                        // today (`Resources::diff` answers `None` for one that
+                        // is not the open float's), but a second `gh` while the
+                        // first is still recorded should draw the *new* hunk
+                        // without carrying the first one's state along.
+                        shell.peek = None;
                         if let Some(asked) = shell.asked {
                             let outcome = editing.apply(
                                 &mut Cx::new(held, focus, &mut panes, &mut shell),
@@ -5512,10 +5614,62 @@ fn hunk_value(hunk: &store::Hunk) -> Value {
 /// store id. A single row type would make one of the two guess.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ReviewRow {
-    /// A directory row — `▾ src/api/`. Foldable; not annotatable.
+    /// A directory row — `▾ src/api/`. Folds; marks everything under it.
     Dir(String),
-    /// A file row — the declared group it is. Annotatable; not foldable.
+    /// A file row — the declared group it is. Annotatable; marks its hunks.
     File(GroupId),
+    /// A hunk row — `@@ 6–10` (`T066`). Folds; marks itself.
+    Hunk(HunkId),
+}
+
+/// A hunk's key in the fold set (`T066`).
+///
+/// **Not a `HunkId`, because the fold set is keyed by `String`** — it holds
+/// directory paths, which the store has never heard of. One set with two kinds
+/// of key in it is a compromise, and the alternative is two sets that can both
+/// be right about different things; the prefix is what keeps a directory named
+/// `12` from folding hunk 12.
+fn hunk_key(hunk: &store::Hunk) -> String {
+    format!("hunk:{}", hunk.id.0)
+}
+
+/// **`2b`, the peek** — one hunk, no chrome (`T066`, §59).
+///
+/// `4b`'s row exactly: `@@ 5–6` then the before/after lines, through the same
+/// [`hunk_lines`]. No header — `2b`'s float is three lines tall and has no room
+/// for one, which is `DiffVm::header`'s own documented empty case, from
+/// `T063`.
+fn peek_vm(hunk: &store::Hunk, source: Option<&str>) -> phosphor_ui::diff::DiffVm {
+    use phosphor_ui::diff::{DiffVm, Entry, File, Hunk};
+
+    // **The caller hands the whole file; this slices it**, the same division
+    // `review_vm`'s `leaf` closure keeps — a caller that has to remember to
+    // call `span_text` itself is a caller that will eventually forget to, the
+    // way this function did on its first version and a test caught.
+    let after = source.map(|source| span_text(source, hunk.span));
+    DiffVm {
+        header: String::new(),
+        entries: vec![Entry::File(File {
+            path: hunk.path.display().to_string(),
+            annotation: None,
+            unseen: None,
+            folded: false,
+            hunks: vec![Hunk {
+                range: if hunk.span.start.line == hunk.span.end.line
+                    || (hunk.span.end.column <= 1 && hunk.span.end.line == hunk.span.start.line + 1)
+                {
+                    hunk.span.start.line.to_string()
+                } else {
+                    format!("{}–{}", hunk.span.start.line, hunk.span.end.line)
+                },
+                label: None,
+                seen: hunk.seen,
+                folded: false,
+                lines: hunk_lines(hunk, after.as_deref()),
+            }],
+        })],
+        selected: None,
+    }
 }
 
 /// The directory a declared file sits in, as `8b` spells it with a trailing
@@ -5525,6 +5679,68 @@ fn review_dir(path: &Path) -> String {
         .map(|parent| parent.display().to_string())
         .filter(|parent| !parent.is_empty())
         .map_or_else(String::new, |parent| format!("{parent}/"))
+}
+
+/// **A hunk's two sides** (`T066`, OPEN-QUESTIONS.md §59).
+///
+/// * **After** — the region's text *now*, read from the open buffer if the file
+///   is one and from disk if it is not. Nothing stores it; `4b` shows what is
+///   there, which is what makes it a review of the file rather than of a record.
+/// * **Before** — what claude says it replaced, carried on the declaration.
+///
+/// **A hunk with no before-side draws additions only, and `4b` draws one**: its
+/// first hunk is `@@ 4` with one `+` line and no `−` line, because that edit
+/// inserted. So *"claude did not say"* and *"it removed nothing"* look the same
+/// on the screen, which is the truthful reading rather than a fallback.
+fn hunk_lines(hunk: &store::Hunk, after: Option<&str>) -> Vec<phosphor_ui::diff::Line> {
+    use phosphor_ui::diff::{Change, Line};
+
+    let mut lines: Vec<Line> = Vec::new();
+    if let Some(was) = &hunk.was {
+        lines.extend(was.lines().map(|text| Line {
+            change: Change::Removed,
+            text: text.to_owned(),
+        }));
+    }
+    if let Some(after) = after {
+        lines.extend(after.lines().map(|text| Line {
+            change: Change::Added,
+            text: text.to_owned(),
+        }));
+    }
+    lines
+}
+
+/// The buffer's text if one has this path open, disk otherwise (`T066`, §59).
+///
+/// **Buffer first, always** — `AppHost::parse`'s door-side ruling inverted for
+/// a surface that has an editor: a disk read would show a hunk as it was before
+/// your last unsaved keystroke.
+fn text_for(path: &Path, open: &BTreeMap<PathBuf, String>) -> Option<String> {
+    open.get(path)
+        .cloned()
+        .or_else(|| std::fs::read_to_string(path).ok())
+}
+
+/// The text a span covers in `source`, by 1-based line (`T066`).
+///
+/// **Whole lines, because a hunk is whole lines.** §7 tints rows and `4b` draws
+/// rows; a span that starts mid-line names the row it starts on. The end line is
+/// exclusive when the span ends at column 1, which is how a
+/// `start: {line: 5}, end: {line: 6, column: 1}` span means *"line 5"* and not
+/// *"lines 5 and 6"* — the same half-open reading `Span`'s own doc gives.
+fn span_text(source: &str, span: Span) -> String {
+    let first = usize::try_from(span.start.line.saturating_sub(1)).unwrap_or(0);
+    let mut last = usize::try_from(span.end.line.saturating_sub(1)).unwrap_or(0);
+    if span.end.column <= 1 && last > first {
+        last -= 1;
+    }
+    source
+        .lines()
+        .skip(first)
+        .take(last.saturating_sub(first) + 1)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// **Screen `8b`, built out of what the store already holds** (`T065`).
@@ -5546,7 +5762,11 @@ fn review_dir(path: &Path) -> String {
 /// the store has. The `+`/`−` lines are `4b`, and they need the text a hunk
 /// replaced, which nothing records: OPEN-QUESTIONS.md §59. The two are one
 /// screen at two fold depths.
-fn review_vm(store: &store::Shared, review: &Review) -> Option<phosphor_ui::diff::DiffVm> {
+fn review_vm(
+    store: &store::Shared,
+    review: &Review,
+    after: &BTreeMap<PathBuf, String>,
+) -> Option<phosphor_ui::diff::DiffVm> {
     use phosphor_ui::diff::{DiffVm, Entry, File, Group, Hunk};
 
     let block = store
@@ -5580,12 +5800,32 @@ fn review_vm(store: &store::Shared, review: &Review) -> Option<phosphor_ui::diff
             folded: false,
             hunks: mine
                 .iter()
-                .map(|hunk| Hunk {
-                    range: format!("{}–{}", hunk.span.start.line, hunk.span.end.line),
-                    label: None,
-                    seen: hunk.seen,
-                    folded: false,
-                    lines: Vec::new(),
+                .map(|hunk| {
+                    let text = after
+                        .get(&hunk.path)
+                        .map(|source| span_text(source, hunk.span));
+                    Hunk {
+                        // `4b` writes a one-line hunk as `@@ 4` and a run as
+                        // `@@ 6–10`, with an en dash. A range whose two ends are
+                        // the same line is one line.
+                        range: if hunk.span.start.line == hunk.span.end.line
+                            || (hunk.span.end.column <= 1
+                                && hunk.span.end.line == hunk.span.start.line + 1)
+                        {
+                            hunk.span.start.line.to_string()
+                        } else {
+                            format!("{}–{}", hunk.span.start.line, hunk.span.end.line)
+                        },
+                        label: None,
+                        seen: hunk.seen,
+                        // **Seen hunks fold themselves.** `4b` draws
+                        // `@@ 9–14 · tests ⋯ folded · 6 lines  seen ✓` — the
+                        // bulk you have already read collapses, which is §11's
+                        // *"scale is grouping, not scrolling"* applied to your
+                        // own progress rather than to the change's size.
+                        folded: hunk.seen || review.folded.contains(&hunk_key(hunk)),
+                        lines: hunk_lines(hunk, text.as_deref()),
+                    }
                 })
                 .collect(),
         }
@@ -5636,6 +5876,22 @@ fn review_vm(store: &store::Shared, review: &Review) -> Option<phosphor_ui::diff
     })
 }
 
+/// How far to the next file row — `4b`'s `]]` (`T066`).
+///
+/// **Answers `0` at the last file rather than wrapping.** A review is a list you
+/// work down; `]]` off the end that landed back at the top would lose your place
+/// in the one screen whose whole job is keeping it.
+fn next_file_delta(store: &store::Shared, review: &Review) -> i64 {
+    let rows = review_rows(store, review);
+    rows.iter()
+        .enumerate()
+        .skip(review.selected.saturating_add(1))
+        .find(|(_, row)| matches!(row, Some(ReviewRow::File(_))))
+        .map_or(0, |(at, _)| {
+            i64::try_from(at.saturating_sub(review.selected)).unwrap_or(1)
+        })
+}
+
 /// The last selectable row of an open review (`T065`), or `0` when it has none.
 fn review_last_row(store: &store::Shared, review: &Review) -> usize {
     review_rows(store, review).len().saturating_sub(1)
@@ -5662,14 +5918,18 @@ fn review_rows(store: &store::Shared, review: &Review) -> Vec<Option<ReviewRow>>
     let mut at: Option<String> = None;
     for group in &block.groups {
         let dir = review_dir(&group.path);
-        let hunks = store
+        // **A hunk is a row now** (`T066`), and a folded one is one row rather
+        // than none: `4b` draws `@@ 12–24 · retry_with_backoff  ⋯ folded · 13
+        // lines`, which is a row you can land on and unfold.
+        let hunks: Vec<Option<ReviewRow>> = store
             .hunks(review.block)
             .into_iter()
             .filter(|hunk| hunk.group == group.id)
-            .count();
+            .map(|hunk| Some(ReviewRow::Hunk(hunk.id)))
+            .collect();
         if dir.is_empty() || matches!(review.grouping, Grouping::Flat) {
             rows.push(Some(ReviewRow::File(group.id)));
-            rows.extend(std::iter::repeat_n(None, hunks));
+            rows.extend(hunks);
             at = None;
             continue;
         }
@@ -5681,7 +5941,7 @@ fn review_rows(store: &store::Shared, review: &Review) -> Vec<Option<ReviewRow>>
             continue;
         }
         rows.push(Some(ReviewRow::File(group.id)));
-        rows.extend(std::iter::repeat_n(None, hunks));
+        rows.extend(hunks);
     }
     rows
 }
@@ -5730,8 +5990,8 @@ fn block_value(block: &store::Block) -> Value {
                             group
                                 .regions
                                 .iter()
-                                .map(|region| {
-                                    Value::Int(i64::try_from(region.0).unwrap_or(i64::MAX))
+                                .map(|change| {
+                                    Value::Int(i64::try_from(change.region.0).unwrap_or(i64::MAX))
                                 })
                                 .collect(),
                         ),
@@ -7083,6 +7343,13 @@ enum ReviewVerb {
     Select(i64),
     /// Fold or unfold the highlighted row.
     Fold,
+    /// Mark the highlighted row seen — `4b`'s `s`, and `S` with `all` set.
+    Mark {
+        /// Widen to what the row is inside.
+        all: bool,
+    },
+    /// Jump to the next file row — `4b`'s `]]`.
+    NextFile,
 }
 
 /// One key's reading on the review float, or [`None`] to let it through.
@@ -7090,7 +7357,9 @@ enum ReviewVerb {
 enum ReviewKey {
     /// A verb to apply.
     Act(ReviewVerb),
-    /// Consumed and does nothing — the `z` of `za`.
+    /// The first key of a two-key press — the `z` of `za`.
+    Prefix,
+    /// Consumed and does nothing: a prefix abandoned.
     Swallow,
     /// Close the surface.
     Close,
@@ -7103,16 +7372,31 @@ enum ReviewKey {
 /// working over the float. `:annotate` and `:grouping` are the two commands that
 /// only make sense while `8b` is on screen, and a surface that owned every key
 /// would be the one place they could not be typed.
-const fn review_key(key: KeyEvent) -> Option<ReviewKey> {
+const fn review_key(key: KeyEvent, pending: Option<char>) -> Option<ReviewKey> {
+    // **The two-key half, first.** `za` and `]]` are prefixes, and a prefix that
+    // is not held is not a prefix: without `pending` a bare `a` folded and a
+    // single `]` jumped a file, which is two bindings nobody wrote and both of
+    // which a test caught only because it pressed the real sequences.
+    if let Some(held) = pending {
+        return match (held, key.code) {
+            ('z', KeyCode::Char('a')) => Some(ReviewKey::Act(ReviewVerb::Fold)),
+            (']', KeyCode::Char(']')) => Some(ReviewKey::Act(ReviewVerb::NextFile)),
+            // A prefix followed by anything else is abandoned, not replayed —
+            // vim's rule, and the input machine's.
+            _ => Some(ReviewKey::Swallow),
+        };
+    }
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => Some(ReviewKey::Act(ReviewVerb::Select(1))),
         KeyCode::Char('k') | KeyCode::Up => Some(ReviewKey::Act(ReviewVerb::Select(-1))),
-        // `za` is two keys and this is one function, so the `z` is swallowed and
-        // the `a` folds. Two-key sequences are the input machine's job and the
-        // machine is not running over a float — the cost of a Rust keymap, and
-        // why `4a` has only digits.
-        KeyCode::Char('a') => Some(ReviewKey::Act(ReviewVerb::Fold)),
-        KeyCode::Char('z') => Some(ReviewKey::Swallow),
+        KeyCode::Char('z' | ']') => Some(ReviewKey::Prefix),
+        // `4b`'s `s seen · S all`. **`s` here is not the buffer's `gs`** and
+        // does not need to be: over a buffer `s` is vim's substitute, which is
+        // why `T041`'s operator became `gs` in the first place — and inside a
+        // float there is no substitute to collide with, so the mockup's own
+        // letter is free.
+        KeyCode::Char('s') => Some(ReviewKey::Act(ReviewVerb::Mark { all: false })),
+        KeyCode::Char('S') => Some(ReviewKey::Act(ReviewVerb::Mark { all: true })),
         KeyCode::Char('q') => Some(ReviewKey::Close),
         _ => None,
     }
@@ -7120,6 +7404,9 @@ const fn review_key(key: KeyEvent) -> Option<ReviewKey> {
 
 /// The `review` float's surface id — `runtime/review.scm` (`T065`).
 const REVIEW_SURFACE: &str = "review";
+
+/// The `hunk-peek` float's surface id — `runtime/review.scm` (`T066`).
+const PEEK_SURFACE: &str = "hunk-peek";
 
 const DASHBOARD_SURFACE: &str = "dashboard";
 
@@ -7285,6 +7572,8 @@ struct Painted<'a> {
     /// composed for block 3 must not draw block 4 because 4 arrived later. The
     /// same reasoning `Resources::ask` records one task earlier.
     review: Option<(BlockId, &'a phosphor_ui::diff::DiffVm)>,
+    /// `T066`'s peek, the same shape one level down — see [`Painted::review`].
+    peek: Option<(HunkId, &'a phosphor_ui::diff::DiffVm)>,
 }
 
 impl<'a> Overlay<'a> {
@@ -7366,12 +7655,20 @@ impl Resources for Painted<'_> {
     /// and `Hunk` needs the peek `T066` builds. A composition naming one of
     /// them today gets an empty body rather than the wrong diff.
     fn diff(&self, source: &DiffSource) -> Option<&phosphor_ui::diff::DiffVm> {
-        let DiffSource::ReviewBlock { block } = source else {
-            return None;
-        };
-        self.review
-            .filter(|(open, _)| open == block)
-            .map(|(_, vm)| vm)
+        match source {
+            DiffSource::ReviewBlock { block } => self
+                .review
+                .filter(|(open, _)| open == block)
+                .map(|(_, vm)| vm),
+            // `T066`. `Hunk` is `2b`'s: one hunk, keyed the same way — a peek
+            // composed for hunk 3 must draw hunk 3 when a fourth is marked seen
+            // behind it, not whichever peek happens to be open.
+            DiffSource::Hunk { hunk } => {
+                self.peek.filter(|(open, _)| open == hunk).map(|(_, vm)| vm)
+            }
+            // `Disk` (`T070`) and `Change` (`T073`) — neither store exists.
+            DiffSource::Disk { .. } | DiffSource::Change { .. } => None,
+        }
     }
 }
 
@@ -7435,6 +7732,8 @@ struct Overlay<'a> {
     asks: &'a BTreeMap<AskId, phosphor_ui::question::QuestionVm>,
     /// `T065`'s review rows, already built — see [`Painted::review`].
     review: Option<(BlockId, &'a phosphor_ui::diff::DiffVm)>,
+    /// `T066`'s peek, already built — see [`Painted::peek`].
+    peek: Option<(HunkId, &'a phosphor_ui::diff::DiffVm)>,
     /// This frame's reading of the app clock (`T050`).
     ///
     /// The whole animation budget: `Node::Spinner` and `Node::Elapsed` render
@@ -7495,6 +7794,7 @@ fn draw(
         transcript: overlay.transcript,
         asks: overlay.asks,
         review: overlay.review,
+        peek: overlay.peek,
     };
 
     // **§8's degradation, asked for once for the whole tree.** It reached
@@ -8361,6 +8661,14 @@ struct Review {
     folded: BTreeSet<String>,
     /// Directory rows, or one flat list — `8d`'s answer at 80 columns.
     grouping: Grouping,
+    /// The first key of a two-key press, if one is waiting (`T066`).
+    ///
+    /// **A one-character input machine, and the cost of a Rust keymap.** `za`
+    /// and `]]` are both two keys; the real machine is not running over a float
+    /// (see [`review_key`]), so this is the whole of what it would have
+    /// provided. Without it a bare `a` folded and a single `]` jumped, which is
+    /// two bindings nobody wrote.
+    pending: Option<char>,
 }
 
 /// cannot be born without one.
@@ -8490,6 +8798,15 @@ struct Shell {
     /// `set-picker-query` and `toggle-picker-preview` act on it, and `esc`
     /// drops it.
     picker: Option<PickerSession>,
+    /// The open hunk peek, if one is (`T066`) — `2b`, a float three lines
+    /// tall over one hunk.
+    ///
+    /// **Separate from [`Shell::review`] and not a case of it.** A review is a
+    /// list you walk; a peek is one hunk anchored to where the cursor was —
+    /// `gh` opens it without leaving the buffer, and `2b`'s own caption is
+    /// *"what claude changed here"*. Sharing the type would give a peek a
+    /// `selected` and a `folded` set it has no rows to spend them on.
+    peek: Option<HunkId>,
     /// The open review surface, if one is (`T065`).
     ///
     /// **`8b` and `4b` are one surface at two fold depths**, which the mockups
@@ -10832,14 +11149,22 @@ impl Editing {
                 };
                 let rows = review_rows(&cx.shell.store, review);
                 let at = usize::try_from(row.saturating_sub(1)).unwrap_or(0);
-                let Some(Some(ReviewRow::Dir(dir))) = rows.get(at).cloned() else {
-                    return declined("nothing to fold there — a directory folds");
+                // **A directory and a hunk both fold, and a file row does
+                // not.** `4b`'s `za` collapses a hunk to
+                // `⋯ folded · 13 lines`; `8b`'s collapses a directory. A file
+                // row sits between them with nothing of its own to hide — its
+                // hunks are rows in their own right, so folding it would be
+                // folding each of them at once under a different name.
+                let key = match rows.get(at).cloned() {
+                    Some(Some(ReviewRow::Dir(dir))) => dir,
+                    Some(Some(ReviewRow::Hunk(hunk))) => format!("hunk:{}", hunk.0),
+                    _ => return declined("nothing to fold there"),
                 };
                 let Some(review) = cx.shell.review.as_mut() else {
                     return declined("no float with folds is focused");
                 };
-                if !review.folded.insert(dir.clone()) {
-                    review.folded.remove(&dir);
+                if !review.folded.insert(key.clone()) {
+                    review.folded.remove(&key);
                 }
                 // **The selection is clamped after the fold, not before.**
                 // Closing a group takes rows away, and a highlight left past
@@ -10873,6 +11198,94 @@ impl Editing {
                     declined("no such group")
                 }
             }
+            // **`T066` — `4b`'s `s seen · S all`, aimed at whatever row you are
+            // on.**
+            //
+            // **A float verb, and the row is resolved here rather than passed
+            // in** — `float-answer`'s ruling, in its own words: *"a digit that
+            // carried an ask id would be a digit that could answer a question
+            // you are not looking at"*. The same is true of a key that carried
+            // a hunk id.
+            //
+            // One verb, three scopes, and the row decides which: a hunk marks
+            // itself, a file marks its hunks, a directory marks everything under
+            // it. That is *"`s`/`S` compose over any group"* read as a sentence
+            // about the *screen* rather than about the vocabulary — the
+            // vocabulary already composed at `T064`, and this is where a person
+            // gets to say it.
+            Action::Float(FloatAction::FloatMark { all, seen }) => {
+                let Some(review) = cx.shell.review.as_ref() else {
+                    return declined("no review is open");
+                };
+                let rows = review_rows(&cx.shell.store, review);
+                let state = if *seen {
+                    SeenState::Seen
+                } else {
+                    SeenState::Unseen
+                };
+                // **`S` is one level wider than `s`, whatever the row is.**
+                //
+                // Hunk → its file, file → its directory, directory → the block.
+                // Both footers read that way: `4b` draws `s seen · S all` beside
+                // a *hunk*, where one level out is the file; `8b` draws
+                // `S here marks all 12` beside a *directory*. A single fixed
+                // meaning — "the block", say — would make `S` on a hunk row do
+                // the same thing as `S` on a directory row, which is a key that
+                // stops telling you where you are.
+                let all_hunks = cx.shell.store.hunks(review.block);
+                let of = |ids: Vec<RegionId>| RegionScope::These(ids);
+                let in_dir = |dir: &str| {
+                    all_hunks
+                        .iter()
+                        .filter(|hunk| review_dir(&hunk.path) == dir)
+                        .map(|hunk| store::Hunk::region_of(hunk.id))
+                        .collect::<Vec<RegionId>>()
+                };
+                let scope = match rows.get(review.selected).cloned() {
+                    Some(Some(ReviewRow::Hunk(hunk))) if !*all => {
+                        RegionScope::One(store::Hunk::region_of(hunk))
+                    }
+                    Some(Some(ReviewRow::Hunk(hunk))) => {
+                        let Some(group) = all_hunks
+                            .iter()
+                            .find(|it| it.id == hunk)
+                            .map(|it| it.group)
+                            .and_then(|group| cx.shell.store.group_regions(group))
+                        else {
+                            return declined("no group here");
+                        };
+                        of(group)
+                    }
+                    Some(Some(ReviewRow::File(group))) if !*all => {
+                        let Some(ids) = cx.shell.store.group_regions(group) else {
+                            return declined("no such group");
+                        };
+                        of(ids)
+                    }
+                    Some(Some(ReviewRow::File(group))) => {
+                        let dir = all_hunks
+                            .iter()
+                            .find(|hunk| hunk.group == group)
+                            .map(|hunk| review_dir(&hunk.path))
+                            .unwrap_or_default();
+                        of(in_dir(&dir))
+                    }
+                    Some(Some(ReviewRow::Dir(dir))) if !*all => of(in_dir(&dir)),
+                    Some(Some(ReviewRow::Dir(_))) => {
+                        let Some(ids) = cx.shell.store.block_regions(review.block) else {
+                            return declined("no such block");
+                        };
+                        of(ids)
+                    }
+                    _ => return declined("nothing to mark on this row"),
+                };
+                let marked = cx.shell.store.set_seen(&scope, state);
+                Outcome::Done(Receipt {
+                    capability: name,
+                    value: Value::Int(i64::try_from(marked).unwrap_or(0)),
+                    note: (marked == 0).then(|| "no region here".to_owned()),
+                })
+            }
             // `T065`. `8d`'s answer at 80 columns: the same files without the
             // group rows. A setting on the open surface rather than a prop
             // rewritten into the float, because the float is a snapshot and
@@ -10886,10 +11299,11 @@ impl Editing {
                 review.selected = review.selected.min(last);
                 done()
             }
-            // `T066`'s verb, armed here because `T065`'s acceptance is that
-            // `8b` is *navigable* and a screen nothing opens is not. What `T066`
-            // adds is `4b`'s hunk lines and `2b`'s peek — the two things that
-            // need a before-side (OPEN-QUESTIONS.md §59) — not the surface.
+            // `T066`'s verb, armed at `T065` because `8b`'s acceptance was
+            // *navigable* and a screen nothing opens is not. `T066` built the
+            // two things that needed the before-side this arm's block did not
+            // — `4b`'s hunk lines and `2b`'s peek (OPEN-QUESTIONS.md §59) —
+            // not the surface, which was already here.
             Action::Review(phosphor_core::action::ReviewAction::OpenReviewBlock { block }) => {
                 // **Absent means the newest**, and that is `defer-ask`'s ruling
                 // rather than a convenience: an id is what a *door* names, and a
@@ -10911,11 +11325,18 @@ impl Editing {
                 if cx.shell.store.block_regions(block).is_none() {
                     return declined("no such block");
                 }
+                // **One surface, one session**, the way §9 gives floats one
+                // slot: without this, opening the review while a peek was still
+                // recorded left `shell.peek` set on a screen no longer showing
+                // it, and the `s` handler below reads whichever session's guard
+                // matches first.
+                cx.shell.peek = None;
                 cx.shell.review = Some(Review {
                     block,
                     selected: 0,
                     folded: BTreeSet::new(),
                     grouping: Grouping::Directory,
+                    pending: None,
                 });
                 // **The session and the float are two things and the verb does
                 // both.** Setting the session alone left `:review` resolving,
@@ -10935,6 +11356,50 @@ impl Editing {
                 // *showing*, so a `:review` typed bare keeps drawing that block
                 // when a newer one arrives behind it.
                 self.float = Some((REVIEW_SURFACE.to_owned(), Value::Record(args)));
+                done()
+            }
+            // `T066` — `gh`'s screen, `2b`. One hunk, no rows, no chrome: the
+            // float is three lines tall and closes on `esc` like any other, so
+            // it needs no entry in `review_key`'s machinery — only `s` inside
+            // it does anything beyond what every float already has, and `s`
+            // is `mark-seen` with an explicit target, which `T041` already
+            // built.
+            //
+            // **The target resolves here, not in scheme**, for `open-review-
+            // block`'s reason exactly: `Target::Cursor` needs the editor, and a
+            // door has none. `review_scope` answers the two spellings that do
+            // not — `Target::Hunk` and `Target::Region` — so an agent naming a
+            // hunk it already knows about is the same call as `gh`.
+            Action::Review(phosphor_core::action::ReviewAction::OpenHunkPeek { target }) => {
+                let hunk = match target {
+                    Target::Hunk { id } => cx.shell.store.hunk_of(store::Hunk::region_of(*id)),
+                    Target::Region { id } => cx.shell.store.hunk_of(*id),
+                    Target::Cursor {} | Target::Selection {} | Target::Buffer { .. } => {
+                        let Some(path) = self.file.clone() else {
+                            return declined("no file open — name a hunk");
+                        };
+                        let at = self.text(cx).cursor();
+                        cx.shell.store.hunk_near(&path, at)
+                    }
+                    other => {
+                        return declined(&format!(
+                            "{} names no hunk",
+                            other.to_value().tag().unwrap_or("that")
+                        ));
+                    }
+                };
+                let Some(hunk) = hunk else {
+                    return declined("no hunk here");
+                };
+                // The other half of the same rule.
+                cx.shell.review = None;
+                cx.shell.peek = Some(hunk.id);
+                let mut args = Args::new();
+                args.set(
+                    "hunk",
+                    Value::Int(i64::try_from(hunk.id.0).unwrap_or(i64::MAX)),
+                );
+                self.float = Some((PEEK_SURFACE.to_owned(), Value::Record(args)));
                 done()
             }
             Action::Float(FloatAction::FloatSelect { delta }) => {
@@ -13806,6 +14271,15 @@ const fn closes_surface(key: KeyEvent, surface: Surface) -> bool {
         // grid is not a text input, so `q` is not a character you are typing.
         // `esc` still closes, because §9's `esc` always does.
         Surface::Help => matches!(key.code, KeyCode::Esc | KeyCode::Char('q')),
+        // `T066`. `2b` draws `q close` in its footer, and it is `q` for
+        // `Surface::Help`'s reason: a door-opened float's body is read, never
+        // typed into, so `q` is not a character a person could be entering. The
+        // review float's own `q` was Rust-side already (`review_key` swallows
+        // every key while it holds the surface, and had to intercept `q` before
+        // this ever ran); giving every `Surface::Float` the same key once is
+        // what `T086`'s help grid already proved and `2b` needed a second time
+        // to become a rule instead of a one-off.
+        Surface::Float => matches!(key.code, KeyCode::Esc | KeyCode::Char('q')),
         _ => matches!(key.code, KeyCode::Esc),
     }
 }
@@ -14964,6 +15438,7 @@ mod tests {
         Shell {
             store: Arc::new(store::Shared::default()),
             review: None,
+            peek: None,
             asks: BTreeMap::new(),
             next_ask: Arc::new(std::sync::Mutex::new(1)),
             held: BTreeMap::new(),
@@ -17711,6 +18186,7 @@ mod tests {
             editors: &editors,
             columns: &columns,
             review: None,
+            peek: None,
             completion: None,
             signature: None,
             picker: None,

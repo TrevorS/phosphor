@@ -87,8 +87,22 @@ pub(crate) struct Group {
     /// Claude's own annotation for this group — `8b`'s *"mechanical"* versus
     /// *"the meat"*.
     pub(crate) annotation: Option<String>,
-    /// The regions this group declared.
-    pub(crate) regions: Vec<RegionId>,
+    /// The regions this group declared, each with what it replaced (`T066`).
+    pub(crate) regions: Vec<Change>,
+}
+
+/// One declared region and the text it replaced (`T066`).
+///
+/// **The before-side of a hunk, and the only place it lives.** The after-side is
+/// read live — the region's text now — so this is not a copy of anything the
+/// store also holds. OPEN-QUESTIONS.md §59 rules why it is claude's to state and
+/// why carrying it does not make a block a snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Change {
+    /// The region the span became.
+    pub(crate) region: RegionId,
+    /// What was there before, verbatim. [`None`] means it removed nothing.
+    pub(crate) was: Option<String>,
 }
 
 /// **A hunk is a region, and this is the type that says so once** (`T064`).
@@ -106,14 +120,21 @@ pub(crate) struct Group {
 /// first time a rewrite moved a span. The block's own doc already made this
 /// ruling for spans — *"a block holds ids, not spans"* — and this is the same
 /// ruling one noun further out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// **No longer `Copy`** — it carries the before-side, which is a `String`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Hunk {
     /// Which hunk — the region's id, read as a hunk.
     pub(crate) id: HunkId,
     /// Which group it belongs to.
     pub(crate) group: GroupId,
+    /// Which file it is in, so a caller can read the after-side (`T066`).
+    pub(crate) path: PathBuf,
     /// Where it is, so a caller can jump to it without a second query.
     pub(crate) span: Span,
+    /// The text it replaced, if claude said (`T066`, §59). [`None`] means it
+    /// removed nothing.
+    pub(crate) was: Option<String>,
     /// Whether it has been read.
     pub(crate) seen: bool,
 }
@@ -310,26 +331,43 @@ impl Shared {
             .iter()
             .map(|file| {
                 let id = self.mint_group();
-                let specs: Vec<RegionSpec> = file
+                // **One `declare` per *span* now, not per group.** The reason is
+                // the one this doc already gives, one level finer: [`Declared`]
+                // reports ids without saying which spec produced them, and
+                // `T066` needs each region paired with the text *its* span
+                // replaced. Per group that ambiguity did not arise between
+                // files; per span it does not arise at all.
+                //
+                // The cost is one lock per span instead of one per file, on a
+                // path an agent takes once at the end of a turn.
+                let regions: Vec<Change> = file
                     .spans
                     .iter()
-                    .map(|span| RegionSpec {
-                        path: file.path.clone(),
-                        span: *span,
-                        author: asked_by,
+                    .flat_map(|changed| {
+                        let declared = self.declare(
+                            &[RegionSpec {
+                                path: file.path.clone(),
+                                span: changed.span,
+                                author: asked_by,
+                            }],
+                            asked_by,
+                        );
+                        declared
+                            .created
+                            .iter()
+                            .chain(&declared.revised)
+                            .map(|region| Change {
+                                region: *region,
+                                was: changed.was.clone(),
+                            })
+                            .collect::<Vec<_>>()
                     })
                     .collect();
-                let declared = self.declare(&specs, asked_by);
                 Group {
                     id,
                     path: key_for(&file.path),
                     annotation: file.annotation.clone(),
-                    regions: declared
-                        .created
-                        .iter()
-                        .chain(&declared.revised)
-                        .copied()
-                        .collect(),
+                    regions,
                 }
             })
             .collect();
@@ -368,6 +406,16 @@ impl Shared {
     /// these files in this order and the surface should not resort them behind
     /// its back.
     ///
+    /// **Built from this block's own groups, not through [`Shared::hunk_of`],
+    /// and that is load-bearing rather than a style choice.** A region two
+    /// blocks both declared — the same span, redeclared — is ambiguous about
+    /// *which* group it belongs to once you have only the region id, which is
+    /// exactly the question `hunk_of`'s global scan answers by *"whichever
+    /// block declared it first"*. That answer is wrong here: `hunks(second)`
+    /// asking for the group a region is in *for this block* has a real answer
+    /// — `second`'s own group — and a test caught the difference the first
+    /// time two blocks shared a span.
+    ///
     /// A region a block named and something later dropped is **skipped rather
     /// than reported unseen**. `unseen` is a fact about a marker, and a marker
     /// that is gone has no facts — reporting a default would put a row on `4b`
@@ -387,17 +435,99 @@ impl Shared {
         groups
             .iter()
             .flat_map(|group| {
-                group.regions.iter().filter_map(|id| {
-                    let region = store.regions().in_scope(&Scope::One(*id)).next().cloned()?;
+                group.regions.iter().filter_map(|change| {
+                    let region = store
+                        .regions()
+                        .in_scope(&Scope::One(change.region))
+                        .next()
+                        .cloned()?;
                     Some(Hunk {
                         id: Hunk::id_of(region.id),
                         group: group.id,
+                        path: region.path.clone(),
                         span: region.span,
+                        was: change.was.clone(),
                         seen: !region.state.unseen(),
                     })
                 })
             })
             .collect()
+    }
+
+    /// **One hunk, by the region it is** — `2b`'s peek (`T066`).
+    ///
+    /// **Global, and that is a real narrowing this function accepts.** Given
+    /// only a region id and no block to scope the search, *"which group is
+    /// this in"* is ambiguous exactly when two blocks declared the same span —
+    /// [`Shared::hunks`]'s own doc explains why that case needs the block. A
+    /// peek has an id from the cursor or from an agent's call and genuinely has
+    /// no block in mind, so it takes the first declaring block's answer, the
+    /// same convention [`Shared::covering`]'s lowest-id rule states for a
+    /// parallel ambiguity.
+    ///
+    /// [`None`] for a region no block ever declared — the same *"not a hunk"*
+    /// reading [`Shared::hunk_covering`] gives `vih`.
+    pub(crate) fn hunk_of(&self, region: RegionId) -> Option<Hunk> {
+        let (group, was) = {
+            let blocks = self
+                .blocks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            blocks
+                .iter()
+                .flat_map(|block| block.groups.iter())
+                .find_map(|group| {
+                    group
+                        .regions
+                        .iter()
+                        .find(|change| change.region == region)
+                        .map(|change| (group.id, change.was.clone()))
+                })?
+        };
+        let row = self
+            .lock()
+            .regions()
+            .in_scope(&Scope::One(region))
+            .next()
+            .cloned()?;
+        Some(Hunk {
+            id: Hunk::id_of(row.id),
+            group,
+            path: row.path,
+            span: row.span,
+            was,
+            seen: !row.state.unseen(),
+        })
+    }
+
+    /// The hunk at a position, whole — `2b`'s `gh` (`T066`).
+    ///
+    /// [`Shared::hunk_covering`] answers the span `vih` selects; this answers
+    /// the row a peek is built from, at the cost of the extra lookup
+    /// [`Shared::hunk_of`] does. Lowest-id for [`Shared::covering`]'s reason.
+    pub(crate) fn hunk_near(&self, path: &Path, at: Position) -> Option<Hunk> {
+        let key = key_for(path);
+        let declared: Vec<RegionId> = {
+            let blocks = self
+                .blocks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            blocks
+                .iter()
+                .flat_map(|block| block.groups.iter())
+                .flat_map(|group| group.regions.iter().map(|change| change.region))
+                .collect()
+        };
+        let region = self
+            .lock()
+            .regions()
+            .in_scope(&Scope::Span {
+                path: key,
+                span: Span { start: at, end: at },
+            })
+            .find(|region| declared.contains(&region.id))
+            .map(|region| region.id)?;
+        self.hunk_of(region)
     }
 
     /// The regions a block's id names (`T064`) — `8b`'s `S here marks all 12`.
@@ -416,7 +546,7 @@ impl Shared {
             found
                 .groups
                 .iter()
-                .flat_map(|group| group.regions.iter().copied())
+                .flat_map(|group| group.regions.iter().map(|change| change.region))
                 .collect(),
         )
     }
@@ -461,7 +591,7 @@ impl Shared {
             .iter()
             .flat_map(|block| block.groups.iter())
             .find(|candidate| candidate.id == group)
-            .map(|found| found.regions.clone())
+            .map(|found| found.regions.iter().map(|change| change.region).collect())
     }
 
     /// The span of the lowest-id hunk covering a position (`T064`).
@@ -484,7 +614,7 @@ impl Shared {
             blocks
                 .iter()
                 .flat_map(|block| block.groups.iter())
-                .flat_map(|group| group.regions.iter().copied())
+                .flat_map(|group| group.regions.iter().map(|change| change.region))
                 .collect()
         };
         let key = key_for(path);
@@ -815,6 +945,14 @@ mod tests {
         }
     }
 
+    /// A changed span with no before-side — `4b`'s `@@ 4`, a pure insertion.
+    fn changed(from: u32, to: u32) -> phosphor_core::request::ChangedSpan {
+        phosphor_core::request::ChangedSpan {
+            span: span(from, to),
+            was: None,
+        }
+    }
+
     fn claude(path: &str) -> RegionSpec {
         RegionSpec {
             path: path.into(),
@@ -830,7 +968,14 @@ mod tests {
                 "retry logic",
                 &[phosphor_core::request::FileGroup {
                     path: "src/fetch.rs".into(),
-                    spans: vec![span(1, 2), span(5, 6), span(9, 10)],
+                    spans: vec![
+                        changed(1, 2),
+                        phosphor_core::request::ChangedSpan {
+                            span: span(5, 6),
+                            was: Some("    let resp = client.get(url).send()?;\n".to_owned()),
+                        },
+                        changed(9, 10),
+                    ],
                     annotation: Some("the meat".to_owned()),
                 }],
                 None,
@@ -850,7 +995,7 @@ mod tests {
         assert_eq!(before.len(), 3, "three spans declared, three hunks");
         assert!(before.iter().all(|hunk| !hunk.seen), "{before:?}");
 
-        let one = before[1];
+        let one = before[1].clone();
         let marked = shared.set_seen(&Scope::One(Hunk::region_of(one.id)), SeenState::Seen);
         assert_eq!(marked, 1, "one region in scope, not three");
 
@@ -926,6 +1071,65 @@ mod tests {
         );
     }
 
+    /// **A region two blocks both declared is a real case, and `hunks` and
+    /// `hunk_of` answer it differently on purpose.**
+    ///
+    /// Found by `group_ids_are_minted_across_blocks_not_within_one`: a first
+    /// version of `hunks(block)` went through `hunk_of`'s global scan, and a
+    /// region two blocks shared came back attributed to whichever block
+    /// declared it *first* — for both blocks' queries. `hunks(second)` has
+    /// `second`'s own group in scope and does not need to guess; `hunk_of`
+    /// takes an id with no block behind it and has nothing better than a
+    /// convention.
+    #[test]
+    fn a_shared_region_belongs_to_each_blocks_own_group_and_to_the_first_for_hunk_of() {
+        let shared = Shared::default();
+        let first = shared
+            .declare_block(
+                "retry logic",
+                &[phosphor_core::request::FileGroup {
+                    path: "src/fetch.rs".into(),
+                    spans: vec![changed(1, 2)],
+                    annotation: None,
+                }],
+                None,
+                Actor::Claude,
+            )
+            .id;
+        // The same span, redeclared under a second block.
+        let second = shared
+            .declare_block(
+                "second pass",
+                &[phosphor_core::request::FileGroup {
+                    path: "src/fetch.rs".into(),
+                    spans: vec![changed(1, 2)],
+                    annotation: None,
+                }],
+                None,
+                Actor::Claude,
+            )
+            .id;
+
+        let via_first = shared.hunks(first);
+        let via_second = shared.hunks(second);
+        assert_eq!(via_first.len(), 1);
+        assert_eq!(via_second.len(), 1);
+        assert_eq!(via_first[0].id, via_second[0].id, "one region, one hunk id");
+        assert_ne!(
+            via_first[0].group, via_second[0].group,
+            "but each block reports its own group for it"
+        );
+
+        // `hunk_of` has no block to ask and takes the first declaring one —
+        // stated as a convention in its own doc, and pinned here so a change to
+        // it is a decision rather than a drift.
+        let region = Hunk::region_of(via_first[0].id);
+        assert_eq!(
+            shared.hunk_of(region).map(|h| h.group),
+            Some(via_first[0].group)
+        );
+    }
+
     /// **`T065`'s verb.** Claude revises a group's annotation, and clearing it
     /// is a thing you can do.
     #[test]
@@ -994,7 +1198,7 @@ mod tests {
         let at = Position { line: 5, column: 1 };
         assert!(shared.unseen_covering(path, at).is_some());
 
-        let one = shared.hunks(id)[1];
+        let one = shared.hunks(id)[1].clone();
         shared.set_seen(&Scope::One(Hunk::region_of(one.id)), SeenState::Seen);
 
         assert_eq!(

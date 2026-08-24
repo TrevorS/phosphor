@@ -1160,7 +1160,12 @@
  (list
   (list "K" (key/run (key/cmd "request-hover")) "what is this")
   (list "gd" (key/run (key/cmd "request-definition")) "go to the definition")
-  (list "gr" (key/run (key/cmd "request-references")) "what uses this")))
+  (list "gr" (key/run (key/cmd "request-references")) "what uses this")
+  ;; `T066` — `2b`, without leaving the buffer. at the cursor rather than a
+  ;; typed id, the same reading `gd`/`gr`/`K` already give `g` — ask about
+  ;; the thing under the cursor.
+  (list "gh" (key/run (key/cmd "open-hunk-peek" "target" (key/at-cursor)))
+        "peek at this hunk")))
 
 ;; ---------------------------------------------------------------------------
 ;; the leader tree — screen 3c

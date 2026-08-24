@@ -193,6 +193,7 @@ S7 T065 annotate-group
 S7 T065 float-toggle-fold
 S7 T065 set-diff-grouping
 S7 T066 expand-diff-context
+S7 T066 float-mark
 S7 T066 open-hunk-peek
 S7 T066 open-review-block
 S7 T066 review-block

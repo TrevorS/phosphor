@@ -4273,8 +4273,14 @@ mod driven {
         // Claude has been busy: one review block over two spans in this file,
         // declared through the registry the same way `T053`'s test does.
         editor.press_until(b":repl\r", "steel");
+        // A record per span (`T066`, §59): where it is, and what it replaced.
         let form = format!(
-            "(declare-review-block! \"retry logic\" (list (hash \"path\" \"{}\"              \"spans\" (list (hash \"start\" (hash \"line\" 1 \"column\" 1)              \"end\" (hash \"line\" 2 \"column\" 1))              (hash \"start\" (hash \"line\" 3 \"column\" 1)              \"end\" (hash \"line\" 4 \"column\" 1)))              \"annotation\" \"the meat\")) \"the whole change\")\r",
+            "(declare-review-block! \"retry logic\" (list (hash \"path\" \"{}\" \
+             \"spans\" (list (hash \"span\" (hash \"start\" (hash \"line\" 1 \"column\" 1) \
+             \"end\" (hash \"line\" 2 \"column\" 1))) \
+             (hash \"span\" (hash \"start\" (hash \"line\" 3 \"column\" 1) \
+             \"end\" (hash \"line\" 4 \"column\" 1)))) \
+             \"annotation\" \"the meat\")) \"the whole change\")\r",
             file.display()
         );
         editor.press_until(form.as_bytes(), "the whole change");
@@ -4516,10 +4522,20 @@ mod driven {
         let editor = Editor::open(&file, &scratch.state(), &runtime);
         editor.press_until(b":repl\r", "steel");
 
-        let span = |from: u32, to: u32| {
+        // **A changed span carries what it replaced** (`T066`, §59). `was`
+        // absent is a pure insertion, which `4b` draws as `+` lines and no `−`.
+        let span = |from: u32, to: u32, was: &str| {
+            // **Absent, not `#false`.** An `Option<String>` on the wire is a
+            // field that is *there* or *is not*; `#false` is a boolean and the
+            // decoder says so — `expected text, found bool`.
+            let replaced = if was.is_empty() {
+                String::new()
+            } else {
+                format!(" \"was\" \"{was}\"")
+            };
             format!(
-                "(hash \"start\" (hash \"line\" {from} \"column\" 1) \
-                 \"end\" (hash \"line\" {to} \"column\" 1))"
+                "(hash \"span\" (hash \"start\" (hash \"line\" {from} \"column\" 1) \
+                 \"end\" (hash \"line\" {to} \"column\" 1)){replaced})"
             )
         };
         let form = format!(
@@ -4528,10 +4544,10 @@ mod driven {
                    (hash \"path\" \"{}\" \"spans\" (list {}) \"annotation\" \"mechanical\")) \
              \"the whole change\")\r",
             file.display(),
-            span(1, 2),
-            span(5, 6),
+            span(1, 2, ""),
+            span(5, 6, "was five"),
             other.display(),
-            span(3, 4),
+            span(3, 4, ""),
         );
         editor.press_until(form.as_bytes(), "the whole change");
         editor.press_until(b"(close-repl!)\r", "review ready");
@@ -4564,9 +4580,37 @@ mod driven {
             body.contains("retry.txt  ●1  mechanical"),
             "and its neighbour is under the same directory:\n{body}"
         );
+        // **`@@ 1`, not `@@ 1–2`.** A span from line 1 to line 2 column 1 is
+        // half-open and covers one line — `Span`'s own reading — and `4b`
+        // writes a one-line hunk as `@@ 4`.
         assert!(
-            body.contains("@@ 1–2") && body.contains("@@ 5–6"),
+            body.contains("@@ 1") && body.contains("@@ 5"),
             "and the hunks are under the file:\n{body}"
+        );
+
+        // **`T066`, §59: the two sides.** The after-side is the file's text
+        // *now*, read live; the before-side is what claude said it replaced.
+        assert!(
+            body.contains("− was five"),
+            "what claude replaced is a minus:\n{body}"
+        );
+        assert!(
+            body.contains("+ five"),
+            "and what is there now is a plus:\n{body}"
+        );
+        // **A hunk that replaced nothing draws no minus**, which `4b` draws
+        // too: its `@@ 4` is one `+` line and no `−` at all. So *"claude did
+        // not say"* and *"it removed nothing"* look identical, which is the
+        // truthful reading rather than a fallback.
+        let inserted = body
+            .lines()
+            .skip_while(|row| !row.contains("@@ 1"))
+            .nth(1)
+            .unwrap_or_default()
+            .to_owned();
+        assert!(
+            inserted.contains("+ one") && !inserted.contains('−'),
+            "a pure insertion is additions only: {inserted:?}"
         );
         // `8b`'s footer, spelled whole — Design Language §6.
         assert!(body.contains("za"), "the footer teaches the keys:\n{body}");
@@ -4652,6 +4696,328 @@ mod driven {
         editor.leave_by(b"ZQ");
     }
 
+    /// **`4b`'s after-side is the buffer, not the disk copy** (`T066`, §59).
+    ///
+    /// A hunk with an unsaved edit under it shows what is on screen, not what
+    /// was last written — the same ruling `AppHost::parse` makes for anchors
+    /// applied here, where the two can actually differ.
+    #[test]
+    fn a_hunks_after_side_is_the_open_buffer_not_the_disk_copy() {
+        let scratch = Scratch::new("review-live");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("fetch.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let form = format!(
+            "(declare-review-block! \"retry logic\" \
+             (list (hash \"path\" \"{}\" \"spans\" \
+                   (list (hash \"span\" (hash \"start\" (hash \"line\" 2 \"column\" 1) \
+                                          \"end\" (hash \"line\" 3 \"column\" 1)))))) \
+             \"one region\")\r",
+            file.display()
+        );
+        editor.press_until(form.as_bytes(), "one region");
+        editor.press_until(b"(close-repl!)\r", "review ready");
+
+        // Edit line 2 without saving — the buffer and the disk copy now
+        // disagree, and only one of them is what the review is *of*.
+        editor.press_quietly(b"gg");
+        editor.press_quietly(b"jcc");
+        editor.press_quietly(b"UNSAVED\x1b");
+
+        let opened = whole(&editor.shown_on_grid(b":review\r", "review — ✻ retry logic"));
+        assert!(
+            opened.contains("+ UNSAVED"),
+            "the hunk shows the unsaved edit:\n{opened}"
+        );
+        assert!(
+            !opened.contains("+ two"),
+            "and not the line that is only on disk:\n{opened}"
+        );
+
+        editor.press_quietly(b"q");
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **One surface, one session — `gh` while a review is open closes it.**
+    ///
+    /// A probe found this before a test did: keys `review_key` does not name
+    /// fall through to the buffer's own keymap even while a float holds the
+    /// screen, so `gh` fires with the review still open. If `shell.review`
+    /// stayed set, the next `s` would read the review's selected row instead of
+    /// the peek's hunk — which is `4b`'s `S`, not `2b`'s `s`, answering a key
+    /// pressed on `2b`'s screen.
+    #[test]
+    fn opening_a_peek_while_a_review_is_open_replaces_it_not_layers_it() {
+        let scratch = Scratch::new("one-session");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("fetch.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\nsix\nseven\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        // **Two hunks, on purpose.** With one, marking through the review's
+        // stale session and marking through the peek land on the same region —
+        // indistinguishable. `s` on the review's `selected` row (a directory,
+        // row 0) marks *every* hunk under it; `s` on the peek marks only the
+        // one it opened. The first version of this test had one hunk and could
+        // not tell the two paths apart — a bug that fails to fail is worse
+        // than no test.
+        let form = format!(
+            "(declare-review-block! \"retry logic\" \
+             (list (hash \"path\" \"{}\" \"spans\" \
+                   (list (hash \"span\" (hash \"start\" (hash \"line\" 2 \"column\" 1) \
+                                          \"end\" (hash \"line\" 3 \"column\" 1))) \
+                         (hash \"span\" (hash \"start\" (hash \"line\" 5 \"column\" 1) \
+                                          \"end\" (hash \"line\" 6 \"column\" 1)))))) \
+             \"two regions\")\r",
+            file.display()
+        );
+        editor.press_until(form.as_bytes(), "two regions");
+        editor.press_until(b"(close-repl!)\r", "review ready");
+
+        // Cursor onto the *second* hunk (line 5) before the review opens — the
+        // review's own navigation does not move the buffer's cursor, and its
+        // `selected` starts at row 0, the directory — a different row entirely.
+        editor.press_quietly(b"gg");
+        editor.press_quietly(b"4j");
+        editor.press_quietly(b":review\r");
+        let opened = whole(&editor.screen());
+        assert!(
+            opened.contains("]] next file"),
+            "the review is the screen right now, selected at row 0:\n{opened}"
+        );
+
+        // `gh`, with the review still recorded as open.
+        let peeked = whole(&editor.shown_on_grid(b"gh", "claude changed"));
+        assert!(
+            !peeked.contains("]] next file"),
+            "the review's footer is gone — it was replaced, not layered:\n{peeked}"
+        );
+        assert!(
+            peeked.contains("@@ 5"),
+            "and it opened at the cursor's hunk, not the review's row 0:\n{peeked}"
+        );
+
+        // **The proof that matters.** If `shell.review` survived, `s` would hit
+        // `review_key`'s guard first — row 0 is the directory, and `s` on an
+        // unwidened directory row marks every hunk under it, both of them. A
+        // correctly cleared session marks only the peek's one hunk.
+        editor.press_quietly(b"s");
+        editor.press_quietly(b"q");
+        editor.press_until(b":repl\r", "steel");
+        let read = editor.press_until(
+            b"(map (lambda (h) (hash-ref h \"seen\")) (hunks 0))\r",
+            "(#f #t)",
+        );
+        assert!(
+            shows(&read, "(#f #t)"),
+            "only the second hunk — the peek's — is marked:\n{read}"
+        );
+
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **`2b`'s acceptance: `gh` opens a peek without leaving the buffer.**
+    ///
+    /// Screens `4b` and `2b` are one function apart — `peek_vm` reuses
+    /// `hunk_lines` exactly, so what proves `4b`'s two sides proves `2b`'s. What
+    /// this test is *for* is the two claims `4b` cannot make: the peek opens at
+    /// the hunk under the *cursor*, and `s` inside it marks that one hunk and
+    /// closes nothing.
+    #[test]
+    fn gh_opens_a_hunk_peek_at_the_cursor_without_leaving_the_buffer() {
+        let scratch = Scratch::new("hunk-peek");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("fetch.txt");
+        fs::write(
+            &file,
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
+        )
+        .expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let form = format!(
+            "(declare-review-block! \"retry logic\" \
+             (list (hash \"path\" \"{}\" \"spans\" \
+                   (list (hash \"span\" (hash \"start\" (hash \"line\" 2 \"column\" 1) \
+                                          \"end\" (hash \"line\" 3 \"column\" 1)) \
+                                \"was\" \"was two\") \
+                         (hash \"span\" (hash \"start\" (hash \"line\" 5 \"column\" 1) \
+                                          \"end\" (hash \"line\" 6 \"column\" 1)))))) \
+             \"two regions\")\r",
+            file.display()
+        );
+        editor.press_until(form.as_bytes(), "two regions");
+        editor.press_until(b"(close-repl!)\r", "review ready");
+
+        // Cursor onto line 2 — the *first* declared span, not the second.
+        editor.press_quietly(b"gg");
+        editor.press_quietly(b"j");
+        let opened = whole(&editor.shown_on_grid(b"gh", "− was two"));
+        assert!(
+            opened.contains("+ two"),
+            "the after-side is line 2, read live:\n{opened}"
+        );
+        assert!(
+            !opened.contains("+ five") && !opened.contains("@@ 5"),
+            "and not the other hunk — this one is at the cursor:\n{opened}"
+        );
+        // **`2b`'s float is three lines tall and has no header** — `T063`'s
+        // documented empty case, spent here.
+        assert!(
+            !opened.contains("review — ✻"),
+            "a peek is not a review:\n{opened}"
+        );
+        assert!(
+            opened.contains("s") && opened.contains("mark seen"),
+            "{opened}"
+        );
+        assert!(opened.contains("close"), "{opened}");
+
+        // `s` marks this hunk and does **not** close the float — `4b`'s `s`
+        // doesn't either, and a screen that closed on its own primary verb
+        // would make "mark the next one" cost a second `gh`.
+        editor.press_quietly(b"s");
+        let marked = whole(&editor.screen());
+        assert!(
+            marked.contains("seen"),
+            "the peek shows it is now seen:\n{marked}"
+        );
+        assert!(
+            marked.contains("− was two"),
+            "and the float is still open:\n{marked}"
+        );
+
+        // **The buffer was never left.** `q` closes the peek and the cursor is
+        // still where `gh` found it — line 2, column 1 — which `G` moving away
+        // from it proves by contrast.
+        editor.press_quietly(b"q");
+        let closed = whole(&editor.shown_on_grid(b"G", "10:1"));
+        assert!(
+            !closed.contains("mark seen"),
+            "the float is gone:\n{closed}"
+        );
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **`4b`'s four keys: `]]`, `za`, `s` and `S`.**
+    ///
+    /// One review, four presses, and each one is a claim about *scope*: `]]`
+    /// lands on the next file, `za` collapses one hunk, `s` marks the row you
+    /// are on, and `S` widens by one level to what that row is inside. The
+    /// counts on the screen are the store's, so they are also the assertion.
+    #[test]
+    fn the_review_footers_keys_each_act_on_their_own_scope() {
+        let scratch = Scratch::new("review-keys");
+        let runtime = copy_layer(&scratch.path);
+        let dir = scratch.path.join("src");
+        fs::create_dir_all(&dir).expect("a directory");
+        let first = dir.join("fetch.txt");
+        let second = dir.join("retry.txt");
+        for path in [&first, &second] {
+            fs::write(
+                path,
+                "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
+            )
+            .expect("a fixture");
+        }
+
+        let editor = Editor::open(&first, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let span = |from: u32, to: u32| {
+            format!(
+                "(hash \"span\" (hash \"start\" (hash \"line\" {from} \"column\" 1) \
+                 \"end\" (hash \"line\" {to} \"column\" 1)))"
+            )
+        };
+        let form = format!(
+            "(declare-review-block! \"retry logic\" \
+             (list (hash \"path\" \"{}\" \"spans\" (list {} {})) \
+                   (hash \"path\" \"{}\" \"spans\" (list {}))) \
+             \"three regions\")\r",
+            first.display(),
+            span(1, 2),
+            span(5, 6),
+            second.display(),
+            span(3, 4),
+        );
+        editor.press_until(form.as_bytes(), "three regions");
+        editor.press_until(b"(close-repl!)\r", "review ready");
+        editor.press_quietly(b":review\r");
+
+        // Row 0 is the directory. `]]` from there lands on the *first* file.
+        editor.press_quietly(b"]]");
+        // **Down onto the file's one hunk, and `s` there marks *that hunk*,
+        // not the file it belongs to.** `fetch.txt` has one region declared
+        // here — `span(1, 2)` — so this is the row directly under the file,
+        // and the assertion below is only true if `s` read the hunk row and
+        // not the nearer file row above it.
+        editor.press_quietly(b"j");
+        editor.press_quietly(b"s");
+        let one = whole(&editor.screen());
+        assert!(
+            one.contains("fetch.txt  ●1"),
+            "`s` on a hunk row marks one hunk, leaving the file's other one:\n{one}"
+        );
+        assert!(
+            one.contains("retry.txt  ●1"),
+            "and not its neighbour's:\n{one}"
+        );
+        assert!(
+            one.contains("●2 unseen · 2 files"),
+            "so the directory has two left, not one:\n{one}"
+        );
+
+        // `s` on the *file* row now marks what is left of it — the second hunk.
+        editor.press_quietly(b"k");
+        editor.press_quietly(b"s");
+        let both = whole(&editor.screen());
+        assert!(
+            both.contains("fetch.txt  ●0"),
+            "`s` on a file row marks the rest of its hunks:\n{both}"
+        );
+
+        // **`]]` again lands on the second file and does not wrap.** A review is
+        // a list you work down; `]]` off the end that came back to the top would
+        // lose your place in the one screen whose job is keeping it.
+        editor.press_quietly(b"]]");
+        editor.press_quietly(b"S");
+        let all = whole(&editor.screen());
+        // **`seen ✓ · 2 files`, not `●0 unseen`.** A group with nothing left to
+        // read says so rather than counting zero — `8b`'s own rule, and the
+        // reason `File::unseen` is an `Option`. The first version of this
+        // assertion asked for the count and the screen was right.
+        assert!(
+            all.contains("seen ✓ · 2 files"),
+            "`S` widens to what the row is inside:\n{all}"
+        );
+        assert!(
+            all.contains("3 seen ✓"),
+            "and the header agrees, because both read the same store:\n{all}"
+        );
+
+        // **A seen hunk folds itself**, which is §11 applied to your own
+        // progress rather than to the change's size — `4b` draws
+        // `@@ 9–14 · tests  ⋯ folded · 6 lines  seen ✓`.
+        assert!(
+            all.contains("⋯ folded"),
+            "what you have read collapses:\n{all}"
+        );
+
+        editor.press_quietly(b"q");
+        let closed = whole(&editor.shown_on_grid(b"G", "11:1"));
+        assert!(
+            !closed.contains("]] next file"),
+            "the float is gone:\n{closed}"
+        );
+        editor.leave_by(b"ZQ");
+    }
+
     /// **`T064`'s acceptance, through the keyboard.** Marking one hunk seen
     /// leaves the rest unseen.
     ///
@@ -4680,10 +5046,12 @@ mod driven {
         let editor = Editor::open(&file, &scratch.state(), &runtime);
         editor.press_until(b":repl\r", "steel");
 
+        // A record per span (`T066`, §59) — where it is, and what it replaced.
+        // `was` is absent throughout: this test is about seen-state, not sides.
         let span = |from: u32, to: u32| {
             format!(
-                "(hash \"start\" (hash \"line\" {from} \"column\" 1) \
-                 \"end\" (hash \"line\" {to} \"column\" 1))"
+                "(hash \"span\" (hash \"start\" (hash \"line\" {from} \"column\" 1) \
+                 \"end\" (hash \"line\" {to} \"column\" 1)))"
             )
         };
         let form = format!(
@@ -4772,12 +5140,15 @@ mod driven {
         editor.press_until(b":repl\r", "steel");
 
         // Two spans in one file, with claude's own annotation for the group.
+        // **`spans` carries a record per span now** (`T066`, §59): where the
+        // change is, and what it replaced. `was` is absent on both here, which
+        // is a pure insertion — the shape `4b`'s own `@@ 4` has.
         let form = format!(
             "(declare-review-block! \"retry logic\" (list (hash \"path\" \"{}\" \
-             \"spans\" (list (hash \"start\" (hash \"line\" 1 \"column\" 1) \
-             \"end\" (hash \"line\" 2 \"column\" 1)) \
-             (hash \"start\" (hash \"line\" 3 \"column\" 1) \
-             \"end\" (hash \"line\" 4 \"column\" 1))) \
+             \"spans\" (list (hash \"span\" (hash \"start\" (hash \"line\" 1 \"column\" 1) \
+             \"end\" (hash \"line\" 2 \"column\" 1))) \
+             (hash \"span\" (hash \"start\" (hash \"line\" 3 \"column\" 1) \
+             \"end\" (hash \"line\" 4 \"column\" 1)))) \
              \"annotation\" \"the meat\")) \"the whole change\")\r",
             file.display()
         );
@@ -5824,12 +6195,66 @@ mod driven {
         );
     }
 
-    /// The three nouns whose stores do not exist select nothing, rather than
-    /// selecting something wrong (`T049`).
+    /// **`dih` is the mockup's own answer to "revert claude's edit"** — the
+    /// design docs' words, verbatim: `TUI Mockups.dc.html`'s `6d` draws
+    /// `dih  delete inner hunk — revert claude's edit, plain vim delete`.
     ///
-    /// `6d` draws four. `T063` builds hunks, `T068` threads and `T053` review
-    /// blocks; until then `dih` has to be a no-op, and a no-op that quietly
-    /// deleted a paragraph would be far worse than an unbound key.
+    /// **Why `RevertHunk` — the richer wire capability with a before-side —
+    /// stays unbuilt.** It would restore what claude's edit replaced; `dih` only
+    /// deletes what is there now, which is *"plain vim delete"* in the mockup's
+    /// own words and not a restore. No screen draws a key for the richer verb —
+    /// `4b`'s footer has no revert key at all, and `2b`'s `u undo (jj)` is
+    /// `T073`'s, a different verb over a different store. `dih` is what every
+    /// mockup that mentions reverting actually asks for, and this is where that
+    /// gets read rather than assumed.
+    #[test]
+    fn a_declared_hunks_dih_reverts_it_plain_vim_delete_style() {
+        let scratch = Scratch::new("dih-reverts");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("fetch.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let form = format!(
+            "(declare-review-block! \"retry logic\" \
+             (list (hash \"path\" \"{}\" \"spans\" \
+                   (list (hash \"span\" (hash \"start\" (hash \"line\" 2 \"column\" 1) \
+                                          \"end\" (hash \"line\" 3 \"column\" 1)) \
+                                \"was\" \"was two\")))) \
+             \"one region\")\r",
+            file.display()
+        );
+        editor.press_until(form.as_bytes(), "one region");
+        editor.press_until(b"(close-repl!)\r", "review ready");
+
+        editor.press_quietly(b"gg");
+        editor.press_quietly(b"j");
+        editor.press_quietly(b"dih");
+        editor.press_until(b":w\r", "fetch.txt");
+        editor.quit();
+
+        let after = fs::read_to_string(&file).expect("written");
+        // **Deleted, not restored** — `dih` takes the hunk's *current* line
+        // and nothing replaces it, which is what makes it *"plain vim delete"*
+        // rather than the richer verb. `was two` — what claude's edit
+        // replaced — is nowhere in this file; a real revert would put it back.
+        assert_eq!(
+            after, "one\nthree\nfour\nfive\n",
+            "the hunk's current line is gone; `was two` was never written back"
+        );
+    }
+
+    /// **Two of the three nouns still have no store; `dih` now does and this
+    /// fixture has nothing declared for it to find** (`T049`, `T064`, `T066`).
+    ///
+    /// `6d` draws four. `T064` built hunks and `dih` resolves through it now —
+    /// see `a_declared_hunks_dih_reverts_it_plain_vim_delete_style` for the
+    /// case where a hunk *is* declared. `T068` threads and `T053`'s review
+    /// blocks give `dit`/`dib` no store to speak of yet, so those two are still
+    /// the true *"select nothing, rather than selecting something wrong"* case
+    /// this test names. This paragraph used to say `dih` was the same as the
+    /// other two; it was, until `T064` built the store under it.
     #[test]
     fn the_nouns_without_a_store_select_nothing() {
         let scratch = Scratch::new("agent-nouns-unbuilt");

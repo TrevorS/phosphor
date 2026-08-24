@@ -22,15 +22,20 @@
 (define (review/body block)
   (view/diff (hash "kind" "review-block" "block" block) "unified" "directory"))
 
-;; 8b's own footer, spelled whole — Design Language §6, *"keyhints spell the
-;; whole command … never cryptic contractions"*. the mockup draws
-;; `za fold · s seen · S group seen · q`, and `q` gets the word it means rather
-;; than the letter it is.
+;; 4b's and 8b's footer, spelled whole — Design Language §6, *"keyhints spell
+;; the whole command … never cryptic contractions"*. 8b draws
+;; `za fold · s seen · S group seen · q` and 4b draws
+;; `]] next file · za fold · s seen · S all · q`; this is their union, because
+;; the two are one surface at two fold depths and a footer that changed as you
+;; folded would be teaching you a different editor each time.
+;;
+;; `q` gets the word it means rather than the letter it is.
 ;;
 ;; **primary action first, escape last**, which is §6's other footer rule.
 (define (review/footer)
   (view/key-hints 'footer
-                  (list (view/key-hint "za" "fold")
+                  (list (view/key-hint "]]" "next file")
+                        (view/key-hint "za" "fold")
                         (view/key-hint "s" "mark seen")
                         (view/key-hint "S" "mark the group seen")
                         (view/key-hint "q" "close"))))
@@ -45,6 +50,31 @@
                  (view/float-header \"review\" \"block\")
                  (review/body (hash-ref args \"block\"))
                  (review/footer)))")
+
+;; **`2b`, the peek** (`T066`) — `gh`, without leaving the buffer.
+;;
+;; the body is `view/diff` over a `DiffSource::Hunk`, no header (the float is
+;; three lines tall and `DiffVm::header` empty draws none — `T063`'s own
+;; documented case for exactly this), and a two-line footer instead of the
+;; block's four: `2b` has no rows to navigate and no groups to widen into, so
+;; `]]`, `za` and `S` would be keys the float cannot answer. `s`'s Rust-side
+;; handling is beside the review's own, for the same reason both exist —
+;; `keymaps.scm` has no way to ask what surface holds the screen.
+(define (peek/body hunk)
+  (view/diff (hash "kind" "hunk" "hunk" hunk) "unified" "flat"))
+
+(define (peek/footer)
+  (view/key-hints 'footer
+                  (list (view/key-hint "s" "mark seen")
+                        (view/key-hint "q" "close"))))
+
+(define-float-surface!
+  "hunk-peek"
+  "(lambda (args)
+     (view/float 'informational
+                 (view/float-header \"claude changed\" \"here\")
+                 (peek/body (hash-ref args \"hunk\"))
+                 (peek/footer)))")
 
 ;; `:review` — the door a *person* has.
 ;;

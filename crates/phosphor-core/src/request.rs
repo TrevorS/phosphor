@@ -937,13 +937,43 @@ wire_record!(RegionSpec {
     author: Actor = "who is claimed to have written it",
 });
 
+/// One changed span of a review block, and what was there before (`T066`).
+///
+/// **The before-side is claude's to state, because claude is the only thing that
+/// knows it.** The after-side is read live — the region's text now, from the
+/// buffer if the file is open and from disk if it is not — so nothing here is a
+/// copy of anything the store also holds. OPEN-QUESTIONS.md §59 rules why it is
+/// not the VCS's answer and why carrying it does not make a block a snapshot:
+/// a location drifts when a rewrite moves it, and history does not.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangedSpan {
+    /// Where the change is now.
+    pub span: Span,
+    /// The text this span replaced, verbatim, newlines included.
+    ///
+    /// **[`None`] and *"removed nothing"* draw identically, and that is the
+    /// truthful reading rather than a fallback.** `4b`'s first hunk is `@@ 4`
+    /// with one `+` line and no `−` line at all, because that edit inserted.
+    pub was: Option<String>,
+}
+
+wire_record!(ChangedSpan {
+    span: Span = "where the change is now",
+    was: Option<String> = "the text it replaced; absent means it removed nothing",
+});
+
 /// One file's contribution to a review block (`T053`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileGroup {
     /// Workspace-relative path.
     pub path: PathBuf,
-    /// The spans that changed.
-    pub spans: Vec<Span>,
+    /// The spans that changed, each with what it replaced.
+    ///
+    /// **A record per span rather than a second list beside this one.** Parallel
+    /// arrays matched by index are the shape that goes wrong silently — a
+    /// producer that sends four spans and three prior texts is a payload nothing
+    /// can reject.
+    pub spans: Vec<ChangedSpan>,
     /// Claude's own annotation for this group — `8b`'s "mechanical" versus "the
     /// meat".
     pub annotation: Option<String>,
@@ -951,7 +981,7 @@ pub struct FileGroup {
 
 wire_record!(FileGroup {
     path: PathBuf = "workspace-relative path",
-    spans: Vec<Span> = "the spans that changed",
+    spans: Vec<ChangedSpan> = "the spans that changed, each with what it replaced",
     annotation: Option<String> = "claude's note about this group",
 });
 

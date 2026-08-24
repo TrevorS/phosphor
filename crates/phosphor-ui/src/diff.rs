@@ -68,6 +68,19 @@ const HUNK_INDENT: u16 = 2;
 /// Cells one level of grouping insets a file's name (`T065`).
 const NEST_COLS: u16 = 2;
 
+/// `13 lines`, and `1 line`.
+///
+/// A one-line hunk is the common case for a single inserted statement, so
+/// *"1 lines"* is not a rare corner — it is what `4b` says about half the
+/// change a person actually reads.
+fn lines_said(count: usize) -> String {
+    if count == 1 {
+        "1 line".to_owned()
+    } else {
+        format!("{count} lines")
+    }
+}
+
 /// What one row of a diff is.
 ///
 /// **Three kinds and not two.** A unified diff is mostly *context* — the
@@ -592,29 +605,34 @@ impl DiffBody<'_> {
         };
         write(buf, area, x, y, &head, meta);
 
-        // **The right-hand note is one of two and never both.** A folded hunk
-        // says how many lines it stands for; an open one says whether it has
-        // been read. Drawing both would put two different kinds of fact in one
-        // column.
-        let note = if hunk.folded {
-            Some((
-                format!("{} folded · {} lines", glyph::ELIDED, hunk.lines.len()),
-                meta,
-            ))
-        } else if hunk.seen {
-            Some((
-                format!("seen {}", glyph::SEEN),
-                Style::new().fg(self.theme.neutrals.meta),
-            ))
-        } else {
-            None
-        };
-        if let Some((note, style)) = note {
+        // **Both notes when both are true**, and `4b` is what settles it: it
+        // draws `@@ 9–14 · tests   ⋯ folded · 6 lines   seen ✓` on one row.
+        // This paragraph used to say they were *"one of two and never both"*
+        // and that drawing both would put two kinds of fact in one column —
+        // which is a fair-sounding rule the mockup does not follow, because
+        // they answer different questions: *how much is hidden here* and
+        // *have you read it*. A folded hunk that dropped its `seen ✓` would
+        // make the one you have finished with look like the one you have not.
+        let mut note = String::new();
+        if hunk.folded {
+            note.push_str(&format!(
+                "{} folded · {}",
+                glyph::ELIDED,
+                lines_said(hunk.lines.len())
+            ));
+        }
+        if hunk.seen {
+            if !note.is_empty() {
+                note.push_str("   ");
+            }
+            note.push_str(&format!("seen {}", glyph::SEEN));
+        }
+        if !note.is_empty() {
             let at = area
                 .right()
                 .saturating_sub(cells(&note))
                 .saturating_sub(PAD_COLS);
-            write(buf, area, at, y, &note, style);
+            write(buf, area, at, y, &note, meta);
         }
     }
 
