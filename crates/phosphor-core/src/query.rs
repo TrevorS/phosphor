@@ -386,6 +386,9 @@ queries! {
             "what a register holds — @ reads one back, and an unset one is empty" {
             register: RegisterName = "which register",
         }
+        Recording = "recording" [S3 / "T099"] -> ParamType::Text,
+            "which register q is recording into, or empty — vim's `recording @a`" {
+        }
         Keymap = "keymap" [S3 / "T033"] -> ParamType::List(&ParamType::Any),
             "the live keymap under a prefix; redefining a binding changes this at once" {
             prefix: Option<KeySeq> = "the prefix; absent means the root",

@@ -1700,9 +1700,14 @@ mod driven {
         // built the *ex* and *claude* kinds without it: a search prompt needs
         // somewhere to search, which is the search machinery rather than the
         // line. The refusal names the same task and says which half.
-        let before = editor.mark();
-        editor.press(b"/");
-        let frame = editor.since(before);
+        // **Read off the grid, not the delta.** `press`'s byte delta is what
+        // ratatui's *diff* renderer emitted, and a settled row arrives in pieces
+        // separated by cursor moves — CI caught this one with the frame reading
+        // `search is T058's oth  half`, the `er` on the far side of an escape.
+        // That is `OPEN-QUESTIONS.md` §54's lesson arriving in a test that
+        // predates it.
+        editor.press_quietly(b"/");
+        let frame = shown_on_grid_text(&editor, "other half");
         assert!(
             shows(&frame, "search is T058's other half"),
             "a deferred key names its task on the statusline; frame was: {frame}"
@@ -1719,9 +1724,8 @@ mod driven {
         // a *search* to have left matches behind. `goto-sequence` now answers
         // per sequence, so `]u` walks regions and `n` names `T058`, which is
         // the task that would actually make it move.
-        let after = editor.mark();
-        editor.press(b"n");
-        let frame = editor.since(after);
+        editor.press_quietly(b"n");
+        let frame = shown_on_grid_text(&editor, "T058 builds it");
         assert!(
             shows(&frame, "not built yet — T058 builds it"),
             "the task comes off the *sequence*, not the verb; frame was: {frame}"
@@ -1769,50 +1773,17 @@ mod driven {
         editor.quit();
     }
 
-    /// **`q` and `m` stopped being silent.** The repair window between `CP-3`
-    /// and `S4` gave each a capability that means what the key means —
-    /// `set-macro-recording` (`T099`) and `place-anchor` (`T042`) — so both now
-    /// decline *by name* instead of resolving to a thunk that draws nothing.
-    ///
-    /// Through the pty rather than at the machine, because the two halves that
-    /// carry this are in different crates and only the loop joins them: the
-    /// keymap row is `runtime/keymaps.scm`'s, and for `q` the refusal is
-    /// manufactured in `Session::key` — `Machine::apply`'s `SetMacroRecording`
-    /// arm is a deliberate no-op, so an `Action::Input` that never reaches
-    /// `Editing::apply` would otherwise succeed silently. A test that drove the
-    /// machine would pass with the statusline saying nothing.
-    #[test]
-    fn the_macro_key_declines_by_naming_its_task() {
-        let scratch = Scratch::new("named-refusal");
-        let runtime = copy_layer(&scratch.path);
-        let file = scratch.path.join("sample.txt");
-        fs::write(&file, "one\ntwo\n").expect("a fixture");
-
-        // **One session each, and that is not fussiness.** The two sentences
-        // differ only in `T099` versus `T042`, and ratatui redraws the diff —
-        // pressing both in one session emits a frame carrying the two changed
-        // cells and nothing else, so the second assertion would read `42` and
-        // fail on a build that is correct.
-
-        // `q` — vim's macro record. The task is read off the capability's own
-        // row, so this sentence goes stale the day `T099` is ticked and the
-        // arm is not replaced, which is the point of asserting the task id.
-        let macros = Editor::open(&file, &scratch.state(), &runtime);
-        let before = macros.mark();
-        macros.press(b"q");
-        let frame = macros.since(before);
-        assert!(
-            shows(&frame, "not built yet — T099 builds it"),
-            "q names the task that builds the recorder; frame was: {frame}"
-        );
-        macros.quit();
-
-        // The mark half of this test used to live here and asserted that `m`
-        // declined by naming `T042`. `T042` is built, so the assertion is now
-        // `a_mark_is_set_and_returned_to` below — a round trip rather than a
-        // refusal. Kept as a note because a reader looking for "where did the
-        // mark case go" should find the answer at the site.
-    }
+    // **`the_macro_key_declines_by_naming_its_task` used to live here**, and its
+    // own doc predicted this: *"this sentence goes stale the day `T099` is
+    // ticked and the arm is not replaced, which is the point of asserting the
+    // task id."* `T099` is ticked and the arm *was* replaced, so `q` no longer
+    // declines by naming a task — it records. What took its place is
+    // `q_records_a_macro_and_at_plays_it_back`, a round trip rather than a
+    // refusal, which is the same shape the mark half took when `T042` landed.
+    //
+    // Kept as a note rather than deleted silently, because a reader looking for
+    // *"where did the macro refusal go"* should find the answer at the site —
+    // which is exactly what the mark half's note did for this one.
 
     /// **`T045`: the picker opens from a keystroke, filters, and closes.**
     ///
@@ -2656,25 +2627,41 @@ mod driven {
         );
     }
 
-    /// `@` is not built, and says which task would build it.
+    /// `@` offers a register to play, and an empty one plays nothing.
     ///
-    /// `key/deferred`, and its own row in the keymap names `T099` over
-    /// `feed-keys`. The same shape as the deferred leader keys above: a key
-    /// that draws in `:help` and does nothing is the defect, and saying so by
-    /// name is the fix until the task lands.
+    /// **This test asserted that `@` names `T099` until that task built it**,
+    /// and the row leaving is the record shrinking as designed — the same shape
+    /// `a_deferred_binding_names_the_task_that_builds_it` has one section up.
+    /// What replaced it is the claim worth keeping: `@` is a *prefix* now, it
+    /// offers the twenty-six registers by name, and playing an untouched one is
+    /// a no-op rather than a refusal.
+    ///
+    /// **An empty register is not an error**, which is the `register` query's
+    /// own wording — *"an unset one is empty"* — and the right answer to
+    /// *"what does `@z` do before you have recorded anything"*.
     #[test]
-    fn at_names_the_task_that_would_build_macros() {
+    fn at_offers_the_registers_and_an_empty_one_plays_nothing() {
         let scratch = Scratch::new("macros");
         let runtime = copy_layer(&scratch.path);
         let file = scratch.path.join("m.txt");
         fs::write(&file, "alpha\n").expect("a fixture");
         let editor = Editor::open(&file, &scratch.state(), &runtime);
 
-        let said = editor.press_until(b"@q", "T099");
+        // The prefix draws its children — which is `T034`'s which-key over a
+        // table `T099` generated, and proof the twenty-six bindings exist.
+        let offered = grid_of(&editor.shown_on_grid(b"@", "play the macro in"));
+        assert!(
+            shows(&offered, "play the macro in q"),
+            "`@` offers the registers by name; grid was:\n{offered}"
+        );
+
+        // And `@q` on an untouched register changes nothing.
+        editor.press_quietly(b"q");
+        let after = grid_of(&editor.shown_on_grid(b"", "alpha"));
         editor.quit();
         assert!(
-            shows(&said, "T099"),
-            "`@` is deferred and must name the task that builds it; frame was: {said}"
+            shows(&after, "alpha"),
+            "an empty register plays nothing; grid was:\n{after}"
         );
     }
 
@@ -2775,9 +2762,13 @@ mod driven {
         // popup and its dismissal are frames no press asked for. The
         // session-wide wait does not count frames and is the right instrument
         // for a key that draws a menu on the way.
-        let before = shown(&editor, "1 unseen");
+        // **Either spelling** — `ShedStep::CounterWords` is the ladder's first
+        // rung, so `1 unseen` becomes `●1` the moment the rest of the row wants
+        // the room. The claim is that the region starts unseen, and both
+        // spellings make it. See `shown_on_grid_any`.
+        let before = shown_on_grid_any(&editor, &["1 unseen", "●1"]);
         assert!(
-            shows(&before, "1 unseen"),
+            before.contains("1 unseen") || before.contains("●1"),
             "the declared region starts unseen; session was: {before}"
         );
 
@@ -3523,6 +3514,54 @@ mod driven {
 
         editor.press_quietly(b"\x1b");
         editor.leave_by(b"ZQ");
+    }
+
+    /// **`T099`: `q` records a macro and `@` plays it back.**
+    ///
+    /// The task's own *Done when*, in the running binary: `q<reg>` records,
+    /// `@<reg>` replays through `feed-keys`, and the `register` query reads the
+    /// same register back.
+    ///
+    /// **The wall this had been stuck behind was one line of scheme.**
+    /// `runtime/keymaps.scm` recorded that *"a keymap cannot ask a query"* — and
+    /// asking was always fine. `phosphor/resolve` called a function binding and
+    /// **discarded its answer**, so a thunk could open a float but could not run
+    /// an Action. It honours a role now, and `@`'s thunk reads the register at
+    /// press time and hands the keys to `feed-keys`, which is the shape `T099`
+    /// described when it added the query for exactly this.
+    #[test]
+    fn q_records_a_macro_and_at_plays_it_back() {
+        let scratch = Scratch::new("macros");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `qa` starts, `x` is the macro, `qa` stops. **The `qa` that stops is
+        // not part of what it stopped** — a recording that included its own
+        // terminator would turn itself off half way through the first replay.
+        editor.press_quietly(b"qa");
+        editor.shown_on_grid(b"x", "lpha");
+        editor.press_quietly(b"qa");
+
+        // The register holds it, read back through the door.
+        editor.press_until(b":repl\r", "steel");
+        let held = editor.press_until(b"(list (register \"a\") (recording))\r", "⇒");
+        assert!(
+            shows(&held, "(\"x\" \"\")"),
+            "the register holds the macro and nothing is recording; session was: {held}"
+        );
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        // **And it plays.** `alpha` lost its `a` to the recording; `@a` takes
+        // the `l`.
+        let played = grid_of(&editor.shown_on_grid(b"@a", "pha"));
+        editor.leave_by(b"ZQ");
+        assert!(
+            shows(&played, "pha"),
+            "`@a` replayed the macro; grid was:\n{played}"
+        );
     }
 
     /// **`T096`: `set-soft-wrap` toggles wrapping, both ways.**
@@ -4527,9 +4566,16 @@ mod driven {
         // next keystroke, so the counter has nowhere to be drawn until the
         // sentence above has been read.
         editor.press_quietly(b"0");
-        let counted = shown(&editor, "2 unseen");
+        // **Either spelling, and CI is what taught this.** The counter's *word*
+        // is `SHED_ORDER`'s first rung — the very first thing the strip gives up
+        // — so whether it reads `2 unseen` or `●2` depends on how much room the
+        // rest of the row wants. On a runner where the language-server chip is
+        // drawn and the temp path is long, the word goes and the count stays;
+        // locally it fit, and the test asserted the wide spelling for months.
+        // The claim is *two regions became unseen*, and both spellings make it.
+        let counted = shown_on_grid_any(&editor, &["2 unseen", "●2"]);
         assert!(
-            shows(&counted, "2 unseen"),
+            counted.contains("2 unseen") || counted.contains("●2"),
             "the block's spans became unseen regions; session was: {counted}"
         );
         editor.leave_by(b"ZQ");
@@ -5453,7 +5499,12 @@ mod driven {
             shows(&empty, "one API, two callers"),
             "and its caption; frame was: {empty}"
         );
-        editor.press_quietly(b"q");
+        // **`esc`, not `q`.** This float's footer said `q close` and `q` never
+        // closed it — `closes_surface` gives `q` to the help grid alone. The
+        // float stayed open and the next `:repl` opened over it, which is why
+        // the test passed. T099 made the stray `q` audible by turning it into a
+        // register prefix that ate the `:` after it.
+        editor.press_quietly(b"\x1b");
 
         // Two regions, and the same command drawn again.
         editor.press_until(b":repl\r", "steel");
@@ -6484,6 +6535,43 @@ mod driven {
     /// `contains` rather than `shows`: the callers here match strings they
     /// wrote themselves, and a fuzzy match on a one-character needle answers
     /// yes to a row of spaces.
+    /// Waits for `wanted` on the **composed grid** and hands the grid back as
+    /// text.
+    ///
+    /// [`Editor::shown_on_grid`] without a keystroke, flattened. The pair with
+    /// [`shown`] below is the same division `Editor::press_until` and
+    /// `Editor::shown_on_grid` draw and for the same reason: a *notice* is
+    /// written fresh and lives in the delta, and anything that has *settled* —
+    /// a statusline segment, a counter, a refusal that is still on the row —
+    /// lives on the grid and may reach the delta in pieces.
+    fn shown_on_grid_text(editor: &Editor, wanted: &str) -> String {
+        shown_on_grid_any(editor, &[wanted])
+    }
+
+    /// The same, satisfied by **any** of `wanted`.
+    ///
+    /// **For text the shed ladder can respell**, which is a real category and
+    /// not a convenience: `§11`'s rungs mean a counter reads `2 unseen` where
+    /// there is room and `●2` where there is not, and *which* depends on how
+    /// much the rest of the row wants — the language-server chip, the length of
+    /// a temp path. A test that needles one spelling is asserting a fact about
+    /// the runner. Both spellings are the same claim.
+    fn shown_on_grid_any(editor: &Editor, wanted: &[&str]) -> String {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let grid = grid_of(&editor.screen());
+            if wanted.iter().any(|needle| shows(&grid, needle)) {
+                editor.settle();
+                return grid_of(&editor.screen());
+            }
+            assert!(
+                Instant::now() < deadline,
+                "none of {wanted:?} reached the grid. Grid was:\n{grid}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     fn shown(editor: &Editor, wanted: &str) -> String {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {

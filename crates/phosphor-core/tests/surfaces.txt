@@ -85,6 +85,7 @@ S3 T035 show-unknown-key-hint
 S3 T081 set-soft-wrap
 S3 T086 describe-key
 S3 T086 open-help
+S3 T099 recording
 S3 T099 register
 S3 T099 set-macro-recording
 S4 T036 apply-workspace-edit

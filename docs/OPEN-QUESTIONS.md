@@ -2599,6 +2599,47 @@ spending.
 **This changes no code.** The build already draws it the ruled way; what changes
 is that it is now a decision rather than a divergence.
 
+### 58 · `q<reg>` toggles where vim's `q` alone stops, and the faithful version needs a key that is both a leaf and a prefix
+
+**Raised by `T099`, 2026-08-23. Built the way it is, recorded because it is a
+deviation from a pedigree this build takes seriously.**
+
+Vim records with `qa` and stops with **`q` alone**. This build toggles: `qa`
+starts and `qa` stops.
+
+**Why not the faithful version.** Two things stand in the way and only one of
+them is about macros.
+
+1. **`q` would have to be both a leaf and a prefix.** `q` is a prefix here — it
+   has twenty-six children, one per register — and `phosphor/resolve` answers
+   `'pending` for a prefix. A bare `q` that meant *stop* would have to win over
+   the prefix while recording and lose to it otherwise, which is a resolution
+   rule that depends on editor state and the resolver takes none.
+2. **The keymap would have to branch on that state**, which it now can: the
+   `(recording)` query exists — `T099` added it — and a thunk can read it. So
+   the missing piece is genuinely (1) and not the information.
+
+**What is built.** `qa` toggles, `(recording)` is what makes the toggle honest
+rather than a guess, and the same query is what §5's strip would read to draw
+vim's `recording @a`. That drawing is not built either; no mockup asks for it,
+and it is the natural companion if this is ever made faithful.
+
+**Three ways to close it, if it is worth closing.**
+
+* **Resolution learns one state-dependent rule.** Smallest in the keymap, worst
+  in the resolver — the whole reason `phosphor/resolve` is legible is that it
+  reads a table and nothing else.
+* **A `stop-recording` key that is not `q`.** Honest and unfaithful in a
+  different place; vim users would have to learn one key rather than unlearn one
+  habit.
+* **Leave it.** `qa`/`qa` is unambiguous, is one keystroke longer than vim only
+  on the stop, and is what ships.
+
+**Recommendation: leave it**, and revisit if `CP-3`'s successor finds hands
+reaching for `q` and getting the register menu. The cost is one keystroke in a
+place where the alternative is a rule in the resolver that every other binding
+would then have to be read against.
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

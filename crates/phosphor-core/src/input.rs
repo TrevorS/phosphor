@@ -193,6 +193,22 @@ pub struct Machine {
     record_changed: bool,
     /// The last command that changed the buffer.
     last_change: Option<Vec<Key>>,
+    /// Which register is being recorded into, and the commands so far (`T099`).
+    ///
+    /// **Commands, not keys.** A macro is played back a command at a time and
+    /// the thing that has to be dropped when recording stops is the `q<reg>`
+    /// that stopped it — which is one command and an unknown number of keys.
+    /// Keeping the boundaries makes that a `pop` instead of an arithmetic on
+    /// key counts that would be wrong the first time a register name was two
+    /// keystrokes.
+    recording: Option<(String, Vec<Vec<Key>>)>,
+    /// A recording that has just finished, waiting for the host to keep it.
+    ///
+    /// **The machine records and the host stores**, because a register is the
+    /// *editor's* — `q` and `y` write the same thirty-odd slots, and a second
+    /// register table inside the input machine would be two things that must
+    /// agree about what `@a` plays.
+    finished: Option<(String, Vec<Key>)>,
 }
 
 /// What the next keystroke means, when it does not mean a binding.
@@ -270,6 +286,28 @@ impl Machine {
         self.last_change.as_deref().map(key::notation_of)
     }
 
+    /// A finished recording, taken once (`T099`).
+    ///
+    /// Drained rather than read, so the host writes each macro to its register
+    /// exactly once — the same shape [`Machine::last_change`]'s consumer has and
+    /// for the same reason: a value the host keeps re-reading is a value it can
+    /// apply twice.
+    pub fn take_recorded(&mut self) -> Option<(String, KeySeq)> {
+        self.finished
+            .take()
+            .map(|(name, keys)| (name, key::notation_of(&keys)))
+    }
+
+    /// Which register is being recorded into, if any (`T099`).
+    ///
+    /// What §5's strip would draw if it drew one — vim writes `recording @a` —
+    /// and what a `q` bound to *stop* would need to know. Neither exists yet;
+    /// this is the reader they would use.
+    #[must_use]
+    pub fn recording(&self) -> Option<&str> {
+        self.recording.as_ref().map(|(name, _)| name.as_str())
+    }
+
     /// One keystroke.
     ///
     /// The Actions come back in the order they must be applied; applying them
@@ -296,6 +334,15 @@ impl Machine {
             && self.object.is_none()
             && self.awaiting.is_none()
         {
+            // **`T099` — a completed command, kept whole.** Recorded here and
+            // not per key, for the reason `.` is: a command is the unit that can
+            // be replayed, and half of one is not a smaller macro but a broken
+            // command. The starting `q<reg>` is not in it because `apply` runs
+            // *after* `feed` — recording is still `None` while the command that
+            // turns it on completes.
+            if let Some((_, commands)) = self.recording.as_mut() {
+                commands.push(self.record.clone());
+            }
             if self.record_changed {
                 self.last_change = Some(core::mem::take(&mut self.record));
             } else {
@@ -326,14 +373,23 @@ impl Machine {
             // Both are re-entries the host drives: it reads `last_change` or the
             // Action's own keys and feeds them back through `feed`.
             InputAction::FeedKeys { .. } | InputAction::RepeatLast { .. } => {}
-            // The recorder is `T099`'s and is deliberately not built here. The
-            // capture machinery it will grow out of is `record`/`record_changed`
-            // above — the same stream `.` already keeps — but generalising it to
-            // a named register is that task's, not the vocabulary's. Until then
-            // this is a no-op, and because `apply` returns nothing the *host* is
-            // the only place that can turn the call into a refusal naming
-            // `T099`; a silent success here is the failure `T098` exists to end.
-            InputAction::SetMacroRecording { .. } => {}
+            // `T099`'s recorder, grown out of `record`/`record_changed` above —
+            // the same stream `.` already keeps, generalised to a named
+            // register. This arm was a no-op for three windows and the comment
+            // that stood here said so.
+            InputAction::SetMacroRecording { register, on } => {
+                if *on {
+                    self.recording = Some((register.0.clone(), Vec::new()));
+                } else if let Some((name, mut commands)) = self.recording.take() {
+                    // **The command that stopped it is not part of it.** `q<reg>`
+                    // completes inside `feed`, which is where a completed command
+                    // is appended — so by the time this arm runs the stop is the
+                    // last entry. Popping it is exact where counting keys would
+                    // not be.
+                    commands.pop();
+                    self.finished = Some((name, commands.concat()));
+                }
+            }
         }
     }
 

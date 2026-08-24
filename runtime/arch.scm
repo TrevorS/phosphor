@@ -86,7 +86,18 @@
       (arch/run "  ·  every row above is view/spans" 'meta)))))
 
 ;; the float itself. informational mood — 6a is not in front of anything and
-;; asks nothing (§4/§9) — and `q close` as the footer the mockup draws.
+;; asks nothing (§4/§9).
+;;
+;; **the footer says `esc` and the mockup draws `q close`.** `q` did not close
+;; this float and never had: `closes_surface` gives `q` to `Surface::Help` alone,
+;; and says why — a keymap grid is not a text input. every other float closes on
+;; `esc`, which is §9's *"esc closes top-down"*. so the drawing named a key that
+;; does nothing, which is the same defect `1b`'s `q close` had and T056 fixed.
+;;
+;; T099 made it louder rather than causing it: `q` is a *register prefix* now —
+;; `qa` records — so a stray `q` at this float swallows the next keystroke too.
+;; that is a positive reason not to overload it back.
+;;
 ;; `view/float` takes mood, header, body, footer — the order `Float`'s own
 ;; `wire_record!` declares. a node goes wherever a child is wanted, which is why
 ;; the body and footer are nodes rather than wrapped.
@@ -96,7 +107,7 @@
      (view/float 'informational
                  (view/float-header \":arch\" \"the substrate\")
                  (view/spans (arch/rows))
-                 (view/key-hints 'footer (list (view/key-hint \"q\" \"close\")))))")
+                 (view/key-hints 'footer (list (view/key-hint \"esc\" \"close\")))))")
 
 ;; ---------------------------------------------------------------------------
 ;; the command

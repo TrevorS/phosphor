@@ -42,7 +42,7 @@ text
  20 │      12 languages declared  ·  every row above is view/spans                   │
  21 │                                                                                │
  22 │────────────────────────────────────────────────────────────────────────────────│
- 23 │  q close                                                                       │
+ 23 │  esc close                                                                     │
 
 fg
      0         1         2         3         4         5         6         7
@@ -70,7 +70,7 @@ fg
  20 │hhhhhhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhh│
  21 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
  22 │CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC│
- 23 │hhjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 23 │hhjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
 
 bg
      0         1         2         3         4         5         6         7

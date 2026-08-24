@@ -367,6 +367,18 @@
 ;; waits for the key that names one. it is a binding rather than a bare prefix
 ;; because 3c draws it with a label, and a label has to be written somewhere.
 (define (key/group) (list 'group))
+
+;; is this a role, as against anything else a thunk might have answered?
+;;
+;; **the five heads the constructors here build, and nothing else.** a thunk is
+;; allowed to end in a capability call — most do — and a door's receipt is a
+;; list too. see `phosphor/resolve`, which is the one caller and the reason this
+;; exists.
+(define (key/role? value)
+  (and (list? value)
+       (not (null? value))
+       (member (car value) '(run motion operator object group))
+       #true))
 (define (key/escape) (list 'escape))
 (define (key/register) (list 'register))
 
@@ -429,7 +441,29 @@
       [entry
        (let ([binding (phosphor/binding-of entry)])
          (cond
-           [(function? binding) (begin (binding) 'ran)]
+           ;; **a thunk that answers a role means it** — T099.
+           ;;
+           ;; this discarded the answer and always said `'ran`, which made a
+           ;; function binding a *side effect only*: it could open a float or
+           ;; write an option, and it could not run an Action. that is the wall
+           ;; T098 recorded when it left `@` deferred — *"a keymap cannot ask a
+           ;; query"* — and the wall was really this line, because asking is
+           ;; fine and it is **answering** that had nowhere to go.
+           ;;
+           ;; `key/deferred` is `(lambda () void)` and keeps meaning `'ran`: a
+           ;; thunk that answers nothing did the work itself, which is what it
+           ;; always meant.
+           ;;
+           ;; **`key/role?` and not `list?`, and a test taught the difference.**
+           ;; the first version took any list, and a thunk whose last expression
+           ;; is a *capability call* answers the door's own receipt — which is
+           ;; also a list. `the_rebind_is_live_on_the_very_next_key` binds
+           ;; `(lambda () (open-repl!))`, and against a refusing host that made
+           ;; the refusal itself look like a role: the key went `Unbound`. only
+           ;; the five heads the constructors below build are roles.
+           [(function? binding)
+            (let ([answered (binding)])
+              (if (key/role? answered) answered 'ran))]
            ;; a group with nothing under it is not a namespace, it is a typo.
            [(equal? binding (key/group))
             (if (phosphor/prefix? scope canon) 'pending 'unbound)]
@@ -757,6 +791,12 @@
 ;; a thunk rather than an empty `key/run` on purpose: what lands here is the
 ;; editor layer's own implementation, and the editor layer's bindings are
 ;; closures. the shape does not change when the feature arrives.
+;;
+;; **nothing uses it today, and that is T098 finished rather than a dead
+;; helper.** `q`, `@` and `m` were its callers; T099 and T042 gave all three a
+;; verb that does what the key means. it is kept because deferring a key is a
+;; thing this build will do again — and because `phosphor/resolve` still has to
+;; treat a `void`-answering thunk as `'ran`, which is the contract this defines.
 (define (key/deferred) (lambda () void))
 
 ;; macros. ruled 2026-08-12: **macros are the editor layer's, over
@@ -773,20 +813,6 @@
 ;; call is refused either way, and T099 rewrites this row when it brings the
 ;; role that consumes the letter.
 ;;
-;; **`@` is still deferred, and this is the one key the window could not close.**
-;; playing a macro is `feed-keys` over the `register` query's answer, and a
-;; keymap cannot ask a query: only a `key/run` reaches the host's `apply`, and
-;; only a refusal from *there* reaches the statusline. a thunk that called
-;; `(register "q")` would raise, and a raising thunk answers `Unbound` — which
-;; spends T035's one teaching row on a key that is known. so the truth stays in
-;; the verb, which `:help` and which-key draw, and it names the task.
-(keymap-set-rows!
- '("normal")
- (list
-  (list "q" (key/run (key/cmd "set-macro-recording" "register" "q" "on" #t))
-        "record a macro")
-  (list "@" (key/deferred) "play a macro — not built; T099, over feed-keys")))
-
 ;; marks. a mark is an anchor and anchoring is T042's, which built them.
 ;;
 ;; this section used to say `'` and backtick were deferred because *"`place-anchor`
@@ -806,6 +832,45 @@
 (define mark-labels
   '("a" "b" "c" "d" "e" "f" "g" "h" "i" "j" "k" "l" "m"
     "n" "o" "p" "q" "r" "s" "t" "u" "v" "w" "x" "y" "z"))
+
+;; macros — T099, and they share the marks' alphabet below because vim gives a
+;; register the same twenty-six names.
+;;
+;; **`@` was deferred because a keymap cannot ask a query**, and the reason it
+;; could not was that `register` had no arm: a thunk calling `(register "a")`
+;; raised, and a raising thunk answers `Unbound`, which spends T035's one
+;; teaching row on a key that is *known*. arming the query is the whole of what
+;; closed it. the thunk reads the register at **press** time and hands the keys
+;; to `feed-keys`, which is the shape T099 described.
+;;
+;; **`q<reg>` toggles, and that is a deliberate deviation from vim.** vim's `q`
+;; alone stops a recording; a key here cannot be both a leaf and a prefix, and a
+;; keymap has no way to ask whether recording is live — which is what `q` alone
+;; would have to know. so `qa` starts and `qa` stops. the `(recording)` query is
+;; what makes the toggle honest rather than a guess, and it is the same reader
+;; §5's strip would use to draw vim's `recording @a`.
+;; OPEN-QUESTIONS.md ss58 records the choice and the faithful alternative.
+(define (macro-rows)
+  (append
+   (map (lambda (label)
+          (list (string-append "q" label)
+                ;; **the toggle is in the thunk, not in the verb.** the
+                ;; capability is `on: bool` because a *door* has to be able to
+                ;; say which; a person pressing the same two keys twice means
+                ;; "the other one".
+                (lambda ()
+                  (key/run (key/cmd "set-macro-recording"
+                                    "register" label
+                                    "on" (not (equal? (recording) label)))))
+                (string-append "record a macro into " label)))
+        mark-labels)
+   (map (lambda (label)
+          (list (string-append "@" label)
+                (lambda () (key/run (key/cmd "feed-keys" "keys" (register label))))
+                (string-append "play the macro in " label)))
+        mark-labels)))
+
+(keymap-set-rows! '("normal") (macro-rows))
 
 (keymap-set-rows!
  '("normal" "visual")

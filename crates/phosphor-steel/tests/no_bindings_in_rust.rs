@@ -60,8 +60,44 @@ fn repo() -> PathBuf {
         .expect("the checkout")
 }
 
+/// A host that **answers** queries instead of refusing them (`T099`).
+///
+/// [`Detached`] refuses every query with the task that would build it, which is
+/// the right thing for a boot — its own doc says the point is *"legible refusals
+/// rather than missing bindings"*. It is the wrong thing for
+/// [`every_shipped_binding_resolves`], and `T099` is where that started to
+/// matter: a binding may now be **computed** from the editor's own state —
+/// `@a`'s thunk reads the `register` query at press time — and a refusal raises,
+/// which turns a legible refusal into exactly the missing binding `Detached`
+/// exists to avoid. The test would have reported twenty-six live keys as dead.
+///
+/// **Empty text for everything**, because that is what a query answers about an
+/// editor with nothing in it, and because the assertion is that a role *decodes*
+/// rather than that it does anything. A thunk needing a list will fail here and
+/// should — this stand-in is meant to be widened deliberately, not to guess.
+#[derive(Debug, Default, Clone, Copy)]
+struct Answering;
+
+impl phosphor_core::query::Answers for Answering {
+    fn answer(
+        &self,
+        _query: &phosphor_core::query::Query,
+    ) -> Result<phosphor_core::query::Answer, phosphor_core::query::QueryError> {
+        Ok(phosphor_core::query::Answer {
+            value: phosphor_core::value::Value::Text(String::new()),
+            revision: phosphor_core::query::Revision::INITIAL,
+        })
+    }
+}
+
+impl Host for Answering {
+    fn apply(&self, request: &phosphor_core::action::Request) -> phosphor_core::action::Outcome {
+        Detached.apply(request)
+    }
+}
+
 fn runtime() -> Runtime {
-    let host: Arc<dyn Host> = Arc::new(Detached);
+    let host: Arc<dyn Host> = Arc::new(Answering);
     Runtime::boot(Some(&repo().join("runtime")), host)
 }
 

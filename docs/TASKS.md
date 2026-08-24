@@ -19,9 +19,9 @@ never executed and says so at the task.
 rulings came out of the manual half; three amend design docs and are tabled in
 [§5](IMPLEMENTATION-PLAN.md#5-decisions).
 
-**Window C is built and its mechanical half is green.** The `Action` vocabulary is 218
+**Window C is built and its mechanical half is green.** The `Action` vocabulary is 219
 capabilities generated from one table, the three doors are total functions over it, and the
-parity test walks all 654 door checks end to end. (`208`/`624` until `S3` added
+parity test walks all 657 door checks end to end. (`208`/`624` until `S3` added
 `Buffer::SetCase`, `209`/`627` until the repair window added `set-macro-recording`, `register`
 and `place-anchor`, `212`/`636` until `S4` added the three `ingest-` verbs the asynchronous
 LSP transport needs, `215`/`645` until `T104` added `insert-indent`, and `216`/`648` until
@@ -2874,7 +2874,7 @@ Split at the internal checkpoint from Q10. Two checkpoints.
   >   of N. Neither is what the other was claimed to be.
   >
   > **Verification.** Six unit tests over the tool list and the schema walk, the
-  > 218-capability live parity walk, and a pty test for the batch. Planted and
+  > 219-capability live parity walk, and a pty test for the batch. Planted and
   > caught: a `row_for` that dispatches every tool to the first row, a
   > front-to-back edit order. Also caught by measurement rather than by a
   > planted defect: `enable_time` missing from the server's tokio runtime, which
@@ -4415,7 +4415,7 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   > float's height and nothing scrolls one, so `:help normal` has more rows than it can show and
   > stops. The bare `:help` draws an index for that reason.
 
-- [ ] **T098 · Honest refusals for the deliberately-deferred vim keys** 📌
+- [x] **T098 · Honest refusals for the deliberately-deferred vim keys** 📌
   `q` `@` `m` `/` `?` `n` `N` are unbound in `runtime/keymaps.scm` — macros, marks and search are
   all deferred on purpose — so pressing one draws `T035`'s unknown-key hint the first time and
   **nothing at all** every time after. To a vim user's hands `q` does not read as *deferred*, it
@@ -4448,6 +4448,13 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   > (`T042`) — so `q`, `@` and `m` now each have a capability that means exactly what the key
   > means, and the refusal they would raise would name the right task. Closing this clause is a
   > line on `T099` and on `T042`, listed there, not new work here.
+  >
+  > **Closed 2026-08-23 by `T099`, and by more than a binding.** `m` went with `T042`; `q` and
+  > `@` are bound to verbs that *do what the keys mean* rather than to refusals that name a task,
+  > which is one better than this clause asked for. The entry's own diagnosis — *"a keymap cannot
+  > ask a query"* — turned out to be half right and pointed at the wrong line: asking was fine,
+  > and `phosphor/resolve` discarding a thunk's **answer** was the wall. Nothing in
+  > `runtime/keymaps.scm` is bound to `key/deferred` any more.
 
 ---
 
@@ -4474,7 +4481,7 @@ naming its task cannot, if the vocabulary has no verb that means what the key me
 verb is `spine`'s and cheap; building the machine behind it is a task, and these are those tasks.
 They are numbered `T099`+ and append rather than renumber, like everything else here.
 
-- [ ] **T099 · Macros — `q` and `@`, over `feed-keys`** 📌
+- [x] **T099 · Macros — `q` and `@`, over `feed-keys`** 📌
   Ruled 2026-08-12 and recorded in `runtime/keymaps.scm`: **macros are the editor layer's, over
   `input/feed-keys`** — recording is capturing keystrokes into a register and playing is feeding
   them back, so the machinery is `T026`'s `record`/`record_changed` stream that `.` already keeps,
@@ -4495,6 +4502,66 @@ They are numbered `T099`+ and append rather than renumber, like everything else 
   *Done when:* `q<reg>` records, `@<reg>` replays through `feed-keys`, the `register` query reads
   the same register back through all three doors, and a pty test records a keystroke sequence and
   replays it in the running binary. *Needs:* T026, T033
+
+  > **Built 2026-08-23. The wall was one line of scheme, and it was not the one
+  > the entry named.** `runtime/keymaps.scm` recorded that *"a keymap cannot ask
+  > a query"* — and asking was always fine. `phosphor/resolve` called a function
+  > binding and **discarded its answer**: `[(function? binding) (begin (binding)
+  > 'ran)]`. So a thunk could open a float or set an option and could not run an
+  > Action, which is why `@` had nowhere to put the keys it had just read. It
+  > honours a role now — a thunk that answers a *list* means it, and
+  > `key/deferred`'s `void` still means `'ran`, which is what it always meant.
+  >
+  > **This is the generalisation the whole editor layer was missing**, not a
+  > macro fix: a binding can now be *computed* from the editor's own state. `@`
+  > is the first caller and the toggle below is the second.
+  >
+  > **It is `key/role?` and not `list?`, and a test taught the difference.**
+  > The first version took *any* list as a role — and a thunk whose last
+  > expression is a **capability call** answers the door's own receipt, which is
+  > also a list. `the_rebind_is_live_on_the_very_next_key` binds
+  > `(lambda () (open-repl!))`, and against a refusing host that made the
+  > refusal itself look like a role: the key went `Unbound`. Only the five heads
+  > the `key/…` constructors build are roles, which keeps a thunk free to end in
+  > a call the way most of them do.
+  >
+  > **Commands, not keys.** `Machine::recording` holds `Vec<Vec<Key>>` because
+  > the thing that must be dropped when recording stops is the `q<reg>` that
+  > stopped it — one command and an unknown number of keystrokes. Keeping the
+  > boundaries makes that a `pop` where counting keys would be wrong the first
+  > time a register name took two presses. The **starting** `q<reg>` is excluded
+  > for free: `apply` runs after `feed`, so recording is still `None` while the
+  > command that turns it on completes.
+  >
+  > **The machine records and the host stores.** A register is the *editor's* —
+  > `q` and `y` write the same thirty-odd slots — so a macro lands where a yank
+  > lands and `@a` and `"ap` read one table. A second register table inside the
+  > input machine would be two things that must agree about what `@a` plays.
+  >
+  > **One new query, and it earns its row.** `recording` answers which register
+  > `q` is filling. It is what makes the toggle honest rather than a guess, and
+  > it is the reader §5's strip would use to draw vim's `recording @a` — which no
+  > mockup asks for and which is the natural companion if `q` is ever made
+  > faithful.
+  >
+  > **`q<reg>` toggles where vim's `q` alone stops**, and that is a deviation
+  > recorded at `OPEN-QUESTIONS.md` §58 rather than glossed. `q` is a prefix here
+  > — twenty-six children, one per register — and a bare `q` meaning *stop* would
+  > have to beat the prefix while recording and lose to it otherwise, which is a
+  > resolution rule that depends on editor state where the resolver reads a table
+  > and nothing else. The information is no longer the obstacle; the resolver's
+  > legibility is.
+  >
+  > **Closes `T098`'s third clause.** `q` and `@` are bound to verbs that do what
+  > the keys mean, so neither is silent and neither names a task.
+  >
+  > **Verification.** One keystroke test in the running binary: `qa`, `x`, `qa`,
+  > then the register read back through the REPL door as `("x" "")` — the macro
+  > and nothing recording — and `@a` replaying it, `alpha` → `lpha` → `pha`. Two
+  > planted defects, two caught: a stop command that records itself (the register
+  > read `"xqa"`, a macro that would turn itself off half way through its first
+  > replay) and a resolver that discards a thunk's answer again. `just gate`
+  > green.
 
 - [x] **T100 · The door speaks §6's voice**
   The two halves of one defect, ruled in this window to be one task because they rewrite the same

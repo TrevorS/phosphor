@@ -55,7 +55,7 @@
 //! # `T023` — the CLI door, alongside the host
 //!
 //! [`door`] is the other half of this file's job and does not touch the loop at
-//! all. `phosphor --eval '(…)'` and the 218 generated capability verbs return
+//! all. `phosphor --eval '(…)'` and the 219 generated capability verbs return
 //! **before** [`Term`] is constructed: no alternate screen, no raw mode, no
 //! frame. That is a requirement, not an accident — `V006` seeds tape fixtures
 //! through `--eval` with no test-only backdoor, which needs the door to work
@@ -904,6 +904,14 @@ struct HostState {
     /// `session` query and §5's chrome cannot disagree, because there is one
     /// derivation and it happens once per frame.
     session: Option<Value>,
+    /// `T099`'s registers, as the loop last published them.
+    ///
+    /// Published for `session`'s reason: the table lives on `Shell`, the loop
+    /// owns `Shell`, and the `register` query is answered from this side of the
+    /// barrier. A copy of one truth rather than a second original.
+    registers: BTreeMap<String, String>,
+    /// Which register `q` is recording into, or empty (`T099`).
+    recording: String,
     /// `T060`'s queue, as the loop last published it.
     ///
     /// **Published rather than held, for `session`'s reason exactly**: the
@@ -1509,6 +1517,14 @@ impl AppHost {
         }
     }
 
+    /// Publish the registers, so `register` has an answer (`T099`).
+    fn publish_registers(&self, registers: BTreeMap<String, String>, recording: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            state.registers = registers;
+            recording.clone_into(&mut state.recording);
+        }
+    }
+
     /// Publish the ask queue, so `pending-asks` and `ask` have an answer
     /// (`T060`).
     fn publish_asks(&self, asks: Vec<Value>) {
@@ -1588,6 +1604,35 @@ impl Answers for AppHost {
                     .ok()
                     .and_then(|state| state.session.clone())
                     .unwrap_or(Value::Null),
+                revision: Revision::INITIAL,
+            }),
+            // `T099` — what a register holds, as the loop last published it.
+            // **One table behind three readers**: `@` feeds it back, `"ap`
+            // pastes it, and the door reads it. An unset one is empty, which is
+            // the row's own wording and not an error — asking what an untouched
+            // register holds is a question with a legitimate *"nothing"*.
+            Query::Input(phosphor_core::query::InputQuery::Register { register }) => Ok(Answer {
+                value: Value::Text(
+                    self.state
+                        .lock()
+                        .ok()
+                        .and_then(|state| state.registers.get(&register.0).cloned())
+                        .unwrap_or_default(),
+                ),
+                revision: Revision::INITIAL,
+            }),
+            // `T099` — which register `q` is filling, or empty. **Published like
+            // the rest**, because the recorder is the *machine's* and this side
+            // of the barrier has no machine: the loop reads
+            // `Machine::recording` once a pass and lends the answer.
+            Query::Input(phosphor_core::query::InputQuery::Recording {}) => Ok(Answer {
+                value: Value::Text(
+                    self.state
+                        .lock()
+                        .ok()
+                        .map(|state| state.recording.clone())
+                        .unwrap_or_default(),
+                ),
                 revision: Revision::INITIAL,
             }),
             // `T060` — the queue, oldest first. **One list behind three
@@ -3599,6 +3644,17 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // Cheap for `session`'s reason and unlike `transcript`: a queue is
         // bounded by how many questions are outstanding, and a transcript grows
         // for as long as the editor is open.
+        // **`T099` — cheap for `session`'s reason.** A register table is a few
+        // dozen short strings; a transcript grows without bound, which is why
+        // that one is guarded by a revision and this one is not.
+        host.publish_registers(
+            shell
+                .registers
+                .iter()
+                .map(|(name, held)| (name.clone(), held.text.clone()))
+                .collect(),
+            machine.recording().unwrap_or_default(),
+        );
         host.publish_asks(
             shell
                 .asks
@@ -12884,12 +12940,30 @@ impl Session<'_> {
                     // it replaces, and until then `q` declines by name instead
                     // of succeeding silently, which is the failure the whole
                     // deferred-keys section exists to end.
+                    // **`T099` — this arm used to be the refusal, and the
+                    // refusal was the point.** `Machine::apply` returned nothing
+                    // and its `set-macro-recording` arm was a no-op, so the host
+                    // was the only place a `q` could decline by naming its task
+                    // rather than succeeding silently. The recorder exists now;
+                    // what is left here is keeping what it made.
+                    //
+                    // **The register store is the editor's, not the machine's.**
+                    // `q` and `y` write the same thirty-odd slots, so a macro
+                    // lands where a yank lands and `@a` and `"ap` read one
+                    // table.
                     InputAction::SetMacroRecording { .. } => {
-                        if !said {
-                            self.editing.refused = Some(Refusal::NotYetImplemented {
-                                task: action.spec().since.task,
-                            });
-                            said = true;
+                        if let Some((name, keys)) = self.machine.take_recorded() {
+                            self.cx.shell.registers.insert(
+                                name,
+                                Register {
+                                    text: keys.0,
+                                    // **Not linewise.** A macro is a key
+                                    // sequence; pasting one with `p` should put
+                                    // the characters where the cursor is rather
+                                    // than opening a line for them.
+                                    linewise: false,
+                                },
+                            );
                         }
                     }
                 }
@@ -16768,23 +16842,36 @@ mod tests {
             resolved(&mut layer, "<C-c>"),
             Resolution::Role(Role::Run(_))
         ));
-        // `T098`: `q` is **known and not built**, so it does not spend `T035`'s
-        // one teaching row. It used to resolve to a thunk that did nothing,
-        // because the vocabulary had no macro verb to name; the repair window
-        // between `CP-3` and `S4` added `set-macro-recording`, so it resolves
-        // to a capability call now and the refusal names `T099` instead of the
-        // key saying nothing. `Q` is what genuinely nobody binds.
-        assert!(
-            matches!(resolved(&mut layer, "q"), Resolution::Role(Role::Run(_))),
-            "`q` names the verb that will record, and declines by naming its task"
+        // **`T099`: `q` and `@` are prefixes, and their leaves are registers.**
+        //
+        // This asserted two weaker things in turn, and each was the truth of its
+        // window: `q` resolved to a thunk that did nothing while the vocabulary
+        // had no macro verb, then to a `Role::Run` that declined by naming
+        // `T099`. Both are gone — the task landed, and a key that takes a
+        // register is a prefix over twenty-six of them, exactly as `m` is.
+        //
+        // **`Pending` is the assertion.** A prefix answering anything else is a
+        // key that swallowed the register you were about to name.
+        assert_eq!(
+            resolved(&mut layer, "q"),
+            Resolution::Pending,
+            "`q` waits for a register the way `m` waits for a mark"
         );
-        // `@` is the one that is still a thunk, and it is argued where it is
-        // bound: playing a macro is `feed-keys` over the `register` query's
-        // answer, and a keymap cannot ask a query.
         assert_eq!(
             resolved(&mut layer, "@"),
-            Resolution::Ran,
-            "`@` is deferred on purpose, and a deferred key is bound"
+            Resolution::Pending,
+            "and so does `@`"
+        );
+        // And the leaves are real. `@a` reads the register at press time, which
+        // is why it is a thunk answering a role rather than a stored one — see
+        // `phosphor/resolve`.
+        assert!(
+            matches!(resolved(&mut layer, "qa"), Resolution::Role(Role::Run(_))),
+            "`qa` records into a"
+        );
+        assert!(
+            matches!(resolved(&mut layer, "@a"), Resolution::Role(Role::Run(_))),
+            "`@a` plays it back"
         );
         assert_eq!(
             resolved(&mut layer, "Q"),
