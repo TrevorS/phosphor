@@ -4288,9 +4288,86 @@ mockup screen ids of the same name, which mean entirely different things.
   > has none, and `Hunk` inherits whichever the peek was opened from. That is a ruling about what
   > `4b` **draws**, so it is written up as OPEN-QUESTIONS.md §59 with three candidate answers and
   > left to the task with the screen in front of it.
-- [ ] **T065 · Directory grouping + annotations** — `tui-tree-widget`; Claude's group
+- [x] **T065 · Directory grouping + annotations** — `tui-tree-widget`; Claude's group
   annotations ("mechanical" vs "the meat"). **Scale is grouping, not scrolling.**
   *Done when:* screen `8b`'s 40-file block is navigable. *Needs:* T064
+
+  > **Built and ticked 2026-08-23.** `8b` opens with `:review`, walks with `j`/`k`, folds with
+  > `za`, takes claude's note with `:annotate` and reflows with `:grouping flat`. One pty test
+  > presses all of it.
+  >
+  > **`tui-tree-widget` was fetched, read and not used**, which is the entry's own instruction
+  > overruled and so is stated rather than buried. It re-exports `ratatui_widgets::scrollbar`
+  > (`src/lib.rs:13`), so taking it puts a widget crate into the one crate that is
+  > deliberately `ratatui-core`-only; it is a `StatefulWidget` over a `TreeState` that owns the
+  > selection and the open set, which every other body here keeps in a ViewModel; and a
+  > `TreeItem` carries one `Text` blob per node, so `8b`'s `▾ src/api/` on the left with
+  > `●31 unseen · 14 files · the meat: …` after it is our layout either way. What it would have
+  > contributed is fold arrows and a flatten-with-indent — about thirty lines. **The Component
+  > Breakdown says buy and the build says no**, the same shape `T063`'s entry records for the
+  > bought diff view, and it is flagged here rather than folded into the design docs.
+  >
+  > **`8b`'s grouping is claude's, not the filesystem's**, and that is the finding that shaped the
+  > ViewModel. The mockup draws `src/errors.rs` as a *peer* of `src/api/` and `src/db/` even though
+  > its parent is `src/` — so the tree cannot be derived from the paths, and a widget that grouped
+  > by parent would draw a different screen. `Entry` is therefore **one list and not two**: `8b`
+  > interleaves group rows and bare files, and two fields would lose the order, which is claude's
+  > statement about what to read first.
+  >
+  > **The host groups and the widget draws.** Nothing in the vocabulary carries claude's judgement
+  > yet, so `review_vm` groups by parent directory — the honest grouping available today — and when
+  > claude's arrives it replaces that function and not the widget. `Grouping::Flat` is a *rendering*
+  > choice in `DiffBody` and a *building* choice in the host, and they are not the same edit: the
+  > float is a snapshot composed once with `"directory"` on its node, so a `:grouping flat` typed
+  > afterwards has to change what the rows *are*. The first version set the session and nothing
+  > moved.
+  >
+  > **`8b` draws no diff lines, and that is not a shortfall.** It is the navigation — 41 files as
+  > eight rows — and every field it draws is a fact the store has: paths, counts, annotations, hunk
+  > ranges. The `+`/`−` lines are `4b` and need the text a hunk replaced, which nothing records
+  > (§59). **`8b` and `4b` are one surface at two fold depths** — both open
+  > `review — ✻ <title> · N files · N regions · N seen ✓` — which is why there is one float, one
+  > session and one verb, and why `T066` inherits the surface rather than building it.
+  >
+  > **`open-review-block` is `T066`'s verb, armed here**, because *"`8b` is navigable"* is not a
+  > claim you can make about a screen nothing opens. It is not re-declared: an unticked task's verb
+  > arriving early is a task getting a head start, not a misattribution, and `T066`'s entry can say
+  > so. Its `block` became `Option` — **absent means the newest** — which is `defer-ask`'s ruling,
+  > and `annotate-group`'s `group` became one too.
+  >
+  > **Three things only a run found, and each is a rule now:**
+  >
+  > * **An ex lambda that calls a query is a command that says it does not exist.** `:review` bare
+  >   resolved the newest block by calling `(review-blocks)` inside the lambda, and a raise inside
+  >   `phosphor/ex` reads as `Ex::Unknown`. `every_ex_command_decodes` caught it, as it caught
+  >   `(string->number "")` at `T060`. The resolution moved into the arm. `:annotate` had the same
+  >   shape and lost its id argument entirely — it annotates the row you are on, which also removes
+  >   an ambiguity rather than deferring one, since `:annotate 3 handler signatures` would have to
+  >   guess whether `3` is a group.
+  > * **A float that owns every key owns the two commands that only work inside it.** The review's
+  >   keys were guarded on *"a review is open"* and swallowed `:`. `4a`'s digits guard on the keys
+  >   themselves and always did; `review_key` does now, and [`None`] means *"not ours"*.
+  > * **The ex line returned to the buffer and closed the review.** The float was never dropped —
+  >   only `surface` moved. Narrowed to the review on purpose: whether a picker or a question float
+  >   should survive an ex line is a separate question with its own screens.
+  >
+  > **`lint-node-kinds.sh`'s `Diff` row is deleted, one task after being re-pointed.** `T063`
+  > recorded it against `T063`, ticking that re-pointed it at `T066`, and `runtime/review.scm`
+  > composes `Node::Diff` now — so the lint reddened with *"the shipped configuration composes it
+  > now"* and the row went. That is the table working: it can only shrink, and it shrank because
+  > somebody built the composition rather than finding a better task to blame.
+  >
+  > **Eleven planted defects, eleven catches.** Six against the widget — a folded group drawing its
+  > children, a fully-seen group counting zero, a group row reporting what it drew, an indented fold
+  > arrow, flat grouping dropping files, an empty annotation stored instead of clearing. Five
+  > against the host — an off-by-one fold key, a directory counting one file's unseen, a nested file
+  > repeating its directory, flat grouping still building group rows, and annotate writing to a
+  > fixed group.
+  >
+  > **A twelfth defect passed, and the fixture was the bug.** `open.files = 1` survived a one-file
+  > fixture, because with one file per directory the right answer and the wrong one are the same
+  > number. The fixture is two files in one directory now — which is also the first fixture in which
+  > the grouping does anything — and it catches it.
 - [ ] **T066 · Review block + hunk peek** — screens `4b`, `2b`. *Needs:* T065, T053
 - [ ] **T067 · Inbox** — one list of everything Claude said; severity is a single MCP flag;
   unread = unseen. Screen `5c`. *Needs:* T053, T041

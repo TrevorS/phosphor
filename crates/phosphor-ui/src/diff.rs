@@ -36,7 +36,7 @@
 //! *"scale is grouping, not scrolling"* — the same shape the transcript's
 //! `⋯ N earlier turn(s)` and the help grid's `and N more` already take.
 
-use phosphor_core::request::DiffMode;
+use phosphor_core::request::{DiffMode, Grouping};
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
 use ratatui_core::style::Style;
@@ -55,6 +55,8 @@ mod glyph {
     pub(super) const ELIDED: &str = "⋯";
     /// `✓` — seen. §2's check, and the one place this surface spends it.
     pub(super) const SEEN: &str = "✓";
+    /// `●` — §2's unseen dot, in front of a count (`T065`).
+    pub(super) const UNSEEN: &str = "●";
 }
 
 /// Cells of air at the left of a file row. Hunks and lines inset further.
@@ -62,6 +64,9 @@ pub const PAD_COLS: u16 = 0;
 
 /// Cells a hunk header is indented past its file.
 const HUNK_INDENT: u16 = 2;
+
+/// Cells one level of grouping insets a file's name (`T065`).
+const NEST_COLS: u16 = 2;
 
 /// What one row of a diff is.
 ///
@@ -120,17 +125,94 @@ pub struct Hunk {
 /// One file's hunks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct File {
-    /// Workspace-relative path, as the header draws it.
+    /// The path as this row draws it.
+    ///
+    /// **Whatever the host put here, verbatim.** `8b` draws
+    /// `handlers/users.rs` under a `src/api/` group and `src/errors.rs` at the
+    /// top level, so a row's path is relative to *where it sits* — which only
+    /// the thing that built the tree knows. Trimming a prefix here would guess.
     pub path: String,
-    /// `· 3 regions`, or whatever the host counted. Absent draws nothing.
+    /// `· 3 regions`, or claude's own note about the file. Absent draws
+    /// nothing.
     pub annotation: Option<String>,
+    /// `●4` — how many of this file's hunks are unseen (`T065`).
+    ///
+    /// [`None`] draws no chip, which is not the same as `Some(0)`: a file
+    /// nobody counted and a file with nothing left to read are different
+    /// facts, and `4b` shows the first while `8b` shows the second.
+    pub unseen: Option<u32>,
     /// Collapsed to its header row.
     pub folded: bool,
     /// The hunks, in file order.
     pub hunks: Vec<Hunk>,
 }
 
-/// What the diff surface draws (`T063`).
+/// A run of files drawn as one row (`T065`).
+///
+/// `⋯ 12 more files, same pattern · S here marks all 12` — §11's *"scale is
+/// grouping, not scrolling"* at the file level, the same shape a folded hunk
+/// takes at the line level.
+///
+/// **The host decides what to elide and says so; this only draws it.** Which
+/// twelve of forty files are *"the same pattern"* is a judgement about the
+/// change, and a widget that picked the tail of the list would be asserting one
+/// it cannot make.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Elided {
+    /// How many files this row stands for.
+    pub files: usize,
+    /// `same pattern` — why they were collapsed together. Absent draws the
+    /// count alone.
+    pub note: Option<String>,
+    /// `S here marks all 12` — the key that acts on them, spelled whole per
+    /// Design Language §6. Absent draws nothing.
+    pub hint: Option<String>,
+}
+
+/// One group of files — `8b`'s `▾ src/api/` row and what hangs off it (`T065`).
+///
+/// **The grouping is claude's, not the filesystem's**, which is the finding
+/// that shaped this type. `8b` draws `src/errors.rs` as a *peer* of `src/api/`
+/// and `src/db/` even though its parent directory is `src/` — so the tree
+/// cannot be derived from the paths, and a widget that grouped by parent would
+/// draw a different screen from the one the mockup draws. The host groups and
+/// annotates; this draws what it is handed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Group {
+    /// `src/api/` — the group's name, as `8b` spells it with its trailing
+    /// slash.
+    pub path: String,
+    /// `the meat: handler signatures`. Claude's, through `annotate-group`.
+    pub annotation: Option<String>,
+    /// `●31 unseen` — how many unseen hunks are under this group.
+    pub unseen: u32,
+    /// How many files it holds *in total*, which is not `files.len()` when some
+    /// were elided. `8b`'s `14 files` over two drawn rows and a `⋯ 12 more`.
+    pub files: usize,
+    /// Collapsed to its own row.
+    pub folded: bool,
+    /// The files drawn under it, in the host's order.
+    pub children: Vec<File>,
+    /// The rest of them, as one row.
+    pub elided: Option<Elided>,
+}
+
+/// One row of the surface's top level.
+///
+/// **One list and not two**, because `8b` interleaves them: `src/api/`,
+/// `src/db/`, then the bare file `src/errors.rs`, then `tests/`. Two fields
+/// would lose that order, and the order is claude's statement about what to
+/// read first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Entry {
+    /// A file with no group above it — `4b`'s whole shape, and `8b`'s
+    /// `src/errors.rs`.
+    File(File),
+    /// A group of files (`T065`).
+    Group(Group),
+}
+
+/// What the diff surface draws (`T063`, grouped at `T065`).
 ///
 /// A ViewModel: derived from the store, read-only, rebuilt when it moves.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -139,11 +221,42 @@ pub struct DiffVm {
     /// draws no header, which is `2b`'s hunk peek: a float three lines tall has
     /// no room for one and no need.
     pub header: String,
-    /// The files, in the order the host grouped them.
-    pub files: Vec<File>,
+    /// The top level, in the order the host built it.
+    pub entries: Vec<Entry>,
+    /// Which top-level row is highlighted, 0-based (`T065`).
+    ///
+    /// **`8b` draws no highlight and this exists anyway.** The mockup is a
+    /// snapshot of a screen at rest; `za fold · s seen · S group seen` in its
+    /// own footer are all verbs that act on *a* row, and a surface where you
+    /// cannot see which row that is has three keys and no way to aim them.
+    /// The picker spends the theme's selection ground on the same job.
+    ///
+    /// [`None`] draws none, which is `4b` and `2b` — bodies you read rather
+    /// than steer.
+    pub selected: Option<usize>,
 }
 
 impl phosphor_core::vm::ViewModel for DiffVm {}
+
+/// One drawn row of the top level, after grouping has been applied (`T065`).
+///
+/// Built once by [`DiffBody::rows`] and walked by both the measure and the
+/// render, so *"how tall is this"* and *"what did it draw"* cannot answer
+/// differently.
+#[derive(Debug, Clone, Copy)]
+enum Row<'a> {
+    /// `▸   handlers/users.rs   ●4  Result<_, ApiError> throughout`.
+    File {
+        /// The file.
+        file: &'a File,
+        /// How many levels in — `0` at the top, `1` under a group.
+        indent: u16,
+    },
+    /// `▾ src/api/        ●31 unseen · 14 files · the meat: …`.
+    Group(&'a Group),
+    /// `⋯ 12 more files, same pattern · S here marks all 12`.
+    Elided(&'a Elided),
+}
 
 /// A diff, as a surface body.
 #[derive(Debug, Clone, Copy)]
@@ -151,6 +264,7 @@ pub struct DiffBody<'a> {
     vm: &'a DiffVm,
     theme: &'a Theme,
     mode: DiffMode,
+    grouping: Grouping,
 }
 
 impl<'a> DiffBody<'a> {
@@ -161,6 +275,7 @@ impl<'a> DiffBody<'a> {
             vm,
             theme,
             mode: DiffMode::Unified,
+            grouping: Grouping::Directory,
         }
     }
 
@@ -171,6 +286,54 @@ impl<'a> DiffBody<'a> {
         self
     }
 
+    /// Whether to draw the group rows or flatten past them (`T065`).
+    ///
+    /// **[`Grouping::Flat`] does not rebuild the tree — it skips the group
+    /// rows and draws their files at the top level.** The order is the host's
+    /// either way; what flattening drops is a level of indent, the fold rows
+    /// and the elisions. It is `8d`'s answer at 80 columns and `4b`'s ordinary
+    /// shape, not a different set of files.
+    #[must_use]
+    pub const fn grouping(mut self, grouping: Grouping) -> Self {
+        self.grouping = grouping;
+        self
+    }
+
+    /// The top level as it will be drawn: groups kept, or flattened away.
+    ///
+    /// Answers `(indent, file)` pairs interleaved with the group rows, so the
+    /// measure and the render walk one sequence and cannot disagree about how
+    /// many rows there are — which is the bug `desired_height` exists to not
+    /// have.
+    fn rows(&self) -> Vec<Row<'_>> {
+        let mut rows = Vec::new();
+        for entry in &self.vm.entries {
+            match entry {
+                Entry::File(file) => rows.push(Row::File { file, indent: 0 }),
+                Entry::Group(group) => match self.grouping {
+                    Grouping::Flat => {
+                        for file in &group.children {
+                            rows.push(Row::File { file, indent: 0 });
+                        }
+                    }
+                    Grouping::Directory => {
+                        rows.push(Row::Group(group));
+                        if group.folded {
+                            continue;
+                        }
+                        for file in &group.children {
+                            rows.push(Row::File { file, indent: 1 });
+                        }
+                        if let Some(elided) = &group.elided {
+                            rows.push(Row::Elided(elided));
+                        }
+                    }
+                },
+            }
+        }
+        rows
+    }
+
     /// Rows this body wants.
     ///
     /// **Measured rather than drawn twice**, for the reason every other body
@@ -178,8 +341,11 @@ impl<'a> DiffBody<'a> {
     #[must_use]
     pub fn desired_height(&self) -> u16 {
         let mut rows = u16::from(!self.vm.header.is_empty());
-        for file in &self.vm.files {
+        for row in self.rows() {
             rows = rows.saturating_add(1);
+            let Row::File { file, .. } = row else {
+                continue;
+            };
             if file.folded {
                 continue;
             }
@@ -258,12 +424,38 @@ impl Widget for DiffBody<'_> {
             y += 1;
         }
 
-        for file in &self.vm.files {
+        for (index, row) in self.rows().into_iter().enumerate() {
             if y >= area.bottom() {
                 return;
             }
-            self.file_row(file, area, y, buf);
-            y += 1;
+            // **Painted before the text, across the whole width.** The picker
+            // does the same and for the same reason: a highlight that stopped
+            // at the end of the longest run would draw a ragged right edge.
+            if self.vm.selected == Some(index) {
+                let ground = Style::new().bg(self.theme.regions.selection);
+                for x in area.x..area.right() {
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_style(ground);
+                    }
+                }
+            }
+            let file = match row {
+                Row::Group(group) => {
+                    self.group_row(group, area, y, buf);
+                    y += 1;
+                    continue;
+                }
+                Row::Elided(elided) => {
+                    self.elided_row(elided, area, y, buf);
+                    y += 1;
+                    continue;
+                }
+                Row::File { file, indent } => {
+                    self.file_row(file, indent, area, y, buf);
+                    y += 1;
+                    file
+                }
+            };
             if file.folded {
                 continue;
             }
@@ -283,30 +475,110 @@ impl Widget for DiffBody<'_> {
 }
 
 impl DiffBody<'_> {
-    /// `▾ src/retry.rs                       · 3 regions`.
-    fn file_row(&self, file: &File, area: Rect, y: u16, buf: &mut Buffer) {
+    /// `▾ src/retry.rs                       · 3 regions`, and `8b`'s indented
+    /// `▸   handlers/users.rs   ●4  Result<_, ApiError> throughout`.
+    fn file_row(&self, file: &File, indent: u16, area: Rect, y: u16, buf: &mut Buffer) {
         let mark = if file.folded {
             glyph::FOLDED
         } else {
             glyph::OPEN
         };
         let meta = Style::new().fg(self.theme.neutrals.meta);
+        // **The arrow stays in the left column at every depth, and the name
+        // moves.** `8b` draws `▸   handlers/users.rs` under `▾ src/api/` with
+        // the two arrows lined up, which is what makes a column of them
+        // scannable — indenting the arrow too would turn the fold state into a
+        // staircase.
         let after = write(buf, area, area.x + PAD_COLS, y, mark, meta);
-        write(
+        let x = after + 1 + indent.saturating_mul(NEST_COLS);
+        let after = write(
             buf,
             area,
-            after + 1,
+            x,
             y,
             &file.path,
             Style::new().fg(self.theme.neutrals.text),
         );
+        let mut right = after;
+        if let Some(unseen) = file.unseen {
+            right = write(
+                buf,
+                area,
+                right + 2,
+                y,
+                &format!("{}{unseen}", glyph::UNSEEN),
+                Style::new().fg(self.theme.actors.claude),
+            );
+        }
         if let Some(annotation) = &file.annotation {
-            let at = area
-                .right()
-                .saturating_sub(cells(annotation))
-                .saturating_sub(PAD_COLS);
+            // **After the chip when there is one, right-aligned when there is
+            // not.** `4b`'s `· 3 regions` is a count against the right edge;
+            // `8b`'s `Result<_, ApiError> throughout` is claude's sentence and
+            // reads left-to-right after the dot. One field, two placements, and
+            // the chip is what tells them apart.
+            let at = if file.unseen.is_some() {
+                right + 2
+            } else {
+                area.right()
+                    .saturating_sub(cells(annotation))
+                    .saturating_sub(PAD_COLS)
+            };
             write(buf, area, at, y, annotation, meta);
         }
+    }
+
+    /// `▾ src/api/        ●31 unseen · 14 files · the meat: handler
+    /// signatures` (`T065`).
+    ///
+    /// **`seen ✓` replaces the count rather than joining it.** `8b` draws
+    /// `tests/  seen ✓ · 17 files` — a group with nothing left to read says so
+    /// instead of saying `●0 unseen`, which is the same rule the statusline's
+    /// counter follows and the reason `File::unseen` is an `Option`.
+    fn group_row(&self, group: &Group, area: Rect, y: u16, buf: &mut Buffer) {
+        let meta = Style::new().fg(self.theme.neutrals.meta);
+        let mark = if group.folded {
+            glyph::FOLDED
+        } else {
+            glyph::OPEN
+        };
+        let after = write(buf, area, area.x + PAD_COLS, y, mark, meta);
+        let after = write(
+            buf,
+            area,
+            after + 1,
+            y,
+            &group.path,
+            Style::new().fg(self.theme.neutrals.text),
+        );
+
+        let mut parts = Vec::new();
+        if group.unseen == 0 {
+            parts.push(format!("seen {}", glyph::SEEN));
+        } else {
+            parts.push(format!("{}{} unseen", glyph::UNSEEN, group.unseen));
+        }
+        parts.push(format!("{} files", group.files));
+        if let Some(annotation) = &group.annotation {
+            parts.push(annotation.clone());
+        }
+        // Two cells of air after the longest name would need a second pass over
+        // every row; one column is enough to keep the counts off the names.
+        write(buf, area, after + 2, y, &parts.join(" · "), meta);
+    }
+
+    /// `⋯ 12 more files, same pattern · S here marks all 12` (`T065`).
+    fn elided_row(&self, elided: &Elided, area: Rect, y: u16, buf: &mut Buffer) {
+        let meta = Style::new().fg(self.theme.neutrals.meta);
+        let mut said = format!("{} {} more files", glyph::ELIDED, elided.files);
+        if let Some(note) = &elided.note {
+            said.push_str(", ");
+            said.push_str(note);
+        }
+        if let Some(hint) = &elided.hint {
+            said.push_str(" · ");
+            said.push_str(hint);
+        }
+        write(buf, area, area.x + PAD_COLS + 1 + NEST_COLS, y, &said, meta);
     }
 
     /// `  @@ 6–10                                    seen ✓`, and the folded
@@ -417,9 +689,9 @@ fn write(buf: &mut Buffer, area: Rect, x: u16, y: u16, text: &str, style: Style)
 
 #[cfg(test)]
 mod tests {
-    use super::{Change, DiffBody, DiffVm, File, Hunk, Line};
+    use super::{Change, DiffBody, DiffVm, Elided, Entry, File, Group, Hunk, Line};
     use crate::theme::Theme;
-    use phosphor_core::request::DiffMode;
+    use phosphor_core::request::{DiffMode, Grouping};
     use ratatui_core::buffer::Buffer;
     use ratatui_core::layout::Rect;
     use ratatui_core::widgets::Widget;
@@ -459,13 +731,15 @@ mod tests {
 
     fn vm(hunk: Hunk) -> DiffVm {
         DiffVm {
+            selected: None,
             header: "review — retry logic · 1 file".to_owned(),
-            files: vec![File {
+            entries: vec![Entry::File(File {
                 path: "src/fetch.rs".to_owned(),
                 annotation: Some("· 3 regions".to_owned()),
+                unseen: None,
                 folded: false,
                 hunks: vec![hunk],
-            }],
+            })],
         }
     }
 
@@ -576,6 +850,234 @@ mod tests {
             .find(|row| row.matches("resp.json().await").count() == 2)
             .expect("context is on both sides");
         assert!(!context.is_empty());
+    }
+
+    // -- `T065`, the 40-file block ------------------------------------------
+
+    fn leaf(path: &str, unseen: u32, note: &str) -> File {
+        File {
+            path: path.to_owned(),
+            annotation: Some(note.to_owned()),
+            unseen: Some(unseen),
+            folded: true,
+            hunks: Vec::new(),
+        }
+    }
+
+    /// **Screen `8b`, built from the mockup's own numbers.**
+    ///
+    /// 41 files across four top-level rows, of which one — `src/errors.rs` — is
+    /// a *bare file beside the groups* rather than under one. That is the
+    /// detail this whole shape exists for: its parent directory is `src/`, and
+    /// a widget that grouped by parent would have filed it under a `src/` row
+    /// the mockup does not draw.
+    fn forty_files() -> DiffVm {
+        DiffVm {
+            selected: None,
+            header: "review — ✻ migrate error handling · 41 files · 96 regions · 12 seen ✓"
+                .to_owned(),
+            entries: vec![
+                Entry::Group(Group {
+                    path: "src/api/".to_owned(),
+                    annotation: Some("the meat: handler signatures".to_owned()),
+                    unseen: 31,
+                    files: 14,
+                    folded: false,
+                    children: vec![
+                        leaf("handlers/users.rs", 4, "Result<_, ApiError> throughout"),
+                        leaf("handlers/orders.rs", 3, "same shape"),
+                    ],
+                    elided: Some(Elided {
+                        files: 12,
+                        note: Some("same pattern".to_owned()),
+                        hint: Some("S here marks all 12".to_owned()),
+                    }),
+                }),
+                Entry::Group(Group {
+                    path: "src/db/".to_owned(),
+                    annotation: Some("mechanical: ? → map_err".to_owned()),
+                    unseen: 22,
+                    files: 9,
+                    folded: true,
+                    children: vec![leaf("queries.rs", 22, "not drawn — the group is folded")],
+                    elided: None,
+                }),
+                Entry::File(File {
+                    path: "src/errors.rs".to_owned(),
+                    annotation: Some("the new ApiError enum — read this one".to_owned()),
+                    unseen: Some(1),
+                    folded: true,
+                    hunks: Vec::new(),
+                }),
+                Entry::Group(Group {
+                    path: "tests/".to_owned(),
+                    annotation: None,
+                    unseen: 0,
+                    files: 17,
+                    folded: true,
+                    children: Vec::new(),
+                    elided: None,
+                }),
+            ],
+        }
+    }
+
+    /// **`8b` is 41 files in eight rows**, which is §11's *"scale is grouping,
+    /// not scrolling"* stated as a number rather than a principle.
+    ///
+    /// Counted off the mockup rather than reasoned about: a header, three group
+    /// rows, the two files drawn under the open one, their elision, and the
+    /// bare `src/errors.rs`. The first version of this test asserted six and
+    /// the render was right.
+    #[test]
+    fn forty_one_files_draw_as_eight_rows() {
+        let vm = forty_files();
+        let rows = drawn(&vm, DiffMode::Unified, 100, 12);
+        let used = rows.iter().filter(|row| !row.is_empty()).count();
+        assert_eq!(
+            used,
+            8,
+            "header · src/api/ + 2 files + elision · src/db/ · src/errors.rs · tests/:\n{}",
+            rows.join("\n")
+        );
+    }
+
+    /// The group row's three facts, in `8b`'s order and spelling.
+    #[test]
+    fn a_group_row_counts_what_is_unseen_and_carries_claudes_note() {
+        let vm = forty_files();
+        let rows = drawn(&vm, DiffMode::Unified, 100, 12);
+        let api = rows
+            .iter()
+            .find(|row| row.contains("src/api/"))
+            .expect("the group is drawn");
+        assert!(api.starts_with("▾ src/api/"), "{api:?}");
+        assert!(
+            api.contains("●31 unseen · 14 files · the meat: handler signatures"),
+            "{api:?}"
+        );
+        // `14 files` is the group's total, not the two rows drawn under it.
+        assert!(!api.contains("2 files"), "{api:?}");
+    }
+
+    /// **A group with nothing left to read says `seen ✓`, not `●0 unseen`.**
+    #[test]
+    fn a_fully_seen_group_says_so_instead_of_counting_zero() {
+        let vm = forty_files();
+        let rows = drawn(&vm, DiffMode::Unified, 100, 12);
+        let tests = rows
+            .iter()
+            .find(|row| row.contains("tests/"))
+            .expect("the group is drawn");
+        assert!(tests.contains("seen ✓ · 17 files"), "{tests:?}");
+        assert!(!tests.contains("●0"), "{tests:?}");
+    }
+
+    /// **The elision row counts what it hides and names the key that acts on
+    /// it**, spelled whole — Design Language §6 forbids `:S` style shorthand
+    /// and this is the footer rule applied inside a body.
+    #[test]
+    fn the_elision_row_says_how_many_and_what_to_press() {
+        let vm = forty_files();
+        let rows = drawn(&vm, DiffMode::Unified, 100, 12);
+        let body = rows.join("\n");
+        assert!(
+            body.contains("⋯ 12 more files, same pattern · S here marks all 12"),
+            "{body}"
+        );
+    }
+
+    /// **A folded group draws neither its children nor its elision.** `src/db/`
+    /// is folded in `8b` and its one child must not appear.
+    #[test]
+    fn a_folded_group_hides_everything_under_it() {
+        let vm = forty_files();
+        let body = drawn(&vm, DiffMode::Unified, 100, 12).join("\n");
+        assert!(body.contains("▸ src/db/"), "the group row is still drawn");
+        assert!(
+            !body.contains("queries.rs"),
+            "and its child is not:\n{body}"
+        );
+    }
+
+    /// **The arrows line up and the names step in.**
+    ///
+    /// A column of fold marks is only scannable if it is a column; indenting
+    /// the arrow with the name would turn it into a staircase.
+    #[test]
+    fn nesting_indents_the_name_and_not_the_arrow() {
+        let vm = forty_files();
+        let rows = drawn(&vm, DiffMode::Unified, 100, 12);
+        let group = rows.iter().find(|row| row.contains("src/api/")).unwrap();
+        let child = rows.iter().find(|row| row.contains("users.rs")).unwrap();
+        assert_eq!(group.find('▾'), Some(0), "{group:?}");
+        assert_eq!(child.find('▸'), Some(0), "{child:?}");
+        assert!(
+            child.find("handlers").unwrap() > group.find("src/api/").unwrap(),
+            "the child's name is further in:\n{group}\n{child}"
+        );
+    }
+
+    /// **`Grouping::Flat` keeps the files and drops the scaffolding**, which is
+    /// what makes it a rendering choice rather than a different query. Same
+    /// files, no group rows, no elisions.
+    #[test]
+    fn flat_grouping_draws_the_files_without_their_groups() {
+        let theme = Theme::phosphor_dark();
+        let vm = forty_files();
+        let area = Rect::new(0, 0, 100, 12);
+        let mut buf = Buffer::empty(area);
+        DiffBody::new(&vm, &theme)
+            .grouping(Grouping::Flat)
+            .render(area, &mut buf);
+        let body: String = (0..12)
+            .map(|row| {
+                (0..100)
+                    .map(|col| buf[(col, row)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            body.contains("users.rs"),
+            "the files are still there:\n{body}"
+        );
+        assert!(
+            body.contains("queries.rs"),
+            "including a folded group's, which flattening reveals:\n{body}"
+        );
+        assert!(!body.contains("src/api/"), "no group rows:\n{body}");
+        assert!(!body.contains("12 more files"), "no elisions:\n{body}");
+    }
+
+    /// The measure and the render walk one sequence, so they agree under both
+    /// groupings — the same claim `T063` makes about the two diff modes, one
+    /// level up.
+    #[test]
+    fn the_measured_height_agrees_under_both_groupings() {
+        let theme = Theme::phosphor_dark();
+        let vm = forty_files();
+        for grouping in [Grouping::Directory, Grouping::Flat] {
+            let wanted = DiffBody::new(&vm, &theme)
+                .grouping(grouping)
+                .desired_height();
+            let area = Rect::new(0, 0, 100, 40);
+            let mut buf = Buffer::empty(area);
+            DiffBody::new(&vm, &theme)
+                .grouping(grouping)
+                .render(area, &mut buf);
+            let used = (0..40)
+                .filter(|row| (0..100).any(|col| buf[(col, *row)].symbol().trim() != ""))
+                .count();
+            assert_eq!(
+                usize::from(wanted),
+                used,
+                "{grouping:?}: measured {wanted} and drew {used}"
+            );
+        }
     }
 
     /// **Side by side is not half as tall**, because a run of three removals

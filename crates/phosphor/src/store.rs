@@ -421,6 +421,35 @@ impl Shared {
         )
     }
 
+    /// **`annotate-group`** — claude's *"mechanical"* against *"the meat"*
+    /// (`T065`).
+    ///
+    /// Answers whether the group existed. **Replaces rather than appends**: an
+    /// annotation is claude's current sentence about a group, not a log of
+    /// them, and `8b` draws one line per row. A second call is a revision.
+    ///
+    /// Not journalled, for [`Shared::blocks`]'s reason — a block is a
+    /// statement, and seen-state is the only thing §7 persists.
+    pub(crate) fn annotate_group(&self, group: GroupId, text: &str) -> bool {
+        let mut blocks = self
+            .blocks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(found) = blocks
+            .iter_mut()
+            .flat_map(|block| block.groups.iter_mut())
+            .find(|candidate| candidate.id == group)
+        else {
+            return false;
+        };
+        // **Empty clears it.** A verb that could set an annotation and never
+        // unset one would leave a wrong sentence on the row forever, and `8b`
+        // draws groups with no annotation (`tests/`) so the absent case is
+        // already a shape the surface has.
+        found.annotation = (!text.is_empty()).then(|| text.to_owned());
+        true
+    }
+
     /// The regions a group's id names (`T064`). [`None`] and empty mean what
     /// they mean for [`Shared::block_regions`].
     pub(crate) fn group_regions(&self, group: GroupId) -> Option<Vec<RegionId>> {
@@ -895,6 +924,30 @@ mod tests {
             ids[0], ids[3],
             "a second block's group is a different group"
         );
+    }
+
+    /// **`T065`'s verb.** Claude revises a group's annotation, and clearing it
+    /// is a thing you can do.
+    #[test]
+    fn a_group_annotation_is_replaced_and_can_be_cleared() {
+        let shared = Shared::default();
+        let id = block(&shared);
+        let group = shared.hunks(id)[0].group;
+
+        // `declare-review-block` set one; this replaces it rather than
+        // appending, because `8b` draws one line per row.
+        assert!(shared.annotate_group(group, "mechanical: ? → map_err"));
+        let annotated = shared.blocks()[0].groups[0].annotation.clone();
+        assert_eq!(annotated.as_deref(), Some("mechanical: ? → map_err"));
+
+        // **Empty clears it**, so a wrong sentence is not permanent.
+        assert!(shared.annotate_group(group, ""));
+        assert_eq!(shared.blocks()[0].groups[0].annotation, None);
+
+        // And an id that names nothing says so rather than annotating the
+        // first group it finds.
+        assert!(!shared.annotate_group(phosphor_core::request::GroupId(99), "nope"));
+        assert_eq!(shared.blocks()[0].groups[0].annotation, None);
     }
 
     /// **`vih` finds a declared hunk and not an ordinary marker**, which is

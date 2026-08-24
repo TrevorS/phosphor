@@ -165,11 +165,11 @@ use phosphor_core::language::{self, Languages};
 use phosphor_core::query::{Answer, Answers, Query, QueryError, RegionQuery, Revision};
 use phosphor_core::registry::McpPolicy;
 use phosphor_core::request::{
-    AcceptHow, Actor, AnchorId, AskId, AskOption, Binding, BufferId, CharRange as SignatureRange,
-    Completion as WireCompletion, Direction, EditMode, FileSpan, FoldState, KeySeq, LanguageId,
-    PaneId, PaneKind, PaneRef, Position, PromptKind, RegionFilter, RegionId, RegisterName, Seek,
-    SelectionKind, Sequence, Signature as WireSignature, SourceId, Span, Target, TextObject,
-    ToolCallId, TurnId,
+    AcceptHow, Actor, AnchorId, AskId, AskOption, Binding, BlockId, BufferId,
+    CharRange as SignatureRange, Completion as WireCompletion, Direction, EditMode, FileSpan,
+    FoldState, GroupId, Grouping, KeySeq, LanguageId, PaneId, PaneKind, PaneRef, Position,
+    PromptKind, RegionFilter, RegionId, RegisterName, Seek, SelectionKind, Sequence,
+    Signature as WireSignature, SourceId, Span, Target, TextObject, ToolCallId, TurnId,
 };
 // `Scope` is already the input table's (`keymaps.scm`'s normal/insert/visual),
 // and a second one under the same name in a 9,000-line file is a trap rather
@@ -183,8 +183,8 @@ use phosphor_core::store::{
 };
 use phosphor_core::value::{Args, Value, Wire as _};
 use phosphor_core::view::{
-    Axis as ViewAxis, Child, Constraint, Density, Emphasis, Float as ViewFloat, KeyHint, Millis,
-    Mood, Node, SessionState, Slot, Tab, Tone, Tree,
+    Axis as ViewAxis, Child, Constraint, Density, DiffSource, Emphasis, Float as ViewFloat,
+    KeyHint, Millis, Mood, Node, SessionState, Slot, Tab, Tone, Tree,
 };
 use phosphor_steel::boot::{BootFault, BootReport, BootUnit};
 use phosphor_steel::float::ExLine;
@@ -2198,6 +2198,32 @@ impl Host for AppHost {
                     note: block.annotation.clone(),
                 })
             }
+            // `T065` — claude's group annotation, `8b`'s *"mechanical"* against
+            // *"the meat"*. Armed here beside `declare-review-block` and for the
+            // same reason: the thing that groups the files is the thing that has
+            // an opinion about them, and nobody types a group id. It is not
+            // agent-only though — `T064` gave groups ids that `review-blocks`
+            // reports, so a person at the repl can revise one.
+            Action::Review(phosphor_core::action::ReviewAction::AnnotateGroup { group, text }) => {
+                // **A door names the group, and only the loop can resolve
+                // *"the one you are on"*** — the same split `mark-seen` makes
+                // across these two appliers, and for the same reason: there is
+                // no selection on this side to be on.
+                let Some(group) = group else {
+                    return declined("name a group — this side has no selection");
+                };
+                if self.store.annotate_group(*group, text) {
+                    Outcome::Done(Receipt {
+                        capability: name,
+                        value: Value::Bool(true),
+                        note: None,
+                    })
+                } else {
+                    // The same shape `mark-seen` uses for an empty scope: say
+                    // what is true in the fewest words that are.
+                    declined("no such group")
+                }
+            }
             Action::Region(RegionAction::MarkSeen { target }) => {
                 self.mark(name, target, SeenState::Seen)
             }
@@ -3214,6 +3240,10 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // rather than inside it. One, until step 4c gives the loop a map of them.
     // Step 4b: what the session owns, once rather than once per buffer.
     let mut shell = Shell {
+        // No review is open at boot. A block declared before one is opened is
+        // still there — `blocks` outlives the surface, which is what makes
+        // `:review` a thing you can type after the fact.
+        review: None,
         store: Arc::clone(&host.store),
         asks: BTreeMap::new(),
         next_ask: Arc::clone(&host.next_ask),
@@ -4070,7 +4100,17 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // strip no row to be drawn into, so the two halves of §5's *"only with
         // 2+ panes"* agree by both asking the same tree the same question.
         let tab_bar = Tree::new(compose_tabs(&panes, &buffers, &unseen_per_buffer));
+        // `T065`. Rebuilt every frame off the store, so marking a hunk seen
+        // moves the counts on the row you marked it from — the same live-query
+        // reading the picker takes and the opposite of the float itself, which
+        // is a snapshot. The float's composed `Node::Diff` names the block; this
+        // answers it.
+        let review_vm = shell
+            .review
+            .as_ref()
+            .and_then(|review| review_vm(&shell.store, review).map(|vm| (review.block, vm)));
         let overlay = Overlay {
+            review: review_vm.as_ref().map(|(block, vm)| (*block, vm)),
             asks: &shell.asks,
             chrome,
             status: status_tree,
@@ -4212,6 +4252,58 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                             notice = Some(phosphor_steel::answer::why(&why));
                         }
                     }
+                    // **`T065` — `8b`'s footer, in Rust.**
+                    //
+                    // `za fold · s seen · S group seen · q` are the review
+                    // float's keys, and they are here rather than in
+                    // `keymaps.scm` for the reason `4a`'s digits are: over a
+                    // buffer every one of them already means something else —
+                    // `za` folds code, `s` is an operator, `q` records a macro
+                    // — and a binding is data that cannot ask what is on
+                    // screen. `lint-capability-bindings` calls this *"a surface
+                    // whose keymap is Rust"* and it is the third of them.
+                    //
+                    // Through the capabilities, never around them: the key says
+                    // *which* verb, and the verb decides what it does.
+                    Event::Key(key)
+                        if matches!(surface, Surface::Float)
+                            && shell.review.is_some()
+                            && review_key(key).is_some() =>
+                    {
+                        // **Guarded on the keys it uses, not on the surface.**
+                        // The first version guarded on *"a review is open"* and
+                        // swallowed everything — including `:`, so the two
+                        // commands that only make sense while `8b` is up were
+                        // unreachable from `8b`. `4a`'s digits guard the same
+                        // way and always did.
+                        let selected = shell.review.as_ref().map_or(0, |it| it.selected);
+                        let row = u32::try_from(selected.saturating_add(1)).unwrap_or(1);
+                        match review_key(key) {
+                            Some(ReviewKey::Close) => {
+                                shell.review = None;
+                                surface = Surface::Buffer;
+                            }
+                            Some(ReviewKey::Swallow) => {}
+                            Some(ReviewKey::Act(action)) => {
+                                let action = match action {
+                                    ReviewVerb::Select(delta) => {
+                                        Action::Float(FloatAction::FloatSelect { delta })
+                                    }
+                                    ReviewVerb::Fold => {
+                                        Action::Float(FloatAction::FloatToggleFold { row })
+                                    }
+                                };
+                                let outcome = editing.apply(
+                                    &mut Cx::new(held, focus, &mut panes, &mut shell),
+                                    &action,
+                                );
+                                if let Outcome::Refused(why) = outcome {
+                                    notice = Some(phosphor_steel::answer::why(&why));
+                                }
+                            }
+                            None => {}
+                        }
+                    }
                     // `T045`. The picker owns every key while it is open, the
                     // same way the ex line does and for the same reason: it is
                     // a line editor with a list under it, not a mode of the
@@ -4303,6 +4395,10 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         }
                     }
                     Event::Key(key) if closes_surface(key, surface) => {
+                        // `T065`. A review closed by `esc` is closed, not
+                        // hidden: the fold state is the *reader's* place in a
+                        // block and reopening is a fresh read.
+                        shell.review = None;
                         if let Some(asked) = shell.asked {
                             let outcome = editing.apply(
                                 &mut Cx::new(held, focus, &mut panes, &mut shell),
@@ -5077,6 +5173,22 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             }
         }
 
+        // **`T065` — the ex line does not close the review.**
+        //
+        // `:` replaces the screen and `ExStep::Submit` returns to the buffer, so
+        // `:annotate` and `:grouping` — the two commands that only make sense
+        // while `8b` is up — closed the surface they act on. The float itself
+        // was never dropped; only `surface` moved.
+        //
+        // **The session is the record that a review is open**, and `q` and `esc`
+        // are what clear it, so this cannot resurrect one you closed. Narrow to
+        // the review on purpose: whether a picker or a question float should
+        // survive an ex line is a separate question with its own screens, and
+        // answering it here would change three surfaces to fix one.
+        if shell.review.is_some() && matches!(surface, Surface::Buffer) && open_float.is_some() {
+            surface = Surface::Float;
+        }
+
         // **`T059` / `T060` — the question float follows the queue, in one
         // place, and Q9's whole rule is the three-way `wanted` below.**
         //
@@ -5390,6 +5502,188 @@ fn hunk_value(hunk: &store::Hunk) -> Value {
     fields.set("span", hunk.span.to_value());
     fields.set("seen", Value::Bool(hunk.seen));
     Value::Record(fields)
+}
+
+/// One drawn row of the review surface (`T065`).
+///
+/// **Two kinds, because two verbs aim at different things.** `za` folds a
+/// *directory*, which is a grouping the host made and the store has never heard
+/// of; `:annotate` writes claude's note onto a *declared group*, which is a
+/// store id. A single row type would make one of the two guess.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ReviewRow {
+    /// A directory row — `▾ src/api/`. Foldable; not annotatable.
+    Dir(String),
+    /// A file row — the declared group it is. Annotatable; not foldable.
+    File(GroupId),
+}
+
+/// The directory a declared file sits in, as `8b` spells it with a trailing
+/// slash. Empty for a file at the workspace root, which draws no group row.
+fn review_dir(path: &Path) -> String {
+    path.parent()
+        .map(|parent| parent.display().to_string())
+        .filter(|parent| !parent.is_empty())
+        .map_or_else(String::new, |parent| format!("{parent}/"))
+}
+
+/// **Screen `8b`, built out of what the store already holds** (`T065`).
+///
+/// One row per directory, the files under it, and the hunk ranges under those —
+/// every count read straight off the regions, so the surface and the gutter
+/// cannot disagree about what is unseen.
+///
+/// **The grouping is by parent directory, and that is the host's answer rather
+/// than the only one.** `phosphor_ui::diff::Group` records why the widget cannot
+/// derive it: `8b` draws `src/errors.rs` as a *peer* of `src/api/`, which is
+/// claude's judgement about what to read together. Nothing in the vocabulary
+/// carries that judgement yet, so the honest grouping available today is the
+/// filesystem's — and when claude's arrives, it replaces this function and not
+/// the widget.
+///
+/// **It draws no diff lines, and that is not a shortfall.** `8b` is the
+/// *navigation* — 41 files as eight rows — and every field it draws is a fact
+/// the store has. The `+`/`−` lines are `4b`, and they need the text a hunk
+/// replaced, which nothing records: OPEN-QUESTIONS.md §59. The two are one
+/// screen at two fold depths.
+fn review_vm(store: &store::Shared, review: &Review) -> Option<phosphor_ui::diff::DiffVm> {
+    use phosphor_ui::diff::{DiffVm, Entry, File, Group, Hunk};
+
+    let block = store
+        .blocks()
+        .into_iter()
+        .find(|candidate| candidate.id == review.block)?;
+    let hunks = store.hunks(review.block);
+
+    let files = block.groups.len();
+    let regions: usize = block.groups.iter().map(|group| group.regions.len()).sum();
+    let seen = hunks.iter().filter(|hunk| hunk.seen).count();
+    let header = format!(
+        "review — ✻ {} · {files} file(s) · {regions} region(s) · {seen} seen ✓",
+        block.title
+    );
+
+    // One `File` per declared group, with its hunk ranges under it. The hunks
+    // carry no lines — see above — so a file opens to a list of `@@` rows with
+    // their seen marks, which is what `s` acts on.
+    let leaf = |group: &store::Group, strip: &str| {
+        let mine: Vec<&store::Hunk> = hunks.iter().filter(|hunk| hunk.group == group.id).collect();
+        let unseen = mine.iter().filter(|hunk| !hunk.seen).count();
+        let shown = group.path.display().to_string();
+        File {
+            // Relative to the row above it, which is what makes a tree readable
+            // — `8b` draws `handlers/users.rs` under `src/api/`, not the path
+            // twice.
+            path: shown.strip_prefix(strip).unwrap_or(&shown).to_owned(),
+            annotation: group.annotation.clone(),
+            unseen: Some(u32::try_from(unseen).unwrap_or(u32::MAX)),
+            folded: false,
+            hunks: mine
+                .iter()
+                .map(|hunk| Hunk {
+                    range: format!("{}–{}", hunk.span.start.line, hunk.span.end.line),
+                    label: None,
+                    seen: hunk.seen,
+                    folded: false,
+                    lines: Vec::new(),
+                })
+                .collect(),
+        }
+    };
+
+    let mut entries: Vec<Entry> = Vec::new();
+    let mut at: Option<String> = None;
+    for group in &block.groups {
+        let dir = review_dir(&group.path);
+        // **Flattening happens here and not in the widget**, and the two are not
+        // the same edit. `DiffBody::grouping` skips the group *rows* of a tree
+        // it was handed; this decides whether to build one. The float is a
+        // snapshot composed once with `"directory"` on its node, so a `:grouping
+        // flat` typed afterwards has to change what the *rows* are — which is
+        // this side. The first version set the session and nothing moved.
+        if dir.is_empty() || matches!(review.grouping, Grouping::Flat) {
+            // A file at the workspace root is its own row — `8b`'s
+            // `src/errors.rs` beside the directories, one level up.
+            entries.push(Entry::File(leaf(group, "")));
+            at = None;
+            continue;
+        }
+        if at.as_ref() != Some(&dir) {
+            entries.push(Entry::Group(Group {
+                path: dir.clone(),
+                annotation: None,
+                unseen: 0,
+                files: 0,
+                folded: review.folded.contains(&dir),
+                children: Vec::new(),
+                elided: None,
+            }));
+            at = Some(dir.clone());
+        }
+        let Some(Entry::Group(open)) = entries.last_mut() else {
+            continue;
+        };
+        let child = leaf(group, &dir);
+        open.unseen = open.unseen.saturating_add(child.unseen.unwrap_or(0));
+        open.files = open.files.saturating_add(1);
+        open.children.push(child);
+    }
+
+    Some(DiffVm {
+        header,
+        entries,
+        selected: Some(review.selected),
+    })
+}
+
+/// The last selectable row of an open review (`T065`), or `0` when it has none.
+fn review_last_row(store: &store::Shared, review: &Review) -> usize {
+    review_rows(store, review).len().saturating_sub(1)
+}
+
+/// What a review's rows point at, in drawn order (`T065`).
+///
+/// **Rebuilt rather than remembered**, from the same block and the same fold set
+/// the ViewModel is built from — so `za` on row 3 folds what row 3 draws and
+/// cannot drift from it. [`None`] is a row neither verb aims at: a hunk.
+fn review_rows(store: &store::Shared, review: &Review) -> Vec<Option<ReviewRow>> {
+    let Some(block) = store
+        .blocks()
+        .into_iter()
+        .find(|candidate| candidate.id == review.block)
+    else {
+        return Vec::new();
+    };
+    // **The header is not row 0.** `DiffBody` draws it before the row loop and
+    // `DiffVm::selected` indexes that loop, so row 0 is the first entry — which
+    // is also the right reading for a selection: a header is not somewhere the
+    // highlight should be able to sit.
+    let mut rows = Vec::new();
+    let mut at: Option<String> = None;
+    for group in &block.groups {
+        let dir = review_dir(&group.path);
+        let hunks = store
+            .hunks(review.block)
+            .into_iter()
+            .filter(|hunk| hunk.group == group.id)
+            .count();
+        if dir.is_empty() || matches!(review.grouping, Grouping::Flat) {
+            rows.push(Some(ReviewRow::File(group.id)));
+            rows.extend(std::iter::repeat_n(None, hunks));
+            at = None;
+            continue;
+        }
+        if at.as_ref() != Some(&dir) {
+            rows.push(Some(ReviewRow::Dir(dir.clone())));
+            at = Some(dir.clone());
+        }
+        if review.folded.contains(&dir) {
+            continue;
+        }
+        rows.push(Some(ReviewRow::File(group.id)));
+        rows.extend(std::iter::repeat_n(None, hunks));
+    }
+    rows
 }
 
 /// One review block as plain data, for the `review-blocks` query (`T053`).
@@ -6782,6 +7076,51 @@ fn referencing(post: &Post, slot: &References) -> phosphor_buffer::lsp::Location
 const ARCH_SURFACE: &str = "arch";
 
 /// `T057`'s dashboard surface id, as `runtime/dashboard.scm` registers it.
+/// What a key does on the review float (`T065`).
+#[derive(Debug, Clone, Copy)]
+enum ReviewVerb {
+    /// Move the highlight.
+    Select(i64),
+    /// Fold or unfold the highlighted row.
+    Fold,
+}
+
+/// One key's reading on the review float, or [`None`] to let it through.
+#[derive(Debug, Clone, Copy)]
+enum ReviewKey {
+    /// A verb to apply.
+    Act(ReviewVerb),
+    /// Consumed and does nothing — the `z` of `za`.
+    Swallow,
+    /// Close the surface.
+    Close,
+}
+
+/// `8b`'s footer, read off a key.
+///
+/// **[`None`] means *"not ours"* and is the important answer**: everything this
+/// does not name falls through to the ordinary path, which is what keeps `:`
+/// working over the float. `:annotate` and `:grouping` are the two commands that
+/// only make sense while `8b` is on screen, and a surface that owned every key
+/// would be the one place they could not be typed.
+const fn review_key(key: KeyEvent) -> Option<ReviewKey> {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => Some(ReviewKey::Act(ReviewVerb::Select(1))),
+        KeyCode::Char('k') | KeyCode::Up => Some(ReviewKey::Act(ReviewVerb::Select(-1))),
+        // `za` is two keys and this is one function, so the `z` is swallowed and
+        // the `a` folds. Two-key sequences are the input machine's job and the
+        // machine is not running over a float — the cost of a Rust keymap, and
+        // why `4a` has only digits.
+        KeyCode::Char('a') => Some(ReviewKey::Act(ReviewVerb::Fold)),
+        KeyCode::Char('z') => Some(ReviewKey::Swallow),
+        KeyCode::Char('q') => Some(ReviewKey::Close),
+        _ => None,
+    }
+}
+
+/// The `review` float's surface id — `runtime/review.scm` (`T065`).
+const REVIEW_SURFACE: &str = "review";
+
 const DASHBOARD_SURFACE: &str = "dashboard";
 
 /// `runtime/asks.scm`'s float — `4a`, claude asking mid-turn (`T059`).
@@ -6939,6 +7278,13 @@ struct Painted<'a> {
     /// `T059`'s questions, by id — see [`Overlay::asks`] for why this one is
     /// keyed and its neighbours are not.
     asks: &'a BTreeMap<AskId, phosphor_ui::question::QuestionVm>,
+    /// The open review's rows (`T065`), and which block they are of.
+    ///
+    /// **Built before the frame and answered by source**, which is what makes
+    /// `Resources::diff` a real lookup rather than *"whichever diff"*: a float
+    /// composed for block 3 must not draw block 4 because 4 arrived later. The
+    /// same reasoning `Resources::ask` records one task earlier.
+    review: Option<(BlockId, &'a phosphor_ui::diff::DiffVm)>,
 }
 
 impl<'a> Overlay<'a> {
@@ -7012,6 +7358,21 @@ impl Resources for Painted<'_> {
     fn ask(&self, ask: AskId) -> Option<&phosphor_ui::question::QuestionVm> {
         self.asks.get(&ask)
     }
+
+    /// `T065`. **A real lookup, keyed on the block the source names.**
+    ///
+    /// The three other `DiffSource` arms answer `None` and draw nothing, which
+    /// is honest rather than a gap: `Disk` is `T070`'s, `Change` is `T073`'s,
+    /// and `Hunk` needs the peek `T066` builds. A composition naming one of
+    /// them today gets an empty body rather than the wrong diff.
+    fn diff(&self, source: &DiffSource) -> Option<&phosphor_ui::diff::DiffVm> {
+        let DiffSource::ReviewBlock { block } = source else {
+            return None;
+        };
+        self.review
+            .filter(|(open, _)| open == block)
+            .map(|(_, vm)| vm)
+    }
 }
 
 /// What rides over the buffer on this frame, and what claims the chrome row.
@@ -7072,6 +7433,8 @@ struct Overlay<'a> {
     /// there are as many asks as claude has asked. A float composed for ask 8
     /// must draw ask 8 even with a newer one behind it.
     asks: &'a BTreeMap<AskId, phosphor_ui::question::QuestionVm>,
+    /// `T065`'s review rows, already built — see [`Painted::review`].
+    review: Option<(BlockId, &'a phosphor_ui::diff::DiffVm)>,
     /// This frame's reading of the app clock (`T050`).
     ///
     /// The whole animation budget: `Node::Spinner` and `Node::Elapsed` render
@@ -7131,6 +7494,7 @@ fn draw(
         picker: overlay.picker,
         transcript: overlay.transcript,
         asks: overlay.asks,
+        review: overlay.review,
     };
 
     // **§8's degradation, asked for once for the whole tree.** It reached
@@ -7973,6 +8337,32 @@ struct Pane {
 /// clone per buffer is a thing a constructor can forget to make, and step 8
 /// builds `Editing`s from a place that has no business knowing about either.
 /// Hung off the context instead, where an arm reaches them and a new buffer
+/// An open review surface (`T065`).
+///
+/// **The fold state lives here and not in the ViewModel**, because a ViewModel
+/// is derived and rebuilt every frame — a fold recorded in one would last until
+/// the next keystroke. The same split the picker makes between its matcher and
+/// its `PickerVm`.
+#[derive(Debug, Clone)]
+struct Review {
+    /// Which block is being read.
+    block: BlockId,
+    /// The highlighted top-level row, 0-based.
+    selected: usize,
+    /// The directories the reader has closed.
+    ///
+    /// **By name and not by row.** A row index means something different the
+    /// moment anything above it folds; a directory's path is what the row *is*.
+    ///
+    /// Not a `GroupId`, and that took a screen to see: `8b`'s foldable rows are
+    /// **directories**, which the host groups by and the store has never heard
+    /// of. A store group is one declared file — folding one would hide its hunks
+    /// rather than its files, which is `4b`.
+    folded: BTreeSet<String>,
+    /// Directory rows, or one flat list — `8d`'s answer at 80 columns.
+    grouping: Grouping,
+}
+
 /// cannot be born without one.
 struct Shell {
     /// `T041`'s store, shared with [`AppHost`] so the gutter, the statusline
@@ -8100,6 +8490,15 @@ struct Shell {
     /// `set-picker-query` and `toggle-picker-preview` act on it, and `esc`
     /// drops it.
     picker: Option<PickerSession>,
+    /// The open review surface, if one is (`T065`).
+    ///
+    /// **`8b` and `4b` are one surface at two fold depths**, which the mockups
+    /// say themselves: both draw
+    /// `review — ✻ <title> · N files · N regions · N seen ✓` as their first
+    /// row, and what differs is whether the files are grouped and closed or one
+    /// of them is open with its hunks under it. So there is one session and one
+    /// slot, the way §9 gives floats one.
+    review: Option<Review>,
     /// The order `cycle-picker-source` walks, refreshed by the loop from the
     /// layer's `phosphor/picker-sources` (`T047`).
     ///
@@ -10414,7 +10813,142 @@ impl Editing {
             // to select today, so this is where they land — a completion list
             // is `T038`'s own session and a `6d` help grid has no selection at
             // all. A float without rows declines by name.
+            // `T065` — `za` on the review surface.
+            //
+            // **The row is a parameter and the keystroke supplies it**, which is
+            // the split `float-select-row` already makes: a *door* naming a row
+            // means a row of what is drawn, and the key means *the highlighted
+            // one*, so the loop reads the selection and passes it. Putting
+            // "which row is highlighted" inside the arm would make the two
+            // callers mean different things by one verb.
+            //
+            // A row with nothing foldable on it — a file under a group — refuses
+            // by name rather than doing nothing, because a key that ate the
+            // press would be indistinguishable from one that had not noticed.
+            // `4a`'s digits set that rule.
+            Action::Float(FloatAction::FloatToggleFold { row }) => {
+                let Some(review) = cx.shell.review.as_ref() else {
+                    return declined("no float with folds is focused");
+                };
+                let rows = review_rows(&cx.shell.store, review);
+                let at = usize::try_from(row.saturating_sub(1)).unwrap_or(0);
+                let Some(Some(ReviewRow::Dir(dir))) = rows.get(at).cloned() else {
+                    return declined("nothing to fold there — a directory folds");
+                };
+                let Some(review) = cx.shell.review.as_mut() else {
+                    return declined("no float with folds is focused");
+                };
+                if !review.folded.insert(dir.clone()) {
+                    review.folded.remove(&dir);
+                }
+                // **The selection is clamped after the fold, not before.**
+                // Closing a group takes rows away, and a highlight left past
+                // the end would be invisible — which reads as "the key did
+                // nothing".
+                let last = review_last_row(&cx.shell.store, review);
+                review.selected = review.selected.min(last);
+                done()
+            }
+            // `T065` — the loop's half of `annotate-group`, which exists for the
+            // one thing the door's half cannot do: resolve *"the group you are
+            // looking at"*. `mark-seen` has the same pair for the same reason.
+            Action::Review(phosphor_core::action::ReviewAction::AnnotateGroup { group, text }) => {
+                let group = match group {
+                    Some(group) => *group,
+                    None => {
+                        let Some(review) = cx.shell.review.as_ref() else {
+                            return declined("no diff is open");
+                        };
+                        let rows = review_rows(&cx.shell.store, review);
+                        let Some(Some(ReviewRow::File(group))) = rows.get(review.selected).cloned()
+                        else {
+                            return declined("no file on this row — a file carries the note");
+                        };
+                        group
+                    }
+                };
+                if cx.shell.store.annotate_group(group, text) {
+                    done()
+                } else {
+                    declined("no such group")
+                }
+            }
+            // `T065`. `8d`'s answer at 80 columns: the same files without the
+            // group rows. A setting on the open surface rather than a prop
+            // rewritten into the float, because the float is a snapshot and
+            // this has to change what the next frame draws.
+            Action::Review(phosphor_core::action::ReviewAction::SetDiffGrouping { grouping }) => {
+                let Some(review) = cx.shell.review.as_mut() else {
+                    return declined("no diff is open");
+                };
+                review.grouping = *grouping;
+                let last = review_last_row(&cx.shell.store, review);
+                review.selected = review.selected.min(last);
+                done()
+            }
+            // `T066`'s verb, armed here because `T065`'s acceptance is that
+            // `8b` is *navigable* and a screen nothing opens is not. What `T066`
+            // adds is `4b`'s hunk lines and `2b`'s peek — the two things that
+            // need a before-side (OPEN-QUESTIONS.md §59) — not the surface.
+            Action::Review(phosphor_core::action::ReviewAction::OpenReviewBlock { block }) => {
+                // **Absent means the newest**, and that is `defer-ask`'s ruling
+                // rather than a convenience: an id is what a *door* names, and a
+                // person who has just read `review ready · retry logic` has one
+                // block in mind and no number for it.
+                //
+                // It also has to be resolved *here*. The first version resolved
+                // it in `review.scm` by calling `(review-blocks)` inside the ex
+                // lambda — and a query that raises inside `phosphor/ex` reads as
+                // `Ex::Unknown`, so `:review` was a command that existed and
+                // said *"no such command"*. `every_ex_command_decodes` types
+                // every name with an empty argument and is what caught it, the
+                // same way it caught `(string->number "")` at `T060`.
+                let Some(block) =
+                    block.or_else(|| cx.shell.store.blocks().last().map(|block| block.id))
+                else {
+                    return declined("no review block yet");
+                };
+                if cx.shell.store.block_regions(block).is_none() {
+                    return declined("no such block");
+                }
+                cx.shell.review = Some(Review {
+                    block,
+                    selected: 0,
+                    folded: BTreeSet::new(),
+                    grouping: Grouping::Directory,
+                });
+                // **The session and the float are two things and the verb does
+                // both.** Setting the session alone left `:review` resolving,
+                // running and drawing nothing — the arm had the state and the
+                // screen had no float — which a probe found and the test then
+                // reproduced. `open-dashboard` raises its surface the same way.
+                //
+                // The block rides in the args because the composed
+                // `Node::Diff` names its source, and a float composed for block
+                // 3 must keep drawing block 3 when a fourth arrives.
+                let mut args = Args::new();
+                args.set(
+                    "block",
+                    Value::Int(i64::try_from(block.0).unwrap_or(i64::MAX)),
+                );
+                // Resolved, not passed through: the float names the block it is
+                // *showing*, so a `:review` typed bare keeps drawing that block
+                // when a newer one arrives behind it.
+                self.float = Some((REVIEW_SURFACE.to_owned(), Value::Record(args)));
+                done()
+            }
             Action::Float(FloatAction::FloatSelect { delta }) => {
+                // `T065`. **The second float with rows**, and the sentence above
+                // said there was one. The review surface takes the same two
+                // verbs because they are the *float's* rather than the picker's
+                // — which is what the comment already claimed and what makes
+                // this an arm rather than a second capability.
+                if let Some(review) = cx.shell.review.as_mut() {
+                    let last = review_last_row(&cx.shell.store, review);
+                    let moved = i64::try_from(review.selected).unwrap_or(0) + *delta;
+                    review.selected = usize::try_from(moved.max(0)).unwrap_or(0).min(last);
+                    return done();
+                }
                 let Some(session) = cx.shell.picker.as_mut() else {
                     return declined("no float with rows is focused");
                 };
@@ -10422,6 +10956,13 @@ impl Editing {
                 done()
             }
             Action::Float(FloatAction::FloatSelectRow { row }) => {
+                if let Some(review) = cx.shell.review.as_mut() {
+                    let last = review_last_row(&cx.shell.store, review);
+                    review.selected = usize::try_from(row.saturating_sub(1))
+                        .unwrap_or(0)
+                        .min(last);
+                    return done();
+                }
                 let Some(session) = cx.shell.picker.as_mut() else {
                     return declined("no float with rows is focused");
                 };
@@ -14422,6 +14963,7 @@ mod tests {
     fn shell() -> Shell {
         Shell {
             store: Arc::new(store::Shared::default()),
+            review: None,
             asks: BTreeMap::new(),
             next_ask: Arc::new(std::sync::Mutex::new(1)),
             held: BTreeMap::new(),
@@ -17168,6 +17710,7 @@ mod tests {
         let painted = Painted {
             editors: &editors,
             columns: &columns,
+            review: None,
             completion: None,
             signature: None,
             picker: None,

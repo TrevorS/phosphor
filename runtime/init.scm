@@ -63,6 +63,8 @@
     ;; comments now, the way scheme's own reader always did, so this paragraph
     ;; is prose rather than a hazard.
     "permissions.scm"
+    ;; `T065` — 8b, the review block as a navigable tree.
+    "review.scm"
     "languages/typescript.scm"
     "languages/javascript.scm"
     "languages/rust.scm"

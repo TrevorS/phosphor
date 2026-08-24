@@ -765,17 +765,27 @@ impl Ctx<'_> {
                 crate::question::QuestionBody::new(vm, theme).render(area, buf);
             }
 
-            // `T063`, drawn by `crate::diff`. The *mode* is composition's — a
-            // caller decides whether two columns fit — and the rows come
+            // `T063`, drawn by `crate::diff`, grouped at `T065`. Both props
+            // are composition's — a caller decides whether two columns fit and
+            // whether the group rows are worth their height — and the rows come
             // through the `Resources` door beside it, which is
-            // `Node::Transcript`'s division exactly. `grouping` is `T065`'s and
-            // is the host's: what the widget receives is already grouped.
-            Node::Diff { source, mode, .. } => {
+            // `Node::Transcript`'s division exactly.
+            //
+            // **`grouping` selects a rendering, not a query.** The VM carries
+            // the tree either way, because the grouping in `8b` is *claude's*
+            // and cannot be derived from the paths; `Grouping::Flat` draws the
+            // same files without the group rows.
+            Node::Diff {
+                source,
+                mode,
+                grouping,
+            } => {
                 let Some(vm) = self.interp.resources.diff(source) else {
                     return;
                 };
                 crate::diff::DiffBody::new(vm, theme)
                     .mode(*mode)
+                    .grouping(*grouping)
                     .render(area, buf);
             }
 
@@ -1185,9 +1195,14 @@ impl Ctx<'_> {
             // `T063`. **The mode changes the height**, because side by side
             // pairs a removal with the addition that replaced it — so the two
             // are asked together rather than the rows being counted here.
-            Node::Diff { source, mode, .. } => self.interp.resources.diff(source).map_or(0, |vm| {
+            Node::Diff {
+                source,
+                mode,
+                grouping,
+            } => self.interp.resources.diff(source).map_or(0, |vm| {
                 crate::diff::DiffBody::new(vm, self.theme())
                     .mode(*mode)
+                    .grouping(*grouping)
                     .desired_height()
             }),
             _ => 0,

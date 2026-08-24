@@ -783,8 +783,8 @@ actions! {
             annotation: Option<String> = "claude's note about the block as a whole",
         }
         OpenReviewBlock = "open-review-block" [S7 / "T066" / Allow]
-            "opens a review block" {
-            block: crate::request::BlockId = "which block",
+            "opens a review block; absent means the newest" {
+            block: Option<crate::request::BlockId> = "which block; absent means the newest",
         }
         SetDiffMode = "set-diff-mode" [S7 / "T066" / Allow]
             "switches a diff between unified and side-by-side" {
@@ -801,8 +801,8 @@ actions! {
         }
         AnnotateGroup = "annotate-group" [S7 / "T065" / Allow]
             "annotates a group — 8b's \"mechanical\" against \"the meat\"" {
-            group: crate::request::GroupId = "which group",
-            text: String = "the annotation",
+            group: Option<crate::request::GroupId> = "which group; absent means the one you are on",
+            text: String = "the annotation; empty clears it",
         }
         RevertHunk = "revert-hunk" [S7 / "T064" / Ask]
             "reverts one hunk; it lowers to edits, so your undo tree has it" {

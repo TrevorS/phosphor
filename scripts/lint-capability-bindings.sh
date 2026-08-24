@@ -116,6 +116,13 @@ EMITTED = {
     # wrong thing for a keyboard: a digit that carried one could answer a
     # question you are not looking at. Its prose half is T060's and T061's wire.
     "answer-ask": "float-answer emits it, having resolved which ask is focused",
+    # `T065`. 8b's `za`, and the keymap for it is Rust for `float-answer`'s
+    # reason exactly: over a buffer `za` is `set-fold` and folds *code*, and
+    # `keymaps.scm` has no way to ask what surface holds the screen. `review_key`
+    # gates on the surface and on the key, and answers `None` for everything it
+    # does not name — which is what keeps `:annotate` and `:grouping`, the two
+    # commands that only make sense while 8b is up, typeable from 8b.
+    "float-toggle-fold": "the review float's own key handling — 8b's `za`",
     "close-float": "`closes_surface` handles `esc` for every float",
     "close-all-floats": "`closes_surface` handles `esc` for every float",
     "close-repl": "`repl_key` handles it — `esc`",

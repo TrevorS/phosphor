@@ -156,20 +156,12 @@ RECORDED = {
                     "transcript both render an elapsed counter inline off a `since` they "
                     "already carry, and neither composes this tag. No creditor for the same "
                     "reason `Spinner` has none."),
-    "Diff": ("T066", "`crate::diff::DiffBody`, and **it is no longer deferred** — `T063` is "
-                     "ticked and the interpreter draws the tag through `Resources::diff`. What "
-                     "is missing is a source. `DiffSource`'s four arms are the four surfaces "
-                     "the mockups draw and each carries its own creditor "
-                     "(`crates/phosphor-core/src/view/props.rs:601`): `ReviewBlock` is `T053`'s "
-                     "and `T053` is ticked, but it shipped `declare_block` — grouped unseen "
-                     "markers and a notification — and no surface that draws the block, which "
-                     "is why re-recording against it would be the wrong creditor a third time "
-                     "in this table. `Hunk` is `T066`'s, `Disk` is `T070`'s, `Change` is "
-                     "`T073`'s. **`T066` is the first unticked task whose acceptance names a "
-                     "screen that draws one** — `4b` and `2b`. `T064` and `T065` sit between it "
-                     "and here, and their acceptance is about seen-state and about grouping "
-                     "rather than about a composed surface; if either composes one first, this "
-                     "row goes, which this lint fails on and says to do."),
+    # `Diff` was recorded here against `T063`, re-pointed at `T066`, and is
+    # gone: `runtime/review.scm` composes `Node::Diff` in the `review` float, so
+    # `8b` is a screen a person opens rather than a widget with a test. The
+    # re-pointing lasted one task, which is what this table is supposed to do —
+    # a row can only shrink, and the reason it shrank is that somebody built the
+    # composition rather than finding a better task to blame.
     "Watch": ("T076", "`WatchOverlay` — the `◉ ⇒` stream, which renders *through* a "
                       "`VirtualText` row. That kind is composed (the unknown-key hint); this "
                       "one is the watch's own formatting and is deferred in the interpreter."),

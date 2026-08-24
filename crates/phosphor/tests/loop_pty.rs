@@ -4482,6 +4482,176 @@ mod driven {
         editor.leave_by(b"ZQ");
     }
 
+    /// **`T065`'s acceptance: `8b` is navigable.**
+    ///
+    /// Declare a block, `:review` it, and the float draws the grouped tree with
+    /// its counts. Then `za` folds the highlighted group and `j` moves the
+    /// highlight — which is the whole of what *navigable* means for a screen
+    /// whose own footer reads `za fold · s seen · S group seen · q`.
+    ///
+    /// **The rows are a live query behind a snapshot float.** The float is
+    /// composed once, at `:review`; the counts on it are rebuilt every frame
+    /// off the same store the gutter reads. So the numbers here are the store's
+    /// answer and not a copy taken at open time.
+    #[test]
+    fn a_review_block_opens_as_a_navigable_tree() {
+        let scratch = Scratch::new("review-tree");
+        let runtime = copy_layer(&scratch.path);
+        // **Two files in one directory**, because one is not a group and a
+        // fixture with one cannot tell a count of what a row *holds* from a
+        // count of what it *drew*. A planted `files = 1` passed against a
+        // one-file fixture and is caught by this one.
+        let dir = scratch.path.join("src");
+        fs::create_dir_all(&dir).expect("a directory");
+        let file = dir.join("fetch.txt");
+        let other = dir.join("retry.txt");
+        for path in [&file, &other] {
+            fs::write(
+                path,
+                "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
+            )
+            .expect("a fixture");
+        }
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+
+        let span = |from: u32, to: u32| {
+            format!(
+                "(hash \"start\" (hash \"line\" {from} \"column\" 1) \
+                 \"end\" (hash \"line\" {to} \"column\" 1))"
+            )
+        };
+        let form = format!(
+            "(declare-review-block! \"retry logic\" \
+             (list (hash \"path\" \"{}\" \"spans\" (list {} {}) \"annotation\" \"the meat\") \
+                   (hash \"path\" \"{}\" \"spans\" (list {}) \"annotation\" \"mechanical\")) \
+             \"the whole change\")\r",
+            file.display(),
+            span(1, 2),
+            span(5, 6),
+            other.display(),
+            span(3, 4),
+        );
+        editor.press_until(form.as_bytes(), "the whole change");
+        editor.press_until(b"(close-repl!)\r", "review ready");
+
+        // **Bare `:review` means the newest block.** A person who has just read
+        // `review ready · retry logic` has one block in mind and no id for it.
+        let open = editor.shown_on_grid(b":review\r", "review — ✻ retry logic");
+        let body = whole(&open);
+        assert!(
+            body.contains("2 file(s) · 3 region(s)"),
+            "the header counts what the store holds:\n{body}"
+        );
+        // **Three levels, which is what `8b` is.** A directory row with the
+        // count under it, the file nested inside carrying claude's note, and the
+        // hunk ranges under that. The counts are the store's, this instant.
+        // **`3` and `2`, and neither is the number of rows drawn.** The
+        // directory holds three unseen hunks across two files; a row that
+        // counted what it drew would say `2 files` by luck and `●2` by mistake.
+        assert!(
+            body.contains("●3 unseen · 2 files"),
+            "the directory row counts what is under it:\n{body}"
+        );
+        // **Relative to the row above it.** `src/` is drawn once, on the
+        // directory row; a file row repeating it would be the path twice.
+        assert!(
+            body.contains("▾   fetch.txt  ●2  the meat"),
+            "the file row is nested, chipped and annotated:\n{body}"
+        );
+        assert!(
+            body.contains("retry.txt  ●1  mechanical"),
+            "and its neighbour is under the same directory:\n{body}"
+        );
+        assert!(
+            body.contains("@@ 1–2") && body.contains("@@ 5–6"),
+            "and the hunks are under the file:\n{body}"
+        );
+        // `8b`'s footer, spelled whole — Design Language §6.
+        assert!(body.contains("za"), "the footer teaches the keys:\n{body}");
+        assert!(body.contains("fold"), "{body}");
+
+        // **`za` folds the highlighted group.** The `z` is swallowed and the
+        // `a` folds — two-key sequences belong to the input machine and the
+        // machine is not running over a float.
+        let folded = whole(&editor.shown_on_grid(b"za", "▸ "));
+        // Row 0 is the directory — the highlight starts there and `za` folds it.
+        assert!(folded.contains("▸ "), "the arrow closed:\n{folded}");
+
+        // And it toggles back, which is what makes it a fold rather than a
+        // hide.
+        let open_again = whole(&editor.shown_on_grid(b"za", "▾ "));
+        assert!(open_again.contains("▾ "), "{open_again}");
+
+        // **`:annotate` writes claude's sentence onto the row you are on**, and
+        // takes no id — `8b`'s *"mechanical"* against *"the meat"*, typed by a
+        // person rather than declared by an agent. That the ex line opens at all
+        // over this float is the assertion underneath: a surface that owned
+        // every key would be the one place its own two commands could not be
+        // typed.
+        //
+        // **Pressed quietly and then read**, not `shown_on_grid` — the needle
+        // would be the text of the command itself, which is on the ex line the
+        // moment it is typed and true a frame before it runs. `press_quietly`
+        // settles, so the grid after it is the grid the command produced.
+        // Onto a *file* row, so the highlight goes there first — a directory is
+        // the host's grouping and carries no store id to annotate.
+        editor.press_quietly(b"j");
+        editor.press_quietly(b":annotate handler signatures\r");
+        let annotated = whole(&editor.screen());
+        assert!(
+            annotated.contains("fetch.txt  ●2  handler signatures"),
+            "the file row carries the new note:\n{annotated}"
+        );
+        assert!(
+            !annotated.contains("the meat"),
+            "and replaces the old one rather than appending:\n{annotated}"
+        );
+        assert!(
+            annotated.contains("retry.txt  ●1  mechanical"),
+            "and its neighbour is untouched:\n{annotated}"
+        );
+
+        // **`:grouping flat` keeps the files and drops the scaffolding** —
+        // `8d`'s answer at 80 columns. The group row goes; what it held stays.
+        editor.press_quietly(b":grouping flat\r");
+        let flat = whole(&editor.screen());
+        assert!(
+            !flat.contains("●3 unseen · 2 files"),
+            "the directory row is gone:\n{flat}"
+        );
+        assert!(
+            flat.contains("handler signatures") && flat.contains("mechanical"),
+            "and both files it held are still drawn, with their notes:\n{flat}"
+        );
+        assert!(
+            flat.contains("src/fetch.txt"),
+            "spelled whole, because there is no row above them now:\n{flat}"
+        );
+        assert!(
+            flat.contains("review — ✻ retry logic"),
+            "the header is not a group row:\n{flat}"
+        );
+
+        // **`q` closes it and the buffer takes keys again**, which is one claim
+        // and needs one keystroke to prove: `G` moves the cursor, which only
+        // the buffer does.
+        //
+        // Not `press_until(b"q", "NORMAL")` — the first version was that, and
+        // it hung for thirty-four seconds. `press_until` reads the *byte
+        // delta*, and closing a float redraws the rows it covered while leaving
+        // the statusline exactly as it was, so `NORMAL` is on screen and not in
+        // what arrived. The needle has to be something the keystroke *changes*.
+        editor.press_quietly(b"q");
+        let closed = whole(&editor.shown_on_grid(b"G", "11:1"));
+        assert!(!closed.contains("za fold"), "the float is gone:\n{closed}");
+
+        // **Every surface closed before `ZQ`** — `leave_by` does a
+        // `child.wait()` with no timeout.
+        editor.leave_by(b"ZQ");
+    }
+
     /// **`T064`'s acceptance, through the keyboard.** Marking one hunk seen
     /// leaves the rest unseen.
     ///
@@ -8974,6 +9144,18 @@ fn retry_with_backoff(base: u64) -> u64 {
                 .filter(|column| &row[usize::from(*column)].background != body)
                 .collect()
         }
+    }
+
+    /// Every row of a screen, joined — for an assertion about the *body* rather
+    /// than about which row something landed on.
+    ///
+    /// A float's rows move with its height, and a test that pinned one would be
+    /// asserting the float's geometry while claiming to assert its contents.
+    fn whole(screen: &Screen) -> String {
+        (0..SCREEN.ws_row)
+            .map(|row| screen.line(row))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// A file whose lines are short, distinct, and the same length — so a
