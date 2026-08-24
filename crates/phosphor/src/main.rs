@@ -1303,7 +1303,68 @@ fn head(source: &str) -> Option<&str> {
 /// by naming the three it does take, rather than silently widening to the
 /// workspace: a count that quietly answered about the wrong scope is worse than
 /// one that did not answer.
-const RESOLVABLE: &[&str] = &["file", "explicit", "region"];
+const RESOLVABLE: &[&str] = &["file", "explicit", "region", "hunk", "group", "block"];
+
+/// An id that names no declared block or group (`T064`).
+///
+/// Two spellings of one fact because the two halves say it to two readers: a
+/// door answers a wire error and a person reads a notice row. Carrying both
+/// keeps the resolution in one function without either half phrasing it in the
+/// other's voice.
+struct Undeclared {
+    /// `"block"` or `"group"` — the loop's sentence.
+    noun: &'static str,
+    /// `"a declared block"` — the door's
+    /// [`WireError::Range`](phosphor_core::value::WireError::Range)
+    /// expectation.
+    expected: &'static str,
+    /// The id that named nothing.
+    got: i64,
+}
+
+/// **The three review targets, resolved once for both halves** (`T064`).
+///
+/// `hunk`, `group` and `block` name regions by id and need no cursor, so unlike
+/// `selection` they do **not** split across the door/loop line — both sides
+/// resolve them, and resolving them the same way is what this function is. The
+/// split above is about focus; these three have none.
+///
+/// [`None`] means *"not one of the three"* and leaves the caller's own arms to
+/// answer. `Some(Err(…))` is *"that id names nothing"*, which is a different
+/// answer from an empty scope: a typo refuses, and a block whose regions were
+/// all dropped marks nothing and says `no region here`.
+fn review_scope(store: &store::Shared, target: &Target) -> Option<Result<RegionScope, Undeclared>> {
+    let (ids, noun, expected, got) = match target {
+        // A hunk *is* a region (`store::Hunk`), so this is `One` and not a set,
+        // and there is nothing to look up: an id that names no region scopes to
+        // nothing and marks nothing, which is what `Target::Region` already
+        // does with a bad id.
+        Target::Hunk { id } => return Some(Ok(RegionScope::One(store::Hunk::region_of(*id)))),
+        Target::Group { id } => (
+            store.group_regions(*id),
+            "group",
+            "a declared group",
+            i64::try_from(id.0).unwrap_or(i64::MAX),
+        ),
+        Target::Block { id } => (
+            store.block_regions(*id),
+            "block",
+            "a declared block",
+            i64::try_from(id.0).unwrap_or(i64::MAX),
+        ),
+        _ => return None,
+    };
+    Some(ids.map_or_else(
+        || {
+            Err(Undeclared {
+                noun,
+                expected,
+                got,
+            })
+        },
+        |ids| Ok(RegionScope::These(ids)),
+    ))
+}
 
 impl AppHost {
     /// An [`Answer`] at the store's current revision.
@@ -1334,6 +1395,20 @@ impl AppHost {
                 span: *span,
             }),
             Target::Region { id } => Ok(RegionScope::One(*id)),
+            Target::Hunk { .. } | Target::Group { .. } | Target::Block { .. } => {
+                review_scope(&self.store, target)
+                    .expect("the three arms matched here are the three it resolves")
+                    .map_err(|undeclared| QueryError::Argument {
+                        name,
+                        source: phosphor_core::value::WireError::Field {
+                            field: "within",
+                            source: Box::new(phosphor_core::value::WireError::Range {
+                                expected: undeclared.expected,
+                                got: undeclared.got,
+                            }),
+                        },
+                    })
+            }
             other => Err(QueryError::Argument {
                 name,
                 source: phosphor_core::value::WireError::Field {
@@ -1453,7 +1528,10 @@ impl AppHost {
             RegionScope::Span { path, span } => (path, span),
             // A whole file is not a place. `declare-regions` is the verb for
             // "this file has claude-written spans"; an anchor names one point.
-            RegionScope::File(_) | RegionScope::One(_) | RegionScope::Everywhere => {
+            RegionScope::File(_)
+            | RegionScope::One(_)
+            | RegionScope::These(_)
+            | RegionScope::Everywhere => {
                 return declined("anchor a place — name a path and a span");
             }
         };
@@ -1700,6 +1778,15 @@ impl Answers for AppHost {
             // disagree about what landed.
             Query::Review(phosphor_core::query::ReviewQuery::ReviewBlocks {}) => Ok(Answer {
                 value: Value::List(self.store.blocks().iter().map(block_value).collect()),
+                revision: self.store.revision(),
+            }),
+            // `T064` — one block's hunks, each with the seen bit read off the
+            // region it *is*. An unknown block answers an empty list rather
+            // than an error, for `region`'s reason: a surface holding an id
+            // across a `drop-regions` is asking a question with a legitimate
+            // no.
+            Query::Review(phosphor_core::query::ReviewQuery::Hunks { block }) => Ok(Answer {
+                value: Value::List(self.store.hunks(*block).iter().map(hunk_value).collect()),
                 revision: self.store.revision(),
             }),
             // `T040`. Answered off the same store the gutter draws from.
@@ -5282,6 +5369,29 @@ fn digit_pressed(key: KeyEvent) -> Option<u32> {
     }
 }
 
+/// One hunk as plain data, for the `hunks` query (`T064`).
+///
+/// **Carries the span, where [`block_value`] deliberately does not.** The two
+/// are not inconsistent: a block is a *grouping* and a second copy of its spans
+/// would drift, but a hunk row is read to draw one hunk and the query answers
+/// at a revision — so the span here is the store's own, this instant, and the
+/// caller has nothing to keep in sync. It is the difference between caching a
+/// span and reporting one.
+fn hunk_value(hunk: &store::Hunk) -> Value {
+    let mut fields = Args::new();
+    fields.set(
+        "hunk",
+        Value::Int(i64::try_from(hunk.id.0).unwrap_or(i64::MAX)),
+    );
+    fields.set(
+        "group",
+        Value::Int(i64::try_from(hunk.group.0).unwrap_or(i64::MAX)),
+    );
+    fields.set("span", hunk.span.to_value());
+    fields.set("seen", Value::Bool(hunk.seen));
+    Value::Record(fields)
+}
+
 /// One review block as plain data, for the `review-blocks` query (`T053`).
 ///
 /// Region **ids**, not spans — see [`store::Block`] for why a block that
@@ -5307,6 +5417,14 @@ fn block_value(block: &store::Block) -> Value {
                 .iter()
                 .map(|group| {
                     let mut row = Args::new();
+                    // `T064`. A `files` row is a group, and until it carried
+                    // its id there was no way to name one — `annotate-group`
+                    // and `S here` both take a `GroupId` and nothing answered
+                    // where one comes from.
+                    row.set(
+                        "group",
+                        Value::Int(i64::try_from(group.id.0).unwrap_or(i64::MAX)),
+                    );
                     row.set("path", Value::Text(group.path.display().to_string()));
                     row.set(
                         "annotation",
@@ -10181,16 +10299,18 @@ impl Editing {
                 self.fingerprint_declared(cx);
                 Outcome::Done(answer)
             }
-            Action::Region(RegionAction::DropRegions { target }) => match self.scope_of(target) {
-                Ok(scope) => Outcome::Done(Receipt {
-                    capability: name,
-                    value: Value::Int(
-                        i64::try_from(cx.shell.store.drop_regions(&scope)).unwrap_or(0),
-                    ),
-                    note: None,
-                }),
-                Err(why) => declined(&why),
-            },
+            Action::Region(RegionAction::DropRegions { target }) => {
+                match self.scope_of(&cx.shell.store, target) {
+                    Ok(scope) => Outcome::Done(Receipt {
+                        capability: name,
+                        value: Value::Int(
+                            i64::try_from(cx.shell.store.drop_regions(&scope)).unwrap_or(0),
+                        ),
+                        note: None,
+                    }),
+                    Err(why) => declined(&why),
+                }
+            }
             // `T041`'s owed arm, recorded against this task in
             // `scripts/lint-action-arms.sh`: collapsing a virtual-text rail
             // addresses it by owning region, and regions are this task.
@@ -11354,7 +11474,14 @@ impl Editing {
     /// The arms that refuse say so in one sentence rather than guessing,
     /// because a target the store silently widened is how `S` over a group
     /// marks a file.
-    fn scope_of(&mut self, target: &Target) -> Result<RegionScope, String> {
+    fn scope_of(&mut self, store: &store::Shared, target: &Target) -> Result<RegionScope, String> {
+        // `T064`'s three, which need no editor and are resolved identically on
+        // the door side — see [`review_scope`]. Taken first so the arms below
+        // stay about focus, which is the only thing this half has that the
+        // other one does not.
+        if let Some(resolved) = review_scope(store, target) {
+            return resolved.map_err(|undeclared| format!("no such {}", undeclared.noun));
+        }
         match target {
             Target::File { path } => Ok(RegionScope::File(store::key_for(path))),
             Target::Explicit { path, span } => Ok(RegionScope::Span {
@@ -11426,7 +11553,7 @@ impl Editing {
             SeenState::Seen => "mark-seen",
             SeenState::Unseen => "mark-unseen",
         };
-        match self.scope_of(target) {
+        match self.scope_of(&cx.shell.store, target) {
             Ok(scope) => {
                 let marked = cx.shell.store.set_seen(&scope, state);
                 // §6's voice: say what is true, in the fewest words that are.
@@ -11464,7 +11591,7 @@ impl Editing {
     /// A rail no region owns cannot be collapsed, and that is honest rather
     /// than a gap: there is nothing to name it by.
     fn collapse(&mut self, cx: &mut Cx<'_>, owner: &Target, on: bool) -> Outcome {
-        let scope = match self.scope_of(owner) {
+        let scope = match self.scope_of(&cx.shell.store, owner) {
             Ok(scope) => scope,
             Err(why) => return declined(&why),
         };
@@ -11794,7 +11921,7 @@ impl Editing {
         target: &Target,
         label: Option<&String>,
     ) -> Outcome {
-        let scope = match self.scope_of(target) {
+        let scope = match self.scope_of(&cx.shell.store, target) {
             Ok(scope) => scope,
             Err(why) => return declined(&why),
         };
@@ -11804,7 +11931,7 @@ impl Editing {
                 (path, self.line_span(line))
             }
             RegionScope::Span { path, span } => (path, span),
-            RegionScope::One(_) | RegionScope::Everywhere => {
+            RegionScope::One(_) | RegionScope::These(_) | RegionScope::Everywhere => {
                 return declined("anchor a place, not a region — name a path or a span");
             }
         };
@@ -12795,6 +12922,18 @@ impl Text for EditorText<'_> {
     fn unseen_at(&self, at: Position) -> Option<Span> {
         let (store, path) = self.regions.as_ref()?;
         store.unseen_covering(path, at)
+    }
+
+    /// `T064` — `vih`, over the blocks the same store holds.
+    ///
+    /// **Seen hunks included, where `viu` excludes them**, and the asymmetry is
+    /// the point: `viu` is *"select the unseen region"* and a noun that caught
+    /// what you had read would make `s` over it a no-op; `vih` is *"the hunk
+    /// here"* and a review surface has to be able to reach a hunk you already
+    /// marked in order to **un**mark it.
+    fn hunk_at(&self, at: Position) -> Option<Span> {
+        let (store, path) = self.regions.as_ref()?;
+        store.hunk_covering(path, at)
     }
 
     fn lines(&self) -> u32 {

@@ -556,8 +556,9 @@
    ;; is the sentence 6d is about.
    ;;
    ;; the one operator that is not an edit: it opens no undo group and fills no
-   ;; register, because seen-state is not the buffer. `Region::MarkSeen` lands
-   ;; at T041, and until then the door answers with the task that builds it.
+   ;; register, because seen-state is not the buffer. `Region::MarkSeen` landed
+   ;; at T041; T064 gave it the hunk noun, so `gsih` is a keystroke rather than
+   ;; a sentence about one.
    (list "gs" (key/operator "mark-seen") "mark seen")))
 
 (keymap-set-rows! phosphor/motion-scopes phosphor/operators)
@@ -589,12 +590,25 @@
 ;; the text objects, named after `i` or `a`. the last four are 6d's agent
 ;; nouns.
 ;;
-;; **`u` resolves** (T049): `viu` selects the unseen region under the cursor,
-;; linewise, over the same store the gutter draws from — so the noun and the
-;; marker cannot disagree. the other three still select nothing, because their
-;; stores do not exist: hunks are T063, threads T068, review blocks T053. they
-;; parse and answer nothing rather than guessing, which is what makes `dih` a
-;; no-op instead of a delete of the wrong thing.
+;; **`u` resolves** (T049) and **`h` resolves** (T064): `viu` selects the unseen
+;; region under the cursor and `vih` the hunk, both linewise, both over the same
+;; store the gutter draws from — so the noun and the marker cannot disagree.
+;; `gsih` is the sentence T064 is about: mark *this* hunk seen and leave the
+;; rest of the block unseen.
+;;
+;; the two nouns are different sets on purpose. a hunk is a region a *review
+;; block* declared, so an ordinary marker is not one; and a hunk you have
+;; already marked is still a hunk, where `viu` excludes what you have read —
+;; because `s` has to be able to reach a hunk you marked in order to unmark it.
+;;
+;; `t` and `b` still select nothing. a thread needs T068's store. a review block
+;; is **not a span** — it is twelve regions across three files, and the widest
+;; thing an operator can be handed is one span in one buffer, so `gsib` could
+;; only mark everything between the first and the last. 8b's `S here marks all
+;; 12` is a key on the review *surface* (T066), not an operator over a buffer,
+;; and that is a finding rather than a gap. they answer nothing rather than
+;; guessing, which is what makes `dib` a no-op instead of a delete of the wrong
+;; thing.
 (keymap-set-rows!
  '("object")
  (list

@@ -180,6 +180,19 @@ pub enum Scope {
     },
     /// One region, by id.
     One(RegionId),
+    /// A named set of regions (`T064`).
+    ///
+    /// **What a review block resolves to**, and the reason it is a set of ids
+    /// rather than a list of spans: a block *"holds ids, not spans — the region
+    /// is the span"*, so a scope that carried spans would be a second copy to
+    /// disagree with the store after a rewrite moved one. `S here marks all 12`
+    /// (`8b`) is this variant with twelve ids in it.
+    ///
+    /// Empty means empty — a block whose regions were all dropped scopes to
+    /// nothing, and `mark-seen` answers `no region here` rather than
+    /// `Everywhere`'s *"all of them"*. That inversion is the one hazard of
+    /// carrying a collection, so it is stated here and tested.
+    These(Vec<RegionId>),
 }
 
 impl Scope {
@@ -191,6 +204,7 @@ impl Scope {
             Self::File(path) => region.path == *path,
             Self::Span { path, span } => region.path == *path && overlaps(*span, region.span),
             Self::One(id) => region.id == *id,
+            Self::These(ids) => ids.contains(&region.id),
         }
     }
 }

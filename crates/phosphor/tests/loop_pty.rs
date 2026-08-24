@@ -4482,6 +4482,98 @@ mod driven {
         editor.leave_by(b"ZQ");
     }
 
+    /// **`T064`'s acceptance, through the keyboard.** Marking one hunk seen
+    /// leaves the rest unseen.
+    ///
+    /// `gsih` — *mark inner hunk seen* — is the sentence the operator ruling of
+    /// 2026-08-12 was written for, and until this task `h` parsed and selected
+    /// nothing, so the whole phrase was a no-op that looked like a binding. The
+    /// keymap's own comment said so, naming a task.
+    ///
+    /// **Counted through `unseen-count` rather than off the statusline**, which
+    /// is not squeamishness about rendering: `2 unseen` is the first rung of the
+    /// shed ladder and becomes `●2` the moment the row is tight, so an assertion
+    /// on the words is an assertion about how wide the terminal happened to be.
+    /// The count is the claim; the chip is a drawing of it.
+    #[test]
+    fn marking_one_hunk_seen_leaves_the_rest_of_the_block_unseen() {
+        let scratch = Scratch::new("hunk-seen");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("fetch.txt");
+        // Ten lines, so three spans have room to be separate.
+        fs::write(
+            &file,
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n",
+        )
+        .expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+
+        let span = |from: u32, to: u32| {
+            format!(
+                "(hash \"start\" (hash \"line\" {from} \"column\" 1) \
+                 \"end\" (hash \"line\" {to} \"column\" 1))"
+            )
+        };
+        let form = format!(
+            "(declare-review-block! \"retry logic\" (list (hash \"path\" \"{}\" \
+             \"spans\" (list {} {} {}) \"annotation\" \"the meat\")) \"three regions\")\r",
+            file.display(),
+            span(1, 2),
+            span(5, 6),
+            span(9, 10),
+        );
+        editor.press_until(form.as_bytes(), "three regions");
+
+        let before = editor.press_until(b"(unseen-count)\r", "3");
+        assert!(shows(&before, "3"), "three declared; session was: {before}");
+
+        editor.press_until(b"(close-repl!)\r", "review ready");
+
+        // Line 5 is inside the second span and inside nothing else.
+        editor.press_quietly(b"gg");
+        editor.press_quietly(b"4j");
+        // **One literal.** `key_coverage.py` reads the bytes a test presses and
+        // matches them against the bound sequences, so `gsih` split across two
+        // calls is four keys it cannot see as a binding. `press_quietly`
+        // because `g` opens a which-key popup on the way and `press` asserts
+        // one frame per key byte.
+        editor.press_quietly(b"gsih");
+
+        let after = editor.press_until(b":repl\r", "steel");
+        assert!(!after.is_empty());
+        // Two left, and the one that went is the one the cursor was in.
+        let counted = editor.press_until(b"(unseen-count)\r", "2");
+        assert!(
+            shows(&counted, "2"),
+            "one hunk marked, two still unseen; session was: {counted}"
+        );
+
+        // **And the hunk rows say *which*** — the query `T064` answers, mapped
+        // down to the one field this is about. A bare `(hunks 0)` prints three
+        // records with their spans nested inside, which is three hundred
+        // characters through an eighty-column repl pane: the needle would be
+        // waiting for text the screen cannot show, and the answer would be
+        // right.
+        //
+        // `#f` and `#t`, not `#false` and `#true` — steel *reads* the long
+        // spelling and *prints* the short one, and the first version of this
+        // needle waited thirty-five seconds for a string the repl was never
+        // going to draw.
+        let listed = editor.press_until(
+            b"(map (lambda (h) (hash-ref h \"seen\")) (hunks 0))\r",
+            "(#f #t #f)",
+        );
+        assert!(
+            shows(&listed, "(#f #t #f)"),
+            "the middle hunk and only it; session was: {listed}"
+        );
+
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+        editor.leave_by(b"ZQ");
+    }
+
     /// **`T053`: a declared block becomes markers and a notification.**
     ///
     /// The task's *Done when* is two things and they land in two places: the

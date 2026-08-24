@@ -2640,6 +2640,52 @@ reaching for `q` and getting the register menu. The cost is one keystroke in a
 place where the alternative is a rule in the resolver that every other binding
 would then have to be read against.
 
+### 59 · `revert-hunk` needs a *before* side, and nothing in the graph produces one for a review block
+
+**Found by `T064`.** `revert-hunk` is declared *"reverts one hunk; it lowers to edits, so your
+undo tree has it"* (`crates/phosphor-core/src/action.rs:807`). Lowering to edits means writing the
+text that was there before — so the arm needs both sides of the hunk, and a review block has only
+one.
+
+`T053`'s `declare-review-block` records **where** claude wrote: a path and a span, which becomes a
+region, which `T064` reads as a hunk. Nothing records **what was there before it wrote**. That is
+not an oversight in `T053` — §7's marker is a claim about attention, not a snapshot — but it means
+`4b` can draw a hunk's location without being able to draw the hunk's removals, and `revert-hunk`
+cannot be armed from the review store alone.
+
+`DiffSource`'s four arms are four different answers to *"before, according to what?"*
+(`crates/phosphor-core/src/view/props.rs:601`) and only two of them have one:
+
+- `Disk` (`T070`) — the buffer against the file. Both sides exist the moment they differ.
+- `Change` (`T073`) — the VCS's copy. Both sides exist because a VCS is a record of befores.
+- `ReviewBlock` (`T053`, ticked) — **one side.** Spans only.
+- `Hunk` (`T066`) — one hunk of whichever of the four the peek was opened from, so it inherits
+  the question rather than answering it.
+
+**What this does not block.** `T064`'s own acceptance is seen-state and needs no before-side; `gsih`
+marks a hunk read without knowing what it replaced. `4b` can draw a review block as *locations* —
+which is what `1b`'s `review ready · retry logic` already is — and the `+`/`−` columns are what
+needs the answer.
+
+**The three candidate rulings**, none taken:
+
+1. **A review block's before-side is the VCS's.** `4b` diffs the declared spans against
+   `HEAD`/`@-`, which is what a person means by *"what did claude change"* most of the time. Costs
+   a hard dependency of the review surface on `T071`, and the task list says *"no feature may
+   assume a repo exists"* — so a repo-less workspace would draw `4b` with no signs at all.
+2. **`declare-review-block` carries the before-text.** Honest and self-contained, and it makes the
+   MCP payload carry the whole prior content of every span. It also makes a block a *snapshot*,
+   which is the thing `store::Block`'s doc rules against for spans — *"a second place for the two
+   to disagree"*.
+3. **A review block has no before-side and `4b` draws locations, not signs.** Cheapest, and it
+   demotes `revert-hunk` to the two sources that do have one (`Disk`, `Change`). Costs `4b` the
+   thing the mockup draws.
+
+Recorded rather than ruled because the answer is `T066`'s to make with the screen in front of it,
+and because taking (1) or (2) here would put a dependency or a payload into a task that has not
+been read yet. `revert-hunk` is recorded in `scripts/lint-action-arms.sh` against `T066` with this
+section named.
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

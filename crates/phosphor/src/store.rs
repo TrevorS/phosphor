@@ -44,7 +44,8 @@ use std::sync::Mutex;
 use phosphor_core::journal;
 use phosphor_core::query::Revision;
 use phosphor_core::request::{
-    Actor, AnchorId, BlockId, Diagnostic, FileGroup, RegionId, RegionSpec, Span,
+    Actor, AnchorId, BlockId, Diagnostic, FileGroup, GroupId, HunkId, Position, RegionId,
+    RegionSpec, Span,
 };
 use phosphor_core::store::{
     Anchor, Declared, Fingerprint, Lens, Reanchored, Region, Scope, SeenLog, SeenState, Snapshot,
@@ -75,6 +76,12 @@ pub(crate) struct Block {
 /// One file's contribution to a block.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Group {
+    /// Which group (`T064`).
+    ///
+    /// Minted per group across the whole session rather than per block, so a
+    /// [`GroupId`] names one group without a block beside it — which is what
+    /// `Target::Group { id }` is, a target carrying one id and no context.
+    pub(crate) id: GroupId,
     /// Workspace-relative, through [`key_for`] like every other path here.
     pub(crate) path: PathBuf,
     /// Claude's own annotation for this group — `8b`'s *"mechanical"* versus
@@ -82,6 +89,51 @@ pub(crate) struct Group {
     pub(crate) annotation: Option<String>,
     /// The regions this group declared.
     pub(crate) regions: Vec<RegionId>,
+}
+
+/// **A hunk is a region, and this is the type that says so once** (`T064`).
+///
+/// `declare-review-block` makes one region per changed span
+/// ([`Shared::declare_block`]), so inside a review block *one span is one
+/// region is one hunk* — three names for the thing `4b` draws a `+`/`−` beside
+/// and `s` marks seen. [`HunkId`] is therefore the region's id under the review
+/// surface's name, and this conversion is the only place the two spellings
+/// meet.
+///
+/// **The alternative was a hunk table, and it would have been a second place
+/// for seen-state to live.** §7 has one mutable flag and it is on the region;
+/// a hunk row carrying its own would be two records of one bit, disagreeing the
+/// first time a rewrite moved a span. The block's own doc already made this
+/// ruling for spans — *"a block holds ids, not spans"* — and this is the same
+/// ruling one noun further out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Hunk {
+    /// Which hunk — the region's id, read as a hunk.
+    pub(crate) id: HunkId,
+    /// Which group it belongs to.
+    pub(crate) group: GroupId,
+    /// Where it is, so a caller can jump to it without a second query.
+    pub(crate) span: Span,
+    /// Whether it has been read.
+    pub(crate) seen: bool,
+}
+
+impl Hunk {
+    /// The region a hunk id names.
+    ///
+    /// **Takes the id rather than the row**, because the caller that matters
+    /// is `Target::Hunk { id }` — a target carries an id and no row. A
+    /// convenience `fn region(self)` beside this one lasted exactly as long as
+    /// it took clippy to notice nothing outside the tests called it, which is
+    /// what a second spelling of one conversion looks like from the outside.
+    pub(crate) const fn region_of(hunk: HunkId) -> RegionId {
+        RegionId(hunk.0)
+    }
+
+    /// The hunk a region is.
+    pub(crate) const fn id_of(region: RegionId) -> HunkId {
+        HunkId(region.0)
+    }
 }
 
 /// The store, shared.
@@ -98,6 +150,14 @@ pub(crate) struct Shared {
     /// for what claude said that outlives a session, and duplicating it here
     /// would be two records of one sentence.
     blocks: Mutex<Vec<Block>>,
+    /// How many groups have been minted this session (`T064`).
+    ///
+    /// Beside `blocks` rather than derived from it, because a group id must be
+    /// stable and never reused: counting the groups already in `blocks` would
+    /// mint a fresh id that collided with an old one the moment a block was
+    /// ever removed. Nothing removes one today, and this is the field that
+    /// keeps that from being load-bearing.
+    groups: Mutex<u64>,
     /// The seen-state journal (`T044`), or [`None`] when there is nowhere to
     /// put one.
     ///
@@ -136,8 +196,11 @@ impl Shared {
             store: Mutex::new(Store::restore(log.state().clone())),
             log: Mutex::new(Some(log)),
             // Not restored: a block is a statement, not seen-state. See the
-            // field's own note.
+            // field's own note. The group counter restarts with it, which is
+            // consistent rather than a gap — ids that name nothing do not need
+            // to be reserved.
             blocks: Mutex::new(Vec::new()),
+            groups: Mutex::new(0),
         })
     }
 
@@ -246,6 +309,7 @@ impl Shared {
         let groups: Vec<Group> = files
             .iter()
             .map(|file| {
+                let id = self.mint_group();
                 let specs: Vec<RegionSpec> = file
                     .spans
                     .iter()
@@ -257,6 +321,7 @@ impl Shared {
                     .collect();
                 let declared = self.declare(&specs, asked_by);
                 Group {
+                    id,
                     path: key_for(&file.path),
                     annotation: file.annotation.clone(),
                     regions: declared
@@ -283,6 +348,125 @@ impl Shared {
         };
         blocks.push(block.clone());
         block
+    }
+
+    /// A fresh group id (`T064`).
+    fn mint_group(&self) -> GroupId {
+        let mut minted = self
+            .groups
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let id = GroupId(*minted);
+        *minted += 1;
+        id
+    }
+
+    /// **One block's hunks, with each one's seen state** — the `hunks` query
+    /// (`T064`).
+    ///
+    /// In declaration order, which is the order `4b` draws them: claude said
+    /// these files in this order and the surface should not resort them behind
+    /// its back.
+    ///
+    /// A region a block named and something later dropped is **skipped rather
+    /// than reported unseen**. `unseen` is a fact about a marker, and a marker
+    /// that is gone has no facts — reporting a default would put a row on `4b`
+    /// with nothing under it.
+    pub(crate) fn hunks(&self, block: BlockId) -> Vec<Hunk> {
+        let groups: Vec<Group> = {
+            let blocks = self
+                .blocks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some(found) = blocks.iter().find(|candidate| candidate.id == block) else {
+                return Vec::new();
+            };
+            found.groups.clone()
+        };
+        let store = self.lock();
+        groups
+            .iter()
+            .flat_map(|group| {
+                group.regions.iter().filter_map(|id| {
+                    let region = store.regions().in_scope(&Scope::One(*id)).next().cloned()?;
+                    Some(Hunk {
+                        id: Hunk::id_of(region.id),
+                        group: group.id,
+                        span: region.span,
+                        seen: !region.state.unseen(),
+                    })
+                })
+            })
+            .collect()
+    }
+
+    /// The regions a block's id names (`T064`) — `8b`'s `S here marks all 12`.
+    ///
+    /// [`None`] when no such block exists, which is *"I do not know that
+    /// block"* and refuses; an empty `Some` is *"that block's regions are all
+    /// gone"* and marks nothing. Collapsing the two would make a typo look like
+    /// a no-op.
+    pub(crate) fn block_regions(&self, block: BlockId) -> Option<Vec<RegionId>> {
+        let blocks = self
+            .blocks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let found = blocks.iter().find(|candidate| candidate.id == block)?;
+        Some(
+            found
+                .groups
+                .iter()
+                .flat_map(|group| group.regions.iter().copied())
+                .collect(),
+        )
+    }
+
+    /// The regions a group's id names (`T064`). [`None`] and empty mean what
+    /// they mean for [`Shared::block_regions`].
+    pub(crate) fn group_regions(&self, group: GroupId) -> Option<Vec<RegionId>> {
+        let blocks = self
+            .blocks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        blocks
+            .iter()
+            .flat_map(|block| block.groups.iter())
+            .find(|candidate| candidate.id == group)
+            .map(|found| found.regions.clone())
+    }
+
+    /// The span of the lowest-id hunk covering a position (`T064`).
+    ///
+    /// `vih`'s answer, and [`Shared::covering`]'s lowest-id rule for its
+    /// reason. **Seen hunks are included**, unlike `viu`'s: `vih` is *"the hunk
+    /// here"* and a review surface's `s` has to be able to reach one you
+    /// already marked in order to unmark it — which is exactly the asymmetry
+    /// `viu` documents in the other direction.
+    ///
+    /// A region that no block ever named is not a hunk. That is what keeps
+    /// `vih` from selecting an ordinary `declare-regions` marker, which would
+    /// make the two nouns the same noun.
+    pub(crate) fn hunk_covering(&self, path: &Path, at: Position) -> Option<Span> {
+        let declared: Vec<RegionId> = {
+            let blocks = self
+                .blocks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            blocks
+                .iter()
+                .flat_map(|block| block.groups.iter())
+                .flat_map(|group| group.regions.iter().copied())
+                .collect()
+        };
+        let key = key_for(path);
+        self.lock()
+            .regions()
+            .in_scope(&Scope::Span {
+                path: key,
+                span: Span { start: at, end: at },
+            })
+            .find(|region| declared.contains(&region.id))
+            .map(|region| region.span)
     }
 
     /// Every declared block, oldest first — the `review-blocks` query
@@ -508,11 +692,7 @@ impl Shared {
     /// The lowest id when more than one covers it, so the answer does not
     /// depend on how the set happened to be iterated. `T042` makes this
     /// anchored rather than positional.
-    pub(crate) fn covering(
-        &self,
-        path: &Path,
-        at: phosphor_core::request::Position,
-    ) -> Option<RegionId> {
+    pub(crate) fn covering(&self, path: &Path, at: Position) -> Option<RegionId> {
         let key = key_for(path);
         self.lock()
             .regions()
@@ -531,11 +711,7 @@ impl Shared {
     /// must not depend on iteration order — and unseen only because `viu` is
     /// *"select the unseen region"*: a noun that also caught regions you had
     /// read would make `s` over it a no-op that looked like a bug.
-    pub(crate) fn unseen_covering(
-        &self,
-        path: &Path,
-        at: phosphor_core::request::Position,
-    ) -> Option<Span> {
+    pub(crate) fn unseen_covering(&self, path: &Path, at: Position) -> Option<Span> {
         let key = key_for(path);
         self.lock()
             .regions()
@@ -595,7 +771,7 @@ mod tests {
     use phosphor_core::request::{Actor, Position, RegionSpec, Span};
     use phosphor_core::store::{Scope, SeenState};
 
-    use super::{Shared, key_for};
+    use super::{Hunk, Shared, key_for};
 
     fn span(from: u32, to: u32) -> Span {
         Span {
@@ -616,6 +792,167 @@ mod tests {
             span: span(1, 3),
             author: Actor::Claude,
         }
+    }
+
+    /// A block over one file with three separate spans — three hunks.
+    fn block(shared: &Shared) -> phosphor_core::request::BlockId {
+        shared
+            .declare_block(
+                "retry logic",
+                &[phosphor_core::request::FileGroup {
+                    path: "src/fetch.rs".into(),
+                    spans: vec![span(1, 2), span(5, 6), span(9, 10)],
+                    annotation: Some("the meat".to_owned()),
+                }],
+                None,
+                Actor::Claude,
+            )
+            .id
+    }
+
+    /// **`T064`'s acceptance, at the store.** Marking one hunk seen leaves the
+    /// rest unseen.
+    #[test]
+    fn marking_one_hunk_seen_leaves_the_rest_unseen() {
+        let shared = Shared::default();
+        let id = block(&shared);
+
+        let before = shared.hunks(id);
+        assert_eq!(before.len(), 3, "three spans declared, three hunks");
+        assert!(before.iter().all(|hunk| !hunk.seen), "{before:?}");
+
+        let one = before[1];
+        let marked = shared.set_seen(&Scope::One(Hunk::region_of(one.id)), SeenState::Seen);
+        assert_eq!(marked, 1, "one region in scope, not three");
+
+        let after = shared.hunks(id);
+        let seen: Vec<bool> = after.iter().map(|hunk| hunk.seen).collect();
+        assert_eq!(
+            seen,
+            vec![false, true, false],
+            "the middle hunk and only it"
+        );
+        // And the ids did not move under it — a surface holding one across the
+        // mark still names the same hunk.
+        assert_eq!(
+            after.iter().map(|hunk| hunk.id).collect::<Vec<_>>(),
+            before.iter().map(|hunk| hunk.id).collect::<Vec<_>>()
+        );
+    }
+
+    /// **The other direction, which is what a block target is for.** `8b`'s
+    /// `S here marks all 12` over three.
+    #[test]
+    fn a_blocks_regions_are_every_hunk_in_it() {
+        let shared = Shared::default();
+        let id = block(&shared);
+
+        let regions = shared.block_regions(id).expect("the block exists");
+        assert_eq!(regions.len(), 3);
+        assert_eq!(
+            shared.set_seen(&Scope::These(regions), SeenState::Seen),
+            3,
+            "all three at once"
+        );
+        assert!(shared.hunks(id).iter().all(|hunk| hunk.seen));
+    }
+
+    /// **An id that names nothing is not an empty scope.** `None` refuses;
+    /// `Some(empty)` marks nothing. Collapsing the two would make a typo look
+    /// like a no-op — the hazard `Scope::These` documents.
+    #[test]
+    fn an_unknown_block_is_absent_rather_than_empty() {
+        let shared = Shared::default();
+        block(&shared);
+        assert!(
+            shared
+                .block_regions(phosphor_core::request::BlockId(99))
+                .is_none()
+        );
+        assert!(
+            shared
+                .group_regions(phosphor_core::request::GroupId(99))
+                .is_none()
+        );
+        assert!(shared.hunks(phosphor_core::request::BlockId(99)).is_empty());
+    }
+
+    /// **A group is named by an id that outlives its position in a block.**
+    /// Two blocks, and the second block's group does not reuse the first's id.
+    #[test]
+    fn group_ids_are_minted_across_blocks_not_within_one() {
+        let shared = Shared::default();
+        let first = block(&shared);
+        let second = block(&shared);
+        let ids: Vec<_> = shared
+            .hunks(first)
+            .iter()
+            .chain(shared.hunks(second).iter())
+            .map(|hunk| hunk.group)
+            .collect();
+        assert_eq!(ids[0], ids[1], "one file, one group");
+        assert_ne!(
+            ids[0], ids[3],
+            "a second block's group is a different group"
+        );
+    }
+
+    /// **`vih` finds a declared hunk and not an ordinary marker**, which is
+    /// what keeps `viu` and `vih` two nouns rather than one with a filter.
+    #[test]
+    fn only_a_block_declared_region_is_a_hunk() {
+        let shared = Shared::default();
+        // An ordinary `declare-regions` marker, on a line no block names.
+        shared.declare(
+            &[RegionSpec {
+                path: "src/fetch.rs".into(),
+                span: span(20, 21),
+                author: Actor::Claude,
+            }],
+            Actor::Claude,
+        );
+        block(&shared);
+
+        let path = std::path::Path::new("src/fetch.rs");
+        let inside = Position { line: 5, column: 1 };
+        let outside = Position {
+            line: 20,
+            column: 1,
+        };
+        assert_eq!(shared.hunk_covering(path, inside), Some(span(5, 6)));
+        assert_eq!(
+            shared.hunk_covering(path, outside),
+            None,
+            "a marker no block declared is not a hunk"
+        );
+        assert!(
+            shared.unseen_covering(path, outside).is_some(),
+            "but it is still an unseen region — `viu` reaches it"
+        );
+    }
+
+    /// **A hunk stays a hunk after you mark it**, where an unseen region stops
+    /// being one. Without this, `s` over a hunk would be one-way.
+    #[test]
+    fn a_seen_hunk_is_still_a_hunk_and_a_seen_region_is_not_unseen() {
+        let shared = Shared::default();
+        let id = block(&shared);
+        let path = std::path::Path::new("src/fetch.rs");
+        let at = Position { line: 5, column: 1 };
+        assert!(shared.unseen_covering(path, at).is_some());
+
+        let one = shared.hunks(id)[1];
+        shared.set_seen(&Scope::One(Hunk::region_of(one.id)), SeenState::Seen);
+
+        assert_eq!(
+            shared.hunk_covering(path, at),
+            Some(span(5, 6)),
+            "still reachable, so `s` can unmark it"
+        );
+        assert!(
+            shared.unseen_covering(path, at).is_none(),
+            "and `viu` no longer offers it"
+        );
     }
 
     /// **The reconciliation this module exists for.** A door declares an

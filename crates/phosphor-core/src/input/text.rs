@@ -83,10 +83,26 @@ pub trait Text {
     /// The binary's implementation reads the same store the gutter draws from,
     /// so the noun and the marker cannot disagree.
     ///
-    /// **Only the unseen region, of `6d`'s four.** A hunk needs `T063`, a
-    /// thread `T068` and a review block `T053` — none of those stores exists,
-    /// so their objects still answer `None` and say which task builds them.
+    /// **Two of `6d`'s four.** A thread needs `T068` and a review block a
+    /// surface `T066` builds, so those objects still answer `None` and say
+    /// which task builds them.
     fn unseen_at(&self, at: Position) -> Option<Span> {
+        let _ = at;
+        None
+    }
+
+    /// The span of the hunk covering `at`, if there is one (`T064`).
+    ///
+    /// `vih`, and the noun `s` composes over to mark one hunk seen. Same
+    /// defaulting as [`Text::unseen_at`] and the same reason — a headless
+    /// driver selects nothing rather than selecting wrongly.
+    ///
+    /// **Not the same answer as `unseen_at` with a different filter.** A hunk
+    /// is a region a *review block* declared, so an ordinary `declare-regions`
+    /// marker is not one; and a hunk you have already marked is still a hunk,
+    /// where `viu` excludes what you have read. The two nouns are different
+    /// sets, deliberately, and the binary's implementation says why.
+    fn hunk_at(&self, at: Position) -> Option<Span> {
         let _ = at;
         None
     }
@@ -761,14 +777,19 @@ pub fn object_span(
         TextObject::UnseenRegion => text
             .unseen_at(at_position)
             .map(|span| (span, SelectionKind::Line)),
-        // A markup tag needs the grammar (`T037`); the other three need a store
-        // that does not exist yet — hunks are `T064`, threads `T068`, review
-        // blocks `T053`. `T063` drew the hunk *widget* and is ticked, which
-        // moves nothing here: a hunk this can select is one with an id and a
-        // seen bit, and that is the store `T064` builds. They stay `None`
-        // rather than guessing, which is what makes `vih` select nothing
+        // `T064`. A hunk is characterwise for `UnseenRegion`'s reason inverted:
+        // a hunk *is* a declared span and §7 tints whole rows, so the same
+        // linewise reading applies — the operator gets the rows the review
+        // surface draws a sign beside, not a character range inside one.
+        TextObject::Hunk => text
+            .hunk_at(at_position)
+            .map(|span| (span, SelectionKind::Line)),
+        // A markup tag needs the grammar (`T037`); the other two need a store
+        // that does not exist yet — threads `T068`, and a review block is a
+        // *surface* rather than a span, which is `T066`. They stay `None`
+        // rather than guessing, which is what makes `vit` select nothing
         // instead of selecting something wrong.
-        TextObject::Tag | TextObject::Hunk | TextObject::Thread | TextObject::Block => None,
+        TextObject::Tag | TextObject::Thread | TextObject::Block => None,
     }
 }
 

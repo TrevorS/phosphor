@@ -103,6 +103,17 @@ RECORDED = {
                                 "this."),
     "ReloadRuntime": ("T094", "Re-booting the editor layer without restarting. Nothing rebuilds a "
                               "`Runtime` in place today."),
+    "RevertHunk": ("T066", "`revert-hunk` lowers to edits, so it needs the text that was there "
+                           "*before* the hunk — and a review block records where claude wrote, "
+                           "not what it replaced. `T064` shipped seen-state, which needs no "
+                           "before-side at all: `gsih` marks a hunk read without knowing what it "
+                           "displaced. **Recorded rather than re-declared to a task that has one**, "
+                           "because of the four `DiffSource` arms only `Disk` (`T070`) and "
+                           "`Change` (`T073`) do, `ReviewBlock` does not, and `Hunk` (`T066`) "
+                           "inherits whichever the peek was opened from. That is a ruling about "
+                           "what `4b` draws rather than about where an arm goes, so it is written "
+                           "up as OPEN-QUESTIONS.md §59 with three candidate answers and left to "
+                           "`T066`, which is the task with the screen in front of it."),
     "UndoToCheckpoint": ("T095", "`UndoTree::goto` and `CheckpointId` both exist and `Timeline` "
                                  "owns the tree; nothing routes a checkpoint id to it."),
     "CompactHistory": ("T095", "`journal.rs` implements compaction and proves it under a real "

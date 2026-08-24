@@ -4209,8 +4209,85 @@ mockup screen ids of the same name, which mean entirely different things.
   > whose acceptance names a screen that draws one (`4b`, `2b`). `T064` and `T065` sit between,
   > and their acceptance is about seen-state and about grouping rather than about a composed
   > surface — if either composes one first, the lint reddens and says to delete the row.
-- [ ] **T064 · Per-hunk seen state** — `s`/`S` compose over any group.
+- [x] **T064 · Per-hunk seen state** — `s`/`S` compose over any group.
   *Done when:* marking one hunk seen leaves the rest unseen. *Needs:* T063, T041
+
+  > **Built and ticked 2026-08-23.**
+  >
+  > **A hunk is a region, and `store::Hunk` is the type that says so once.**
+  > `declare-review-block` already makes one region per changed span, so inside a review block
+  > *one span is one region is one hunk* — three names for the thing `4b` draws a sign beside and
+  > `s` marks seen. The alternative was a hunk table, and it would have been a second place for
+  > seen-state to live: §7 has one mutable flag and it is on the region, so a hunk row carrying
+  > its own would be two records of one bit, disagreeing the first time a rewrite moved a span.
+  > `store::Block`'s own doc had already made this ruling one noun in — *"a block holds ids, not
+  > spans — the region **is** the span"* — and this is the same ruling one noun further out.
+  > `Hunk::region_of` and `Hunk::id_of` are the only places the two spellings meet.
+  >
+  > **`gsih` was a binding that did nothing, and now it is the acceptance.** `h` has been bound to
+  > `(key/object "hunk")` since the objects landed; `TextObject::Hunk` answered `None`, so the
+  > whole phrase parsed and was a no-op. `Text::hunk_at` is the new seam, defaulting to `None` the
+  > way `unseen_at` does, and `EditorText` answers it off the same store the gutter draws from.
+  > `marking_one_hunk_seen_leaves_the_rest_of_the_block_unseen` presses it through a real pty: three
+  > spans declared, cursor into the second, `gsih`, and `(unseen-count)` goes 3 → 2 with
+  > `(#f #t #f)` naming which.
+  >
+  > **`vih` and `viu` are two nouns, not one with a filter**, and the asymmetry runs both ways. A
+  > hunk is a region a *review block* declared, so an ordinary `declare-regions` marker is not one
+  > — otherwise the two nouns would be the same noun. And a hunk you have already marked **is
+  > still a hunk**, where `viu` excludes what you have read: `s` has to be able to reach a hunk you
+  > marked in order to unmark it. `only_a_block_declared_region_is_a_hunk` and
+  > `a_seen_hunk_is_still_a_hunk_and_a_seen_region_is_not_unseen` hold both halves.
+  >
+  > **`Scope::These` is the new scope, and an empty one is not `Everywhere`.** `8b`'s
+  > `S here marks all 12` is a target that resolves to twelve ids, so the store needed a set-of-ids
+  > scope beside `One`. The hazard of carrying a collection is the empty case inverting into *"all
+  > of them"*, so it is stated on the variant and tested. Beside it: **an id that names nothing is
+  > absent, not empty.** `block_regions(99)` is `None` and refuses; a block whose regions were all
+  > dropped is `Some(vec![])` and marks nothing, saying `no region here`. Collapsing the two would
+  > make a typo look like a no-op.
+  >
+  > **The three review targets do not split across the door/loop line, and `review_scope` is why.**
+  > That split exists for *focus* — `selection` means something different depending on where the
+  > cursor is, and a door has no cursor — but `hunk`, `group` and `block` name regions by id and
+  > need no editor. So both halves resolve them and resolve them identically, through one function.
+  > `RESOLVABLE` goes from three tags to six.
+  >
+  > **Groups got ids, and they are minted across the session rather than within a block.** `Group`
+  > had none at all, so `Target::Group { id }` and `annotate-group` both took an id nothing could
+  > produce — the same gap `T088`'s pane verbs had. The counter sits beside `blocks` rather than
+  > being derived from `blocks.len()`, because deriving it would mint a colliding id the first time
+  > anything removed a block; nothing removes one today and this is what keeps that from being
+  > load-bearing. `review-blocks` rows carry `group` now.
+  >
+  > **A review block is not a span, and `gsib` cannot be an operator.** The keymap's own comment
+  > calls `gsib` *"the sentence 6d is about"*, so this was checked rather than assumed: a block is
+  > twelve regions across three files, and the widest thing an operator can be handed is one span
+  > in one buffer — so `gsib` could only mark everything between the first region and the last.
+  > `8b`'s `S here marks all 12` is a key on the review **surface**, which is `T066`'s, and
+  > `TextObject::Block` stays `None` naming it. That is a finding, not a gap, and the keymap says
+  > so where a reader will hit it.
+  >
+  > **Five planted defects, five catches, each by the test whose claim it breaks.** Letting any
+  > region count as a hunk failed only `only_a_block_declared_region_is_a_hunk`; reporting every
+  > hunk unseen failed the acceptance test and the block-wide one; minting one group id for every
+  > group failed only the minting test; answering an empty scope for an unknown block failed only
+  > `an_unknown_block_is_absent_rather_than_empty`; and putting `hunk_at` back to `None` failed the
+  > pty test and nothing else, which is the point of having it.
+  >
+  > **One duplication was caught by clippy rather than by review.** `Hunk::region(self)` and the
+  > `RegionId(id.0)` written out inside `review_scope` were two spellings of the conversion the
+  > type exists to keep in one place; `region` had no caller outside the tests, which is what that
+  > looks like from the outside. One `region_of(HunkId)` now, called by both.
+  >
+  > **`revert-hunk` is declared against this task and is not seen-state.** It lowers to edits, so
+  > it needs the text that was there *before* the hunk — and a review block records where claude
+  > wrote, not what it replaced. Recorded against `T066` rather than re-declared, because which
+  > task owns the verb is downstream of a question nobody has answered: of `DiffSource`'s four
+  > arms only `Disk` (`T070`) and `Change` (`T073`) have a before-side at all, `ReviewBlock`
+  > has none, and `Hunk` inherits whichever the peek was opened from. That is a ruling about what
+  > `4b` **draws**, so it is written up as OPEN-QUESTIONS.md §59 with three candidate answers and
+  > left to the task with the screen in front of it.
 - [ ] **T065 · Directory grouping + annotations** — `tui-tree-widget`; Claude's group
   annotations ("mechanical" vs "the meat"). **Scale is grouping, not scrolling.**
   *Done when:* screen `8b`'s 40-file block is navigable. *Needs:* T064
