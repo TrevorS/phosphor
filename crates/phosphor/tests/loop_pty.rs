@@ -4798,8 +4798,19 @@ mod driven {
         // `selected` starts at row 0, the directory — a different row entirely.
         editor.press_quietly(b"gg");
         editor.press_quietly(b"4j");
-        editor.press_quietly(b":review\r");
-        let opened = whole(&editor.screen());
+        // **`shown_on_grid`, not a quiet press and a grid read.** Opening this
+        // float runs scheme — `review/body` and `review/footer` compose through
+        // the VM — and `press_quietly` settles the *bytes*, which is not the
+        // same as waiting for the surface to exist. Reading `screen()` straight
+        // after is a race that this machine wins and CI loses.
+        //
+        // **It lost three times before anyone looked.** The runs for `T066`,
+        // `T067` and `T068` were all red on exactly this assertion while
+        // `just gate` was green locally each time, because CI shards nextest
+        // across four slower workers and the float had not drawn yet. A local
+        // gate is not a CI result, and three commits went out on that
+        // assumption.
+        let opened = whole(&editor.shown_on_grid(b":review\r", "]] next file"));
         assert!(
             opened.contains("]] next file"),
             "the review is the screen right now, selected at row 0:\n{opened}"
