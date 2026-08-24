@@ -1116,6 +1116,18 @@ impl AppHost {
     }
 
     /// A boolean option, or `None` if `init.scm` never set it.
+    /// Set a boolean option from outside the layer (`T096`).
+    ///
+    /// **One writer for one piece of state.** `--soft-wrap` is the only caller:
+    /// a command-line flag is a *default* like `init.scm`'s, so it belongs in
+    /// the same place rather than beside it. Everything else sets options
+    /// through `set-option!`, which is the door.
+    fn set_flag(&self, key: &str, value: bool) {
+        if let Ok(mut state) = self.state.lock() {
+            state.options.insert(key.to_owned(), Value::Bool(value));
+        }
+    }
+
     fn flag(&self, key: &str) -> Option<bool> {
         match self.state.lock().ok()?.options.get(key)? {
             Value::Bool(flag) => Some(*flag),
@@ -1862,6 +1874,19 @@ impl Host for AppHost {
             // shape as `discover-sessions` in `T057`, one applier the other
             // way round.
             Action::Motion(MotionAction::GotoLocation { .. }) => {
+                self.ask(Intent::Act(Box::new(request.action.clone())));
+                done(Value::Null)
+            }
+            // `T096` — **the fourth line, and the pattern is now worth naming.**
+            // A capability armed in `Editing::act` is reachable from a *key*;
+            // a door lands here, and the two appliers do not fall through to
+            // one another on purpose (see the comment on `apply-edits` above).
+            // So a verb whose whole point is that three doors can call it needs
+            // a line here, and `set-soft-wrap` is exactly that verb: it was
+            // declared, generated into Steel, MCP and the CLI, armed in the
+            // loop, and still answered `not built yet — T081 builds it` from
+            // every door. Found by running it.
+            Action::View(ViewAction::SetSoftWrap { .. }) => {
                 self.ask(Intent::Act(Box::new(request.action.clone())));
                 done(Value::Null)
             }
@@ -2962,6 +2987,17 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // directory comes off the host rather than from a second `config_dir()` —
     // see `AppHost::config_home`.
     layer.note_if_no_layer(host.config_home().as_deref());
+    // **`--soft-wrap` seeds the option; it is not a second answer** (`T096`).
+    //
+    // The loop used to read `cli.soft_wrap || host.flag("soft-wrap")` every
+    // frame, which made the flag and the option two pieces of state for one
+    // question — and left `set-soft-wrap` unable to turn wrapping *off* in a
+    // session started with the flag, since the `||` put it straight back. Seeded
+    // **after** the layer loads, so it overrides `init.scm` the way a command
+    // line should and the verb can still override it afterwards.
+    if cli.soft_wrap {
+        host.set_flag("soft-wrap", true);
+    }
     let boot = layer.boot_float();
 
     // Whether the file named on the command line has nothing behind it yet, so
@@ -3298,7 +3334,13 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // and the per-pane pass below is where the request is honoured. Two
         // reads of `host.flag` could disagree inside one frame — the VM runs
         // between them.
-        let soft_wrap = cli.soft_wrap || host.flag("soft-wrap") == Some(true);
+        // **One piece of state, which is `T096`'s other half.** `--soft-wrap`
+        // used to be OR'd in here every frame, so the flag and the option were
+        // two answers to one question and the verb could not turn wrapping
+        // *off* in a session that had been started with the flag. The flag
+        // seeds the option once at boot (see `soft_wrap_default`); this reads
+        // the option and nothing else.
+        let soft_wrap = host.flag("soft-wrap") == Some(true);
         // **`T050` — the session follows the option, and only when it moves.**
         // Read per frame for the reason `soft-wrap` is: the value is the editor
         // layer's and `(set-option! "agent-command" …)` at the REPL has to
@@ -3408,10 +3450,16 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 continue;
             };
             let buffer = buffers.at_mut(shown);
-            if soft_wrap {
+            // The buffer's own answer, or the room's. **And the `else` is not
+            // tidiness**: without it, turning wrapping off left every buffer
+            // wrapped until it was reopened — the option moved and the rope did
+            // not, which is a toggle that only works once.
+            if buffer.soft_wrap.unwrap_or(soft_wrap) {
                 // Free when the width has not changed, and it moves no
                 // viewport.
                 soft_wrap::wrap_to(&mut buffer.editor, outer);
+            } else {
+                soft_wrap::unwrap(&mut buffer.editor);
             }
             // `8e`'s whitespace marks are INSERT-only, and the mode is the
             // machine's — the first thing in this loop that is not hardcoded.
@@ -5449,18 +5497,53 @@ fn session_value(
 /// `file://src/retry.rs`, where `src` is read as an *authority* — a link to
 /// another machine. Joining is what makes that impossible rather than unlikely.
 ///
-/// Nothing is percent-encoded. A path with a `#` or a space in it produces a
-/// URI a strict parser would read wrongly, and that is recorded at
-/// `OPEN-QUESTIONS.md` §56 rather than half-solved: encoding is a table, the
-/// table is `percent-encoding`, and a hand-rolled subset of it is the kind of
-/// almost-right this build spends its lints avoiding.
+/// **The path is percent-encoded, and it is the whole charset rather than a
+/// subset.** This shipped unencoded with §56 recording the gap and the reason —
+/// *"encoding is a table, and a hand-rolled subset of it is the kind of
+/// almost-right this build spends its lints avoiding"*. That is true of a
+/// subset and not of [`encoded`], which implements RFC 3986's `path-abempty`
+/// completely: every byte outside `unreserved`, `sub-delims`, `:`, `@` and the
+/// separator is escaped, so there is nothing left to be almost right about. A
+/// file called `notes #2.md` produced a URI whose fragment began at the `#`.
 fn jump_uri(workspace: &Path, path: &str, line: Option<u32>) -> String {
     let resolved = workspace.join(path);
-    let mut uri = format!("file://{}", resolved.display());
+    let mut uri = format!("file://{}", encoded(&resolved.display().to_string()));
     if let Some(line) = line {
         uri.push_str(&format!("#L{line}"));
     }
     uri
+}
+
+/// A path as a URI path component — RFC 3986 `path-abempty` (`T056`).
+///
+/// **The unreserved set is the specification's and is not shortened.** `-`, `.`,
+/// `_` and `~` are unreserved; the sub-delims are `!$&'()*+,;=`; `:` and `@` are
+/// allowed in a path segment; `/` is the separator and stays. Everything else —
+/// space, `#`, `?`, `%`, `"`, `<`, `>`, and every non-ASCII byte — is escaped,
+/// which for UTF-8 means per *byte* rather than per character, because a URI is
+/// bytes.
+///
+/// `%` is escaped like anything else, so encoding is not idempotent — running it
+/// twice gives `%2520`. That is correct and is why there is exactly one call
+/// site.
+fn encoded(path: &str) -> String {
+    const UNRESERVED: &str = "-._~";
+    const SUB_DELIMS: &str = "!$&'()*+,;=";
+    let mut out = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        let plain = byte.is_ascii_alphanumeric()
+            || UNRESERVED.as_bytes().contains(&byte)
+            || SUB_DELIMS.as_bytes().contains(&byte)
+            || byte == b':'
+            || byte == b'@'
+            || byte == b'/';
+        if plain {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
 
 /// The option `runtime/permissions.scm`'s `allow` publishes (`T061`).
@@ -5619,12 +5702,15 @@ fn ask_id_of(value: &Value) -> Option<u64> {
 /// `q close`, which is the one thing true of a transcript either way.
 ///
 /// **The verbs are spelled in full and the mockup is not.** `7b` draws
-/// `:ca reattach · :cn new session`, and Design Language §6 — quoted in
-/// [`phosphor_core::view::KeyHint`]'s own doc — says *"never cryptic
-/// contractions like `:ca`"* by name. The drawing and the rule disagree; the
-/// build follows the rule, the same way `status_line` already says
-/// `session lost — :reattach`. Recorded at `OPEN-QUESTIONS.md` §55 rather than
-/// resolved here.
+/// `:ca reattach · :cn new session`, and Design Language §6 answers both by
+/// name: *"keyhints spell the whole command — `s mark seen`, `:reattach`,
+/// `:transcript`, `:diff-disk` — never cryptic contractions like `:ca` or
+/// `:rr`. Abbreviations exist for typing; the UI always teaches the full
+/// name."* Two of the three commands §6 lists as correct are ones this build
+/// draws, so the rule is not being read against its grain. `OPEN-QUESTIONS.md`
+/// §55 records the ruling and what it cost: `:cn` was renamed to
+/// `:start-session`, because a contraction with no full name to teach is the
+/// same mistake with nothing left to look up.
 fn transcript_hints(life: &SessionLife, paused: bool) -> Vec<KeyHint> {
     let mut hints = Vec::new();
     // `7e` — three ways on from a boundary, and they are the screen's own.
@@ -5647,8 +5733,8 @@ fn transcript_hints(life: &SessionLife, paused: bool) -> Vec<KeyHint> {
             verb: "reattach".to_owned(),
         });
         hints.push(KeyHint {
-            key: KeySeq(":cn".to_owned()),
-            verb: "new session".to_owned(),
+            key: KeySeq(":start-session".to_owned()),
+            verb: "start a new one".to_owned(),
         });
     }
     // **`<C-w> c`, and not `1b`'s `q`.** The mockup's footer draws `q close`,
@@ -8927,6 +9013,14 @@ struct Editing {
     /// this field is a per-pass copy of [`indent_style`]'s answer and never a
     /// snapshot of it.
     indent_style: IndentStyle,
+    /// Whether this buffer wraps, or [`None`] to follow the option (`T096`).
+    ///
+    /// **Three-valued on purpose.** `soft-wrap` is a *default*: `init.scm` sets
+    /// it, `--soft-wrap` seeds it, and the option is what a session means by
+    /// *"wrapping is on"*. `set-soft-wrap` names a **buffer**, so a buffer that
+    /// has been told answers for itself and one that has not follows the room.
+    /// A `bool` here would make opening a file a decision about wrapping.
+    soft_wrap: Option<bool>,
     /// `T038`/`T039`'s ask: which *"tell me about this place"* request the last
     /// key made. Drained by the loop, which is the only thing holding the
     /// servers.
@@ -9142,6 +9236,7 @@ impl Editing {
                 unit: " ".repeat(TAB_WIDTH_DEFAULT),
                 tab_width: TAB_WIDTH_DEFAULT,
             },
+            soft_wrap: None,
             lookup: None,
             restart: None,
             question: None,
@@ -9484,6 +9579,37 @@ impl Editing {
             // the half that never had a call site, and the machinery is the
             // fork's (`code.rs`'s `fold_query` / `fold_ranges`, read out of
             // `langs/<lang>/folds.scm`).
+            // **`T096` — the verb the doors have advertised since `T081`.**
+            // `set-soft-wrap` was declared, generated into Steel, MCP and the
+            // CLI, and applied by nothing: a capability three doors offer and
+            // that does nothing is worse than one that is absent, which is what
+            // `scripts/lint-action-arms.sh` has said on every run since.
+            //
+            // **The target is honoured rather than ignored.** The row says
+            // *"which buffer"*, and a global toggle wearing a per-buffer
+            // signature is the kind of almost-true this build spends its lints
+            // on. `Target::Cursor` is the focused one — the same reading every
+            // focus-relative target has.
+            Action::View(ViewAction::SetSoftWrap { target, on }) => {
+                match target {
+                    Target::Cursor {} | Target::Selection {} => {
+                        self.soft_wrap = Some(*on);
+                        done()
+                    }
+                    Target::Buffer { id } if *id == cx.buffer => {
+                        self.soft_wrap = Some(*on);
+                        done()
+                    }
+                    // **Refused rather than silently applied to the focused
+                    // buffer.** An `Editing` is one buffer; a target naming
+                    // another is a request this arm cannot honour, and honouring
+                    // it against the wrong rope is worse than saying so.
+                    Target::Buffer { .. } | Target::File { .. } => {
+                        Outcome::Refused(Refusal::NoSuchTarget)
+                    }
+                    _ => declined("soft wrap is a buffer's, not a row's"),
+                }
+            }
             Action::View(ViewAction::SetFold { target, state }) => {
                 if self.set_fold(target, *state) {
                     done()
@@ -14332,6 +14458,39 @@ mod tests {
             editing.shell.held.len(),
             1,
             "and the action is held against the ask that is asking"
+        );
+    }
+
+    /// **`T056`: a jump URI escapes what a URI reader would misread.**
+    ///
+    /// The half of §56 that was recorded rather than built. The `#` case is the
+    /// one that actually bites: a file called `notes #2.md` produced a URI whose
+    /// *fragment* began inside the filename, so the link opened `notes ` — a
+    /// file that does not exist — and the line number was lost with it.
+    #[test]
+    fn a_jump_uri_escapes_the_bytes_a_uri_reader_would_take_for_syntax() {
+        let root = Path::new("/w");
+        // The separator survives; the space and the hash do not.
+        assert_eq!(
+            super::jump_uri(root, "/w/notes #2.md", Some(19)),
+            "file:///w/notes%20%232.md#L19"
+        );
+        // `%` is escaped like anything else, which is what makes the encoding
+        // unambiguous and non-idempotent.
+        assert_eq!(
+            super::jump_uri(root, "/w/50%.txt", None),
+            "file:///w/50%25.txt"
+        );
+        // Non-ASCII is escaped per *byte* — a URI is bytes, and `é` is two.
+        assert_eq!(
+            super::jump_uri(root, "/w/café.rs", None),
+            "file:///w/caf%C3%A9.rs"
+        );
+        // And an ordinary path is left completely alone, including the
+        // characters the specification allows in a segment.
+        assert_eq!(
+            super::jump_uri(root, "/w/src/retry_v2-final.rs", Some(1)),
+            "file:///w/src/retry_v2-final.rs#L1"
         );
     }
 

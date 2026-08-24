@@ -2491,121 +2491,113 @@ path works and an almost identical path does not, resting entirely on a reading
 taken outside the test harness. **When a probe and a test disagree, suspect the
 probe.**
 
-### 55 · `7b` and `2d` draw `:ca`, `:tr` and `:c`; Design Language §6 forbids exactly that
+### 55 · ~~`7b` and `2d` draw `:ca`, `:tr` and `:c`; Design Language §6 forbids exactly that~~ — ruled 2026-08-23
 
-**Raised by `T057`, 2026-08-21. Flagged rather than folded in — the build follows
-the rule and the drawings disagree with it.**
+**Raised by `T057`, ruled by reading §6 rather than by weighing the drawings.**
+It settles itself, and it settles more than it was asked:
 
-Design Language §6, quoted verbatim in `phosphor_core::view::KeyHint`'s own doc
-comment, says a verb *"spells the whole command"* and gives its counter-example
-by name: *"never cryptic contractions like `:ca`"*.
+> **Keyhints spell the whole command:** `s mark seen`, `:reattach`,
+> `:transcript`, `:diff-disk` — never cryptic contractions like `:ca` or `:rr`.
+> Abbreviations exist for typing (vim-style unique-prefix matching); the UI
+> always teaches the full name. Footer order: primary action first, escape last.
 
-Three mockups draw the contraction anyway:
+**Two of the three commands §6 lists as correct are ones this build draws**, so
+the rule is not being read against its grain — it is being read off the page.
+`:ca` and `:rr` are named as the counter-examples. The mockup footers are
+shorthand for a reader; §6 is the rule for the product. `status_line.rs` had
+already resolved its half this way before the question was asked.
 
-* `7b`'s transcript footer — `:ca reattach · :cn new session · q close`
-* `7b`'s statusline — `✕ session lost · :ca`
-* `2d`'s footer — `]u next unseen · :tr transcript · :c claude · :e edit`
+**And it condemns `:cn`, which the entry let stand.** The original ruling kept
+`:cn` on the reasoning that it is a command *name* rather than a contraction of
+one — thin at the time and wrong on re-reading, because §6's requirement is that
+*"the UI always teaches the full name"* and `:cn` has no full name to teach. It
+is the same mistake as `:ca` with nothing left to look up. Renamed to
+`:start-session`; `:start` is the shortest unambiguous prefix, `:steer` being the
+other command beginning `st`.
 
-`status_line.rs` resolved its half before this task, drawing
-`session lost — :reattach`, and `T057` has now resolved the other two the same
-way: the transcript footer reads `:reattach · :cn · q`, and the dashboard's
-mid-task footer reads `:transcript` and `:claude`. Both are still *typable*
-short — `:reat`, `:tr`, `:cl` — because vim's one-field abbreviation rule is
-what `keymaps.scm` implements, and §6 is explicit that abbreviation is a
-keyboard affordance and never a label.
+**A third finding came out of the same pass.** `7d`'s footer draws
+`:e edit · :cn start claude · :f find file`, and **there is no `:f`** — the files
+picker is `SPC f` and no ex command opens it. A footer teaching a command that
+does not exist is §6's failure arriving from the other direction: the rule is
+about the UI teaching the *right* name, and a wrong one is worse than a short
+one. The dashboard says `:edit · :start-session · SPC f` now.
 
-**What is actually open.** `:cn` survives in full in both the drawings and the
-build, and it is not obviously less cryptic than `:ca` — it is a command *name*
-rather than an abbreviation of one, which is the distinction that saves it, and
-that distinction is thin. Either the mockups' footers are shorthand for the
-reader and the rule governs, or `:cn` is a fourth violation nobody has called
-one. **The design is Teej's and the ruling is his**; the build has taken the
-reading that keeps §6 true, and this entry exists so the divergence is on the
-record rather than discovered later as a bug in the screens.
+**Nothing is lost at the keyboard.** `:reat`, `:tr`, `:cl` and `:start` all still
+type, which is exactly what §6 reserves abbreviation for.
 
-### 56 · `1b`'s footer offers a keyboard jump the transcript has no focus to jump *from*
+### 56 · ~~`1b`'s footer offers a keyboard jump the transcript has no focus to jump *from*~~ — ruled 2026-08-23
 
-**Raised by `T056`, 2026-08-21. Two of the three are recorded and closed inside
-that task; the third needs a ruling.**
+**Raised by `T056`. Two of its three parts were closed inside that task; both
+of the rest are decided here.**
 
-`1b` and `7b` draw the transcript pane's footer as `↵ jump to file · q close`
-and `:ca reattach · :cn new session · q close`. `T057` drew both footers
-verbatim; `T056` found that two of the three keys are not what they say.
+**`q` was bound to something else and is fixed.** `runtime/keymaps.scm` gives `q`
+to `set-macro-recording` — vim's own meaning — so `1b`'s `q close` named a key
+that does something different. The footer says `<C-w> c close`.
 
-**`q` is bound, to something else.** `runtime/keymaps.scm` gives `q` to
-`set-macro-recording` — vim's own meaning — in normal mode, everywhere. The
-footer now says `<C-w> c close`, which is the binding that exists. This one is
-settled: a hint naming a key that does something else is worse than a hint fewer,
-and `T088` is the precedent for how long that survives unnoticed.
+**Percent-encoding is built, and the reason it was deferred did not survive
+inspection.** The entry said encoding is a table and *"a hand-rolled subset of it
+is the kind of almost-right this build spends its lints avoiding"*. True of a
+subset — and `jump_uri` does not use one. `encoded` implements RFC 3986's
+`path-abempty` completely: `unreserved`, the sub-delims, `:`, `@` and the
+separator pass, every other byte is escaped, and non-ASCII is escaped per byte
+because a URI is bytes. There is nothing left for it to be almost right about,
+and no dependency was needed to say so. The case that actually bites is `#`: a
+file called `notes #2.md` produced a URI whose *fragment* began inside the
+filename, so the link opened a file that does not exist and lost the line number
+with it.
 
-**Percent-encoding is not done, deliberately.** `jump_uri` builds
-`file:///path#L19` by concatenation. A path containing a space, a `#` or a `%`
-produces a URI a strict parser reads wrongly. Encoding is a table, the table is
-the `percent-encoding` crate, and a hand-rolled subset of it is the kind of
-almost-right this build spends its lints avoiding — so it is a dependency
-decision rather than a defect, and it is `spine`'s. Every path this repository
-tests with is ASCII and slash-separated.
+**The ruling on `↵`: clicking is the only way in, and that is the design rather
+than a shortfall.**
 
-**The open question is `↵`, and it is narrower than it looked.** The *verb*
-exists and works: `goto-location` is `T056`'s own capability, it is armed, it is
-reachable through every door, and a keystroke test drives it. What is missing is
-only the last inch — a **focused row** inside a transcript pane for `↵` to act
-on: a selection model the pane does not have, a movement vocabulary for it, and
-a `<cr>` binding scoped to that surface. `T059` adds digit-answering to a
-*float* and is the nearest thing, and it is not this.
+* §9's own framing is that a transcript is *"a stream you read beside your
+  code"*. A picker has a selection because choosing is what it is for; a stream
+  does not, and giving one a cursor is a second selection model inside a pane
+  that already has one for its buffer.
+* The keyboard user is not stranded. The path is **on screen**, and `:edit` is
+  three keystrokes from reading it — which is what a vim user does with a path
+  they can see. `goto-location` exists, works, and is reachable from every door
+  for anything that wants to jump programmatically.
+* OSC 8 costs nothing on the primary terminal and the underline is the
+  affordance — which is
+  [`Emphasis::Underline`](../crates/phosphor-core/src/view/props.rs)'s own
+  definition of what that variant is for.
 
-OSC 8 needs none of that, which is why `T056` shipped without it — a click lands
-in the terminal, which resolves the `file://` URI itself, and the underline is
-the affordance. That is
-[`Emphasis::Underline`](../crates/phosphor-core/src/view/props.rs)'s own
-definition of what the variant is for.
+So `1b`'s `↵ jump to file` is not built and the footer does not offer it. If a
+transcript ever *does* get row focus — `T065`'s fold-a-row-in-a-float is the
+nearest thing that would want one — the verb is already there and the binding is
+one line.
 
-So: **does a transcript row get focus, or is clicking the only way in?** Both are
-defensible. Clicking-only keeps the pane a stream you read, which is what §9's
-*"a transcript you are reading beside your code"* argues for, and it costs
-nothing to the keyboard-only user who can already `:e` the path they can see.
-Focus makes the surface navigable and makes `1b`'s own footer true, at the price
-of a second selection model in a pane. **Teej's call**; the footer says what is
-bound until it is made.
+### 57 · ~~`7e` puts `PAUSED` in the mode chip, which is the editor's mode and not the session's~~ — ruled 2026-08-23
 
-### 57 · `7e` puts `PAUSED` in the mode chip, which is the editor's mode and not the session's
-
-**Raised by `T062`, 2026-08-21. Flagged rather than folded in, the same way §55
-was.**
+**Raised and ruled by `T062`. Option 1: the drawing is shorthand, and the strip
+is where session state belongs.**
 
 `7e` draws `PAUSED` in the bottom-left cell where every other screen draws
-`NORMAL`, `INSERT` or `VISUAL`. That cell is the **mode chip** — Design Language
-§5 calls it *"the only inverted text on screen"* — and what it carries is the
-*editor's* mode.
+`NORMAL`, `INSERT` or `VISUAL`. That cell is the **mode chip**, which §5 calls
+*"the only inverted text on screen"*, and its subject is the *editor's* mode.
 
-While a turn is paused the buffer is in normal mode. You can move, you can edit,
-you can `:w`. A chip reading `PAUSED` would be the one inverted thing on screen
-telling you about something other than the keys you are about to press, and the
-consequence is concrete: with `PAUSED` in that cell there is nothing left to say
-whether `dd` is about to delete a line or start an operator.
+**The deciding argument is what the chip stops being able to say.** While a turn
+is paused the buffer is in normal mode: you can move, edit, `:w`. With `PAUSED`
+in that cell there is nothing left on screen to tell you whether `dd` is about to
+delete a line or start an operator — the chip's whole job — and it has been given
+away to a fact that already has a home two segments to the right.
 
-**What `T062` built instead.** The session state is on the strip, which is where
-§5 puts it: `⏸ claude paused`, in the same cell that says `✻ claude idle` and
-`✕ session lost`. `SessionState::Paused` and its `⏸` glyph were already in
-`status_line.rs` waiting for a source, and the shed ladder already keeps the
-glyph through every rung.
+**The strip is that home, and it was built for this.** `⏸ claude paused` sits in
+the cell that says `✻ claude idle` and `✕ session lost`; `SessionState::Paused`
+and its `⏸` were in `status_line.rs` waiting for a source, and `SHED_ORDER` keeps
+the glyph through every rung. Five of the six session states already live there.
+Moving the sixth to the chip would be a special case costing more to remember
+than it buys.
 
-**What is actually open.** Three readings, and the choice is Teej's.
+**The two alternatives, and why not.** Making the chip mean *"what happens if you
+type"* rather than *"which vim mode"* is coherent, but it is a different contract
+from the one every other screen draws and would want saying in §5 rather than
+inferred from one mockup. A fourth chip colour with the mode word beside it costs
+a cell on the narrowest terminals, which is what the shed ladder exists to avoid
+spending.
 
-1. **The drawing is shorthand.** `7e` needed to show *paused* somewhere and the
-   chip is the most visible cell; the strip is where it belongs and the build is
-   right. This is the reading `T062` took.
-2. **The chip carries the mode that is in charge**, and while a turn is paused
-   the thing in charge is the pause. That is a coherent design — it makes the
-   chip *"what happens if you type"* rather than *"which vim mode"* — but it is
-   a different design from the one every other screen draws, and it would want
-   saying in §5 rather than being inferred from one mockup.
-3. **A fourth chip colour**, with the mode word beside it. Costs a cell on the
-   narrowest terminals, which is what the shed ladder is for.
-
-Nothing about the build changes under (1). Under (2) or (3) the chip's own
-contract moves, which is a Design Language edit rather than a code one — and the
-mockups are `docs/design/*.dc.html`, which are edited at claude.ai and not here.
+**This changes no code.** The build already draws it the ruled way; what changes
+is that it is now a decision rather than a divergence.
 
 ## Repair pass — queued work, not questions
 

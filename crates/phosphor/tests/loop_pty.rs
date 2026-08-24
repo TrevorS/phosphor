@@ -3237,7 +3237,7 @@ mod driven {
         );
     }
 
-    /// **`T057`: `7d` and `5d` reproduce, and `:cn` starts a session.**
+    /// **`T057`: `7d` and `5d` reproduce, and `:start-session` starts a session.**
     ///
     /// The dashboard is one screen with two data shapes — `7d` is *"session /
     /// none running"* and `5d` is the same surface with discovery's list under
@@ -3250,7 +3250,7 @@ mod driven {
     /// because these rows change with the session where the diagram's numbers
     /// only change with the store.
     ///
-    /// **`:cn` is read off the composed grid and not off the byte delta**, and
+    /// **`:start-session` is read off the composed grid and not off the byte delta**, and
     /// that distinction is the whole of `OPEN-QUESTIONS.md` §54. The verb was
     /// recorded there as reaching the client and never finishing the handshake,
     /// on the evidence of a probe that searched the raw pty stream for
@@ -3275,8 +3275,8 @@ mod driven {
         );
         assert!(
             // Needled on the words, not the spacing: adjacent `view/run`s are
-            // laid out with a cell between them, so `:cn start claude` in the
-            // source is `:cn  start claude` on the grid.
+            // laid out with a cell between them, so `:start-session start claude` in the
+            // source is `:start-session  start claude` on the grid.
             shows(&cold, "start claude"),
             "and offers `7d`'s three verbs; session was: {cold}"
         );
@@ -3291,14 +3291,14 @@ mod driven {
             "the remedy says what it needs; session was: {nothing}"
         );
 
-        // **`:cn` — the verb `7d` names.** The one-off form of
+        // **`:start-session` — the verb `7d` names.** The one-off form of
         // `(set-option! "agent-command" …)`, and `7d` draws it because a
         // dashboard whose only remedy is an option is not a remedy.
         let agent = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../phosphor-agent/tests/fixtures/toy_acp_agent.py")
             .canonicalize()
             .expect("the toy agent is in the sibling crate");
-        let started = format!(":cn python3 {} turn\r", agent.display());
+        let started = format!(":start-session python3 {} turn\r", agent.display());
         // **The notice first, then the state.** `claude attached` is written
         // fresh on the whole statusline row and holds it; the strip underneath
         // only becomes readable once a keystroke has retired the notice, which
@@ -3307,7 +3307,7 @@ mod driven {
         let running = editor.shown_on_grid(b"\x1bj", "claude idle");
         assert!(
             shows(&grid_of(&running), "claude idle"),
-            "`:cn` attaches and the strip settles to idle; grid was:\n{}",
+            "`:start-session` attaches and the strip settles to idle; grid was:\n{}",
             grid_of(&running)
         );
 
@@ -3350,7 +3350,7 @@ mod driven {
             .expect("the toy agent is in the sibling crate");
 
         let editor = Editor::open(&file, &scratch.state(), &runtime);
-        let started = format!(":cn python3 {} turn\r", agent.display());
+        let started = format!(":start-session python3 {} turn\r", agent.display());
         editor.shown_on_grid(started.as_bytes(), "claude attached");
 
         // A turn, so there is a tool row — the fixture's `turn` mode edits
@@ -3399,7 +3399,7 @@ mod driven {
         let editor = Editor::open(&file, &scratch.state(), &runtime);
         // A session, because `4a`'s strip says `! claude waiting` and there is
         // nothing to be waiting *for* without one.
-        let started = format!(":cn python3 {} mute\r", agent.display());
+        let started = format!(":start-session python3 {} mute\r", agent.display());
         editor.shown_on_grid(started.as_bytes(), "claude attached");
 
         let asked = grid_of(&editor.shown_on_grid(
@@ -3525,6 +3525,62 @@ mod driven {
         editor.leave_by(b"ZQ");
     }
 
+    /// **`T096`: `set-soft-wrap` toggles wrapping, both ways.**
+    ///
+    /// The verb was declared by `T081`, generated into Steel, MCP and the CLI,
+    /// and applied by nothing — *"a capability that the doors advertise and that
+    /// does nothing is worse than one that is absent"*, which is the task's own
+    /// sentence and what `scripts/lint-action-arms.sh` has said on every run
+    /// since.
+    ///
+    /// **Both ways is the assertion that matters.** Turning wrapping on is one
+    /// line; turning it off needs the loop to *unwrap* a rope it already
+    /// wrapped, and without that the toggle works exactly once.
+    ///
+    /// **And it was reachable from no door at all.** Arming it in `Editing::act`
+    /// made it a *key's* verb; every door lands in `AppHost::apply`, which does
+    /// not fall through — so `(set-soft-wrap! …)` at the REPL went on answering
+    /// `not built yet — T081 builds it` with the arm sitting right there.
+    #[test]
+    fn set_soft_wrap_wraps_a_long_line_and_unwraps_it_again() {
+        let scratch = Scratch::new("soft-wrap-verb");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("long.txt");
+        // Wider than the 120-column harness, in one line, so wrapping is the
+        // only thing that can put its tail on the screen.
+        let long = "alpha ".repeat(40);
+        fs::write(&file, format!("{long}\n")).expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // Off by default — `init.scm` sets `soft-wrap` false, and the tail of
+        // the line is off the right edge rather than on a second row.
+        let flat = grid_of(&editor.shown_on_grid(b"", "alpha"));
+        assert!(
+            !flat.contains('↪'),
+            "no continuation mark before the verb runs; grid was:\n{flat}"
+        );
+
+        // **`:wrap`, the way vim spells it**, rather than the REPL — the verb
+        // is reachable from all three doors and the one a *person* has is the
+        // one worth pressing.
+        let wrapped = grid_of(&editor.shown_on_grid(b":wrap\r", "↪"));
+        assert!(
+            wrapped.contains('↪'),
+            "`:wrap` wrapped it; grid was:\n{wrapped}"
+        );
+
+        // **And off again.** This is the half that did not work: the option
+        // moved and the rope did not, so a buffer stayed wrapped until it was
+        // reopened.
+        editor.press_quietly(b":nowrap\r");
+        let flat_again = grid_of(&editor.shown_on_grid(b"", "alpha"));
+        editor.leave_by(b"ZQ");
+        assert!(
+            !flat_again.contains('↪'),
+            "and unwrapped it again; grid was:\n{flat_again}"
+        );
+    }
+
     /// **`T062`: screen `7e` reproduces — `esc` stops the turn at a boundary.**
     ///
     /// *"`esc` pauses at the next tool boundary · steer, resume, or abort · the
@@ -3548,7 +3604,7 @@ mod driven {
             .expect("the toy agent is in the sibling crate");
 
         let editor = Editor::open(&file, &scratch.state(), &runtime);
-        let started = format!(":cn python3 {} dawdle\r", agent.display());
+        let started = format!(":start-session python3 {} dawdle\r", agent.display());
         editor.shown_on_grid(started.as_bytes(), "claude attached");
 
         // **Waited for, not slept through.** The turn has to be *running* when
@@ -3640,7 +3696,7 @@ mod driven {
             .expect("the toy agent is in the sibling crate");
 
         let editor = Editor::open(&file, &scratch.state(), &runtime);
-        let started = format!(":cn python3 {} dawdle\r", agent.display());
+        let started = format!(":start-session python3 {} dawdle\r", agent.display());
         editor.shown_on_grid(started.as_bytes(), "claude attached");
 
         // Pause once, resume, and the held call is a call again.
@@ -4031,7 +4087,7 @@ mod driven {
             .expect("the toy agent is in the sibling crate");
 
         let editor = Editor::open(&file, &scratch.state(), &runtime);
-        let started = format!(":cn python3 {} turn\r", agent.display());
+        let started = format!(":start-session python3 {} turn\r", agent.display());
         editor.shown_on_grid(started.as_bytes(), "claude attached");
 
         // Wider than the 120-column harness, so the tail is off the row unless
@@ -4093,7 +4149,7 @@ mod driven {
             .expect("the toy agent is in the sibling crate");
 
         let editor = Editor::open(&file, &scratch.state(), &runtime);
-        let started = format!(":cn python3 {} drop\r", agent.display());
+        let started = format!(":start-session python3 {} drop\r", agent.display());
         editor.shown_on_grid(started.as_bytes(), "claude attached");
 
         // The prompt starts a turn; the agent answers once and goes. Both the
@@ -4131,12 +4187,12 @@ mod driven {
         // `reattach` went green with the hint deleted, because the statusline
         // three rows below already says `✕ session lost — :reattach` — the
         // remedy was on screen and the footer was empty, and the assertion
-        // could not tell those apart. `new session` is the `:cn` hint and
+        // could not tell those apart. `new session` is the `:start-session` hint and
         // nothing else on the screen draws it, so it locates the strip; the row
         // it is on is then the row that has to carry the rest.
         let footer = seam
             .lines()
-            .find(|row| row.contains("new session"))
+            .find(|row| row.contains("start a new one"))
             .unwrap_or_else(|| panic!("`7b`'s footer is not on screen; grid was:\n{seam}"));
         assert!(
             footer.contains("reattach") && footer.contains("close"),
@@ -4152,7 +4208,7 @@ mod driven {
     /// *"what you see attaching to a repo where claude's been busy · state, not
     /// splash"*. Same surface as `7d`, three differences: the session row names
     /// what is running, an `unseen` row appears because there is something to
-    /// be unseen, and the footer leads with `]u` instead of `:cn` — you did not
+    /// be unseen, and the footer leads with `]u` instead of `:start-session` — you did not
     /// come back to start a session, you came back to the work.
     ///
     /// **Two of `2d`'s five rows are absent and that is the honest rendering.**
@@ -4172,7 +4228,7 @@ mod driven {
             .expect("the toy agent is in the sibling crate");
 
         let editor = Editor::open(&file, &scratch.state(), &runtime);
-        let started = format!(":cn python3 {} mute\r", agent.display());
+        let started = format!(":start-session python3 {} mute\r", agent.display());
         editor.shown_on_grid(started.as_bytes(), "claude attached");
 
         // Claude has been busy: one review block over two spans in this file,

@@ -1462,6 +1462,20 @@
                         (key/cmd "save-buffer" "target" (key/at-cursor))
                         (key/cmd "save-buffer" "target" (key/at-cursor) "path" rest)))))
 
+;; `T096` — soft wrap, as vim spells it. **two commands rather than one that
+;; toggles**, which is vim's own choice and the right one here: a toggle answers
+;; a question you did not ask ("was it on?") and these two state what you want.
+;;
+;; `:w` stays `:write` — `wrap` carries no brackets, so its shortest form is the
+;; whole word and the one-letter prefix belongs to the command that had it.
+(ex-set! "wrap" "wrap long lines in this buffer"
+         (lambda (rest bang)
+           (key/run (key/cmd "set-soft-wrap" "target" (key/at-cursor) "on" #true))))
+
+(ex-set! "nowrap" "let long lines run off the edge"
+         (lambda (rest bang)
+           (key/run (key/cmd "set-soft-wrap" "target" (key/at-cursor) "on" #false))))
+
 (ex-set! "wa[ll]" "save every buffer"
          (lambda (rest bang) (key/run (key/cmd "save-all"))))
 

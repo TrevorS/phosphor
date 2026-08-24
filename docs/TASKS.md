@@ -4343,7 +4343,7 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   checkpoint id round-trips through `undo-to-checkpoint` back to that state, and both survive a
   restart. *Needs:* T030
 
-- [ ] **T096 · `set-soft-wrap` — the verb** 📌
+- [x] **T096 · `set-soft-wrap` — the verb** 📌
   The narrowest of the six and the clearest statement of the shape. **Soft wrap works.** `T081`
   built it, `--soft-wrap` turns it on, and `host.flag("soft-wrap")` at
   `crates/phosphor/src/main.rs:891` reads what `init.scm`'s `(set-option! …)` set. What does not
@@ -4352,6 +4352,45 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   doors advertise and that does nothing is worse than one that is absent.
   *Done when:* `set-soft-wrap` toggles wrapping on the next frame from each of the three doors,
   and the flag and the verb read one piece of state rather than two. *Needs:* T081, T026
+
+  > **Built 2026-08-23.** The verb applies, the flag seeds the option instead of
+  > racing it, and `:wrap` / `:nowrap` are what a person types.
+  >
+  > **It was reachable from no door at all, and an arm was not enough.** Arming
+  > `set-soft-wrap` in `Editing::act` makes it a *key's* verb; every door lands
+  > in `AppHost::apply`, and the two appliers do not fall through to one another
+  > on purpose. So `(set-soft-wrap! …)` at the REPL went on answering
+  > `#refused · not built yet — T081 builds it` with the arm sitting right
+  > there. It is the **fourth** capability this window to need an explicit line
+  > on that forwarding list — after `apply-edits`, `goto-location` and
+  > `apply-workspace-edit` — and the pattern is named in the comment now: a verb
+  > whose whole point is that three doors can call it needs a line there.
+  >
+  > **One piece of state.** `cli.soft_wrap || host.flag("soft-wrap")` was read
+  > every frame, which made the flag and the option two answers to one question
+  > — and left the verb unable to turn wrapping *off* in a session started with
+  > `--soft-wrap`, because the `||` put it straight back. The flag seeds the
+  > option once at boot, **after** the layer loads so a command line overrides
+  > `init.scm` the way one should, and the loop reads the option and nothing
+  > else.
+  >
+  > **The target is honoured rather than ignored.** The capability's row says
+  > *"which buffer"*, and a global toggle wearing a per-buffer signature is the
+  > kind of almost-true this build spends its lints on. `Editing::soft_wrap` is
+  > `Option<bool>`: a buffer that has been told answers for itself, one that has
+  > not follows the option. A `bool` would make opening a file a decision about
+  > wrapping. A target naming a *different* buffer is refused rather than
+  > applied to the focused one — an `Editing` is one rope.
+  >
+  > **The `else` is the task.** Without it the loop wrapped and never unwrapped,
+  > so the option moved and the rope did not: a toggle that works exactly once,
+  > and the half a test of "does `:wrap` wrap" would never have found.
+  >
+  > **Verification.** One keystroke test over a line wider than the terminal:
+  > no `↪` at rest, `:wrap` puts one there, `:nowrap` takes it away. Both
+  > commands are pressed, which `scripts/lint-key-coverage.sh` required and
+  > which made the test better than the REPL version it replaced. One planted
+  > defect — the missing `unwrap` — caught on the second half. `just gate` green.
 
 - [x] **T097 · The `open-help` arm in the host** 📌
   `open-help` is declared at `crates/phosphor-core/src/action.rs:1075` and

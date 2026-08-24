@@ -1,4 +1,5 @@
-;; dashboard.scm — `:cn` and the session dashboard, screens 7d, 5d and 2d (T057).
+;; dashboard.scm — `:start-session` and the session dashboard, screens 7d, 5d
+;; and 2d (T057, footers ruled by T062's pass over §6).
 ;;
 ;; **the second proof that the escape hatch is sufficient**, after arch.scm.
 ;; every row here is `view/spans`, so this whole surface adds zero lines to
@@ -125,13 +126,19 @@
       ;; with a session already busy the first thing offered is the unseen work
       ;; you came back to. `dismiss-dashboard-hint` is the "then" in both.
       (if (equal? state "none")
-          (dash/row (dash/run ":e" 'you) (dash/run " edit · " 'meta)
-                    (dash/run ":cn" 'you) (dash/run " start claude · " 'meta)
-                    (dash/run ":f" 'you) (dash/run " find file" 'meta))
+          ;; **spelled in full, and `SPC f` is a key rather than a command.**
+          ;; 7d draws `:e edit · :cn start claude · :f find file`; §6 rules the
+          ;; first two, and the third names a command that **does not exist** —
+          ;; the files picker is `SPC f` and there is no `:f`. a footer that
+          ;; teaches a command you cannot type is the failure §6's own rule is
+          ;; about, arriving from the other direction.
+          (dash/row (dash/run ":edit" 'you) (dash/run " edit · " 'meta)
+                    (dash/run ":start-session" 'you) (dash/run " start claude · " 'meta)
+                    (dash/run "SPC f" 'you) (dash/run " find file" 'meta))
           (dash/row (dash/run "]u" 'you) (dash/run " next unseen · " 'meta)
                     (dash/run ":transcript" 'you) (dash/run " transcript · " 'meta)
                     (dash/run ":claude" 'you) (dash/run " claude · " 'meta)
-                    (dash/run ":e" 'you) (dash/run " edit" 'meta)))))))
+                    (dash/run ":edit" 'you) (dash/run " edit" 'meta)))))))
 
 ;; the float. informational — 7d is not in front of anything and asks nothing —
 ;; and 5d's own footer sentence, which is the thesis of the whole screen: the
@@ -149,11 +156,21 @@
 ;; the commands
 ;; ---------------------------------------------------------------------------
 
-;; `:cn` — 7d and 5d both draw it as the verb that starts a session. the
-;; argument is the agent's command, which is `agent-command`'s value said once
-;; rather than set: `(set-option! …)` is the persistent form and this is the
-;; one-off.
-(ex-set! "cn" "start a claude session — :cn <command>"
+;; `:start-session` — 7d and 5d both draw this verb, and both draw it as `:cn`.
+;; **Design Language §6 overrules the drawing**, in the same words it overrules
+;; 7b's `:ca`: *"keyhints spell the whole command — `s mark seen`, `:reattach`,
+;; `:transcript`, `:diff-disk` — never cryptic contractions like `:ca` or `:rr`.
+;; Abbreviations exist for typing; the UI always teaches the full name."*
+;;
+;; `:cn` is a contraction with **no full name to teach**, which is the version
+;; of that mistake §6 has no counter-example for only because nobody had made it
+;; yet. `:start` is the shortest unambiguous prefix — `:steer` is the other one
+;; beginning `st`.
+;;
+;; the argument is the agent's command, which is `agent-command`'s value said
+;; once rather than set: `(set-option! …)` is the persistent form and this is
+;; the one-off.
+(ex-set! "start[-session]" "start a claude session — :start-session <command>"
          (lambda (rest bang)
            (key/run (key/cmd "start-session" "agent" rest))))
 

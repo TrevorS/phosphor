@@ -107,10 +107,11 @@ RECORDED = {
                                  "owns the tree; nothing routes a checkpoint id to it."),
     "CompactHistory": ("T095", "`journal.rs` implements compaction and proves it under a real "
                                "`SIGKILL`; nothing triggers it, so a history only grows."),
-    "SetSoftWrap": ("T096", "Soft wrap is reachable and works — `--soft-wrap` and "
-                            "`host.flag(\"soft-wrap\")` — but the verb is not applied, so it "
-                            "cannot be toggled from Steel, MCP or the CLI door. `T081` is ticked; "
-                            "this is `T016`'s shape and was found by the same audit."),
+    # `SetSoftWrap` was recorded here against `T096` and is gone: that task
+    # armed it in the loop and added the fourth line to `AppHost::apply`'s
+    # forwarding list, so all three doors reach it — and the loop unwraps a
+    # rope it wrapped, which is what makes it a toggle rather than a switch
+    # that works once.
     # `ApplyWorkspaceEdit` was recorded here against `T060` and is gone: that task
     # built the queue, so `deliver` turns an `Ask`-rated action into a question
     # instead of refusing it, and the arm applies the edits across files. §47's
