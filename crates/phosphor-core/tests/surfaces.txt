@@ -12,16 +12,14 @@
 # then read the diff before committing it.
 
 S1 T010 theme
-S1 T011 reload-theme
-S1 T012 set-theme
 S1 T090 quit
+S1 T092 reload-theme
+S1 T092 set-theme
 S2 T021 close-all-floats
 S2 T021 close-float
 S2 T021 floats
-S2 T021 load-runtime-file
 S2 T021 open-float
 S2 T021 options
-S2 T021 reload-runtime
 S2 T021 set-option
 S2 T022 close-repl
 S2 T022 open-repl
@@ -32,6 +30,8 @@ S2 T023 eval
 S2 T024 capabilities
 S2 T024 describe-capability
 S2 T093 define-float-surface
+S2 T094 load-runtime-file
+S2 T094 reload-runtime
 S3 T016 fold-all
 S3 T016 set-fold
 S3 T016 unfold-all
@@ -67,8 +67,6 @@ S3 T028 select-object
 S3 T029 commit-undo-group
 S3 T029 redo
 S3 T029 undo
-S3 T029 undo-to-checkpoint
-S3 T030 compact-history
 S3 T032 set-virtual-text-visible
 S3 T033 buffer
 S3 T033 buffers
@@ -85,6 +83,8 @@ S3 T035 show-unknown-key-hint
 S3 T081 set-soft-wrap
 S3 T086 describe-key
 S3 T086 open-help
+S3 T095 compact-history
+S3 T095 undo-to-checkpoint
 S3 T099 recording
 S3 T099 register
 S3 T099 set-macro-recording
@@ -197,7 +197,6 @@ S7 T066 float-mark
 S7 T066 open-hunk-peek
 S7 T066 open-review-block
 S7 T066 review-block
-S7 T066 set-diff-mode
 S7 T067 inbox
 S7 T067 notify
 S7 T067 open-inbox
@@ -215,6 +214,7 @@ S7 T069 reload-from-disk
 S7 T069 set-file-watch
 S7 T070 open-disk-diff
 S7 T070 resolve-disk-diff
+S7 T070 set-diff-mode
 S7 T071 refresh-vcs
 S7 T071 vcs-status
 S7 T073 edit-at-change

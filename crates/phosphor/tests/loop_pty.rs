@@ -1699,7 +1699,12 @@ mod driven {
         // `/` is vim's search. It is bound to the search prompt, and `T058`
         // built the *ex* and *claude* kinds without it: a search prompt needs
         // somewhere to search, which is the search machinery rather than the
-        // line. The refusal names the same task and says which half.
+        // line.
+        //
+        // **It named `T058` until 2026-08-24, and `T058` is ticked** — so the
+        // refusal sent a reader to a finished task, which is the whole defect
+        // `scripts/lint-refusal-tasks.sh` was written for. `T110` is the
+        // machinery, added the same day because nothing in the graph owned it.
         // **Read off the grid, not the delta.** `press`'s byte delta is what
         // ratatui's *diff* renderer emitted, and a settled row arrives in pieces
         // separated by cursor moves — CI caught this one with the frame reading
@@ -1707,27 +1712,28 @@ mod driven {
         // That is `OPEN-QUESTIONS.md` §54's lesson arriving in a test that
         // predates it.
         editor.press_quietly(b"/");
-        let frame = shown_on_grid_text(&editor, "other half");
+        let frame = shown_on_grid_text(&editor, "the matcher");
         assert!(
-            shows(&frame, "search is T058's other half"),
+            shows(&frame, "search needs the matcher — T110 builds it"),
             "a deferred key names its task on the statusline; frame was: {frame}"
         );
 
         // `n` walks the search matches, and walking a sequence is
         // `goto-sequence`.
         //
-        // **The task it names moved from `T049` to `T058`, and that is the
-        // refusal getting more precise rather than the rule bending.** While
-        // the whole verb was unapplied the answer came off its capability row —
-        // *"`T049` builds it"* — which was true and unhelpful: `T049` built the
-        // verb, and `n` was still not going to work, because what `n` needs is
-        // a *search* to have left matches behind. `goto-sequence` now answers
-        // per sequence, so `]u` walks regions and `n` names `T058`, which is
-        // the task that would actually make it move.
+        // **The task it names moved twice, and the second move is the
+        // interesting one.** It went from `T049` to `T058` when
+        // `goto-sequence` learned to answer per *sequence* rather than per
+        // verb — the refusal getting more precise. It went from `T058` to
+        // `T110` on 2026-08-24 for the opposite reason: `T058` had been ticked
+        // for three phases, so *"not built yet — T058 builds it"* was pointing
+        // a reader at work that shipped. Precision is worth nothing if the
+        // address is stale, which is why `scripts/lint-refusal-tasks.sh` now
+        // fails when any of these names a ticked task.
         editor.press_quietly(b"n");
-        let frame = shown_on_grid_text(&editor, "T058 builds it");
+        let frame = shown_on_grid_text(&editor, "T110 builds it");
         assert!(
-            shows(&frame, "not built yet — T058 builds it"),
+            shows(&frame, "not built yet — T110 builds it"),
             "the task comes off the *sequence*, not the verb; frame was: {frame}"
         );
         editor.quit();
@@ -2104,13 +2110,16 @@ mod driven {
         // wanted needle and the frame it got back was `1b` itself, splitting
         // open rather than refusing.
         let deferred: &[(&[u8], &str, &str)] = &[
-            (b"?", "search backward", "T058"),
-            (b"N", "previous search match", "T058"),
+            (b"?", "search backward", "T110"),
+            (b"N", "previous search match", "T110"),
             // The review-block walk. Added when the audit noticed the table had
-            // nine rows and the deferred surface had eleven: `goto_sequence`
-            // names `T053` for `BlockFile`, and both directions are bound.
-            (b"]b", "next file in the review block", "T053"),
-            (b"[b", "previous file in the review block", "T053"),
+            // nine rows and the deferred surface had eleven, and re-pointed on
+            // 2026-08-24: `goto_sequence` named `T053` for `BlockFile` while
+            // `T053` was ticked, so both rows advertised finished work. `T109`
+            // is the walk itself, and it owns opening the file — which is what
+            // *"next file in the review block"* has always required.
+            (b"]b", "next file in the review block", "T109"),
+            (b"[b", "previous file in the review block", "T109"),
             // `SPC c p` and `SPC c s` left this table when `T058` built the
             // claude prompt — they raise the line now rather than refusing.
             // `SPC c i` left it when `T062` built the interrupt: it declines by
@@ -2694,11 +2703,17 @@ mod driven {
 
         // `:theme` — **not built**, and it says so by name. Written expecting
         // it to work and corrected by running it: `set-theme` answers *"not
-        // built yet — T012 builds it"* even for a slug the layer ships, which
+        // built yet — T092 builds it"* even for a slug the layer ships, which
         // is why the theme tapes set the theme on the command line instead.
-        let themed = editor.press_until(b":theme phosphor-light\r", "T012");
+        //
+        // **It named `T012` until 2026-08-24, and `T012` is ticked** — the
+        // refusal sent a reader to a task that shipped three phases earlier.
+        // `set-theme`'s row is stamped `T092` now, the task whose own *done
+        // when* is this exact keystroke, and `scripts/lint-refusal-tasks.sh`
+        // is what stops the stamp drifting back.
+        let themed = editor.press_until(b":theme phosphor-light\r", "T092");
         assert!(
-            shows(&themed, "T012"),
+            shows(&themed, "T092"),
             "`:theme` is deferred and names the task that builds it; frame was: {themed}"
         );
 

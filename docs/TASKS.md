@@ -4,7 +4,7 @@ Decomposed from [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md), which is itsel
 the four design docs in [design/](design/). The plan says *what each phase is for*; this file
 says *what to build, in what order, and where we stop and look at it*.
 
-**108 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
+**110 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
 Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids
 are stable and assigned in order of creation — reference them in commits. New tasks append
 rather than renumber, so `T078`+ sit inside earlier phases.
@@ -6115,6 +6115,77 @@ name. Neither task may decide it alone; it is [OPEN-QUESTIONS.md](OPEN-QUESTIONS
   region lifecycle (§7: *claude writes → unseen → seen*) is defined over a line that is an
   address rather than content.
   *Needs:* T033
+
+---
+
+## E · The refusal audit — task ids a user reads that name finished work
+
+Found on 2026-08-24 by scouting the plan, and the shape is one this build has met twice already
+one layer down. `scripts/lint-action-arms.sh` proves a ticked task's mutation is *named* by the
+binary and `scripts/lint-key-coverage.sh` proves every bound key is *pressed* by a test. Neither
+reads the **sentence the refusal prints**, and that sentence carries a task id.
+
+`Refusal::NotYetImplemented { task }` renders as *"not built yet — `{task}` builds it"*
+(`crates/phosphor-core/src/action.rs`, `Refusal::sentence`). The id comes from one of two places:
+the capability's own row in the macro table — derived, which is the shape `T098` praised — or a
+string literal in the binary. **Both had gone stale, and in the same direction: every one of them
+named a task that is ticked.** A reader who pressed the key was told to wait for work that had
+already shipped.
+
+**Nine capability rows were re-stamped on 2026-08-24 and needed no new task**, because the real
+creditor already existed and `lint-action-arms.sh`'s own RECORDED table already named it —
+`set-theme`/`reload-theme` to `T092`, `load-runtime-file`/`reload-runtime` to `T094`,
+`undo-to-checkpoint`/`compact-history` to `T095`, `set-diff-mode` to `T070`. The table knew who
+owed the work; the refusal named someone else. Re-stamping made the two agree and shrank that
+table from nine recorded gaps to two.
+
+**The two tasks below are the other half** — the literal task ids in `Editing::goto_sequence`,
+which no capability row governs and which no creditor existed for at all. `docs/OPEN-QUESTIONS.md`
+§18 set the precedent for exactly this: *"Eleven declared mutations that no task will ever close.
+RULED: add the tasks."* An unowned debt recorded in a lint is a debt nobody is going to pay.
+
+- [ ] **T109 · The sequence walks** 📌
+  `Editing::goto_sequence` walks `Sequence::UnseenRegion` off the store and answers
+  `Sequence::Ask` from the queue. **Four of the remaining sequences refuse, and every store they
+  would walk is already built** — `Hunk` named `T063`, `BlockFile` named `T053`, `Diagnostic`
+  named `T085`, `Thread` named `T068`, and all four of those tasks are ticked. Read against the
+  tree this session: `store::Shared::hunks` answers hunks with their regions (`T064`),
+  `review-blocks` answers a block's file groups (`T053`), `T085` draws diagnostics the gutter
+  already ranks, and `store::Shared::threads_in` plus `region_span` answer a thread's place
+  (`T068`). What is missing is the walk, not the rows.
+  **Only `]b`/`[b` are bound** — `runtime/keymaps.scm` binds no key at all for hunk, diagnostic
+  or thread, so those three refuse only through Steel, MCP and the CLI today. Binding them is
+  half the task and `lint-key-coverage.sh` will ask for the presses.
+  **It owns opening the file too, and `]b` is why it has no choice.** That key's own help text is
+  *"next file in the review block"* — a walk that cannot leave the current buffer is not the
+  feature. The same wall is already reachable from the other side: `Editing::jump` declines an
+  anchor in another file, and until 2026-08-24 it declined by naming `T056`, which is OSC 8
+  tool-row links and is ticked. Cross-file navigation from a store row is one capability with two
+  callers, and this is it.
+  *Done when:* `]h`/`[h`, `]b`/`[b`, `]d`/`[d` and `]t`/`[t` each move the cursor to the next and
+  previous row of their own sequence in the running binary, each wraps the way `]u` wraps, each
+  says something honest when its store is empty rather than refusing, a row in another file opens
+  that file rather than declining — for the walks and for `jump` alike — and a pty test presses
+  all eight. *Needs:* T049, T063, T064, T068, T085
+
+- [ ] **T110 · Search machinery** 📌
+  `/` and `?` are bound to `open-prompt` with `kind` `search`, and `n`/`N` to `goto-sequence` over
+  `search-match`. **All four refuse**, and until 2026-08-24 all four named `T058` — whose *done
+  when* is `1c` raising from a keystroke, which shipped. `T058`'s own record says it plainly:
+  *"Search is the half this task did not build … a search prompt needs somewhere to search, which
+  is the search machinery rather than the line."* That machinery has never had a task.
+  **The prompt is not the missing piece.** `T058` built the line, the anchor chip and the history;
+  `PromptKind::Search` reaches an arm that declines. What does not exist is a matcher over the
+  buffer, a match sequence for `goto-sequence` to walk, and the highlight that shows where the
+  matches are. `T047`'s grep picker is *not* it and says so — it is nucleo over open buffer lines,
+  a fuzzy picker, not an in-buffer regex search with a cursor.
+  **Ruling to make before building, not after:** regex or literal. Nothing in this tree parses a
+  regex, and `broadcast-thread` (`T068`) already took the narrow road and said so rather than
+  treating `.*` as three characters. A `/` that silently matched literally would be the worse
+  version of that choice, because vim users will type a regex on the first day.
+  *Done when:* `/` and `?` search the buffer from the cursor in the running binary, `n` and `N`
+  walk the matches and wrap, the ruling above is recorded at this entry, and a pty test presses
+  all four. *Needs:* T058, T049
 
 ---
 

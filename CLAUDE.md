@@ -132,6 +132,19 @@ Hygiene and truthfulness — each of these exists because the thing it catches a
   and the shrink-only RECORDED table holds the rest. **The three spellings the layer uses for a
   capability name all count**, and getting that wrong is how the gap was miscounted twice while
   the lint was being written: `(key/cmd "name" …)`, `(name! …)`, and `(list 'name …)`.
+- **Refusal task ids** — *"not built yet — `T063` builds it"* is a promise with an address on it,
+  and on 2026-08-24 **every address in the tree was wrong, in the one direction that misleads**:
+  fourteen refusals named a task that was already ticked, so a reader who went looking found the
+  work finished. Two causes. Nine capability rows carried the task that *declared* the verb rather
+  than the one that will build it — `set-theme` at `T012`, `reload-runtime` at `T021` — and for
+  seven of them `lint-action-arms.sh`'s own RECORDED table already named the real creditor, so the
+  lint and the sentence disagreed and only the lint was read by a machine. Five more were literals
+  in `Editing::goto_sequence` that no capability row governs, each naming the task that built the
+  *store* the walk would read. **None of the three existing lints could see it**: an arm that only
+  refuses still *names* its variant, a test that presses the key and asserts the refusal goes
+  green forever, and `doc_claims.py` checks a cited task exists rather than whether it is still
+  open. Re-stamping shrank `lint-action-arms.sh` from nine recorded gaps to two; `T109` and `T110`
+  were added as the creditors that never existed.
 - **Doc line citations** — prose is cited by heading or quoted phrase, never by a markdown path with a line number stapled to it.
   `file:line` is right for *code*, where a moved line usually means a moved fact and two other
   lints already check the references; nothing holds a line number pointed at a paragraph. Two
@@ -154,7 +167,7 @@ Hygiene and truthfulness — each of these exists because the thing it catches a
 - **Fuzz targets** — the `fuzz/` crate's targets are checked against the parsers they claim.
 - **Counts nothing else recomputes** — the capability and parity counts (`209`/`627` went stale in
   six places at once), and the lint count in CI's own prose, which said "six" while sixteen
-  existed. **Twenty-three lints now** — and this paragraph itself said seventeen for a window after the
+  existed. **Twenty-four lints now** — and this paragraph itself said seventeen for a window after the
   eighteenth landed, because `doc_claims.py` section 6 globbed `.github/workflows/*.yml` and could
   not see the file every agent reads on entry. It reads this one too now, so the sentence you are
   reading is recomputed rather than remembered.

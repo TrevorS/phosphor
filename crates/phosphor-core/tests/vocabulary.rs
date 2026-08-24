@@ -53,6 +53,16 @@ const NO_CAPABILITY: &[(&str, &str)] = &[
          input machine already names",
     ),
     (
+        "T030",
+        "undo persistence in phosphor-core — the journal writing and replaying itself, on \
+         `T044`'s precedent one line down: persistence is where a verb lands, not a verb. It \
+         held `compact-history` until 2026-08-24, when that row was re-stamped to `T095`. The \
+         stamp is the address a refusal prints — *\"not built yet — T030 builds it\"* — and \
+         `T030` is ticked, so it named finished work; `T095` is the task whose own text is \
+         *\"`journal.rs` implements compaction and proves it under a real `SIGKILL`, and \
+         nothing triggers it\"*. See scripts/lint-refusal-tasks.sh",
+    ),
+    (
         "T031",
         "GutterBar — a widget. It renders region, diagnostic and VCS state the store already \
          holds; nothing about it is a mutation",

@@ -2729,6 +2729,70 @@ restore the before-side, not delete the current text — is recorded in `scripts
 with no creditor, because nothing asks for the difference between a delete and a restore. If a
 screen ever does, the before-side this section rules is exactly the field it would read.
 
+## Raised by the plan scout
+
+### 60 · An anchored message draws its chip and refuses to send, and `1c` is the screen `T058` was accepted on
+
+**Found on 2026-08-24** while scouting what is done and what is left, by pulling
+on a smaller thread: `]b` answered *"not built yet — `T053` builds it"* while
+`T053` was ticked. Fourteen refusals turned out to name finished tasks; thirteen
+of them had a fix that needed no ruling, and `scripts/lint-refusal-tasks.sh` now
+holds the line. **This is the fourteenth, and it is the one that needs a
+decision rather than a re-stamp.**
+
+`Editing::act`'s `SessionAction::SendMessage` arm refuses outright when
+`anchors` is non-empty:
+
+```rust
+if !anchors.is_empty() {
+    return Outcome::Refused(Refusal::NotYetImplemented { task: "T058" });
+}
+```
+
+The comment beside it is right about *why* it refuses — *"an anchored message
+whose anchor is silently dropped is worse than no anchored message: claude
+answers about the wrong thing and nothing on screen said the file and range went
+missing"* — and that reasoning is not in question. What is in question is the
+task id and what it implies.
+
+**`T058` is ticked, and `1c` is the screen it was accepted on.** Its *done when*
+reads *"screen `1c` reproduces **from a keystroke** — pressing `:` in the running
+binary raises the line, anchor chip included"*, and that is true: the chip draws,
+it resolves the selection at prompt-open rather than at submit, and the range is
+inclusive. `T058`'s record explains all three. So the visual half of the feature
+shipped and the sending half refuses, which means **the anchor chip currently
+draws a promise the editor cannot keep** — you select, you type, you hit enter,
+and it declines naming a task that is done.
+
+**The question is who owns carrying anchors over ACP.** Three candidates, none
+of them obviously right, which is why this is filed rather than decided:
+
+1. **A new task**, the way `T109` and `T110` were added for the sequence walks
+   and the search machinery in the same pass. Cleanest bookkeeping, and it makes
+   the debt visible; costs a third new task in one day.
+2. **A line on an existing session task.** `T050`'s *done when* is *"a session
+   attaches and a turn completes"*, which is met without anchors ever being
+   carried — so this would be re-opening a ticked task, which this build has
+   deliberately avoided doing.
+3. **`T058` was ticked too early** and the tick should be qualified. Against
+   this: the acceptance criterion it was ticked on is genuinely met, and the
+   lesson recorded at *the wording standard for a done when* is that the
+   criterion is the contract. Re-litigating a met criterion is how a checklist
+   stops meaning anything.
+
+**What is not in question:** the refusal stays. Sending an anchored message with
+the anchors quietly dropped is the failure the arm exists to prevent, and
+`7a`-style silent divergence between what a screen says and what a door did is
+the exact class of defect §7 is built around.
+
+**Recorded, not guessed at.** The citation sits in
+`scripts/lint-refusal-tasks.sh`'s `RECORDED` table with no blocking task — the
+one entry there with no creditor — so it fails that lint the moment somebody
+re-points it at a ticked task, and shows up in the count every run until it is
+ruled.
+
+---
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

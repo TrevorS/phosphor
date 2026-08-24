@@ -501,14 +501,14 @@ actions! {
             "steps forward again" {
             count: u32 = "how many steps",
         }
-        UndoToCheckpoint = "undo-to-checkpoint" [S3 / "T029" / Allow]
+        UndoToCheckpoint = "undo-to-checkpoint" [S3 / "T095" / Allow]
             "returns the buffer to a named point in its undo tree" {
             checkpoint: CheckpointId = "which point",
         }
         CommitUndoGroup = "commit-undo-group" [S3 / "T029" / Allow]
             "closes the current undo group explicitly, so the next edit starts a new one" {
         }
-        CompactHistory = "compact-history" [S3 / "T030" / Allow]
+        CompactHistory = "compact-history" [S3 / "T095" / Allow]
             "compacts persisted history for a target — the periodic sweep Q1 and Q2 share" {
             target: Target = "whose history",
         }
@@ -791,7 +791,7 @@ actions! {
             "opens a review block; absent means the newest" {
             block: Option<crate::request::BlockId> = "which block; absent means the newest",
         }
-        SetDiffMode = "set-diff-mode" [S7 / "T066" / Allow]
+        SetDiffMode = "set-diff-mode" [S7 / "T070" / Allow]
             "switches a diff between unified and side-by-side" {
             mode: DiffMode = "which mode",
         }
@@ -1169,11 +1169,11 @@ actions! {
             "evaluates scheme source; the CLI door and the REPL are both this" {
             source: String = "the source text",
         }
-        LoadRuntimeFile = "load-runtime-file" [S2 / "T021" / Deny]
+        LoadRuntimeFile = "load-runtime-file" [S2 / "T094" / Deny]
             "loads a scheme file; a broken one leaves a working editor and an error float" {
             path: std::path::PathBuf = "which file",
         }
-        ReloadRuntime = "reload-runtime" [S2 / "T021" / Deny]
+        ReloadRuntime = "reload-runtime" [S2 / "T094" / Deny]
             "re-runs the boot sequence — init.scm is just the REPL session that runs at boot" {
         }
         OpenRepl = "open-repl" [S2 / "T022" / Allow]
@@ -1214,11 +1214,11 @@ actions! {
             key: String = "the option's name",
             value: Value = "its value",
         }
-        SetTheme = "set-theme" [S1 / "T012" / Allow]
+        SetTheme = "set-theme" [S1 / "T092" / Allow]
             "switches theme by slug" {
             slug: ThemeSlug = "which theme",
         }
-        ReloadTheme = "reload-theme" [S1 / "T011" / Allow]
+        ReloadTheme = "reload-theme" [S1 / "T092" / Allow]
             "re-reads the current theme file and re-validates its actor hues" {
         }
     }

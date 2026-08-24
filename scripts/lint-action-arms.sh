@@ -82,13 +82,20 @@ import sys
 # comment: it reads as authoritative. TEAM.md's concurrency rules say cite
 # symbols; this is that rule applied to itself.
 RECORDED = {
-    "SetTheme": ("T092", "`:theme <slug>` is bound in runtime/keymaps.scm and answers a refusal. "
-                         "The theme is an immutable local — `builtin(&cli.theme)` in `main` — "
-                         "baked into each `Editor` at construction, so runtime switching is a "
-                         "rebuild path, not an arm. `--theme <slug>` works and is what the eight "
-                         "theme tapes use."),
-    "ReloadTheme": ("T092", "Same rebuild path as `SetTheme`; re-reading a theme file also needs "
-                            "a user-theme path, and `main` only ever calls `builtin()`."),
+    # **Seven entries left together, and none of them was wired.** Each was
+    # re-declared against the task that will really build it — `SetTheme` and
+    # `ReloadTheme` to `T092`, `LoadRuntimeFile` and `ReloadRuntime` to `T094`,
+    # `UndoToCheckpoint` and `CompactHistory` to `T095`, `SetDiffMode` to `T070`
+    # — which is the fifth check below doing its job: a record only means
+    # something while its variant's own task is ticked.
+    #
+    # The reason is `scripts/lint-refusal-tasks.sh`, written beside this one.
+    # The stamp on a capability row is not bookkeeping; it is the sentence a
+    # user reads when the verb refuses — `not built yet - {task} builds it`.
+    # All seven were stamped with the task that *declared* the capability, and
+    # all seven of those tasks are ticked, so every one of them told the reader
+    # to wait for finished work. This table already knew the real creditor; the
+    # refusal named someone else. Re-stamping made the two agree.
     # `OpenFloat`, `CloseFloat` and `CloseAllFloats` were recorded here against
     # `T093` and are gone. What blocked them was never the slot — it was that
     # `open-float` takes a `SurfaceId` naming a registry **nothing created and
@@ -98,18 +105,6 @@ RECORDED = {
     # barrier. All four arms are in `AppHost::apply`, posting `Intent`s the loop
     # drains — composing a surface runs scheme, and a binding is already inside
     # the VM when it calls.
-    "LoadRuntimeFile": ("T094", "Evaluating a further `.scm` after boot. The REPL evaluates forms "
-                                "and `init.scm` reads the load order once at startup; neither is "
-                                "this."),
-    "ReloadRuntime": ("T094", "Re-booting the editor layer without restarting. Nothing rebuilds a "
-                              "`Runtime` in place today."),
-    "SetDiffMode": ("T070", "checked against the design brief rather than assumed: `4b`'s own "
-                            "words are \"one review block as one unified diff\" — the block diff "
-                            "is unified, full stop, and the side-by-side mode `DiffBody` already "
-                            "draws (`T063`, tested against both modes) belongs to `:dv`, "
-                            "`:diff-disk`'s own screen, whose design-brief line is `:dv` \"a "
-                            "side-by-side of buffer vs disk\". Nothing composes `4b`/`8b`/`2b` "
-                            "with anything but `\"unified\"` and `T070` is where that changes."),
     "ExpandDiffContext": ("", "No creditor — checked against every mockup this task drew and "
                              "the ones after it, and none asks to see more lines around a hunk "
                              "than `T066` already shows. `4b`'s footer has no key for it, `8b`'s "
@@ -131,10 +126,6 @@ RECORDED = {
                        "against a declared hunk with a before-side, and proves it does **not** "
                        "restore that before-side — `dih` deletes; `revert-hunk` would restore, "
                        "and nothing asks for the difference."),
-    "UndoToCheckpoint": ("T095", "`UndoTree::goto` and `CheckpointId` both exist and `Timeline` "
-                                 "owns the tree; nothing routes a checkpoint id to it."),
-    "CompactHistory": ("T095", "`journal.rs` implements compaction and proves it under a real "
-                               "`SIGKILL`; nothing triggers it, so a history only grows."),
     # `SetSoftWrap` was recorded here against `T096` and is gone: that task
     # armed it in the loop and added the fourth line to `AppHost::apply`'s
     # forwarding list, so all three doors reach it — and the loop unwraps a

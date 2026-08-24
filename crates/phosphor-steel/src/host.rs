@@ -144,7 +144,7 @@ mod tests {
         let Outcome::Refused(Refusal::NotYetImplemented { task }) = Detached.apply(&request) else {
             panic!("a detached host refuses everything, legibly");
         };
-        assert_eq!(task, "T021");
+        assert_eq!(task, "T094");
     }
 
     #[test]
@@ -152,7 +152,7 @@ mod tests {
         let log = ReceiptLog::new();
         log.push(
             "reload-runtime",
-            Outcome::Refused(Refusal::NotYetImplemented { task: "T021" }),
+            Outcome::Refused(Refusal::NotYetImplemented { task: "T094" }),
         );
         assert_eq!(log.take().len(), 1);
         assert!(log.take().is_empty(), "a drain empties the log");

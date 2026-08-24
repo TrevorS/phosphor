@@ -11493,7 +11493,7 @@ impl Editing {
                     self.anchor = anchor.as_ref().and_then(|target| self.file_span(target));
                     done()
                 }
-                PromptKind::Search => declined("search is T058's other half — :/ is not built yet"),
+                PromptKind::Search => declined("search needs the matcher — T110 builds it"),
             },
             // `T058`'s four surface verbs. Each posts a step the loop
             // performs — see [`Shell::prompt_step`] for why an arm cannot do
@@ -13679,11 +13679,18 @@ impl Editing {
 
     /// **`goto-sequence`.** Walks a sequence of store rows (`T049`).
     ///
-    /// Only [`Sequence::UnseenRegion`] has a store to walk. The other seven
-    /// name what builds them rather than doing nothing quietly — `]!` needs
-    /// `T060`'s ask queue, `]]` needs `T053`'s review blocks, and so on. That
-    /// is `T098`'s rule reaching a motion: a bound key that cannot act says
-    /// which task will let it.
+    /// Only [`Sequence::UnseenRegion`] has a store to walk, and
+    /// [`Sequence::Ask`] answers from the queue. The rest name what builds
+    /// them rather than doing nothing quietly. That is `T098`'s rule reaching
+    /// a motion: a bound key that cannot act says which task will let it.
+    ///
+    /// **The task ids here were wrong for a whole phase, in the one direction
+    /// that misleads.** Every sequence below named the task that built its
+    /// *store*, and every one of those tasks is ticked — so the rule above
+    /// inverted: a key that could not act named a task that was finished, and
+    /// a reader who went looking found it done. `T109` and `T110` are the real
+    /// creditors, added 2026-08-24, and `scripts/lint-refusal-tasks.sh` is
+    /// what stops the ids drifting back onto ticked work.
     ///
     /// **Wraps**, because `]u` is *"the next one"* and a list you can fall off
     /// the end of makes the last region a dead end — vim's own `n` wraps for
@@ -13697,10 +13704,19 @@ impl Editing {
     ) -> Outcome {
         let task = match sequence {
             Sequence::UnseenRegion => None,
-            Sequence::Hunk => Some("T063"),
-            Sequence::BlockFile => Some("T053"),
-            Sequence::Diagnostic => Some("T085"),
-            Sequence::Thread => Some("T068"),
+            // **`T109`, and it used to be four different ticked tasks.** Each
+            // of these named the task that built the *store* — `T063` for
+            // hunks, `T053` for blocks, `T085` for diagnostics, `T068` for
+            // threads — and all four are ticked, so the sentence a caller read
+            // was `not built yet - T063 builds it` about work that shipped.
+            // The stores are the reason these are cheap now, not the reason
+            // they were blocked; `T109` is the walk over them.
+            // `scripts/lint-refusal-tasks.sh` fails if any of these names a
+            // ticked task again.
+            Sequence::Hunk => Some("T109"),
+            Sequence::BlockFile => Some("T109"),
+            Sequence::Diagnostic => Some("T109"),
+            Sequence::Thread => Some("T109"),
             // `T060`. **A motion over the queue, answered here rather than by
             // walking a store of rows** — the sequences below this one are
             // spans in a file and this one is a float, so what *"the next one"*
@@ -13723,7 +13739,10 @@ impl Editing {
                     None => declined("nothing pushed back — the question is already up"),
                 };
             }
-            Sequence::SearchMatch => Some("T058"),
+            // **`T110`.** This named `T058`, whose *done when* is `1c` raising
+            // from a keystroke and which shipped; `T058`'s own record says the
+            // search machinery was the half it did not build.
+            Sequence::SearchMatch => Some("T110"),
             // A jumplist entry is an anchor and `jump` already walks them, so
             // this arm would be a second spelling of one behaviour.
             Sequence::Jump => return self.jump(cx, seek),
@@ -14044,7 +14063,7 @@ impl Editing {
             return declined("that anchor is lost — the code it named is gone");
         }
         if focused.as_deref() != Some(anchor.path.as_path()) {
-            return declined("that anchor is in another file — T056 opens it");
+            return declined("that anchor is in another file — T109 opens it");
         }
         if record {
             self.push_jump(cx);
@@ -17563,7 +17582,7 @@ mod tests {
         else {
             panic!("an unbuilt capability names the task that builds it");
         };
-        assert_eq!(task, "T021");
+        assert_eq!(task, "T094");
     }
 
     #[test]
@@ -19115,12 +19134,15 @@ mod tests {
         );
         // Search is the half `T058` did not build: a search prompt needs
         // somewhere to search, which is the search machinery and not the line.
+        // **The refusal names `T110`, not `T058`** — `T058` is ticked, and a
+        // sentence that sends the reader to a finished task is the defect
+        // `scripts/lint-refusal-tasks.sh` exists to catch.
         let Outcome::Refused(Refusal::Declined { reason }) =
             editing.apply(&open(phosphor_core::request::PromptKind::Search))
         else {
             panic!("search has no machinery behind it yet");
         };
-        assert!(reason.contains("T058"), "{reason}");
+        assert!(reason.contains("T110"), "{reason}");
     }
 
     /// **Two panes over one buffer keep two jumplists**, which is the whole of
