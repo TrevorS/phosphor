@@ -124,11 +124,26 @@ fn agent_object_hints(runtime: &mut Runtime) -> Vec<KeyHint> {
         return Vec::new();
     };
 
-    // `6d`'s two illustrations: select one, and delete one — *"revert claude's
-    // edit, plain vim delete"*.
+    // `6d`'s illustrations: select one, delete one — *"revert claude's edit,
+    // plain vim delete"* — and **mark one seen**, which is the row `6d` draws as
+    // `sib` and this build spells `gsib`.
+    //
+    // **The third head is named and the first two are not**, and that asymmetry
+    // is the point rather than an inconsistency. `Select` and `Operator` take
+    // whatever plays the role, because `6d`'s claim about them is *"whatever
+    // your select and delete are"*. Mark-seen is not any operator — it is the
+    // one the screen is about — so asking for the first `Operator` found it
+    // `d` and drew `dib` twice, with no slot left for `gsib` however the keymap
+    // was written. `T086`'s own entry recorded that as the outstanding item.
     let heads = [
         bound(&entries, "normal", |role| matches!(role, Role::Select(_))),
         bound(&entries, "normal", |role| matches!(role, Role::Operator(_))),
+        bound(&entries, "normal", |role| {
+            matches!(
+                role,
+                Role::Operator(phosphor_core::input::table::Operator::MarkSeen)
+            )
+        }),
     ];
 
     let mut hints = Vec::new();
@@ -175,8 +190,8 @@ fn status_vm() -> StatusVm {
 fn tree(runtime: &mut Runtime) -> Tree {
     let hints = agent_object_hints(runtime);
     assert!(
-        hints.len() == 8,
-        "the shipped table binds two heads, `i`, and four agent nouns: {hints:?}"
+        hints.len() == 12,
+        "the shipped table binds three heads, `i`, and four agent nouns: {hints:?}"
     );
     let status = status::compose(runtime, &status_vm()).expect("runtime/statusline.scm composes");
 
@@ -222,9 +237,12 @@ const NOTES: &[&str] = &[
     "    as an amendment in docs/README.md, not folded into the .dc.html.",
     "  `]u` / `[u` are bound, to `goto-sequence` over unseen regions. They",
     "    resolve and decline by name until the store lands (T041/T049).",
-    "  `:'<,'>c` parses: the ex line grew a range grammar, so the selection",
-    "    range is read rather than swallowed into a command name. There is",
-    "    still no `:c` command and no `:g` (T058, T062), so it declines.",
+    "  `:'<,'>c` runs. The ex line grew a range grammar, so the selection range",
+    "    is read rather than swallowed into a command name, and `c[omment]` is",
+    "    bound — `:c` resolves to it, `cl[aude]` needing two letters. This note",
+    "    said *there is still no `:c` command* until 2026-08-23, which had been",
+    "    false since the comment verb landed: the frame did not move, so insta",
+    "    passed the prose with it.",
     "  `\"ay ib`, `q:` — register-into-prompt and command history, still T058.",
     "6d draws its noun letters in you-blue and the sequences in claude green;",
     "  view::KeyHint carries no distinction, so every key draws in the claude",
@@ -303,7 +321,13 @@ fn screen_6d_draws_at_80_columns() {
 fn a_repl_rebind_shows_up_in_the_help_grid() {
     let mut runtime = layer();
     let theme = Theme::phosphor_dark();
-    let before = rows(&screen(&mut runtime, &theme, 120, 24)).join("\n");
+    // **Taller than `6d`'s own frame, and deliberately.** The grid grew a third
+    // head when `T086` made mark-seen one, so twelve grammar rows do not fit a
+    // 24-row screen and the float says so — `KeyHints` at `Density::Help` spends
+    // its last row on the count it dropped. That is the shipped behaviour and it
+    // is honest; it is just not this test's subject, which is that a *rebind*
+    // reaches the grid at all.
+    let before = rows(&screen(&mut runtime, &theme, 120, 40)).join("\n");
     assert!(before.contains("visual inside unseen region"), "{before}");
 
     // Move the unseen-region object from `u` to `U`, and say so differently.
@@ -320,10 +344,19 @@ fn a_repl_rebind_shows_up_in_the_help_grid() {
         "{outcome:?}"
     );
 
-    let after = rows(&screen(&mut runtime, &theme, 120, 24)).join("\n");
+    let after = rows(&screen(&mut runtime, &theme, 120, 40)).join("\n");
+    // **The key and the verb, not the spacing between them.** The gap is the
+    // key column's padding, which is the width of the *longest* key in the
+    // table — so `T086` adding `gsib` moved it from two spaces to three and
+    // this assertion failed on a grid that was entirely correct. What the test
+    // is about is that the rebind reached the row.
+    let row = after
+        .lines()
+        .find(|line| line.contains("viU"))
+        .unwrap_or_else(|| panic!("the rebound key is on screen:\n{after}"));
     assert!(
-        after.contains("viU  visual inside region claude wrote"),
-        "the rebound key and verb are both on screen:\n{after}"
+        row.contains("visual inside region claude wrote"),
+        "and its verb is beside it; row was: {row:?}"
     );
     assert!(!after.contains("viu"), "and the old key is not:\n{after}");
 }

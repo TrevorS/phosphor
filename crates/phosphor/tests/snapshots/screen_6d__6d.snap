@@ -16,9 +16,12 @@ screen 6d · phosphor-dark · 120x24 cells
       as an amendment in docs/README.md, not folded into the .dc.html.
     `]u` / `[u` are bound, to `goto-sequence` over unseen regions. They
       resolve and decline by name until the store lands (T041/T049).
-    `:'<,'>c` parses: the ex line grew a range grammar, so the selection
-      range is read rather than swallowed into a command name. There is
-      still no `:c` command and no `:g` (T058, T062), so it declines.
+    `:'<,'>c` runs. The ex line grew a range grammar, so the selection range
+      is read rather than swallowed into a command name, and `c[omment]` is
+      bound — `:c` resolves to it, `cl[aude]` needing two letters. This note
+      said *there is still no `:c` command* until 2026-08-23, which had been
+      false since the comment verb landed: the frame did not move, so insta
+      passed the prose with it.
     `"ay ib`, `q:` — register-into-prompt and command history, still T058.
   6d draws its noun letters in you-blue and the sequences in claude green;
     view::KeyHint carries no distinction, so every key draws in the claude
@@ -46,22 +49,22 @@ text
   3 │            │  :help agent-objects                                                                         │            │
   4 │            ├──────────────────────────────────────────────────────────────────────────────────────────────┤            │
   5 │            │                                                                                              │            │
-  6 │            │  viu  visual inside unseen region                                                            │            │
-  7 │            │  vih  visual inside hunk                                                                     │            │
-  8 │            │  vit  visual inside thread                                                                   │            │
-  9 │            │  vib  visual inside review block                                                             │            │
- 10 │            │  diu  delete inside unseen region                                                            │            │
- 11 │            │  dih  delete inside hunk                                                                     │            │
- 12 │            │  dit  delete inside thread                                                                   │            │
- 13 │            │  dib  delete inside review block                                                             │            │
- 14 │            │                                                                                              │            │
- 15 │            ├──────────────────────────────────────────────────────────────────────────────────────────────┤            │
- 16 │            │  q close                                                                                     │            │
- 17 │            └──────────────────────────────────────────────────────────────────────────────────────────────┘            │
- 18 │                                                                                                                        │
- 19 │                                                                                                                        │
- 20 │                                                                                                                        │
- 21 │                                                                                                                        │
+  6 │            │  viu   visual inside unseen region                                                           │            │
+  7 │            │  vih   visual inside hunk                                                                    │            │
+  8 │            │  vit   visual inside thread                                                                  │            │
+  9 │            │  vib   visual inside review block                                                            │            │
+ 10 │            │  diu   delete inside unseen region                                                           │            │
+ 11 │            │  dih   delete inside hunk                                                                    │            │
+ 12 │            │  dit   delete inside thread                                                                  │            │
+ 13 │            │  dib   delete inside review block                                                            │            │
+ 14 │            │  gsiu  mark seen inside unseen region                                                        │            │
+ 15 │            │  gsih  mark seen inside hunk                                                                 │            │
+ 16 │            │  gsit  mark seen inside thread                                                               │            │
+ 17 │            │  gsib  mark seen inside review block                                                         │            │
+ 18 │            │                                                                                              │            │
+ 19 │            ├──────────────────────────────────────────────────────────────────────────────────────────────┤            │
+ 20 │            │  q close                                                                                     │            │
+ 21 │            └──────────────────────────────────────────────────────────────────────────────────────────────┘            │
  22 │                                                                                                                        │
  23 │ NORMAL  help                                                                                                           │
 
@@ -74,22 +77,22 @@ fg
   3 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
   4 │llllllllllllCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCllllllllllll│
   5 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
-  6 │llllllllllllohhaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
-  7 │llllllllllllohhaaahhjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
-  8 │llllllllllllohhaaahhjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
-  9 │llllllllllllohhaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
- 10 │llllllllllllohhaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
- 11 │llllllllllllohhaaahhjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
- 12 │llllllllllllohhaaahhjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
- 13 │llllllllllllohhaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
- 14 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
- 15 │llllllllllllCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCllllllllllll│
- 16 │llllllllllllohhjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
- 17 │lllllllllllloooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooollllllllllll│
- 18 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
- 19 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
- 20 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
- 21 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
+  6 │llllllllllllohhaaahhhjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+  7 │llllllllllllohhaaahhhjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+  8 │llllllllllllohhaaahhhjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+  9 │llllllllllllohhaaahhhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 10 │llllllllllllohhaaahhhjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 11 │llllllllllllohhaaahhhjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 12 │llllllllllllohhaaahhhjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 13 │llllllllllllohhaaahhhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 14 │llllllllllllohhaaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 15 │llllllllllllohhaaaahhjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 16 │llllllllllllohhaaaahhjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 17 │llllllllllllohhaaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 18 │llllllllllllohhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 19 │llllllllllllCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCllllllllllll│
+ 20 │llllllllllllohhjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhollllllllllll│
+ 21 │lllllllllllloooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooollllllllllll│
  22 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
  23 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
 
@@ -114,10 +117,10 @@ bg
  15 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
  16 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
  17 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
- 18 │........................................................................................................................│
- 19 │........................................................................................................................│
- 20 │........................................................................................................................│
- 21 │........................................................................................................................│
+ 18 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 19 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 20 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
+ 21 │............xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx............│
  22 │........................................................................................................................│
  23 │aaaaaaaa................................................................................................................│
 

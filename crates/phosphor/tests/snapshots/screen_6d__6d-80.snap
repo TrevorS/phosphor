@@ -16,9 +16,12 @@ screen 6d-80 · phosphor-dark · 80x24 cells
       as an amendment in docs/README.md, not folded into the .dc.html.
     `]u` / `[u` are bound, to `goto-sequence` over unseen regions. They
       resolve and decline by name until the store lands (T041/T049).
-    `:'<,'>c` parses: the ex line grew a range grammar, so the selection
-      range is read rather than swallowed into a command name. There is
-      still no `:c` command and no `:g` (T058, T062), so it declines.
+    `:'<,'>c` runs. The ex line grew a range grammar, so the selection range
+      is read rather than swallowed into a command name, and `c[omment]` is
+      bound — `:c` resolves to it, `cl[aude]` needing two letters. This note
+      said *there is still no `:c` command* until 2026-08-23, which had been
+      false since the comment verb landed: the frame did not move, so insta
+      passed the prose with it.
     `"ay ib`, `q:` — register-into-prompt and command history, still T058.
   6d draws its noun letters in you-blue and the sequences in claude green;
     view::KeyHint carries no distinction, so every key draws in the claude
@@ -45,22 +48,22 @@ text
   2 │                                                                                │
   3 │                                                                                │
   4 │                                                                                │
-  5 │                                                                                │
-  6 │                                                                                │
-  7 │                                                                                │
+  5 │────────────────────────────────────────────────────────────────────────────────│
+  6 │  :help agent-objects                                                           │
+  7 │────────────────────────────────────────────────────────────────────────────────│
   8 │                                                                                │
-  9 │────────────────────────────────────────────────────────────────────────────────│
- 10 │  :help agent-objects                                                           │
- 11 │────────────────────────────────────────────────────────────────────────────────│
- 12 │                                                                                │
- 13 │  viu  visual inside unseen region                                              │
- 14 │  vih  visual inside hunk                                                       │
- 15 │  vit  visual inside thread                                                     │
- 16 │  vib  visual inside review block                                               │
- 17 │  diu  delete inside unseen region                                              │
- 18 │  dih  delete inside hunk                                                       │
- 19 │  dit  delete inside thread                                                     │
- 20 │  dib  delete inside review block                                               │
+  9 │  viu   visual inside unseen region                                             │
+ 10 │  vih   visual inside hunk                                                      │
+ 11 │  vit   visual inside thread                                                    │
+ 12 │  vib   visual inside review block                                              │
+ 13 │  diu   delete inside unseen region                                             │
+ 14 │  dih   delete inside hunk                                                      │
+ 15 │  dit   delete inside thread                                                    │
+ 16 │  dib   delete inside review block                                              │
+ 17 │  gsiu  mark seen inside unseen region                                          │
+ 18 │  gsih  mark seen inside hunk                                                   │
+ 19 │  gsit  mark seen inside thread                                                 │
+ 20 │  gsib  mark seen inside review block                                           │
  21 │                                                                                │
  22 │────────────────────────────────────────────────────────────────────────────────│
  23 │  q close                                                                       │
@@ -73,22 +76,22 @@ fg
   2 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
   3 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
   4 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
-  5 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
-  6 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
-  7 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
-  8 │llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll│
-  9 │oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo│
- 10 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
- 11 │CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC│
- 12 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
- 13 │hhaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
- 14 │hhaaahhjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
- 15 │hhaaahhjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
- 16 │hhaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
- 17 │hhaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
- 18 │hhaaahhjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
- 19 │hhaaahhjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
- 20 │hhaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+  5 │oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo│
+  6 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+  7 │CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC│
+  8 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+  9 │hhaaahhhjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 10 │hhaaahhhjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 11 │hhaaahhhjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 12 │hhaaahhhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 13 │hhaaahhhjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 14 │hhaaahhhjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 15 │hhaaahhhjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 16 │hhaaahhhjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 17 │hhaaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 18 │hhaaaahhjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 19 │hhaaaahhjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
+ 20 │hhaaaahhjjjjjjjjjjjjjjjjjjjjjjjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
  21 │hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
  22 │CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC│
  23 │hhjjjjjjjhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh│
@@ -101,10 +104,10 @@ bg
   2 │................................................................................│
   3 │................................................................................│
   4 │................................................................................│
-  5 │................................................................................│
-  6 │................................................................................│
-  7 │................................................................................│
-  8 │................................................................................│
+  5 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+  6 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+  7 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
+  8 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
   9 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
  10 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│
  11 │xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx│

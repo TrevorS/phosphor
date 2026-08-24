@@ -1137,7 +1137,7 @@ CP-0 settled the shape: **the input machine is ours.**
   > (Small inaccuracy in that test's own comment: it says *"a different one"* and presses the
   > same key. The latch is per session, so the assertion is right either way.)
 
-- [ ] **T086 · `HelpGrid` — the `:help` float body** 📌
+- [x] **T086 · `HelpGrid` — the `:help` float body** 📌
   Screen `6d` (`:help agent-objects`) is an S3 acceptance target in the plan with no task behind
   it, and `HelpGrid` is named as a `Float` body in the Component Breakdown. Same data as
   `KeymapFooter`, third density: a full grid, read from the **live** keymap so Steel rebinds and
@@ -1179,6 +1179,42 @@ CP-0 settled the shape: **the input machine is ours.**
   > true at the first gate and all three are false against the tree now —
   > `runtime/keymaps.scm:475` (`gs`), `:602`–`:608` (`]u` `[u` `]b` `[b`), `:1003`
   > (`c[omment]`). The frame did not move, so `insta` passed it. The notes are the bug.
+  >
+  > **Ticked 2026-08-23. All three items above are closed, and the first two were closed by
+  > other tasks that said so.**
+  >
+  > **The keystroke half was `T097`'s**, and its record already names the three pty tests that
+  > carry it: `:help` opens the grid, `:help agent-objects` narrows it, and a REPL rebind reads
+  > back out of it. Nothing was owed here.
+  >
+  > **The third head is one line and the entry named it.** `agent_object_hints` asked for the
+  > first `Select` and the first `Operator` in normal scope, which is `v` and `d` — so `6d`'s
+  > third grammar row had nowhere to go however the keymap was written, and the frame drew `dib`
+  > where `gsib` belongs. It asks for `Operator(MarkSeen)` by name now, and the asymmetry is the
+  > point: `6d`'s claim about the first two is *"whatever your select and delete are"*, and its
+  > claim about the third is about **mark-seen specifically**. The frame draws twelve rows
+  > (`viu`…`gsib`) where it drew eight.
+  >
+  > **The false note is gone and it had been false since the comment verb landed.** `c[omment]`
+  > is bound with a one-letter minimum, so `:c` resolves — `cl[aude]` needs two. The snapshot
+  > said *"there is still no `:c` command"*, and the frame did not move, so `insta` passed the
+  > prose along with it. That is the failure mode this entry itself identified, and it took a
+  > reader checking each clause against the tree rather than a lint, because **no lint reads a
+  > snapshot's prose**.
+  >
+  > **Two assertions were pinned to layout incidentals**, and growing the grid found both. The
+  > rebind test asserted `viU  visual …` with the exact gap — which is the key column's padding,
+  > the width of the *longest* key in the table, so `gsib` moved it from two spaces to three and
+  > a correct grid failed. It reads the row and checks the verb is on it now. And the frame at
+  > 24 rows no longer fits twelve grammar rows, so the rebind test draws at 40: the float's
+  > *"and N more"* row is the shipped answer to a body taller than its float and is already
+  > tested at `a_help_body_taller_than_its_float_names_what_it_dropped`, but it is not this
+  > test's subject.
+  >
+  > **What is still owed and is not this task's:** nothing scrolls a `Density::Help` body, so
+  > `:help normal` stops at what fits and says how much it dropped. That is honest rather than
+  > silent, which is what `T018`'s rule asks; making it *scroll* is a surface with a viewport
+  > and belongs to whoever gives floats one.
 
 ### ✋ CP-3 — Does it feel like an editor? · **PASSED**
 

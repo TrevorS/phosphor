@@ -5935,12 +5935,19 @@ mod driven {
             let file = scratch.path.join("sample.txt");
             fs::write(&file, source).expect("a fixture");
 
+            // **`press_quietly`, and the assertion below is why.** What this
+            // proves is the *file* after `:w`, which `quit` guarantees by
+            // waiting for the child to exit — no frame is read, so counting
+            // them buys nothing and costs a flake. `gUiw` is four bytes in one
+            // `press`, and `g` opens a which-key popup on the way: the
+            // one-frame-per-key contract was never true of it, and CI is where
+            // that came due.
             let editor = Editor::open(&file, &scratch.state(), &runtime);
-            editor.press(keys);
-            editor.press(b"i");
-            editor.press(b"|");
-            editor.press(b"\x1b");
-            editor.press(b":w\r");
+            editor.press_quietly(keys);
+            editor.press_quietly(b"i");
+            editor.press_quietly(b"|");
+            editor.press_quietly(b"\x1b");
+            editor.press_quietly(b":w\r");
             editor.quit();
 
             assert_eq!(
