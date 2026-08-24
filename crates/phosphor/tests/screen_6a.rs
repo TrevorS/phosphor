@@ -237,6 +237,7 @@ fn status_vm() -> StatusVm {
         session: SessionState::None,
         since: None::<Millis>,
         ask_pending: false,
+        inbox_unread: 0,
         unseen: 2,
         trouble: 0,
         attention: 0,

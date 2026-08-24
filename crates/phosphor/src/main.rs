@@ -1303,7 +1303,15 @@ fn head(source: &str) -> Option<&str> {
 /// by naming the three it does take, rather than silently widening to the
 /// workspace: a count that quietly answered about the wrong scope is worse than
 /// one that did not answer.
-const RESOLVABLE: &[&str] = &["file", "explicit", "region", "hunk", "group", "block"];
+const RESOLVABLE: &[&str] = &[
+    "file",
+    "explicit",
+    "region",
+    "hunk",
+    "group",
+    "block",
+    "inbox-item",
+];
 
 /// An id that names no declared block or group (`T064`).
 ///
@@ -1334,6 +1342,27 @@ struct Undeclared {
 /// answer from an empty scope: a typo refuses, and a block whose regions were
 /// all dropped marks nothing and says `no region here`.
 fn review_scope(store: &store::Shared, target: &Target) -> Option<Result<RegionScope, Undeclared>> {
+    // `T067`. **An inbox row's scope is whatever backs that row**, which is
+    // the whole of *"unread derives from seen-state"* on the writing side: `s`
+    // on `5c`'s `✻ review ready` marks the block's regions, and the row goes
+    // read because it reads them back. A note has no regions and is handled
+    // before this function is ever called (`Editing::mark`/`AppHost::mark`
+    // both intercept it) — reaching here with a note-kind id or an ask-kind
+    // id is a caller that skipped that check, and it scopes to nothing rather
+    // than guessing, the same as an id nothing declared.
+    if let Target::InboxItem { id } = target {
+        return Some(match store::InboxSource::of(*id) {
+            Some(store::InboxSource::Block(block)) => store.block_regions(block).map_or(
+                Err(Undeclared {
+                    noun: "inbox item",
+                    expected: "a declared block",
+                    got: i64::try_from(block.0).unwrap_or(i64::MAX),
+                }),
+                |ids| Ok(RegionScope::These(ids)),
+            ),
+            _ => Ok(RegionScope::These(Vec::new())),
+        });
+    }
     let (ids, noun, expected, got) = match target {
         // A hunk *is* a region (`store::Hunk`), so this is `One` and not a set,
         // and there is nothing to look up: an id that names no region scopes to
@@ -1395,20 +1424,21 @@ impl AppHost {
                 span: *span,
             }),
             Target::Region { id } => Ok(RegionScope::One(*id)),
-            Target::Hunk { .. } | Target::Group { .. } | Target::Block { .. } => {
-                review_scope(&self.store, target)
-                    .expect("the three arms matched here are the three it resolves")
-                    .map_err(|undeclared| QueryError::Argument {
-                        name,
-                        source: phosphor_core::value::WireError::Field {
-                            field: "within",
-                            source: Box::new(phosphor_core::value::WireError::Range {
-                                expected: undeclared.expected,
-                                got: undeclared.got,
-                            }),
-                        },
-                    })
-            }
+            Target::Hunk { .. }
+            | Target::Group { .. }
+            | Target::Block { .. }
+            | Target::InboxItem { .. } => review_scope(&self.store, target)
+                .expect("the three arms matched here are the three it resolves")
+                .map_err(|undeclared| QueryError::Argument {
+                    name,
+                    source: phosphor_core::value::WireError::Field {
+                        field: "within",
+                        source: Box::new(phosphor_core::value::WireError::Range {
+                            expected: undeclared.expected,
+                            got: undeclared.got,
+                        }),
+                    },
+                }),
             other => Err(QueryError::Argument {
                 name,
                 source: phosphor_core::value::WireError::Field {
@@ -1425,6 +1455,28 @@ impl AppHost {
     /// **`mark-seen` and `mark-unseen`, from a door.** Answers how many
     /// regions were in scope.
     fn mark(&self, name: &'static str, target: &Target, state: SeenState) -> Outcome {
+        // `T067`. **The same shortcut `Editing::mark` takes, and it has to be
+        // the same or `mark-seen` means two things.** A note is the one inbox
+        // row that is not a region — no file, no span — so it is handled before
+        // the scope machinery on both sides. The door can do this one because
+        // it needs the store and nothing else; what it cannot do is resolve
+        // *"the cursor"*, which is the only asymmetry between the two halves.
+        if let Target::InboxItem { id } = target
+            && let Some(store::InboxSource::Note(_)) = store::InboxSource::of(*id)
+        {
+            let known = self
+                .store
+                .set_note_seen(*id, matches!(state, SeenState::Seen));
+            return if known {
+                Outcome::Done(Receipt {
+                    capability: name,
+                    value: Value::Int(1),
+                    note: None,
+                })
+            } else {
+                declined("no such inbox item")
+            };
+        }
         match self.scope(name, Some(target)) {
             Ok(scope) => {
                 let marked = self.store.set_seen(&scope, state);
@@ -1619,6 +1671,113 @@ impl AppHost {
         }
     }
 
+    /// **`5c`, merged from the three places claude's news already lives**
+    /// (`T067`).
+    ///
+    /// Newest first, which is `5c`'s own order and the only one an inbox can
+    /// have: the row you have not read yet is the one at the top.
+    ///
+    /// **Every row's `unread` is computed here and stored nowhere**, which is
+    /// `CP-8a`'s requirement stated as code:
+    ///
+    /// * an **ask** is unread while it is still pending — the queue is the
+    ///   truth `]!` and the statusline `!` already read (`query.rs`: *"one truth
+    ///   for `]!`, the inbox and the statusline"*),
+    /// * a **block** is unread while any of its regions is, straight off the
+    ///   same store the gutter draws from,
+    /// * a **note** carries its own bit, because nothing else holds that fact —
+    ///   which is not a duplicate of seen-state but the absence of one.
+    ///
+    /// The consequence worth naming: marking every hunk of a block seen makes
+    /// its inbox row read, with nothing subscribing to anything. That is the
+    /// property `CP-8a` is checking for.
+    fn inbox_rows(&self) -> Vec<Value> {
+        // **Two tiers, not one flat sort.** An ask is on the list because it
+        // is waiting *right now* — `4a`'s float would be on screen for it —
+        // and the mockup draws it at the very top regardless of when the
+        // block below it arrived. Blocks and notes interleave by
+        // `Shared::arrivals`, the one clock both mint from; asks have no
+        // comparable stamp (they live on `Shell`, not `Shared`) and do not
+        // need one; among themselves they sort by `AskId`, which is minted in
+        // order.
+        let mut asks: Vec<(u64, Value)> = Vec::new();
+        let raw = self
+            .state
+            .lock()
+            .map(|state| state.asks.clone())
+            .unwrap_or_default();
+        for ask in &raw {
+            let Value::Record(fields) = ask else { continue };
+            let Some(Value::Int(id)) = fields.get("ask") else {
+                continue;
+            };
+            let prose = match fields.get("prose") {
+                Some(Value::Text(prose)) => prose.clone(),
+                _ => String::new(),
+            };
+            let n = u64::try_from(*id).unwrap_or(0);
+            let mut row = Args::new();
+            row.set("item", inbox_id(store::InboxSource::Ask(n)));
+            row.set("kind", Value::Text("needs input".to_owned()));
+            row.set("severity", Value::Text("attention".to_owned()));
+            row.set("title", Value::Text(prose));
+            row.set("detail", Value::Null);
+            // **A pending ask is unread by definition.** It is on the list
+            // because it is waiting; answering it takes it off.
+            row.set("unread", Value::Bool(true));
+            row.set("age", Value::Null);
+            asks.push((n, Value::Record(row)));
+        }
+        asks.sort_by_key(|(ordinal, _)| std::cmp::Reverse(*ordinal));
+
+        let mut rest: Vec<(u64, Value)> = Vec::new();
+
+        // Review blocks. `1b`'s seam sentence, said again as a row.
+        for block in self.store.blocks() {
+            let hunks = self.store.hunks(block.id);
+            let unread = hunks.iter().any(|hunk| !hunk.seen);
+            let files = block.groups.len();
+            let regions: usize = block.groups.iter().map(|group| group.regions.len()).sum();
+            let mut row = Args::new();
+            row.set("item", inbox_id(store::InboxSource::Block(block.id)));
+            row.set("kind", Value::Text("review ready".to_owned()));
+            row.set("severity", Value::Text("info".to_owned()));
+            row.set(
+                "title",
+                Value::Text(format!(
+                    "{} — {files} file(s) · {regions} region(s)",
+                    block.title
+                )),
+            );
+            row.set(
+                "detail",
+                block.annotation.clone().map_or(Value::Null, Value::Text),
+            );
+            row.set("unread", Value::Bool(unread));
+            row.set("age", Value::Null);
+            rest.push((block.arrival, Value::Record(row)));
+        }
+
+        // Notes.
+        for note in self.store.notes() {
+            let mut row = Args::new();
+            row.set("item", Value::Int(i64::try_from(note.id.0).unwrap_or(0)));
+            row.set("kind", Value::Text("note".to_owned()));
+            row.set("severity", note.severity.to_value());
+            row.set("title", Value::Text(note.title.clone()));
+            row.set("detail", note.body.clone().map_or(Value::Null, Value::Text));
+            row.set("unread", Value::Bool(!note.seen));
+            row.set(
+                "age",
+                Value::Int(i64::try_from(note.at.elapsed().as_secs()).unwrap_or(i64::MAX)),
+            );
+            rest.push((note.arrival, Value::Record(row)));
+        }
+        rest.sort_by_key(|(arrival, _)| std::cmp::Reverse(*arrival));
+
+        asks.into_iter().chain(rest).map(|(_, row)| row).collect()
+    }
+
     /// A [`RegionFilter`] as a store [`Lens`].
     fn lens(&self, name: &'static str, filter: Option<&RegionFilter>) -> Result<Lens, QueryError> {
         let Some(filter) = filter else {
@@ -1789,6 +1948,30 @@ impl Answers for AppHost {
                 value: Value::List(self.store.hunks(*block).iter().map(hunk_value).collect()),
                 revision: self.store.revision(),
             }),
+            // `T067` — `5c`, and the whole of it is a *merge*. See
+            // [`inbox_rows`]: nothing here stores an inbox, so nothing here can
+            // disagree with the three places that do.
+            Query::Review(phosphor_core::query::ReviewQuery::Inbox { limit, offset }) => {
+                // **The window is applied after the merge, not inside it.**
+                // `5c` shows four rows of however many there are, and a caller
+                // paging through has to see the same order this side sorted —
+                // slicing per-source and merging afterwards would interleave
+                // three separate windows into something no page boundary lines
+                // up with.
+                let rows = self.inbox_rows();
+                let from = usize::try_from(offset.unwrap_or(0)).unwrap_or(usize::MAX);
+                let windowed: Vec<Value> = rows
+                    .into_iter()
+                    .skip(from)
+                    .take(limit.map_or(usize::MAX, |limit| {
+                        usize::try_from(limit).unwrap_or(usize::MAX)
+                    }))
+                    .collect();
+                Ok(Answer {
+                    value: Value::List(windowed),
+                    revision: self.store.revision(),
+                })
+            }
             // `T040`. Answered off the same store the gutter draws from.
             Query::Review(phosphor_core::query::ReviewQuery::Diagnostics { path }) => Ok(Answer {
                 value: Value::List(self.store.answer_diagnostics(path.as_deref())),
@@ -2223,6 +2406,59 @@ impl Host for AppHost {
                     // what is true in the fewest words that are.
                     declined("no such group")
                 }
+            }
+            // `T067` — `5c`. One float over the `inbox` query, composed in the
+            // editor layer like `7d` and `8b` before it.
+            Action::Inbox(phosphor_core::action::InboxAction::OpenInbox {}) => {
+                self.ask(Intent::OpenSurface(
+                    INBOX_SURFACE.to_owned(),
+                    Value::Record(inbox_args(0)),
+                ));
+                done(Value::Null)
+            }
+            // `T067` — claude posts a note. **The agent's door and mostly the
+            // agent's**, like `declare-review-block` beside it: `5c`'s `· note`
+            // row is something claude said, and `:notify` exists on the ex line
+            // for the reason every other one-off there does — a screen nothing
+            // can put a row on is a screen nothing can check.
+            //
+            // The anchor is resolved here rather than stored as a `Target`,
+            // because a target can mean *"the cursor"* and a note outlives the
+            // cursor that made it. `Explicit` and `File` are the two a door can
+            // resolve; anything focus-relative refuses by name rather than
+            // silently anchoring to wherever the cursor happened to be.
+            Action::Inbox(phosphor_core::action::InboxAction::Notify {
+                severity,
+                title,
+                body,
+                anchor,
+            }) => {
+                let anchor = match anchor {
+                    None => None,
+                    Some(Target::Explicit { path, span }) => Some(FileSpan {
+                        path: path.clone(),
+                        span: Some(*span),
+                    }),
+                    // **Absent means the whole file**, which is `FileSpan`'s own
+                    // reading — a synthetic `1:1` span would claim claude
+                    // pointed at the first line when he pointed at the file.
+                    Some(Target::File { path }) => Some(FileSpan {
+                        path: path.clone(),
+                        span: None,
+                    }),
+                    Some(other) => {
+                        return declined(&format!(
+                            "{} is not a place a note can point at — name a path",
+                            other.to_value().tag().unwrap_or("that")
+                        ));
+                    }
+                };
+                let id = self.store.notify(*severity, title, body.as_deref(), anchor);
+                Outcome::Done(Receipt {
+                    capability: name,
+                    value: Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)),
+                    note: None,
+                })
             }
             Action::Region(RegionAction::MarkSeen { target }) => {
                 self.mark(name, target, SeenState::Seen)
@@ -3245,6 +3481,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // makes `:review` a thing you can type after the fact.
         review: None,
         peek: None,
+        inbox: None,
         store: Arc::clone(&host.store),
         asks: BTreeMap::new(),
         next_ask: Arc::clone(&host.next_ask),
@@ -3925,6 +4162,16 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // count is `(unseen-count)` with no `within`, and it is a different
             // question — `2a`'s picker asks it, the statusline does not.
             unseen: u32::try_from(unseen).unwrap_or(u32::MAX),
+            // `T067` — `5c`'s `inbox 3 unread`. Counted from the same three
+            // sources the inbox merges, so the strip and the float cannot
+            // disagree about how much is waiting.
+            //
+            // **Not a fourth reading of the same facts**: an ask is unread
+            // while pending, a block while any region is, a note by its bit,
+            // which is the merge's own rule applied by the one function that
+            // knows it.
+            inbox_unread: u32::try_from(inbox_unread(&shell.store, &shell.asks))
+                .unwrap_or(u32::MAX),
             // **The count `2b` draws and nothing computed until now.** It is
             // over the whole file, never over what the rows drew: bounding the
             // inline rows (`RowPolicy`) is only honest if the ones that stay
@@ -4376,6 +4623,83 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                             None => {}
                         }
                     }
+                    // **`T067` — `5c`'s `↵`/`s`, and `j`/`k` recompose the
+                    // float rather than mutate it.**
+                    //
+                    // `view/spans` is a snapshot (`layer.surface`'s own doc);
+                    // there is no live-query door into it the way
+                    // `Resources::diff` gives `4b`/`8b`/`2b`, so navigating the
+                    // inbox means asking the same query again with a new
+                    // `selected` and drawing what comes back — one extra
+                    // `(inbox)` per keystroke, over a list this build has no
+                    // reason to expect to be long.
+                    // **Guarded on the keys it uses, not on the surface** —
+                    // `review_key`'s rule, and the bug it exists to prevent
+                    // bit this arm before a test caught it: a first version
+                    // guarded on `shell.inbox.is_some()` alone and its `_ =>
+                    // {}` swallowed `esc`, which never reached
+                    // `closes_surface` below — the inbox would not close.
+                    Event::Key(key)
+                        if matches!(surface, Surface::Float)
+                            && shell.inbox.is_some()
+                            && matches!(
+                                key.code,
+                                KeyCode::Char('j' | 'k' | 's')
+                                    | KeyCode::Down
+                                    | KeyCode::Up
+                                    | KeyCode::Enter
+                            ) =>
+                    {
+                        let at = shell.inbox.unwrap_or(0);
+                        match key.code {
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                let next = at.saturating_add(1);
+                                shell.inbox = Some(next);
+                                editing.float = Some((
+                                    INBOX_SURFACE.to_owned(),
+                                    Value::Record(inbox_args(next)),
+                                ));
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                let next = at.saturating_sub(1);
+                                shell.inbox = Some(next);
+                                editing.float = Some((
+                                    INBOX_SURFACE.to_owned(),
+                                    Value::Record(inbox_args(next)),
+                                ));
+                            }
+                            KeyCode::Char('s') => {
+                                let item = inbox_row_id(&shell.store, &shell.asks, at);
+                                let outcome = editing.apply(
+                                    &mut Cx::new(held, focus, &mut panes, &mut shell),
+                                    &Action::Region(RegionAction::MarkSeen {
+                                        target: Target::InboxItem { id: item },
+                                    }),
+                                );
+                                if let Outcome::Refused(why) = outcome {
+                                    notice = Some(phosphor_steel::answer::why(&why));
+                                } else {
+                                    editing.float = Some((
+                                        INBOX_SURFACE.to_owned(),
+                                        Value::Record(inbox_args(at)),
+                                    ));
+                                }
+                            }
+                            KeyCode::Enter => {
+                                let item = inbox_row_id(&shell.store, &shell.asks, at);
+                                let outcome = editing.apply(
+                                    &mut Cx::new(held, focus, &mut panes, &mut shell),
+                                    &Action::Inbox(
+                                        phosphor_core::action::InboxAction::OpenInboxItem { item },
+                                    ),
+                                );
+                                if let Outcome::Refused(why) = outcome {
+                                    notice = Some(phosphor_steel::answer::why(&why));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                     // `T045`. The picker owns every key while it is open, the
                     // same way the ex line does and for the same reason: it is
                     // a line editor with a list under it, not a mode of the
@@ -4501,6 +4825,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         // first is still recorded should draw the *new* hunk
                         // without carrying the first one's state along.
                         shell.peek = None;
+                        // `T067`. Same shape a third time.
+                        shell.inbox = None;
                         if let Some(asked) = shell.asked {
                             let outcome = editing.apply(
                                 &mut Cx::new(held, focus, &mut panes, &mut shell),
@@ -6366,6 +6692,81 @@ fn permission_question(invocation: &str, files: &[PathBuf]) -> (String, String) 
     (format!("$ {invocation}{touching}"), verb)
 }
 
+/// How many inbox rows are unread — `5c`'s `inbox 3 unread` (`T067`).
+///
+/// **The statusline's half of the merge, and it must agree with
+/// [`AppHost::inbox_rows`] by construction.** Both apply one rule per kind: a
+/// pending ask is unread, a block is unread while any of its hunks is, a note
+/// carries its own bit. This one counts rather than building rows, because the
+/// strip has room for a number and not for a list.
+fn inbox_unread(
+    store: &store::Shared,
+    asks: &BTreeMap<AskId, phosphor_ui::question::QuestionVm>,
+) -> usize {
+    let blocks = store
+        .blocks()
+        .into_iter()
+        .filter(|block| store.hunks(block.id).iter().any(|hunk| !hunk.seen))
+        .count();
+    let notes = store.notes().into_iter().filter(|note| !note.seen).count();
+    asks.len() + blocks + notes
+}
+
+/// `5c`'s float args — the selected row, and nothing else it needs (`T067`).
+fn inbox_args(selected: usize) -> Args {
+    let mut args = Args::new();
+    args.set("selected", Value::Int(i64::try_from(selected).unwrap_or(0)));
+    args
+}
+
+/// An [`store::InboxSource`]'s row id, as the wire spells it (`T067`).
+fn inbox_id(source: store::InboxSource) -> Value {
+    Value::Int(i64::try_from(source.id().0).unwrap_or(i64::MAX))
+}
+
+/// The `InboxId` a drawn row names, by its 0-based position (`T067`).
+///
+/// **The same two-tier order [`AppHost::inbox_rows`] draws, or a keystroke
+/// would act on a different row than the one under the highlight.** Asks
+/// first, by `AskId` descending; then blocks and notes interleaved by
+/// [`store::Shared`]'s shared arrival clock — see that struct's own doc for
+/// why blocks and notes cannot be sorted on their own ids.
+///
+/// Rebuilt from the store every time rather than cached, the same
+/// `review_rows`/`review_last_row` shape one screen over. Out of range answers
+/// `InboxId(u64::MAX)`, which names nothing and refuses by the ordinary
+/// *"no such inbox item"* path.
+fn inbox_row_id(
+    store: &store::Shared,
+    asks: &BTreeMap<AskId, phosphor_ui::question::QuestionVm>,
+    at: usize,
+) -> phosphor_core::request::InboxId {
+    let mut asked: Vec<u64> = asks.keys().map(|id| id.0).collect();
+    asked.sort_by_key(|id| std::cmp::Reverse(*id));
+    if let Some(id) = asked.get(at) {
+        return store::InboxSource::Ask(*id).id();
+    }
+    let rest_at = at.saturating_sub(asked.len());
+
+    let mut rest: Vec<(u64, store::InboxSource)> = store
+        .blocks()
+        .into_iter()
+        .map(|block| (block.arrival, store::InboxSource::Block(block.id)))
+        .collect();
+    rest.extend(
+        store
+            .notes()
+            .into_iter()
+            .filter_map(|note| Some((note.arrival, store::InboxSource::of(note.id)?))),
+    );
+    rest.sort_by_key(|(arrival, _)| std::cmp::Reverse(*arrival));
+
+    rest.get(rest_at)
+        .map_or(phosphor_core::request::InboxId(u64::MAX), |(_, source)| {
+            source.id()
+        })
+}
+
 /// One queued ask as plain data, for `pending-asks` and `ask` (`T060`).
 ///
 /// **`deferred` is a field on the row rather than a second list**, because a
@@ -7407,6 +7808,9 @@ const REVIEW_SURFACE: &str = "review";
 
 /// The `hunk-peek` float's surface id — `runtime/review.scm` (`T066`).
 const PEEK_SURFACE: &str = "hunk-peek";
+
+/// The `inbox` float's surface id — `runtime/inbox.scm` (`T067`).
+const INBOX_SURFACE: &str = "inbox";
 
 const DASHBOARD_SURFACE: &str = "dashboard";
 
@@ -8807,6 +9211,14 @@ struct Shell {
     /// *"what claude changed here"*. Sharing the type would give a peek a
     /// `selected` and a `folded` set it has no rows to spend them on.
     peek: Option<HunkId>,
+    /// The highlighted row of an open inbox, if one is open (`T067`).
+    ///
+    /// **A `usize` and not an id**, unlike [`Shell::peek`] — `5c` has no fold
+    /// state and no grouping to key a set by, so there is nothing `Review`'s
+    /// richer session would buy here. The row is resolved against a fresh
+    /// `(inbox)` on every keystroke, the same live-query reading `review_vm`
+    /// takes, so it always points at what is currently drawn.
+    inbox: Option<usize>,
     /// The open review surface, if one is (`T065`).
     ///
     /// **`8b` and `4b` are one surface at two fold depths**, which the mockups
@@ -11331,6 +11743,7 @@ impl Editing {
                 // it, and the `s` handler below reads whichever session's guard
                 // matches first.
                 cx.shell.peek = None;
+                cx.shell.inbox = None;
                 cx.shell.review = Some(Review {
                     block,
                     selected: 0,
@@ -11357,6 +11770,134 @@ impl Editing {
                 // when a newer one arrives behind it.
                 self.float = Some((REVIEW_SURFACE.to_owned(), Value::Record(args)));
                 done()
+            }
+            // **`T067` — the loop's half of the two verbs an ex command
+            // reaches.**
+            //
+            // `:inbox` and `:notify` are typed at the ex line, which resolves
+            // through *this* applier; the repl's `(notify! …)` goes through the
+            // door's. Both halves exist for the reason `mark-seen`'s two do —
+            // and the first version of this task armed only the door's, so
+            // `:inbox` answered `not built yet — T067 builds it` while
+            // `(open-inbox!)` worked. A probe found it before a test did.
+            Action::Inbox(phosphor_core::action::InboxAction::OpenInbox {}) => {
+                // One surface, one session — `T065`/`T066`'s rule, a third
+                // time: whichever of the three was open, this replaces it.
+                cx.shell.review = None;
+                cx.shell.peek = None;
+                cx.shell.inbox = Some(0);
+                self.float = Some((INBOX_SURFACE.to_owned(), Value::Record(inbox_args(0))));
+                done()
+            }
+            Action::Inbox(phosphor_core::action::InboxAction::Notify {
+                severity,
+                title,
+                body,
+                anchor,
+            }) => {
+                // The one thing this half can do that the door's cannot:
+                // resolve a focus-relative anchor, because it has the editor.
+                let anchor = match anchor {
+                    None => None,
+                    Some(Target::Explicit { path, span }) => Some(FileSpan {
+                        path: path.clone(),
+                        span: Some(*span),
+                    }),
+                    Some(Target::File { path }) => Some(FileSpan {
+                        path: path.clone(),
+                        span: None,
+                    }),
+                    Some(Target::Cursor {} | Target::Selection {} | Target::Buffer { .. }) => {
+                        let Some(path) = self.file.clone() else {
+                            return declined("no file open — name a path");
+                        };
+                        let at = self.text(cx).cursor();
+                        Some(FileSpan {
+                            path,
+                            span: Some(Span { start: at, end: at }),
+                        })
+                    }
+                    Some(other) => {
+                        return declined(&format!(
+                            "{} is not a place a note can point at — name a path",
+                            other.to_value().tag().unwrap_or("that")
+                        ));
+                    }
+                };
+                let id = cx
+                    .shell
+                    .store
+                    .notify(*severity, title, body.as_deref(), anchor);
+                Outcome::Done(Receipt {
+                    capability: name,
+                    value: Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)),
+                    note: None,
+                })
+            }
+            // **`T067` — `5c`'s `↵ open`, and it means three different things
+            // because a row does.**
+            //
+            // A review block opens the review (`4b`/`8b`); a note with an anchor
+            // jumps to the place claude named; an ask raises the question float
+            // by deferring nothing — `]!` and this land on the same screen,
+            // which is Q9's *"one truth"* read as a keystroke.
+            //
+            // A note **without** an anchor opens nothing and says so. That is
+            // the honest answer rather than a no-op: `· note  bumped tokio to
+            // 1.41 for sleep jitter` is a sentence, not a place, and a `↵` that
+            // silently did nothing would be indistinguishable from one that
+            // missed.
+            Action::Inbox(phosphor_core::action::InboxAction::OpenInboxItem { item }) => {
+                match store::InboxSource::of(*item) {
+                    Some(store::InboxSource::Block(block)) => self.act(
+                        cx,
+                        &Action::Review(phosphor_core::action::ReviewAction::OpenReviewBlock {
+                            block: Some(block),
+                        }),
+                    ),
+                    Some(store::InboxSource::Note(_)) => {
+                        let Some(note) = cx
+                            .shell
+                            .store
+                            .notes()
+                            .into_iter()
+                            .find(|note| note.id == *item)
+                        else {
+                            return declined("no such inbox item");
+                        };
+                        let Some(anchor) = note.anchor else {
+                            return declined("that note is not about anywhere");
+                        };
+                        // Through `goto-location`, which `T056` built and which
+                        // already knows how to open a file it is not in.
+                        self.act(
+                            cx,
+                            &Action::Motion(MotionAction::GotoLocation {
+                                path: anchor.path.clone(),
+                                // **The span's start, or nowhere in
+                                // particular.** `FileSpan::span` absent means
+                                // *"the whole file"*, and `goto-location`'s
+                                // `position` absent means *"where you last
+                                // were"* — which is the right landing for a
+                                // note about a file rather than about a line.
+                                position: anchor.span.map(|span| span.start),
+                                pane: PaneRef::Focused {},
+                            }),
+                        )
+                    }
+                    Some(store::InboxSource::Ask(n)) => {
+                        // The queue decides which float is on screen (see the
+                        // `T059`/`T060` block in the loop); this only says the
+                        // ask is no longer pushed back, and the loop raises it.
+                        let ask = AskId(n);
+                        if !cx.shell.asks.contains_key(&ask) {
+                            return declined("that question is already answered");
+                        }
+                        cx.shell.deferred.remove(&ask);
+                        done()
+                    }
+                    None => declined("no such inbox item"),
+                }
             }
             // `T066` — `gh`'s screen, `2b`. One hunk, no rows, no chrome: the
             // float is three lines tall and closes on `esc` like any other, so
@@ -11393,6 +11934,7 @@ impl Editing {
                 };
                 // The other half of the same rule.
                 cx.shell.review = None;
+                cx.shell.inbox = None;
                 cx.shell.peek = Some(hunk.id);
                 let mut args = Args::new();
                 args.set(
@@ -12559,6 +13101,31 @@ impl Editing {
             SeenState::Seen => "mark-seen",
             SeenState::Unseen => "mark-unseen",
         };
+        // `T067`. **A note is the one inbox row that is not a region**, so it is
+        // taken before the scope machinery rather than inside it: `5c`'s
+        // `· note  bumped tokio to 1.41` has no file and no span, and asking
+        // `scope_of` for one would be asking a question with no answer.
+        //
+        // The other two rows *are* regions — a block's are its hunks' — and
+        // `review_scope` resolves them, which is what makes `s` one key with one
+        // meaning across all three of `5c`'s kinds.
+        if let Target::InboxItem { id } = target
+            && let Some(store::InboxSource::Note(_)) = store::InboxSource::of(*id)
+        {
+            let known = cx
+                .shell
+                .store
+                .set_note_seen(*id, matches!(state, SeenState::Seen));
+            return if known {
+                Outcome::Done(Receipt {
+                    capability,
+                    value: Value::Int(1),
+                    note: None,
+                })
+            } else {
+                declined("no such inbox item")
+            };
+        }
         match self.scope_of(&cx.shell.store, target) {
             Ok(scope) => {
                 let marked = cx.shell.store.set_seen(&scope, state);
@@ -15439,6 +16006,7 @@ mod tests {
             store: Arc::new(store::Shared::default()),
             review: None,
             peek: None,
+            inbox: None,
             asks: BTreeMap::new(),
             next_ask: Arc::new(std::sync::Mutex::new(1)),
             held: BTreeMap::new(),

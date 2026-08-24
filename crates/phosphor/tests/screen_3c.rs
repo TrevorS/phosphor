@@ -159,6 +159,7 @@ fn status_vm() -> StatusVm {
         session: SessionState::None,
         since: None::<Millis>,
         ask_pending: false,
+        inbox_unread: 0,
         unseen: 4,
         // No diagnostic on this screen. `2b` is the one that
         // draws `■ N`, and it has no golden frame.

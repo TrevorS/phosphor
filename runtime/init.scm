@@ -65,6 +65,8 @@
     "permissions.scm"
     ;; `T065`/`T066` — 8b/4b/2b, the review surfaces.
     "review.scm"
+    ;; `T067` — 5c, the inbox.
+    "inbox.scm"
     "languages/typescript.scm"
     "languages/javascript.scm"
     "languages/rust.scm"

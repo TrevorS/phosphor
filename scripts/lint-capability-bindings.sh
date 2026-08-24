@@ -130,6 +130,13 @@ EMITTED = {
     # row and no `all` to widen into.
     "float-mark": "the review float's own key handling — 4b's `s`/`S`",
     "float-toggle-fold": "the review float's own key handling — 8b's `za`",
+    # `T067`. 5c's `↵`, Rust-side for the same reason the two above are: `view/
+    # spans` is a snapshot and `keymaps.scm` cannot ask which row is
+    # highlighted. `j`/`k`/`s` recompose the float through `open-inbox`'s own
+    # capability and stay off this table; `↵` dispatches `open-inbox-item`
+    # directly, because that is the verb that decides what a row *means* and
+    # `T067`'s own arm already had to answer that question for the door.
+    "open-inbox-item": "the inbox float's own key handling — 5c's `↵`",
     "close-float": "`closes_surface` handles `esc` for every float",
     "close-all-floats": "`closes_surface` handles `esc` for every float",
     "close-repl": "`repl_key` handles it — `esc`",

@@ -287,6 +287,7 @@
 ;; the counter group — the only place a `│` appears.
 (define (status/counters vm)
   (let ([unseen (hash-try-get vm "unseen")]
+        [inbox (hash-try-get vm "inbox_unread")]
         [trouble (hash-try-get vm "trouble")]
         [attention (hash-try-get vm "attention")]
         [server (status/present? (hash-try-get vm "server"))]
@@ -337,6 +338,24 @@
           (list (status/segment 'counter-words
                                 (view/counter 'unseen unseen void 'meta)
                                 (view/counter 'unseen unseen "unseen" 'meta)
+                                'bar))
+          '())
+      ;; `T067` — 5c draws `inbox 3 unread` beside the `!`. it shares the
+      ;; counter rung, so §11's first step gives up the word and keeps the
+      ;; number: `inbox 3 unread` becomes `3`, which is still a fact and still
+      ;; points at `:inbox`.
+      ;;
+      ;; **no glyph, unlike `unseen` and `diagnostic`.** §2's lexicon has none
+      ;; for an inbox, and inventing one would be this file adding to a
+      ;; vocabulary the design language owns. the word is the label until width
+      ;; takes it.
+      (if (and (number? inbox) (> inbox 0))
+          (list (status/segment 'counter-words
+                                (view/label (number->string inbox) 'meta 'plain)
+                                (view/label (string-append "inbox "
+                                                           (number->string inbox)
+                                                           " unread")
+                                            'meta 'plain)
                                 'bar))
           '())
       (if server

@@ -102,6 +102,17 @@ pub struct StatusVm {
     pub ask_pending: bool,
     /// Unseen regions in this file. Zero draws nothing.
     pub unseen: u32,
+    /// Unread inbox rows (`5c`, `T067`). Zero draws nothing.
+    ///
+    /// **A count and not a list**, because §11's ladder gives this segment one
+    /// number and a word it can drop. What the number *is* derives — an ask
+    /// while it is pending, a block while any of its regions is unseen, a note
+    /// by its own bit — and it is computed where the merge is, so this field
+    /// carries an answer rather than a second opinion.
+    ///
+    /// Distinct from [`StatusVm::unseen`] beside it, which counts regions **in
+    /// this file**: closing the file changes that one and not this one.
+    pub inbox_unread: u32,
     /// Diagnostics in this file, by grade. Zero of a grade draws nothing.
     ///
     /// **§3's third diagnostic surface, and it was missing for a whole
@@ -151,6 +162,7 @@ impl Default for StatusVm {
             session: SessionState::None,
             since: None,
             ask_pending: false,
+            inbox_unread: 0,
             unseen: 0,
             trouble: 0,
             attention: 0,
@@ -194,6 +206,7 @@ impl StatusVm {
                 .with("since", self.since.to_value())
                 .with("ask_pending", self.ask_pending.to_value())
                 .with("unseen", self.unseen.to_value())
+                .with("inbox_unread", self.inbox_unread.to_value())
                 .with("trouble", self.trouble.to_value())
                 .with("attention", self.attention.to_value())
                 .with("vcs", self.vcs.to_value())
@@ -421,6 +434,7 @@ mod tests {
         let mut runtime = runtime();
         let vm = StatusVm {
             ask_pending: true,
+            inbox_unread: 0,
             session: SessionState::Idle,
             ..screen_9c()
         };

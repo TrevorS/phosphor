@@ -4461,8 +4461,88 @@ mockup screen ids of the same name, which mean entirely different things.
   > (the probe-then-test pattern above).
   >
   > `just gate` green.
-- [ ] **T067 · Inbox** — one list of everything Claude said; severity is a single MCP flag;
+- [x] **T067 · Inbox** — one list of everything Claude said; severity is a single MCP flag;
   unread = unseen. Screen `5c`. *Needs:* T053, T041
+
+  > **Built and ticked 2026-08-24.** `:inbox` opens `5c`; `↵`, `s` and `esc` work; `:notify`
+  > posts a note from the keyboard and the door's `notify` capability posts one from an agent.
+  > The strip draws `inbox N unread` on §11's counter rung, dropping the word before the glyph
+  > the way `unseen` does — except there is no glyph, because §2's lexicon has none for an inbox
+  > and this file does not invent one.
+  >
+  > **The inbox is a merge, and CP-8a's requirement is what that word has to mean in code, not
+  > prose.** `5c` is *"everything claude said"*, and the three things he says already live
+  > somewhere: a pending ask (`T060`'s queue), a declared review block (`T053`), a note
+  > (`store::Note`, the one addition here). `AppHost::inbox_rows` reads all three and computes
+  > `unread` per kind — pending for an ask, any-region-unseen for a block, its own bit for a
+  > note — and stores nothing. The statusline's `inbox_unread` applies the identical three rules
+  > independently, so the strip and the float cannot disagree by construction; a planted defect
+  > that counted every note instead of unread ones caught nothing until the test marked one note
+  > read and checked the strip afterward, which is when *"the same number either way"* stopped
+  > being true.
+  >
+  > **A row's identity had to survive the query that produced it, and an index would not.** A
+  > note arriving between two `(inbox)` calls renumbers everything after it in a merged list — so
+  > `InboxId` encodes its own source (`InboxSource::{Ask,Block,Note}`) rather than being one. Two
+  > functions, `id()`/`of()`, are the whole codec, the shape `Hunk::region_of`/`id_of` already
+  > used for the other id coupling in this file. A test pins the round-trip and the
+  > no-collision property directly, because an off-by-one in the encoding is the kind of bug a
+  > screenshot does not catch.
+  >
+  > **A note is the one inbox row that is not a region, and both `mark-seen` appliers take the
+  > same shortcut for it.** `Editing::mark` and `AppHost::mark` each check for
+  > `Target::InboxItem` naming a note *before* the region-scope machinery runs, because a note
+  > has no file and no span to resolve one from. The two had to be written twice and had to
+  > agree — the pty test marks a note through the door's capability (a repl call) and reads the
+  > result off the keyboard-driven float, which is the only way to prove they mean the same
+  > thing rather than assert it.
+  >
+  > **`↵` means three different things because a row does**, and a note with no anchor refuses
+  > by name rather than opening nothing silently — *"that note is not about anywhere"* is the
+  > honest answer to a sentence that is not a place.
+  >
+  > **The times are relative, and that is a stated deviation from `5c`, not an oversight.** The
+  > mockup draws `2m` for the newest row and `14:41` for the older three; nothing in this
+  > dependency graph can render the second half — there is no timezone-aware wall clock — and
+  > adding one to format a timestamp is not a trade this task makes. `store::Note::at` is an
+  > `Instant`, every row renders relative, and the ordering and the recency claim both still
+  > hold. Flagged per the standing rule rather than folded into the design docs.
+  >
+  > **`5c` is navigable, and that needed a second pass the first tick did not have.** `:inbox`
+  > opened a static list; `j`/`k` did nothing. `view/spans` is a *snapshot* — `layer.surface`'s
+  > own words — and unlike `4b`/`8b`/`2b` there is no `Resources` door into it, so navigation
+  > recomposes: `Shell::inbox` holds the row index, `j`/`k` re-run the surface with a new
+  > `selected`, and `Tint::Selection` (which the vocabulary already had, for exactly this) draws
+  > the highlight. `s` marks the highlighted row and `↵` opens what it names. `inbox_row_id`
+  > rebuilds the same order `inbox_rows` draws, so a keystroke cannot act on a different row than
+  > the one under the highlight.
+  >
+  > **Ten planted defects, ten catches — and three of them only after the fixture was fixed.**
+  > The first six: a block computing its own unread flag instead of deriving it, marking one row
+  > read marking every row, the merge sorting oldest-first, the strip counting every note instead
+  > of unread ones, two id kinds colliding at the same ordinal, and a note posted already read.
+  > Four more against the interactive half: `j` not moving, `s` acting on row 0 regardless of the
+  > highlight, blocks sorted on `BlockId` instead of the shared arrival clock, and the key guard
+  > swallowing `esc`.
+  >
+  > **Two of those exposed a real bug and a real gap in my own testing.**
+  >
+  > * **The arrival clock exists because a planted defect found its absence.** `BlockId` and a
+  >   note's counter mint independently, so ordering the merge on either is wrong the moment they
+  >   interleave. `Shared::arrivals` is one clock both stamp from. Proving it took **three**
+  >   fixtures: with one block, `BlockId(0)` and arrival `0` are the same number; with one note
+  >   between two blocks, the wrong key *ties* and a stable sort breaks the tie correctly by luck;
+  >   only with two notes do the keys diverge enough to change the drawn order. The test's own doc
+  >   records all three, because the first two versions passed against a defect and that is worth
+  >   more written down than fixed silently.
+  > * **The `esc` defect is caught as a *hang*, not a failure.** With the guard broad again, the
+  >   inbox never closes, and `leave_by` does a `child.wait()` with no timeout. The guard is
+  >   narrowed to the keys it uses — `review_key`'s rule, a third time — and the arm's own comment
+  >   names the failure so the next person widening it knows what they are buying.
+  >
+  > `just gate` green — confirmed with a bare, unpiped run after a mid-session reminder that a
+  > verification command piped into `grep`/`tail` reports the filter's exit code and not the
+  > command's.
 - [ ] **T068 · Anchored exchange / threads** — your comment and Claude's reply as virtual text
   under the region. Screen `3a`. The region itself carries Design Language §3's full anchored
   treatment — **tint + undercurl** — which is `T087` and `T085` composed, not the marks API alone.

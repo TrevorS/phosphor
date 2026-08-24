@@ -4821,6 +4821,293 @@ mod driven {
         editor.leave_by(b"ZQ");
     }
 
+    /// **`5c`: one list of everything claude said, and unread derives.**
+    ///
+    /// `T067`'s two claims in one press. The list is a *merge* — a declared
+    /// review block and a posted note are two different stores and one screen —
+    /// and `CP-8a` asks that unread come from seen-state rather than a copy, so
+    /// the proof is that **marking the block's hunks seen makes its inbox row
+    /// read** with nothing subscribing to anything.
+    #[test]
+    fn the_inbox_merges_what_claude_said_and_unread_derives_from_seen_state() {
+        let scratch = Scratch::new("inbox");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("fetch.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let form = format!(
+            "(declare-review-block! \"retry logic\" \
+             (list (hash \"path\" \"{}\" \"spans\" \
+                   (list (hash \"span\" (hash \"start\" (hash \"line\" 2 \"column\" 1) \
+                                          \"end\" (hash \"line\" 3 \"column\" 1)))))) \
+             \"one region\")\r",
+            file.display()
+        );
+        editor.press_until(form.as_bytes(), "one region");
+        // The receipt is the note's id — `⇒ 2`, which is `InboxSource::Note(0)`
+        // encoded. Needled on it because "steel" was already on screen from the
+        // banner and would have matched a frame before this ran.
+        editor.press_until(
+            b"(notify! \"info\" \"bumped tokio to 1.41 for sleep jitter\")\r",
+            "⇒ 2",
+        );
+        editor.press_until(b"(close-repl!)\r", "review ready");
+
+        // **`5c`'s strip says how much is waiting, before the float is open.**
+        // Two unread — the block and the note — counted from the same three
+        // sources the float merges, so the two cannot disagree.
+        //
+        // `j` first, and it is not decoration: a notice borrows the *whole*
+        // statusline row (vim's placement, and `Chrome`'s), and the frame this
+        // arrives on is still showing `review ready · retry logic`. A harmless
+        // key gives the row back before anything on it can be read.
+        let strip = whole(&editor.shown_on_grid(b"j", "inbox 2 unread"));
+        assert!(strip.contains("inbox 2 unread"), "{strip}");
+
+        // **Both stores, one list.**
+        let opened = whole(&editor.shown_on_grid(b":inbox\r", "everything claude said"));
+        assert!(
+            opened.contains("✻ review ready"),
+            "the block is a row:\n{opened}"
+        );
+        assert!(
+            opened.contains("· note") && opened.contains("bumped tokio to 1.41"),
+            "and so is the note:\n{opened}"
+        );
+        // Newest first — the note arrived after the block.
+        let note_at = opened.find("bumped tokio").expect("the note is drawn");
+        let block_at = opened.find("review ready").expect("the block is drawn");
+        assert!(
+            note_at < block_at,
+            "newest first, which is the only order an inbox has:\n{opened}"
+        );
+        // Neither has been read.
+        assert!(!opened.contains("seen ✓"), "nothing is read yet:\n{opened}");
+        // `5c`'s footer, spelled whole — Design Language §6.
+        assert!(
+            opened.contains("open") && opened.contains("mark seen"),
+            "{opened}"
+        );
+
+        // **The `CP-8a` proof.** Mark the block's one hunk seen from the
+        // *buffer* — `gsih`, nothing to do with the inbox — and its inbox row
+        // must go read on its own, because the row's `unread` is computed from
+        // the same regions the gutter draws.
+        editor.press_quietly(b"\x1b");
+        editor.press_quietly(b"gg");
+        editor.press_quietly(b"j");
+        editor.press_quietly(b"gsih");
+        let after = whole(&editor.shown_on_grid(b":inbox\r", "everything claude said"));
+        assert!(
+            after.contains("seen ✓"),
+            "the block's row went read with nothing subscribing:\n{after}"
+        );
+        // And the note did **not** — it has a bit of its own and nobody touched
+        // it. Without this the assertion above would pass on a screen that had
+        // marked everything.
+        let note_row = after
+            .lines()
+            .find(|row| row.contains("bumped tokio"))
+            .unwrap_or_default();
+        assert!(
+            !note_row.contains("seen ✓"),
+            "the note is untouched: {note_row:?}"
+        );
+        // And the strip agrees — one left, not two.
+        editor.press_quietly(b"\x1b");
+        let after_strip = whole(&editor.shown_on_grid(b"j", "inbox 1 unread"));
+        assert!(
+            after_strip.contains("inbox 1 unread"),
+            "the strip counts the same merge the float does:\n{after_strip}"
+        );
+
+        // **And a note is marked read through the same verb**, against an
+        // `inbox-item` target — the one inbox row that is not a region, taken
+        // before the scope machinery because a note has no file and no span.
+        //
+        // This half is also what makes the strip's count *testable*: with only
+        // the block ever marked, `every row` and `every unread row` are the
+        // same number, and a planted `notes.len()` passed. Marking the note is
+        // what separates them.
+        editor.press_quietly(b"\x1b");
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(
+            b"(mark-seen! (hash \"kind\" \"inbox-item\" \"id\" 2))\r",
+            "⇒ 1",
+        );
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        let read = whole(&editor.shown_on_grid(b":inbox\r", "everything claude said"));
+        let note_now = read
+            .lines()
+            .find(|row| row.contains("bumped tokio"))
+            .unwrap_or_default();
+        assert!(
+            note_now.contains("seen ✓"),
+            "the note reads as seen: {note_now:?}"
+        );
+        editor.press_quietly(b"\x1b");
+        // Nothing unread left, so §11's segment draws nothing at all rather
+        // than `inbox 0 unread` — the same rule `unseen` follows beside it.
+        editor.press_quietly(b"j");
+        let empty = whole(&editor.screen());
+        // **`unread`, not `inbox`.** The scratch directory is named after this
+        // test, so the file path on the strip contains the word `inbox` — and
+        // the first version of this assertion failed on its own fixture's name
+        // while the segment was correctly absent.
+        assert!(
+            !empty.contains("unread"),
+            "an empty count draws nothing:\n{empty}"
+        );
+
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **Three kinds, one clock: newest first across blocks and notes alike.**
+    ///
+    /// **This fixture's shape is the whole test, and it took two tries to get
+    /// right.** `store::Shared::arrivals` exists so blocks and notes can be
+    /// ordered against each other; `BlockId` and a note's own counter mint
+    /// independently and are not comparable. Proving that needs a fixture where
+    /// the two disagree *and* the disagreement changes the drawn order:
+    ///
+    /// * With **one** block, `BlockId(0)` and arrival `0` are the same number.
+    ///   A planted `block.id.0` drew an identical screen.
+    /// * With **one note between two blocks**, the wrong key gives the note and
+    ///   the second block the same value — and a stable sort happens to break
+    ///   that tie the right way. Still identical.
+    /// * With **two notes**, the keys finally diverge: correct puts the second
+    ///   block on top, wrong puts the newest note there.
+    ///
+    /// So the assertion below is on the *first* row, which is the only position
+    /// the two orderings disagree about.
+    #[test]
+    fn the_inbox_orders_blocks_and_notes_on_one_shared_clock() {
+        let scratch = Scratch::new("inbox-order");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("fetch.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let block = |title: &str, line: u32, note: &str| {
+            format!(
+                "(declare-review-block! \"{title}\" \
+                 (list (hash \"path\" \"{}\" \"spans\" \
+                       (list (hash \"span\" (hash \"start\" (hash \"line\" {line} \"column\" 1) \
+                                              \"end\" (hash \"line\" {} \"column\" 1)))))) \
+                 \"{note}\")\r",
+                file.display(),
+                line + 1,
+            )
+        };
+        // Oldest first, so the drawn order must come out reversed. Two notes
+        // between the blocks — see the doc above for why one is not enough.
+        editor.press_until(block("retry logic", 2, "first").as_bytes(), "first");
+        editor.press_until(
+            b"(notify! \"info\" \"bumped tokio to 1.41\")\r",
+            "\u{21d2} ",
+        );
+        editor.press_until(
+            b"(notify! \"info\" \"pinned the toolchain\")\r",
+            "\u{21d2} ",
+        );
+        editor.press_until(block("ws reconnect", 4, "later").as_bytes(), "later");
+        editor.press_until(b"(close-repl!)\r", "review ready");
+
+        let all = whole(&editor.shown_on_grid(b":inbox\r", "ws reconnect"));
+        let newest = all.find("ws reconnect").expect("the second block is drawn");
+        let note_two = all.find("pinned the toolchain").expect("the newer note");
+        let note_one = all.find("bumped tokio").expect("the older note");
+        let oldest = all.find("retry logic").expect("the first block is drawn");
+        assert!(
+            newest < note_two,
+            "the block declared last is the first row — the position the two \
+             orderings disagree about:\n{all}"
+        );
+        assert!(
+            note_two < note_one && note_one < oldest,
+            "and the rest fall in arrival order behind it:\n{all}"
+        );
+
+        editor.press_quietly(b"\x1b");
+        editor.leave_by(b"ZQ");
+    }
+
+    /// **`j`/`k`/`s`/`↵` inside `5c`, aimed at the row under the highlight.**
+    ///
+    /// `view/spans` is a snapshot — `layer.surface`'s own doc — so there is no
+    /// live door into it the way `Resources::diff` gives the review float;
+    /// navigating recomposes the inbox with a new `selected` on every key. The
+    /// proof this test is for is that the *right* row moves: `s` on the
+    /// highlighted row and not on row 0 regardless of where the highlight is,
+    /// and `↵` on a block opens the review it names.
+    #[test]
+    fn the_inbox_navigates_and_opens_what_the_highlighted_row_names() {
+        let scratch = Scratch::new("inbox-nav");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("fetch.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_until(b":repl\r", "steel");
+        let form = format!(
+            "(declare-review-block! \"retry logic\" \
+             (list (hash \"path\" \"{}\" \"spans\" \
+                   (list (hash \"span\" (hash \"start\" (hash \"line\" 2 \"column\" 1) \
+                                          \"end\" (hash \"line\" 3 \"column\" 1)))))) \
+             \"one region\")\r",
+            file.display()
+        );
+        editor.press_until(form.as_bytes(), "one region");
+        editor.press_until(
+            b"(notify! \"info\" \"bumped tokio to 1.41 for sleep jitter\")\r",
+            "⇒ 2",
+        );
+        editor.press_until(b"(close-repl!)\r", "review ready");
+
+        // Row 0 is the note (newest); row 1 is the block. `j` moves onto the
+        // block without touching the note.
+        let opened = whole(&editor.shown_on_grid(b":inbox\r", "everything claude said"));
+        assert!(
+            opened.contains("bumped tokio"),
+            "the note is drawn:\n{opened}"
+        );
+        editor.press_quietly(b"j");
+        editor.press_quietly(b"s");
+        let marked = whole(&editor.screen());
+        let block_row = marked
+            .lines()
+            .find(|row| row.contains("review ready"))
+            .unwrap_or_default();
+        let note_row = marked
+            .lines()
+            .find(|row| row.contains("bumped tokio"))
+            .unwrap_or_default();
+        assert!(
+            block_row.contains("seen ✓"),
+            "`s` acted on the highlighted row, the block: {block_row:?}"
+        );
+        assert!(
+            !note_row.contains("seen ✓"),
+            "and not on row 0, the note: {note_row:?}"
+        );
+
+        // **`↵` on the block opens the review it names.** `k` back onto it —
+        // `s` did not move the highlight — then `Enter`.
+        editor.press_quietly(b"\r");
+        let review = whole(&editor.screen());
+        assert!(
+            review.contains("]] next file"),
+            "the review opened, replacing the inbox:\n{review}"
+        );
+
+        editor.press_quietly(b"q");
+        editor.leave_by(b"ZQ");
+    }
+
     /// **`2b`'s acceptance: `gh` opens a peek without leaving the buffer.**
     ///
     /// Screens `4b` and `2b` are one function apart — `peek_vm` reuses
@@ -5776,8 +6063,10 @@ mod driven {
         // capability's own row in `action.rs`.
         // `:transcript` left this table with `SPC t` — same task, same
         // capability, same reason.
+        // `:inbox` left this table when `T067` built `5c` — it opens a float
+        // now, which is the third command to graduate off this list and the
+        // reason the list is written as data rather than as prose.
         let deferred: &[(&str, &str)] = &[
-            ("inbox", "T067"),
             ("diff-disk", "T070"),
             // `:reattach` left this table when `T057` built the lifecycle —
             // with no session it declines by *name* now rather than by task.

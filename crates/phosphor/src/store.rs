@@ -40,12 +40,13 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Instant;
 
 use phosphor_core::journal;
 use phosphor_core::query::Revision;
 use phosphor_core::request::{
-    Actor, AnchorId, BlockId, Diagnostic, FileGroup, GroupId, HunkId, Position, RegionId,
-    RegionSpec, Span,
+    Actor, AnchorId, BlockId, Diagnostic, FileGroup, FileSpan, GroupId, HunkId, InboxId, Position,
+    RegionId, RegionSpec, Severity, Span,
 };
 use phosphor_core::store::{
     Anchor, Declared, Fingerprint, Lens, Reanchored, Region, Scope, SeenLog, SeenState, Snapshot,
@@ -71,6 +72,15 @@ pub(crate) struct Block {
     pub(crate) annotation: Option<String>,
     /// One entry per file, in the order declared.
     pub(crate) groups: Vec<Group>,
+    /// When this block was declared, against [`Shared::arrivals`] (`T067`).
+    ///
+    /// **The one thing a `BlockId` cannot answer on its own.** `5c` interleaves
+    /// asks, blocks and notes by recency, and `BlockId`, `AskId` and
+    /// `Note::arrival` are three counters that mint independently — a second
+    /// block declared after a note would have a *lower* `BlockId` than the
+    /// note's own inbox-encoded id if the merge sorted on either counter
+    /// alone. This is the shared clock the merge actually needs.
+    pub(crate) arrival: u64,
 }
 
 /// One file's contribution to a block.
@@ -157,6 +167,102 @@ impl Hunk {
     }
 }
 
+/// What an inbox row is a row *of* (`T067`).
+///
+/// `5c` is *"everything claude said"*, and the three things he says already
+/// live in three places: a pending question (`T060`'s queue), a declared review
+/// block (`T053`), and a note (`Shared::notify`). The inbox is a **view** over
+/// them, not a fourth store — which is what `CP-8a` asks for when it says
+/// unread must derive from seen-state rather than duplicate it.
+///
+/// That leaves one problem: `open-inbox-item` and `Target::InboxItem` both name
+/// a row by [`InboxId`], and a row's identity has to outlive the query that
+/// produced it. An index into the merged list would not — a note arriving
+/// renumbers every row under it. So the id **carries its own source**, which is
+/// what makes `InboxId(9)` mean the same row on two consecutive calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InboxSource {
+    /// A question waiting to be answered — `5c`'s `! needs input`.
+    Ask(u64),
+    /// A declared review block — `5c`'s `✻ review ready`.
+    Block(BlockId),
+    /// A note claude posted — `5c`'s `· note`.
+    Note(u64),
+}
+
+/// How many kinds an [`InboxId`] can encode.
+///
+/// Four rather than three, so a fourth kind is an added arm rather than a
+/// renumbering of every id in a running session.
+const INBOX_KINDS: u64 = 4;
+
+impl InboxSource {
+    /// This source's row id.
+    ///
+    /// **The whole encoding, in one pair of functions**, the shape
+    /// [`Hunk::region_of`] already uses for the other id coupling in this file:
+    /// two spellings of one fact meet in exactly one place, so there is nowhere
+    /// for them to disagree.
+    pub(crate) const fn id(self) -> InboxId {
+        let (kind, n) = match self {
+            Self::Ask(n) => (0, n),
+            Self::Block(block) => (1, block.0),
+            Self::Note(n) => (2, n),
+        };
+        InboxId(n * INBOX_KINDS + kind)
+    }
+
+    /// The source a row id names, or [`None`] for a kind nothing encodes.
+    pub(crate) const fn of(id: InboxId) -> Option<Self> {
+        let n = id.0 / INBOX_KINDS;
+        match id.0 % INBOX_KINDS {
+            0 => Some(Self::Ask(n)),
+            1 => Some(Self::Block(BlockId(n))),
+            2 => Some(Self::Note(n)),
+            _ => None,
+        }
+    }
+}
+
+/// One note claude posted — `notify`, and `5c`'s `· note` row (`T067`).
+///
+/// **The only inbox row with storage of its own, and that is the whole of what
+/// `T067` adds.** `5c` is *"everything claude said"*, which is three things
+/// that already exist: a pending ask (`T060`'s queue), a declared review block
+/// (`T053`), and a note. The first two are read where they live — `CP-8a` asks
+/// that unread *derive* from seen-state rather than being copied, and a copy is
+/// exactly what a fourth store would be.
+///
+/// A note has nowhere else to live, so its `seen` bit is not a duplicate of
+/// anything; it is the fact itself.
+#[derive(Debug, Clone)]
+pub(crate) struct Note {
+    /// Which item.
+    pub(crate) id: InboxId,
+    /// `info`, `attention` or `trouble` — one flag, as the task says.
+    pub(crate) severity: Severity,
+    /// `5c`'s one line.
+    pub(crate) title: String,
+    /// The rest, if there is any.
+    pub(crate) body: Option<String>,
+    /// What it is about, when claude named a place.
+    pub(crate) anchor: Option<FileSpan>,
+    /// When it was posted.
+    ///
+    /// **[`Instant`], not a wall clock.** `5c` draws `2m` for the newest row
+    /// and `14:41` for the older ones; nothing in this tree can render the
+    /// second half — there is no timezone-aware clock in the dependency graph
+    /// and adding one for a timestamp format is not a trade this task makes.
+    /// So every row renders relative, which orders them identically and says
+    /// the same thing about recency. Recorded rather than faked.
+    pub(crate) at: Instant,
+    /// Whether it has been read.
+    pub(crate) seen: bool,
+    /// When this note was posted, against [`Shared::arrivals`] (`T067`).
+    /// See [`Block::arrival`] for why one shared clock is needed at all.
+    pub(crate) arrival: u64,
+}
+
 /// The store, shared.
 #[derive(Debug, Default)]
 pub(crate) struct Shared {
@@ -171,6 +277,22 @@ pub(crate) struct Shared {
     /// for what claude said that outlives a session, and duplicating it here
     /// would be two records of one sentence.
     blocks: Mutex<Vec<Block>>,
+    /// **The one clock `5c`'s merge needs** — minted by [`Shared::mint_arrival`]
+    /// and stamped on a [`Block`] and a [`Note`] alike, so the two can be
+    /// sorted together by when they actually arrived. Blocks and notes each
+    /// already have their own id counter; neither is comparable to the
+    /// other's, which is exactly the bug `T067`'s own test found before this
+    /// field existed — a second block declared after a note sorted as older
+    /// than it.
+    arrivals: Mutex<u64>,
+    /// Notes claude posted (`T067`), oldest first.
+    ///
+    /// Beside `blocks` and not journalled, for exactly `blocks`'s reason: a note
+    /// is a statement claude made once, and `phosphor_core::store` is the
+    /// *seen-state* machine. What that costs is that a note does not survive a
+    /// restart — which is the same trade `T053`'s blocks already make, and the
+    /// inbox is a session's news rather than an archive.
+    notes: Mutex<Vec<Note>>,
     /// How many groups have been minted this session (`T064`).
     ///
     /// Beside `blocks` rather than derived from it, because a group id must be
@@ -221,6 +343,8 @@ impl Shared {
             // consistent rather than a gap — ids that name nothing do not need
             // to be reserved.
             blocks: Mutex::new(Vec::new()),
+            arrivals: Mutex::new(0),
+            notes: Mutex::new(Vec::new()),
             groups: Mutex::new(0),
         })
     }
@@ -383,9 +507,81 @@ impl Shared {
             title: title.to_owned(),
             annotation: annotation.map(str::to_owned),
             groups,
+            arrival: self.mint_arrival(),
         };
         blocks.push(block.clone());
         block
+    }
+
+    /// **`notify`** — claude posts a note to the inbox (`T067`).
+    ///
+    /// Answers the id, so a caller can name the row it just made. Ids are
+    /// minted from the count for [`Shared::declare_block`]'s reason: stable
+    /// within a session and never reused.
+    pub(crate) fn notify(
+        &self,
+        severity: Severity,
+        title: &str,
+        body: Option<&str>,
+        anchor: Option<FileSpan>,
+    ) -> InboxId {
+        let mut notes = self
+            .notes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let id = InboxSource::Note(notes.len() as u64).id();
+        notes.push(Note {
+            id,
+            severity,
+            title: title.to_owned(),
+            body: body.map(str::to_owned),
+            anchor: anchor.map(|span| FileSpan {
+                path: key_for(&span.path),
+                span: span.span,
+            }),
+            at: Instant::now(),
+            seen: false,
+            arrival: self.mint_arrival(),
+        });
+        id
+    }
+
+    /// Every note, oldest first (`T067`).
+    pub(crate) fn notes(&self) -> Vec<Note> {
+        self.notes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Marks one note read, or unread. Answers whether it existed (`T067`).
+    ///
+    /// **The one inbox row `mark-seen` touches directly.** A block row's seen
+    /// state is its regions' and a pending ask's is the queue's; both are
+    /// reached through the scopes that already exist, which is what keeps this
+    /// from being a second seen-state machine.
+    pub(crate) fn set_note_seen(&self, item: InboxId, seen: bool) -> bool {
+        let mut notes = self
+            .notes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(found) = notes.iter_mut().find(|note| note.id == item) else {
+            return false;
+        };
+        found.seen = seen;
+        true
+    }
+
+    /// A fresh arrival stamp — the clock [`Block::arrival`]/[`Note::arrival`]
+    /// read (`T067`).
+    fn mint_arrival(&self) -> u64 {
+        let mut minted = self
+            .arrivals
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let stamp = *minted;
+        *minted += 1;
+        stamp
     }
 
     /// A fresh group id (`T064`).
@@ -1127,6 +1323,139 @@ mod tests {
         assert_eq!(
             shared.hunk_of(region).map(|h| h.group),
             Some(via_first[0].group)
+        );
+    }
+
+    /// **`T067`'s id codec round-trips, and that is the whole of what makes an
+    /// inbox row nameable.**
+    ///
+    /// `open-inbox-item` and `Target::InboxItem` both take an `InboxId`, and the
+    /// inbox is a view over three stores rather than a store of its own — so a
+    /// row's identity has to survive the next call, which an index into the
+    /// merged list would not.
+    #[test]
+    fn an_inbox_id_carries_the_source_it_names() {
+        use super::InboxSource;
+
+        // Every kind, at ids that would collide under a narrower encoding: note
+        // 1 and ask 1 and block 1 are three different rows.
+        let sources = [
+            InboxSource::Ask(0),
+            InboxSource::Ask(1),
+            InboxSource::Block(phosphor_core::request::BlockId(1)),
+            InboxSource::Note(1),
+            InboxSource::Ask(u64::from(u32::MAX)),
+            InboxSource::Note(7),
+        ];
+        for source in sources {
+            assert_eq!(
+                InboxSource::of(source.id()),
+                Some(source),
+                "{source:?} round-trips"
+            );
+        }
+
+        // And the three kinds at the same ordinal are three different ids —
+        // the property an index-based id would break.
+        let one = [
+            InboxSource::Ask(1).id(),
+            InboxSource::Block(phosphor_core::request::BlockId(1)).id(),
+            InboxSource::Note(1).id(),
+        ];
+        assert_ne!(one[0], one[1]);
+        assert_ne!(one[1], one[2]);
+        assert_ne!(one[0], one[2]);
+    }
+
+    /// **A note is the one inbox row with storage of its own**, and its seen bit
+    /// is the fact rather than a copy of one.
+    #[test]
+    fn a_note_is_posted_read_and_unread_again() {
+        let shared = Shared::default();
+        let first = shared.notify(
+            phosphor_core::request::Severity::Info,
+            "bumped tokio to 1.41 for sleep jitter",
+            None,
+            None,
+        );
+        let second = shared.notify(
+            phosphor_core::request::Severity::Trouble,
+            "the websocket reconnect loop is hot",
+            Some("it retries with no backoff"),
+            None,
+        );
+        assert_ne!(first, second, "two notes, two ids");
+
+        let notes = shared.notes();
+        assert_eq!(notes.len(), 2, "oldest first");
+        assert_eq!(notes[0].title, "bumped tokio to 1.41 for sleep jitter");
+        assert!(notes.iter().all(|note| !note.seen), "posted unread");
+
+        assert!(shared.set_note_seen(second, true));
+        let after = shared.notes();
+        assert!(!after[0].seen, "the other one is untouched");
+        assert!(after[1].seen, "and this one is read");
+
+        // Unread again — `5c`'s footer offers `s seen`, and a mark you cannot
+        // undo is a mark you hesitate to make.
+        assert!(shared.set_note_seen(second, false));
+        assert!(!shared.notes()[1].seen);
+
+        // An id that names nothing says so rather than marking the first note
+        // it finds — `annotate_group`'s rule, one store over.
+        assert!(!shared.set_note_seen(phosphor_core::request::InboxId(999), true));
+    }
+
+    /// **Blocks and notes interleave by when they actually arrived, not by
+    /// either one's own id counter** (`T067`).
+    ///
+    /// `BlockId` and a note's own `InboxId` are two counters that mint
+    /// independently, so sorting rows on either alone is wrong the moment a
+    /// block and a note arrive interleaved: a second block declared after a
+    /// note has a *lower* `BlockId` than the note's, and would sort as older
+    /// than something posted before it existed. `Shared::arrivals` is the one
+    /// clock both stamp from.
+    #[test]
+    fn a_second_block_after_a_note_still_arrives_after_it() {
+        let shared = Shared::default();
+        // block 0
+        block(&shared);
+        let note = shared.notify(
+            phosphor_core::request::Severity::Info,
+            "bumped tokio to 1.41 for sleep jitter",
+            None,
+            None,
+        );
+        // block 1 — a higher `BlockId`, and it should also read as arriving
+        // after the note, which a lower one would not.
+        let second_block = shared
+            .declare_block(
+                "second pass",
+                &[phosphor_core::request::FileGroup {
+                    path: "src/fetch.rs".into(),
+                    spans: vec![changed(1, 2)],
+                    annotation: None,
+                }],
+                None,
+                Actor::Claude,
+            )
+            .id;
+
+        let blocks = shared.blocks();
+        let by_id: std::collections::BTreeMap<phosphor_core::request::BlockId, u64> = blocks
+            .iter()
+            .map(|block| (block.id, block.arrival))
+            .collect();
+        let note_arrival = shared
+            .notes()
+            .into_iter()
+            .find(|candidate| candidate.id == note)
+            .expect("the note exists")
+            .arrival;
+
+        assert!(
+            by_id[&second_block] > note_arrival,
+            "the second block arrived after the note, on the shared clock"
         );
     }
 
