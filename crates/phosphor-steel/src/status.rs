@@ -102,6 +102,16 @@ pub struct StatusVm {
     pub ask_pending: bool,
     /// Unseen regions in this file. Zero draws nothing.
     pub unseen: u32,
+    /// Unresolved threads in this file (`3a`, `T068`). Zero draws nothing.
+    ///
+    /// **Unresolved, not all** — `3a` draws `1 thread · 4 unseen` beside an
+    /// exchange you are still in. A count that included the finished ones would
+    /// keep claiming your attention for a conversation you closed, which is the
+    /// same argument §3 row 18 makes about a seen region's marker.
+    ///
+    /// In *this file*, like [`StatusVm::unseen`] beside it and unlike
+    /// [`StatusVm::inbox_unread`]: closing the file changes this one.
+    pub threads: u32,
     /// Unread inbox rows (`5c`, `T067`). Zero draws nothing.
     ///
     /// **A count and not a list**, because §11's ladder gives this segment one
@@ -162,6 +172,7 @@ impl Default for StatusVm {
             session: SessionState::None,
             since: None,
             ask_pending: false,
+            threads: 0,
             inbox_unread: 0,
             unseen: 0,
             trouble: 0,
@@ -206,6 +217,7 @@ impl StatusVm {
                 .with("since", self.since.to_value())
                 .with("ask_pending", self.ask_pending.to_value())
                 .with("unseen", self.unseen.to_value())
+                .with("threads", self.threads.to_value())
                 .with("inbox_unread", self.inbox_unread.to_value())
                 .with("trouble", self.trouble.to_value())
                 .with("attention", self.attention.to_value())
@@ -434,6 +446,7 @@ mod tests {
         let mut runtime = runtime();
         let vm = StatusVm {
             ask_pending: true,
+            threads: 0,
             inbox_unread: 0,
             session: SessionState::Idle,
             ..screen_9c()

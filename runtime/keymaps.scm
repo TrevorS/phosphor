@@ -1664,10 +1664,6 @@
 ;; says so until then, which is the design's own rule — unimplemented is a
 ;; value, not an absence — and is why this answers a role rather than erroring.
 ;;
-;; **not built:** `:g/TODO/c`, 6d's other range form. `broadcast-thread` is
-;; declared for it (`action.rs`, *"one message against every match of a
-;; pattern"*) and a `/pattern/` grammar is a second parser; no done-when asks
-;; for it, so it is named here rather than half-written.
 (ex-set! "c[omment]" "an anchored message over a range — 6d's :'<,'>c"
          (lambda (rest bang)
            (apply key/run
@@ -1675,6 +1671,67 @@
                           (list (key/cmd "start-thread"
                                          "anchor" (ex-anchor)
                                          "body" rest))))))
+
+;; T068 — 3a's other four verbs, so an exchange is a conversation you can hold
+;; rather than one you can only start.
+;;
+;; **each takes the thread's id**, which `(threads)` reports and 3a does not
+;; draw. that is the same shape `:review <id>` has and the same limitation: a
+;; screen that showed the number would be spending a column on bookkeeping. what
+;; makes it usable is that ids are minted in order and never reused, so the
+;; thread you just started is the highest one.
+;;
+;; `:reply` splits on the first space — the id, then the rest verbatim, because
+;; a reply is prose and the only thing that can be taken from the front of it is
+;; a number.
+;;
+;; **`(string->number "")` is `#false`, and a `#false` id raises inside
+;; `key/cmd` — which reaches the ex bridge as *"no such command"*.** so every
+;; one of these guards its own number: an empty or non-numeric argument names
+;; thread `0`, which either exists (and the verb is honest about acting on it)
+;; or does not (and the arm refuses with `no such thread`). that is the third
+;; time this trap has been sprung — T060's `:defer`, T067's `:annotate`, and
+;; here — and `every_ex_command_decodes` types every name with an empty
+;; argument, which is what catches it each time.
+(define (thread/id text)
+  (let ([n (string->number text)])
+    (if (number? n) n 0)))
+
+(define (thread/split text)
+  (let loop ([left (string->list text)] [head '()])
+    (cond
+     [(null? left) (cons (list->string (reverse head)) "")]
+     [(char=? (car left) #\space)
+      (cons (list->string (reverse head)) (list->string (cdr left)))]
+     [else (loop (cdr left) (cons (car left) head))])))
+
+(ex-set! "reply" "reply to a thread — :reply <id> <text>"
+         (lambda (rest bang)
+           (let ([split (thread/split rest)])
+             (key/run (key/cmd "reply-to-thread"
+                               "thread" (thread/id (car split))
+                               "body" (cdr split))))))
+
+(ex-set! "resolve" "mark a thread done, keeping it — :resolve <id>"
+         (lambda (rest bang)
+           (key/run (key/cmd "resolve-thread" "thread" (thread/id rest)))))
+
+;; banged, because deleting an exchange is the one thread verb that loses
+;; something — `:resolve` is the ordinary way to finish with one.
+(ex-set! "unthread" "delete a thread outright — :unthread! <id>"
+         (lambda (rest bang)
+           (key/run (key/cmd "delete-thread" "thread" (thread/id rest)))))
+
+;; 6d's other range form, `:g/TODO/c`, without the `/pattern/` grammar — which
+;; is a second parser and one no done-when asks for. the pattern is a literal
+;; substring and `broadcast-thread`'s own arm says so, which is a narrower verb
+;; than the mockup draws and an honest one rather than a half-written regex.
+(ex-set! "broadcast" "one message against every line matching — :broadcast <pattern> <text>"
+         (lambda (rest bang)
+           (let ([split (thread/split rest)])
+             (key/run (key/cmd "broadcast-thread"
+                               "pattern" (car split)
+                               "body" (cdr split))))))
 
 ;; T036 — restarting a language server, the one thing you do to a server rather
 ;; than through it. an ex command and not a leader key because 3c draws six rows

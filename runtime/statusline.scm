@@ -288,6 +288,7 @@
 (define (status/counters vm)
   (let ([unseen (hash-try-get vm "unseen")]
         [inbox (hash-try-get vm "inbox_unread")]
+        [threads (hash-try-get vm "threads")]
         [trouble (hash-try-get vm "trouble")]
         [attention (hash-try-get vm "attention")]
         [server (status/present? (hash-try-get vm "server"))]
@@ -338,6 +339,25 @@
           (list (status/segment 'counter-words
                                 (view/counter 'unseen unseen void 'meta)
                                 (view/counter 'unseen unseen "unseen" 'meta)
+                                'bar))
+          '())
+      ;; `T068` — 3a draws `1 thread · 4 unseen`, threads first. it shares the
+      ;; counter rung, so §11's first step gives up the word and keeps the
+      ;; number.
+      ;;
+      ;; **`⚓` is §2's anchor glyph and this is where the strip spends it.**
+      ;; unlike the inbox below, a thread *has* a glyph in the lexicon — so the
+      ;; contraction is `⚓1` rather than a bare number, which is one more fact
+      ;; kept at the same width.
+      (if (and (number? threads) (> threads 0))
+          (list (status/segment 'counter-words
+                                (view/label (string-append "⚓" (number->string threads))
+                                            'meta 'plain)
+                                (view/label (string-append (number->string threads)
+                                                           (if (= threads 1)
+                                                               " thread"
+                                                               " threads"))
+                                            'meta 'plain)
                                 'bar))
           '())
       ;; `T067` — 5c draws `inbox 3 unread` beside the `!`. it shares the

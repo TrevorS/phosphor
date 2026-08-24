@@ -408,6 +408,16 @@ fn decorate(
     let tally = shown.tally();
     let mut regions = Vec::new();
     regions.extend(shown.regions(&buffer.editor));
+    // **`T068` — `3a`'s threads, read once and spent three times**: the row
+    // tint below, the virtual-text rows further down, and the undercurl that
+    // marks the anchor. One read, because three reads of the same store in one
+    // frame is three chances for the tint, the rows and the curl to disagree
+    // about where a thread is.
+    let threads = buffer
+        .file
+        .as_deref()
+        .map(|path| store.threads_in(path))
+        .unwrap_or_default();
     // **`T041` — the second source this `Vec` was built for.** The comment
     // above has said since `T040` that *"there is one source today; `T041`
     // adds the rest to this `Vec` and nothing else here changes"*, and
@@ -421,7 +431,7 @@ fn decorate(
     // *"seen — marker cleared, line is plain"* — so the ladder is what
     // decides they draw nothing, in the one place that decides it.
     let unseen = buffer.file.as_deref().map_or(0, |path| {
-        let spans: Vec<_> = store
+        let mut spans: Vec<_> = store
             .spans_in(path)
             .into_iter()
             .map(|(span, state)| {
@@ -434,6 +444,18 @@ fn decorate(
                 )
             })
             .collect();
+        // **`T068` — §3's row 20, and the reason `RegionState::Thread` was
+        // already in the ladder.** A thread's line takes the anchor tint and
+        // contributes *nothing* to the column — `RegionState::mark` maps it to
+        // `StateMark::None` — which is what makes an exchange an overlay rather
+        // than a claim about attention. Appended to the same `spans` the unseen
+        // regions build, so one `Tints::sync` and one `gutter::resolve` decide
+        // a row that carries both.
+        spans.extend(
+            threads
+                .iter()
+                .map(|thread| (thread.span, gutter::RegionState::Thread)),
+        );
         regions.extend(gutter::spans(&buffer.editor, &spans));
         // `T087` — §3's row tints, through the fork's marks API. The same
         // `spans` the gutter's column is built from, so the tint and the
@@ -483,7 +505,43 @@ fn decorate(
             })
             .collect()
     });
-    let underlines = shown.underlines(&buffer.editor, theme);
+    // **`T068` — `3a`'s exchange, as virtual text under the anchor.**
+    //
+    // Appended after the diagnostics so a line carrying both reads
+    // trouble-first, which is §3's own priority; `virtual_text::install` keeps
+    // the order it is given.
+    //
+    // **Owned by the region under the anchor, when there is one** — the same
+    // `store.covering` lookup the diagnostic rows just did, and for the same
+    // reason: `set-virtual-text-visible` collapses a rail *by its owner*, and a
+    // thread on a claude-written line should fold with the rest of that line's
+    // rails rather than being the one thing left behind.
+    let mut rows = rows;
+    if let Some(path) = buffer.file.clone() {
+        for thread in &threads {
+            let (line, column) = (
+                usize::try_from(thread.span.start.line.saturating_sub(1)).unwrap_or(0),
+                usize::try_from(thread.span.start.column.saturating_sub(1)).unwrap_or(0),
+            );
+            let owner = store.covering(&path, thread.span.start);
+            if owner.is_some_and(|owner| buffer.collapsed.contains(&owner)) {
+                continue;
+            }
+            for reply in &thread.replies {
+                let row = virtual_text::Row::new(
+                    virtual_text::Anchor::at(line, column),
+                    thread_runs(reply, thread.resolved, theme),
+                );
+                rows.push(owner.map_or_else(|| row.clone(), |owner| row.clone().owned_by(owner)));
+            }
+        }
+    }
+    let mut underlines = shown.underlines(&buffer.editor, theme);
+    // **§3's row 20 is a tint *and* an undercurl, and this is the second
+    // half.** `T085` put undercurl in the fork for the diagnostics; the anchor
+    // wants the same treatment in a different hue — §1's anchor colour, because
+    // a thread is a place you marked and not a fault.
+    underlines.extend(thread_underlines(&buffer.editor, &threads, theme));
     virtual_text::install(&mut buffer.editor, &rows);
     buffer.editor.set_styled_spans(underlines);
     // As many rows as any region reaches and no more. `BufferView`'s own
@@ -497,6 +555,110 @@ fn decorate(
         tally,
         unseen,
     }
+}
+
+/// One reply as `3a` draws it — `⚓ you · 2m  collapse these arms …` (`T068`).
+///
+/// **The glyph and the colour both come from the actor**, which is §1 stated as
+/// code: *"each colour names exactly one actor or state, never decoration"*. A
+/// reply cannot be drawn in a hue its author did not earn, because there is
+/// nowhere here to pass one in.
+///
+/// A resolved thread draws in the meta neutral throughout — `3a` has no
+/// resolved row to copy, and greying the whole exchange is the reading that
+/// costs the language nothing: it is the same *"marker cleared, line is
+/// plain"* move §3 row 18 makes for a seen region, one overlay over.
+fn thread_runs(reply: &store::Reply, resolved: bool, theme: &Theme) -> Vec<virtual_text::Run> {
+    use virtual_text::Run;
+
+    // **Only two actors can hold a conversation, and the other three are not
+    // silently one of them.** §1 gives `you` and `claude` a colour each; Steel,
+    // the CLI and the editor itself are *doors*, not voices. A reply that
+    // arrived through one is still somebody's, and the honest rendering is the
+    // door's own name in the meta neutral rather than borrowing a hue that
+    // names a different actor.
+    let (glyph, who, hue) = match reply.actor {
+        Actor::Claude => ("✻", "claude", theme.actors.claude),
+        Actor::You => ("⚓", "you", theme.actors.you),
+        Actor::Steel => ("◆", "steel", theme.neutrals.meta),
+        Actor::Cli => ("❯", "cli", theme.neutrals.meta),
+        Actor::System => ("·", "phosphor", theme.neutrals.meta),
+    };
+    let hue = if resolved { theme.neutrals.meta } else { hue };
+    let body = if resolved {
+        theme.neutrals.meta
+    } else {
+        theme.neutrals.text
+    };
+    vec![
+        Run::new(
+            format!("{glyph} {who} · {}  ", said_age(reply.at.elapsed())),
+            Style::new().fg(hue),
+        ),
+        Run::new(reply.body.clone(), Style::new().fg(body)),
+    ]
+}
+
+/// `2m`, `1h`, `now` — the relative age `3a` draws beside an actor (`T068`).
+///
+/// Relative and never absolute, for `store::Note::at`'s reason: there is no
+/// timezone-aware clock in this dependency graph.
+fn said_age(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    if seconds < 60 {
+        "now".to_owned()
+    } else if seconds < 3600 {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{}h", seconds / 3600)
+    }
+}
+
+/// §3 row 20's undercurl, over every thread's anchor (`T068`).
+///
+/// The other half of the anchored treatment — the tint is `Tints::sync`'s, and
+/// this is the curl. `T085` built the fork support for the diagnostics; this
+/// spends it in §1's anchor hue, because a thread is a place you marked and not
+/// a fault.
+fn thread_underlines(
+    editor: &Editor,
+    threads: &[store::Thread],
+    theme: &Theme,
+) -> Vec<ratatui_code_editor::phosphor::cell_style::StyledSpan> {
+    let chars = editor.code_ref().len_chars();
+    threads
+        .iter()
+        .filter(|thread| !thread.resolved)
+        .filter_map(|thread| {
+            let start = offset_of(editor, thread.span.start)?;
+            let end = offset_of(editor, thread.span.end)
+                .unwrap_or(chars)
+                .max(start.saturating_add(1))
+                .min(chars.max(start));
+            Some(
+                ratatui_code_editor::phosphor::cell_style::StyledSpan::undercurl(
+                    start,
+                    end,
+                    theme.regions.anchor_undercurl,
+                ),
+            )
+        })
+        .collect()
+}
+
+/// A vocabulary position as a character offset into the document (`T068`).
+///
+/// The coordinate a `StyledSpan` speaks, and the same conversion
+/// `phosphor_ui::diagnostics` makes for its own underlines — one-based line and
+/// column in, zero-based char offset out.
+fn offset_of(editor: &Editor, at: Position) -> Option<usize> {
+    let code = editor.code_ref();
+    let line = usize::try_from(at.line.saturating_sub(1)).ok()?;
+    if line >= code.len_lines() {
+        return None;
+    }
+    let column = usize::try_from(at.column.saturating_sub(1)).ok()?;
+    Some(code.line_to_char(line).saturating_add(column))
 }
 
 fn diagnostic_rows(host: &AppHost, editor: &Editor) -> RowPolicy {
@@ -1944,6 +2106,29 @@ impl Answers for AppHost {
             // than an error, for `region`'s reason: a surface holding an id
             // across a `drop-regions` is asking a question with a legitimate
             // no.
+            // `T068` — `3a`'s threads, narrowed to a target or the whole
+            // workspace. `within` takes the same scopes every other
+            // region-shaped query does, so *"the threads in this file"* and
+            // *"the threads in this block"* are one question asked twice.
+            Query::Review(phosphor_core::query::ReviewQuery::Threads { within }) => {
+                let scope = self.scope(name, within.as_ref())?;
+                let rows = self
+                    .store
+                    .threads()
+                    .into_iter()
+                    .filter(|thread| in_thread_scope(&self.store, &scope, thread))
+                    .map(|thread| thread_value(&thread))
+                    .collect();
+                Ok(self.answered(Value::List(rows)))
+            }
+            Query::Review(phosphor_core::query::ReviewQuery::Thread { thread }) => {
+                self.store.thread_of(*thread).map_or_else(
+                    // `region`'s rule: an id that names nothing is a question
+                    // with a legitimate no, not an error.
+                    || Ok(self.answered(Value::Null)),
+                    |found| Ok(self.answered(thread_value(&found))),
+                )
+            }
             Query::Review(phosphor_core::query::ReviewQuery::Hunks { block }) => Ok(Answer {
                 value: Value::List(self.store.hunks(*block).iter().map(hunk_value).collect()),
                 revision: self.store.revision(),
@@ -2415,6 +2600,62 @@ impl Host for AppHost {
                     Value::Record(inbox_args(0)),
                 ));
                 done(Value::Null)
+            }
+            // **`T068` — claude's side of `3a`, and the one thing this applier
+            // does that the loop's does not.**
+            //
+            // *"claude's reply arrives the same way yours does"* — same verb,
+            // same store, different [`Actor`], and the actor is *which door was
+            // used* rather than a field a caller could set. A `who` parameter
+            // would let the keyboard post as claude, which is the one thing §7
+            // rules out: the machine tracks claude, and it can only do that if
+            // the two sides are told apart by something the caller does not
+            // choose.
+            Action::Thread(phosphor_core::action::ThreadAction::ReplyToThread { thread, body }) => {
+                if self.store.reply_to_thread(*thread, Actor::Claude, body) {
+                    done(Value::Null)
+                } else {
+                    declined("no such thread")
+                }
+            }
+            // **The three that need no editor, so both appliers have them.**
+            //
+            // `resolve-thread` and `delete-thread` take an id and touch one
+            // store; `start-thread` needs a *place*, which this side can only
+            // be given explicitly — `Target::Cursor` is the loop's and refuses
+            // here by name, the same split `mark-seen` and `place-anchor`
+            // already make.
+            //
+            // Both halves exist because a repl call and a keystroke are two
+            // doors onto one verb, and `T068`'s own test found the gap: with
+            // only the loop's arm, `(resolve-thread! 0)` at the REPL answered
+            // `not built yet` while `:resolve` would have worked.
+            Action::Thread(phosphor_core::action::ThreadAction::ResolveThread { thread }) => {
+                if self.store.resolve_thread(*thread, true) {
+                    done(Value::Null)
+                } else {
+                    declined("no such thread")
+                }
+            }
+            Action::Thread(phosphor_core::action::ThreadAction::DeleteThread { thread }) => {
+                if self.store.delete_thread(*thread) {
+                    done(Value::Null)
+                } else {
+                    declined("no such thread")
+                }
+            }
+            Action::Thread(phosphor_core::action::ThreadAction::StartThread { anchor, body }) => {
+                let Target::Explicit { path, span } = anchor else {
+                    return declined(&format!(
+                        "{} needs an editor — name a path and a span",
+                        anchor.to_value().tag().unwrap_or("that")
+                    ));
+                };
+                // **`Actor::Claude` on this side**, for `reply-to-thread`'s
+                // reason exactly: the actor is which door was used, and a
+                // thread opened by the agent is his.
+                let id = self.store.start_thread(path, *span, Actor::Claude, body);
+                done(Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)))
             }
             // `T067` — claude posts a note. **The agent's door and mostly the
             // agent's**, like `declare-review-block` beside it: `5c`'s `· note`
@@ -4170,6 +4411,23 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // while pending, a block while any region is, a note by its bit,
             // which is the merge's own rule applied by the one function that
             // knows it.
+            // `T068` — `3a`'s `1 thread`, over the file on screen. Unresolved
+            // only, and counted off the same store the rows are drawn from.
+            threads: u32::try_from(
+                editing
+                    .file
+                    .as_deref()
+                    .map(|path| {
+                        shell
+                            .store
+                            .threads_in(path)
+                            .into_iter()
+                            .filter(|thread| !thread.resolved)
+                            .count()
+                    })
+                    .unwrap_or(0),
+            )
+            .unwrap_or(u32::MAX),
             inbox_unread: u32::try_from(inbox_unread(&shell.store, &shell.asks))
                 .unwrap_or(u32::MAX),
             // **The count `2b` draws and nothing computed until now.** It is
@@ -6710,6 +6968,70 @@ fn inbox_unread(
         .count();
     let notes = store.notes().into_iter().filter(|note| !note.seen).count();
     asks.len() + blocks + notes
+}
+
+/// One thread as plain data, for `threads` and `thread` (`T068`).
+///
+/// Replies carry their author and their age; the surface decides the glyph and
+/// the colour from the actor, which is §1's *"each colour names exactly one
+/// actor"* read as a data shape rather than as a rule to remember.
+fn thread_value(thread: &store::Thread) -> Value {
+    let mut fields = Args::new();
+    fields.set(
+        "thread",
+        Value::Int(i64::try_from(thread.id.0).unwrap_or(i64::MAX)),
+    );
+    fields.set("path", Value::Text(thread.path.display().to_string()));
+    fields.set("span", thread.span.to_value());
+    fields.set("resolved", Value::Bool(thread.resolved));
+    fields.set(
+        "replies",
+        Value::List(
+            thread
+                .replies
+                .iter()
+                .map(|reply| {
+                    let mut row = Args::new();
+                    row.set("actor", reply.actor.to_value());
+                    row.set("body", Value::Text(reply.body.clone()));
+                    row.set(
+                        "age",
+                        Value::Int(i64::try_from(reply.at.elapsed().as_secs()).unwrap_or(i64::MAX)),
+                    );
+                    Value::Record(row)
+                })
+                .collect(),
+        ),
+    );
+    Value::Record(fields)
+}
+
+/// Whether a thread falls inside a resolved region scope (`T068`).
+///
+/// **Threads are not regions, so this cannot go through `Scope::holds`.** A
+/// thread hangs off a span of its own; the scopes the vocabulary already has
+/// are phrased in terms of regions, and the two that mean something for a
+/// thread — a file, and a span inside one — are answered here directly.
+///
+/// `These`/`One` name *regions*, so a thread is in one when its span overlaps
+/// any of those regions: `threads within: block 3` is a real question and this
+/// is the only honest reading of it.
+fn in_thread_scope(store: &store::Shared, scope: &RegionScope, thread: &store::Thread) -> bool {
+    match scope {
+        RegionScope::Everywhere => true,
+        RegionScope::File(path) => thread.path == *path,
+        RegionScope::Span { path, span } => {
+            thread.path == *path && phosphor_core::store::region::overlaps(thread.span, *span)
+        }
+        RegionScope::One(id) => store.region_span(*id).is_some_and(|(path, span)| {
+            thread.path == path && phosphor_core::store::region::overlaps(thread.span, span)
+        }),
+        RegionScope::These(ids) => ids.iter().any(|id| {
+            store.region_span(*id).is_some_and(|(path, span)| {
+                thread.path == path && phosphor_core::store::region::overlaps(thread.span, span)
+            })
+        }),
+    }
 }
 
 /// `5c`'s float args — the selected row, and nothing else it needs (`T067`).
@@ -11771,6 +12093,105 @@ impl Editing {
                 self.float = Some((REVIEW_SURFACE.to_owned(), Value::Record(args)));
                 done()
             }
+            // **`T068` — `3a`'s five verbs.**
+            //
+            // Armed here rather than on the door for `start-thread`'s sake:
+            // `:comment` sends `(ex-anchor)`, which is `Target::Cursor` or
+            // `Target::Selection`, and only this side has the editor that
+            // knows where those are. The other four take an id and would work
+            // from either applier; they live beside it so `3a`'s verbs are one
+            // block rather than four here and one there.
+            Action::Thread(phosphor_core::action::ThreadAction::StartThread { anchor, body }) => {
+                let Some(path) = self.file.clone() else {
+                    return declined("no file open — a thread is about a place");
+                };
+                let Some(span) = self.thread_span(cx, anchor) else {
+                    return declined("nothing to anchor to");
+                };
+                // **`Actor::You`, and that is the capability rather than a
+                // default.** §7's rule is that the machine tracks claude;
+                // `start-thread` is the verb *you* reach for, and claude's own
+                // side of `3a` arrives as a reply. An agent that wants to open
+                // one says so through `reply-to-thread` on a thread it started
+                // — or through this same verb, at which point the row would be
+                // mislabelled, which is why `T068`'s entry records it.
+                let id = cx.shell.store.start_thread(&path, span, Actor::You, body);
+                Outcome::Done(Receipt {
+                    capability: name,
+                    value: Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)),
+                    note: None,
+                })
+            }
+            Action::Thread(phosphor_core::action::ThreadAction::ReplyToThread { thread, body }) => {
+                // **The actor is the *caller's*, and this is the one place the
+                // two sides of `3a` are told apart.** A reply from the keyboard
+                // is yours; one arriving over the agent's door is claude's, and
+                // `AppHost`'s copy of this arm passes `Actor::Claude`.
+                if cx.shell.store.reply_to_thread(*thread, Actor::You, body) {
+                    done()
+                } else {
+                    declined("no such thread")
+                }
+            }
+            Action::Thread(phosphor_core::action::ThreadAction::ResolveThread { thread }) => {
+                if cx.shell.store.resolve_thread(*thread, true) {
+                    done()
+                } else {
+                    declined("no such thread")
+                }
+            }
+            Action::Thread(phosphor_core::action::ThreadAction::DeleteThread { thread }) => {
+                if cx.shell.store.delete_thread(*thread) {
+                    done()
+                } else {
+                    declined("no such thread")
+                }
+            }
+            // **`:g/TODO/c` — one message against every match** (`T068`).
+            //
+            // A literal substring rather than a regex, and that is a stated
+            // limit rather than a stub: nothing in this tree parses one, and a
+            // `pattern` that silently treated `.*` as three characters would be
+            // worse than a narrow verb that says what it does.
+            Action::Thread(phosphor_core::action::ThreadAction::BroadcastThread {
+                pattern,
+                body,
+            }) => {
+                let Some(path) = self.file.clone() else {
+                    return declined("no file open — a thread is about a place");
+                };
+                if pattern.is_empty() {
+                    return declined("name a pattern — an empty one matches every line");
+                }
+                let code = self.editor.code_ref();
+                let mut started = 0usize;
+                for line in 0..code.len_lines() {
+                    if !code.line(line).to_string().contains(pattern.as_str()) {
+                        continue;
+                    }
+                    let at = u32::try_from(line).unwrap_or(u32::MAX).saturating_add(1);
+                    // Linewise, half-open — the shape `ex-preamble` already
+                    // builds for a range, so a broadcast anchor and a typed one
+                    // are the same kind of span.
+                    let span = Span {
+                        start: Position {
+                            line: at,
+                            column: 1,
+                        },
+                        end: Position {
+                            line: at.saturating_add(1),
+                            column: 1,
+                        },
+                    };
+                    cx.shell.store.start_thread(&path, span, Actor::You, body);
+                    started += 1;
+                }
+                Outcome::Done(Receipt {
+                    capability: name,
+                    value: Value::Int(i64::try_from(started).unwrap_or(i64::MAX)),
+                    note: (started == 0).then(|| "nothing matched".to_owned()),
+                })
+            }
             // **`T067` — the loop's half of the two verbs an ex command
             // reaches.**
             //
@@ -12996,6 +13417,41 @@ impl Editing {
     /// Only the two focus-relative arms the input machine emits are answered;
     /// everything else is the store's to resolve (`T041`) and refuses rather
     /// than guessing.
+    /// The span a thread anchors at, for a target `:comment` can send
+    /// (`T068`).
+    ///
+    /// **Linewise for a bare cursor, and that is `3a` rather than a
+    /// simplification.** The mockup hangs its rows under *line 22* and gives
+    /// that whole line §3's row-20 tint; a one-character span at the cursor
+    /// would tint one cell and leave the rest of the line plain, which is not a
+    /// treatment the design language has. A *selection* keeps its own extent,
+    /// because there you said what you meant.
+    ///
+    /// The two explicit spellings are here so an agent's `start-thread` and a
+    /// person's `:comment` land in the same place; anything else answers
+    /// [`None`] and the arm refuses by name.
+    fn thread_span(&mut self, cx: &Cx<'_>, target: &Target) -> Option<Span> {
+        match target {
+            Target::Explicit { span, .. } => Some(*span),
+            Target::File { .. } | Target::Buffer { .. } => None,
+            Target::Selection {} => {
+                let (from, to) = self.target_range(target)?;
+                Some(self.span_between(from, to))
+            }
+            Target::Cursor {} => {
+                let line = self.text(cx).cursor().line;
+                Some(Span {
+                    start: Position { line, column: 1 },
+                    end: Position {
+                        line: line.saturating_add(1),
+                        column: 1,
+                    },
+                })
+            }
+            _ => None,
+        }
+    }
+
     fn target_range(&mut self, target: &Target) -> Option<(usize, usize)> {
         match target {
             Target::Selection {} => self
@@ -14507,6 +14963,12 @@ impl Text for EditorText<'_> {
     fn hunk_at(&self, at: Position) -> Option<Span> {
         let (store, path) = self.regions.as_ref()?;
         store.hunk_covering(path, at)
+    }
+
+    /// `T068` — `vit`, over the same store `3a`'s rows are drawn from.
+    fn thread_at(&self, at: Position) -> Option<Span> {
+        let (store, path) = self.regions.as_ref()?;
+        store.thread_covering(path, at)
     }
 
     fn lines(&self) -> u32 {

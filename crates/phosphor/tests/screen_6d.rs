@@ -174,6 +174,7 @@ fn status_vm() -> StatusVm {
         session: SessionState::None,
         since: None::<Millis>,
         ask_pending: false,
+        threads: 0,
         inbox_unread: 0,
         unseen: 0,
         // No diagnostic on this screen. `2b` is the one that

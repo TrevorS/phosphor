@@ -46,7 +46,7 @@ use phosphor_core::journal;
 use phosphor_core::query::Revision;
 use phosphor_core::request::{
     Actor, AnchorId, BlockId, Diagnostic, FileGroup, FileSpan, GroupId, HunkId, InboxId, Position,
-    RegionId, RegionSpec, Severity, Span,
+    RegionId, RegionSpec, Severity, Span, ThreadId,
 };
 use phosphor_core::store::{
     Anchor, Declared, Fingerprint, Lens, Reanchored, Region, Scope, SeenLog, SeenState, Snapshot,
@@ -263,6 +263,48 @@ pub(crate) struct Note {
     pub(crate) arrival: u64,
 }
 
+/// One message in a thread — `3a`'s `⚓ you · 2m` or `✻ claude · 1m` (`T068`).
+#[derive(Debug, Clone)]
+pub(crate) struct Reply {
+    /// Who said it. §1 gives each actor exactly one colour, and this is the
+    /// field that picks it.
+    pub(crate) actor: Actor,
+    /// What they said, on one row.
+    pub(crate) body: String,
+    /// When, for the relative age `3a` draws. [`Instant`] for
+    /// [`Note::at`]'s reason — there is no wall clock in this tree.
+    pub(crate) at: Instant,
+}
+
+/// One anchored exchange — `3a` (`T068`).
+///
+/// **A thread is a conversation *about a place*, and the place is a span
+/// rather than a region.** `T042`'s anchors are the machinery for surviving a
+/// rewrite and `T041`'s regions are §7's seen-state; a thread is neither. It
+/// hangs where you put it, is drawn as virtual text under that line, and gives
+/// the line §3's row-20 treatment — a tint and an undercurl, and no bar in the
+/// column, because a conversation is an overlay and not a claim about
+/// attention.
+#[derive(Debug, Clone)]
+pub(crate) struct Thread {
+    /// Which thread.
+    pub(crate) id: ThreadId,
+    /// Workspace-relative, through [`key_for`] like every other path here.
+    pub(crate) path: PathBuf,
+    /// Where it is anchored.
+    pub(crate) span: Span,
+    /// Your comment, then whatever came back — oldest first, which is how a
+    /// conversation reads and how `3a` stacks the rows.
+    pub(crate) replies: Vec<Reply>,
+    /// Marked done without being deleted (`resolve-thread`).
+    ///
+    /// **Resolved is not deleted, and `3a` is why.** *"revised lines go unseen
+    /// again"* — the exchange is the record of why a line looks the way it
+    /// does, and a verb that could only destroy it would make the honest move
+    /// (finishing with a thread) also the lossy one.
+    pub(crate) resolved: bool,
+}
+
 /// The store, shared.
 #[derive(Debug, Default)]
 pub(crate) struct Shared {
@@ -285,6 +327,13 @@ pub(crate) struct Shared {
     /// field existed — a second block declared after a note sorted as older
     /// than it.
     arrivals: Mutex<u64>,
+    /// Anchored exchanges (`T068`), oldest first.
+    ///
+    /// Beside `blocks` and `notes` and not journalled, for the reason those
+    /// two give: `phosphor_core::store` is the *seen-state* machine, and a
+    /// thread is a conversation. What that costs is that a thread does not
+    /// survive a restart — the same trade `T053`'s blocks already make.
+    threads: Mutex<Vec<Thread>>,
     /// Notes claude posted (`T067`), oldest first.
     ///
     /// Beside `blocks` and not journalled, for exactly `blocks`'s reason: a note
@@ -344,6 +393,7 @@ impl Shared {
             // to be reserved.
             blocks: Mutex::new(Vec::new()),
             arrivals: Mutex::new(0),
+            threads: Mutex::new(Vec::new()),
             notes: Mutex::new(Vec::new()),
             groups: Mutex::new(0),
         })
@@ -570,6 +620,152 @@ impl Shared {
         };
         found.seen = seen;
         true
+    }
+
+    /// **`start-thread`** — your comment in the margin (`T068`).
+    ///
+    /// Answers the id. Minted from the count, so ids are stable within a
+    /// session and never reused — [`Shared::declare_block`]'s rule.
+    pub(crate) fn start_thread(
+        &self,
+        path: &Path,
+        span: Span,
+        actor: Actor,
+        body: &str,
+    ) -> ThreadId {
+        let mut threads = self
+            .threads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let id = ThreadId(threads.len() as u64);
+        threads.push(Thread {
+            id,
+            path: key_for(path),
+            span,
+            replies: vec![Reply {
+                actor,
+                body: body.to_owned(),
+                at: Instant::now(),
+            }],
+            resolved: false,
+        });
+        id
+    }
+
+    /// **`reply-to-thread`** — *"claude's side arrives the same way yours
+    /// does"*, which is this function called with a different [`Actor`].
+    pub(crate) fn reply_to_thread(&self, thread: ThreadId, actor: Actor, body: &str) -> bool {
+        let mut threads = self
+            .threads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(found) = threads.iter_mut().find(|it| it.id == thread) else {
+            return false;
+        };
+        found.replies.push(Reply {
+            actor,
+            body: body.to_owned(),
+            at: Instant::now(),
+        });
+        // **A reply reopens it.** `3a`'s exchange is a conversation, and one
+        // that answered a resolved thread while leaving it resolved would hide
+        // the answer behind the state that said nobody was talking.
+        found.resolved = false;
+        true
+    }
+
+    /// **`resolve-thread`** — done, not deleted.
+    pub(crate) fn resolve_thread(&self, thread: ThreadId, resolved: bool) -> bool {
+        let mut threads = self
+            .threads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(found) = threads.iter_mut().find(|it| it.id == thread) else {
+            return false;
+        };
+        found.resolved = resolved;
+        true
+    }
+
+    /// **`delete-thread`** — gone. Answers whether there was one.
+    pub(crate) fn delete_thread(&self, thread: ThreadId) -> bool {
+        let mut threads = self
+            .threads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let before = threads.len();
+        threads.retain(|it| it.id != thread);
+        threads.len() != before
+    }
+
+    /// One region's file and span, by id (`T068`).
+    ///
+    /// The lookup `in_thread_scope` needs: a `These`/`One` scope names regions,
+    /// and a thread is inside such a scope when its own span overlaps one of
+    /// them — which cannot be asked without turning an id back into a place.
+    pub(crate) fn region_span(&self, region: RegionId) -> Option<(PathBuf, Span)> {
+        self.lock()
+            .regions()
+            .in_scope(&Scope::One(region))
+            .next()
+            .map(|found| (found.path.clone(), found.span))
+    }
+
+    /// Every thread, oldest first (`T068`).
+    pub(crate) fn threads(&self) -> Vec<Thread> {
+        self.threads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The threads anchored in one file, oldest first (`T068`).
+    ///
+    /// **Resolved ones are included**, and the caller decides: `3a` draws them
+    /// and the statusline's `1 thread` counts the unresolved. A filter here
+    /// would make `threads` mean two different things to two readers.
+    pub(crate) fn threads_in(&self, path: &Path) -> Vec<Thread> {
+        let key = key_for(path);
+        self.threads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|thread| thread.path == key)
+            .cloned()
+            .collect()
+    }
+
+    /// One thread, by id (`T068`).
+    pub(crate) fn thread_of(&self, thread: ThreadId) -> Option<Thread> {
+        self.threads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .find(|it| it.id == thread)
+            .cloned()
+    }
+
+    /// The span of the lowest-id thread covering a position — `vit` (`T068`).
+    ///
+    /// [`Shared::covering`]'s lowest-id rule, for its reason. **Resolved
+    /// threads are still threads**: `vit` is *"the thread here"*, and a noun
+    /// that skipped the finished ones would make `dit` after resolving one a
+    /// delete of whatever else happened to be on the line.
+    pub(crate) fn thread_covering(&self, path: &Path, at: Position) -> Option<Span> {
+        let key = key_for(path);
+        self.threads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|thread| thread.path == key)
+            // A zero-width span at the position, which is the same question
+            // `Scope::Span` asks for a cursor and answered by the same
+            // function — rather than a second reading of *"covers"* that could
+            // disagree with it at an edge.
+            .find(|thread| {
+                phosphor_core::store::region::overlaps(thread.span, Span { start: at, end: at })
+            })
+            .map(|thread| thread.span)
     }
 
     /// A fresh arrival stamp — the clock [`Block::arrival`]/[`Note::arrival`]
@@ -1404,6 +1600,79 @@ mod tests {
         // An id that names nothing says so rather than marking the first note
         // it finds — `annotate_group`'s rule, one store over.
         assert!(!shared.set_note_seen(phosphor_core::request::InboxId(999), true));
+    }
+
+    /// **`3a`'s exchange: two actors, one thread, and resolve is not delete**
+    /// (`T068`).
+    #[test]
+    fn a_thread_takes_both_sides_and_resolving_keeps_them() {
+        let shared = Shared::default();
+        let path = std::path::Path::new("src/retry.rs");
+        let id = shared.start_thread(path, span(3, 4), Actor::You, "collapse these arms");
+
+        // Claude's side arrives through the same verb with a different actor —
+        // which is the *door*, not a field, and is what makes §7's "the machine
+        // tracks claude" checkable rather than trusted.
+        assert!(shared.reply_to_thread(id, Actor::Claude, "error carried in `last`"));
+        let found = shared.thread_of(id).expect("the thread exists");
+        assert_eq!(
+            found.replies.len(),
+            2,
+            "oldest first, as a conversation reads"
+        );
+        assert_eq!(found.replies[0].actor, Actor::You);
+        assert_eq!(found.replies[1].actor, Actor::Claude);
+        assert!(!found.resolved);
+
+        // **Resolve keeps the exchange.** `3a`'s record of *why* a line looks
+        // the way it does outlives the conversation.
+        assert!(shared.resolve_thread(id, true));
+        let done = shared.thread_of(id).expect("still there");
+        assert!(done.resolved);
+        assert_eq!(done.replies.len(), 2, "resolving destroys nothing");
+
+        // **A reply reopens it**, because an answer hidden behind "nobody is
+        // talking" is an answer nobody reads.
+        assert!(shared.reply_to_thread(id, Actor::You, "good catch"));
+        assert!(!shared.thread_of(id).expect("still there").resolved);
+
+        // Delete is the verb that removes it, and it is a different verb.
+        assert!(shared.delete_thread(id));
+        assert!(shared.thread_of(id).is_none());
+        assert!(!shared.delete_thread(id), "and only once");
+    }
+
+    /// **`vit` finds a thread by its span, resolved or not** (`T068`).
+    ///
+    /// The resolved half matters: a noun that skipped finished threads would
+    /// make `dit` after resolving one a delete of whatever else was on the
+    /// line — `hunk_covering`'s ruling, one overlay over.
+    #[test]
+    fn a_thread_is_found_at_its_anchor_even_once_resolved() {
+        let shared = Shared::default();
+        let path = std::path::Path::new("src/retry.rs");
+        let id = shared.start_thread(path, span(3, 4), Actor::You, "collapse these arms");
+
+        let inside = Position { line: 3, column: 1 };
+        let outside = Position { line: 9, column: 1 };
+        assert_eq!(shared.thread_covering(path, inside), Some(span(3, 4)));
+        assert_eq!(shared.thread_covering(path, outside), None);
+
+        shared.resolve_thread(id, true);
+        assert_eq!(
+            shared.thread_covering(path, inside),
+            Some(span(3, 4)),
+            "a resolved thread is still a thread"
+        );
+
+        // And a thread in one file is not in another — `key_for`'s
+        // reconciliation, the same as every other path in this module.
+        assert!(
+            shared
+                .thread_covering(std::path::Path::new("src/fetch.rs"), inside)
+                .is_none()
+        );
+        assert_eq!(shared.threads_in(path).len(), 1);
     }
 
     /// **Blocks and notes interleave by when they actually arrived, not by

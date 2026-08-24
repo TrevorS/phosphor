@@ -4965,6 +4965,143 @@ mod driven {
         editor.leave_by(b"ZQ");
     }
 
+    /// **`3a`: your comment and claude's reply, as virtual text under the
+    /// region.**
+    ///
+    /// The mockup's own three claims, in one press each: the exchange hangs
+    /// under the anchored line as `┊` rows, the two sides are told apart by
+    /// *which door they came through* rather than by a field, and the
+    /// statusline counts the conversation you are still in.
+    #[test]
+    fn a_thread_draws_both_sides_under_the_line_it_is_anchored_to() {
+        let scratch = Scratch::new("thread");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("retry.txt");
+        fs::write(&file, "one\ntwo\nthree\nfour\nfive\nsix\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `:comment` anchors at the cursor — line 3.
+        editor.press_quietly(b"gg");
+        editor.press_quietly(b"jj");
+        let mine =
+            whole(&editor.shown_on_grid(b":comment collapse these arms\r", "collapse these arms"));
+        // **`you · `, not `⚓ you`.** `⚓` is double-width; ratatui writes it and
+        // marks the cell it covers as skipped, and `Screen::replayed` has no
+        // model for that — so the *test grid* keeps whatever was in that cell
+        // before and reads `⚓r you`. The byte stream is correct and so is the
+        // terminal. Needling past the covered cell asserts the row without
+        // asserting the harness's own gap.
+        assert!(mine.contains("you \u{b7} "), "your side names you:\n{mine}");
+
+        // **Claude's side arrives the same way yours does — same verb, same
+        // store, different door.** The actor is *which applier ran* and not a
+        // parameter, which is the one thing §7 rules out being settable: the
+        // machine can only track claude if the two sides cannot be forged.
+        //
+        // Through the REPL rather than `:reply`, and that is the assertion: a
+        // repl call is a **door** call, so this proves `AppHost`'s arm labels
+        // it `claude` while `:reply` below proves the loop's labels it `you`.
+        editor.press_until(b":repl\r", "steel");
+        editor.press_until(
+            "(reply-to-thread! 0 \"collapsed - error carried in `last`\")\r".as_bytes(),
+            "\u{21d2} ",
+        );
+        editor.press_until(b"(close-repl!)\r", "NORMAL");
+
+        let both = whole(&editor.screen());
+        assert!(
+            both.contains("claude \u{b7} "),
+            "and claude's names him, from the door he came through:\n{both}"
+        );
+        assert!(
+            both.contains("collapsed - error carried in"),
+            "with what he said:\n{both}"
+        );
+        // Both rows hang off the same anchor, on the `┊` rail `T032` built.
+        assert!(
+            both.matches('\u{250a}').count() >= 2,
+            "two rows, one rail:\n{both}"
+        );
+
+        // **§3's row 20 is a tint *and* an undercurl, and the tint is what
+        // says the anchor is a whole line.** The exchange draws either way —
+        // rows hang at `span.start` regardless — so a point anchor is
+        // invisible in the rows and visible here: a zero-width span produces
+        // no marks at all (`Tints::marks` needs `start < end`), and this row
+        // would come back untinted. A planted point anchor passed every other
+        // assertion in this test.
+        //
+        // Row 2 is line 3, the anchored one: rows are 0-based and the buffer
+        // starts at the top of the screen.
+        let anchored = editor.screen().tinted(2);
+        assert!(
+            !anchored.is_empty(),
+            "the anchored line carries §3's row tint: {:?}",
+            editor.screen().line(2)
+        );
+
+        // **`1 thread`, and it is the conversation you are still in.** A
+        // harmless key first: a notice borrows the whole statusline row.
+        let strip = whole(&editor.shown_on_grid(b"j", "1 thread"));
+        assert!(strip.contains("1 thread"), "{strip}");
+
+        // **`:reply` is the keyboard's half, and it labels the reply *yours*.**
+        // Same verb, same store, other applier — the pair that makes the actor
+        // a fact about the door rather than about a parameter.
+        let mine_again = whole(&editor.shown_on_grid(b":reply 0 good catch\r", "good catch"));
+        assert_eq!(
+            mine_again.matches("you \u{b7} ").count(),
+            2,
+            "two of the three rows are yours:\n{mine_again}"
+        );
+        assert_eq!(
+            mine_again.matches("claude \u{b7} ").count(),
+            1,
+            "and one is his:\n{mine_again}"
+        );
+
+        // **Resolving takes it off the count and leaves the exchange.** `3a`'s
+        // own subtitle is that the record of *why* a line looks the way it does
+        // outlives the conversation — so the rows stay and the claim on your
+        // attention goes.
+        editor.press_quietly(b":resolve 0\r");
+        editor.press_quietly(b"k");
+        let resolved = whole(&editor.screen());
+        assert!(
+            !resolved.contains("1 thread"),
+            "resolved stops claiming your attention:\n{resolved}"
+        );
+        assert!(
+            resolved.contains("collapse these arms"),
+            "and the exchange is still there:\n{resolved}"
+        );
+
+        // **`:broadcast` puts one message on every matching line** — `6d`'s
+        // `:g/TODO/c` without the `/pattern/` grammar. Two lines contain `o`
+        // in this fixture's first three (`one`, `two`), so this is a claim
+        // about *many* anchors rather than one.
+        editor.press_quietly(b":broadcast four sweep this\r");
+        let swept = whole(&editor.screen());
+        assert!(
+            swept.contains("sweep this"),
+            "the broadcast landed on its match:\n{swept}"
+        );
+
+        // **`:unthread` is the verb that loses something, and it is the only
+        // one of the four that does.** `:resolve` above kept the rows; this
+        // takes them.
+        editor.press_quietly(b":unthread 0\r");
+        editor.press_quietly(b"j");
+        let gone = whole(&editor.screen());
+        assert!(
+            !gone.contains("collapse these arms"),
+            "the exchange is deleted, not resolved:\n{gone}"
+        );
+
+        editor.leave_by(b"ZQ");
+    }
+
     /// **Three kinds, one clock: newest first across blocks and notes alike.**
     ///
     /// **This fixture's shape is the whole test, and it took two tries to get
@@ -6066,11 +6203,14 @@ mod driven {
         // `:inbox` left this table when `T067` built `5c` — it opens a float
         // now, which is the third command to graduate off this list and the
         // reason the list is written as data rather than as prose.
+        // `:comment` left this table when `T068` built `3a` — it starts a
+        // thread now. That is the fourth command to graduate off this list in
+        // as many tasks, which is the reason the list is written as data: each
+        // departure is one line, and the line that stays is the claim.
         let deferred: &[(&str, &str)] = &[
-            ("diff-disk", "T070"),
             // `:reattach` left this table when `T057` built the lifecycle —
             // with no session it declines by *name* now rather than by task.
-            ("comment", "T068"),
+            ("diff-disk", "T070"),
         ];
         for (command, task) in deferred {
             let said = editor.press_until(format!(":{command}\r").as_bytes(), task);

@@ -106,6 +106,20 @@ pub trait Text {
         let _ = at;
         None
     }
+
+    /// The span of the thread covering `at`, if there is one (`T068`).
+    ///
+    /// `vit`, and the noun `d` composes over to delete an anchored exchange's
+    /// line. Same defaulting as [`Text::unseen_at`] and the same reason.
+    ///
+    /// **A resolved thread is still a thread**, for the reason a seen hunk is
+    /// still a hunk (`Text::hunk_at`): `vit` is *"the thread here"*, and a noun
+    /// that skipped the finished ones would make `dit` after resolving one a
+    /// delete of whatever else happened to be on that line.
+    fn thread_at(&self, at: Position) -> Option<Span> {
+        let _ = at;
+        None
+    }
 }
 
 /// What is on screen, in buffer lines.
@@ -784,12 +798,17 @@ pub fn object_span(
         TextObject::Hunk => text
             .hunk_at(at_position)
             .map(|span| (span, SelectionKind::Line)),
-        // A markup tag needs the grammar (`T037`); the other two need a store
-        // that does not exist yet — threads `T068`, and a review block is a
+        // `T068`. Linewise for `UnseenRegion`'s reason: §7 tints whole rows,
+        // and a thread's anchor is a line — `3a` hangs its exchange under one
+        // and gives that whole line §3's row-20 treatment.
+        TextObject::Thread => text
+            .thread_at(at_position)
+            .map(|span| (span, SelectionKind::Line)),
+        // A markup tag needs the grammar (`T037`); a review block is a
         // *surface* rather than a span, which is `T066`. They stay `None`
-        // rather than guessing, which is what makes `vit` select nothing
+        // rather than guessing, which is what makes `vib` select nothing
         // instead of selecting something wrong.
-        TextObject::Tag | TextObject::Thread | TextObject::Block => None,
+        TextObject::Tag | TextObject::Block => None,
     }
 }
 

@@ -4543,10 +4543,85 @@ mockup screen ids of the same name, which mean entirely different things.
   > `just gate` green — confirmed with a bare, unpiped run after a mid-session reminder that a
   > verification command piped into `grep`/`tail` reports the filter's exit code and not the
   > command's.
-- [ ] **T068 · Anchored exchange / threads** — your comment and Claude's reply as virtual text
+- [x] **T068 · Anchored exchange / threads** — your comment and Claude's reply as virtual text
   under the region. Screen `3a`. The region itself carries Design Language §3's full anchored
   treatment — **tint + undercurl** — which is `T087` and `T085` composed, not the marks API alone.
   *Needs:* T032, T042, T085, T087
+
+  > **Built and ticked 2026-08-24.** `:comment` opens a thread at the cursor; claude replies
+  > through the door; both draw as `┊` rows under the anchored line; the strip counts the
+  > conversation you are still in. `vit` selects a thread, `:g/TODO/c` broadcasts one message
+  > against every match.
+  >
+  > **Four ticked tasks composed and almost nothing new drawn.** The entry's own line — *"`T087`
+  > and `T085` composed, not the marks API alone"* — turned out to describe the whole build:
+  > `gutter::RegionState::Thread` was already in the ladder mapping to `StateMark::None` (§3's
+  > row 20: an overlay tints a row and says nothing in the column), `Tints::tint` already
+  > answered the anchor hue for it, `theme.regions.anchor_undercurl` already existed with §3's
+  > name on it, and `T032`'s `VirtualText` already had an owner field. What `T068` adds is a
+  > store, five arms, and about forty lines of composition in `decorate` — the drawing layer
+  > had been waiting.
+  >
+  > **A thread is a span, not a region and not an anchor.** `T042`'s anchors are the machinery
+  > for surviving a rewrite and `T041`'s regions are §7's seen-state; a conversation is neither.
+  > It hangs where you put it, and the one thing it borrows is the *owner* of the region under
+  > it — so `set-virtual-text-visible` collapses a thread's rail with the rest of that line's
+  > rails rather than leaving it behind alone.
+  >
+  > **The actor is which door was used, and that is the capability rather than a field.** §7's
+  > rule is that the machine tracks claude; `reply-to-thread` is armed in *both* appliers and
+  > each passes its own `Actor` — `Editing::act` yours, `AppHost::apply` his. A `who` parameter
+  > would let the keyboard post as claude, which is the one thing that rule rules out. A planted
+  > defect swapping the door's actor is caught by the pty test.
+  >
+  > **`:comment` anchors linewise, and a planted point anchor proved why that is `3a` rather
+  > than a simplification.** The mockup hangs its rows under line 22 and tints that whole line;
+  > a zero-width span draws the rows identically and produces **no marks at all**, because
+  > `Tints::marks` needs `start < end`. So the defect was invisible in every assertion about the
+  > rows and visible only in `Screen::tinted`. The test asserts the tint now, and its comment
+  > says which half of §3 row 20 each assertion is holding.
+  >
+  > **Resolve is not delete, and a reply reopens.** `3a`'s subtitle is that the exchange is the
+  > record of *why* a line looks the way it does — a verb that could only destroy it would make
+  > finishing with a thread the lossy move. And an answer posted to a resolved thread reopens it,
+  > because an answer hidden behind *"nobody is talking"* is an answer nobody reads.
+  >
+  > **The three other actors are not silently one of the two.** §1 gives `you` and `claude` a
+  > colour each; Steel, the CLI and the editor itself are *doors*, and a reply that arrived
+  > through one draws its own name in the meta neutral rather than borrowing a hue that names a
+  > different actor.
+  >
+  > **All five verbs are typeable, and the lint chain is what made that true.** Ticking the task
+  > turned `lint-capability-bindings` red for four of them — armed, on a ticked task, and reachable
+  > by nothing — so `:reply`, `:resolve`, `:unthread` and `:broadcast` joined `:comment`. That
+  > turned `lint-key-coverage` red in turn (a bound key no test presses), which is what put all
+  > four into the pty test rather than leaving `3a` provable only through the REPL. Two lints in
+  > sequence, each catching what the other could not see.
+  >
+  > **The `(string->number "")` trap sprang a third time.** An empty argument makes it `#false`,
+  > which raises inside `key/cmd` and reaches the ex bridge as *"no such command"* — so a
+  > registered command reports that it does not exist. `T060`'s `:defer` and `T067`'s `:annotate`
+  > hit it before this; `every_ex_command_decodes` types every name with an empty argument and
+  > has now caught it three times. `thread/id` guards all three numeric commands, and the comment
+  > beside it names the count so the fourth time is a shorter debug.
+  >
+  > **`broadcast-thread` matches a literal substring, not a regex**, and that is a stated limit:
+  > nothing in this tree parses one, and a `pattern` that quietly treated `.*` as three
+  > characters would be worse than a narrow verb that says what it does. Loop-only, because it
+  > needs the buffer's text.
+  >
+  > **Five planted defects, five catches** — a reply leaving a resolved thread resolved,
+  > `thread_covering` ignoring the file, the strip counting resolved threads, the door replying
+  > as the wrong actor, and the point anchor above (missed until the tint assertion existed).
+  >
+  > **One gap the test found before a lint could.** `resolve-thread`, `delete-thread` and
+  > `start-thread` were armed only in the loop, so `(resolve-thread! 0)` at the REPL answered
+  > `not built yet` while `:resolve` would have worked — a repl call is a *door* call. All three
+  > have both halves now; `start-thread` on the door takes an explicit target only, since
+  > `Target::Cursor` needs an editor. `broadcast-thread` stays loop-only for the same reason and
+  > says so.
+  >
+  > `just gate` green — 1526 tests, confirmed with a bare unpiped run reading the exit code.
 
 ### ✋ CP-8a — Can you actually review a big change?
 
