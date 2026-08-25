@@ -50,6 +50,12 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
+# **`tests.rs` is skipped by name.** The binary's unit tests moved out of
+# `main.rs` on 2026-08-25 to get back under the 1 MB hygiene ceiling. This
+# scan strips the column-0 `#[cfg(test)]` to find the production half — and
+# in a file that *is* the test module there is no attribute to strip, so
+# without this line 5,000 lines of fixtures would read as production and a
+# test that constructs an Action would count as an arm.
 python3 - <<'PY'
 import pathlib
 import re
@@ -246,6 +252,8 @@ ticked = set(re.findall(r"^- \[x\] \*\*(T\d+|V\d+)", TASKS.read_text(encoding="u
 # -- which the binary names, so an arm exists -------------------------------
 body = []
 for path in sorted(BIN.glob("*.rs")):
+    if path.name == "tests.rs":
+        continue
     source = path.read_text(encoding="utf-8")
     module = re.search(r"^#\[cfg\(test\)\]", source, re.M)
     body.append(source[: module.start()] if module else source)

@@ -83,6 +83,12 @@ set -euo pipefail
 
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# **`tests.rs` is skipped by name.** The binary's unit tests moved out of
+# `main.rs` on 2026-08-25 to get back under the 1 MB hygiene ceiling. This
+# scan strips the column-0 `#[cfg(test)]` to find the production half — and
+# in a file that *is* the test module there is no attribute to strip, so
+# without this line 5,000 lines of fixtures would read as production and a
+# test that constructs an Action would count as an arm.
 python3 - <<'PYEOF'
 import pathlib
 import re
@@ -216,6 +222,8 @@ declared = declared + queried
 production = []
 for root in SOURCES:
     for path in sorted(root.glob("*.rs")):
+        if path.name == "tests.rs":
+            continue
         text = path.read_text(encoding="utf-8")
         module = re.search(r"^#\[cfg\(test\)\]", text, re.M)
         production.append((path, text[: module.start()] if module else text))

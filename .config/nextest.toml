@@ -40,6 +40,31 @@ max-threads = 8
 
 # **Two threads per test, because there are two processes.**
 #
+# **Three was tried on 2026-08-25 and rejected on the measurement — see
+# `OPEN-QUESTIONS.md` §63.** The argument for it is good: a `loop_pty` fixture
+# on a language with a declared server runs *three* processes, not two, because
+# the child spawns a server that nextest cannot see. Three separate pty tests
+# flaked once each across `S7.2`–`S7.3` on work that touched none of them, and
+# each of them starts a server, presses keys and asserts.
+#
+# What killed it was the price. Measured over two full runs at each setting on
+# this machine:
+#
+#     threads-required = 2   224s      1 of 3 suite runs flaked
+#     threads-required = 3   381s      0 of 3 suite runs flaked
+#
+# **A 70% slower gate**, consistently, to avoid a flake that fires about one run
+# in three and clears on a re-run. That is the wrong trade for the loop a person
+# actually waits on, and it is the same trade this file already rejected one
+# paragraph up when a flat `max-threads = 2` doubled the time.
+#
+# **The targeted fix is a narrower group**, not a bigger number: only the pty
+# tests that declare a language server need the third slot, and the rest of the
+# suite should not pay for them. nextest can express that with a filter over
+# test names; what it cannot do is see which fixtures start a server, so the
+# list would have to be written and kept. Worth doing if the cluster keeps
+# costing re-runs; not worth doing pre-emptively.
+#
 # This models the missing child directly, and it is why the fix is not
 # `--test-threads 2` on the whole shard: the ~1100 tests that never leave their
 # own process keep running at full width, and only these pay.

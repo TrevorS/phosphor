@@ -114,7 +114,12 @@ Reachability — a ticked task may not ship something no keystroke can reach:
 Hygiene and truthfulness — each of these exists because the thing it catches already happened:
 
 - **Repo hygiene** — no tracked file over 1 MB, no undocumented byte-identical reference capture,
-  no refs outside the normal namespaces.
+  no refs outside the normal namespaces. **`main.rs` crossed that ceiling at `T073`** and its
+  5,023-line test module moved to `crates/phosphor/src/tests.rs` — 23% of the file, and enough
+  to clear it with room to spare. Four of them glob `crates/phosphor/src/*.rs` and strip the
+  column-0 `#[cfg(test)]` to find production; they skip `tests.rs` by name, because in a file
+  that *is* the test module there is no attribute to strip. A fifth reader — `phosphor-steel`'s
+  `no_bindings_in_rust` test — is not a lint and was missed by grepping `scripts/`.
 - **Doc claims** — the task counts, wave widths and gate counts in `TEAM.md` are recomputed from
   the dependency graph in `TASKS.md`, the toolchain version quoted in prose is checked against
   `rust-toolchain.toml`, and every `T0xx` cited in a Rust comment must be a task that exists.

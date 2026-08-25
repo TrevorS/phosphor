@@ -155,8 +155,18 @@ fn outside_tests(path: &Path) -> Vec<(usize, String)> {
         path.display()
     );
     if let Some(at) = marks.first() {
+        // **Both spellings, because the binary's tests now live in a file.**
+        // `main.rs` crossed the 1 MB hygiene ceiling at `T073` and its 5,023
+        // test lines moved to `src/tests.rs`, so the attribute there is
+        // followed by a *declaration* rather than a block. Either shape means
+        // the same thing to this scan: everything below it is test code.
+        //
+        // This was the **fifth** reader of that anchor, and the one a grep of
+        // `scripts/` missed — the other four are lints, this is a test.
         assert!(
-            lines.get(at + 1).is_some_and(|next| *next == "mod tests {"),
+            lines
+                .get(at + 1)
+                .is_some_and(|next| *next == "mod tests {" || *next == "mod tests;"),
             "{}:{}: a top-level #[cfg(test)] that is not a test module",
             path.display(),
             at + 1

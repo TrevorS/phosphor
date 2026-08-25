@@ -2929,11 +2929,50 @@ measuring the strip (that turned out to be a real, different problem, fixed by
 `PHOSPHOR_VCS=0`; see the `Editor::in_a_repo` note). Chasing this properly means
 reproducing under controlled concurrency, which is its own piece of work.
 
-**What would settle it:** run the `spawns-a-child` group at
-`threads-required = 3` (the child, the server, and the test) and see whether the
-cluster goes quiet. That is a one-line experiment and a measurement, not a
-guess — and it is exactly the kind of number `.config/nextest.toml` insists be
-measured before it is believed.
+**RUN, 2026-08-25 — and the first attempt was worthless.** The experiment was
+launched against a tree that was still being edited: a full suite, repeatedly,
+while the tests it was running were being changed under it. Both "failures" were
+the two files mid-edit. That is not a measurement of anything, and it is
+recorded because the mistake is easy to repeat.
+
+**Re-run on a stable tree**, three full suite runs at each setting:
+
+```text
+threads-required=2 (current):  1/3 runs failed — a_jump_inside_the_open_file…
+threads-required=3 (proposed): 0/3 runs failed
+```
+
+**The right direction, and weaker than it looks.** At n=3 a 1→0 shift could be
+chance, and saying otherwise would be the kind of claim this file exists to stop.
+
+**Applied, then reverted on the price.** The argument for three is good —
+`threads-required` models *processes*, and the config says so in its own words:
+*"two threads per test, because there are two processes"*. A `loop_pty` fixture
+on a language with a declared server runs **three**: the test, the child editor,
+and the server the child spawns.
+
+Then the gate was timed at both settings, twice each:
+
+```text
+threads-required = 2   224s      1 of 3 suite runs flaked
+threads-required = 3   381s      0 of 3 suite runs flaked
+```
+
+**A 70% slower gate** to avoid a flake that fires about one run in three and
+clears on a re-run. That is the wrong trade for the loop a person waits on, and
+it is the same trade this repo already rejected when a flat `max-threads = 2`
+doubled the time. Reverted to two.
+
+**What the experiment actually bought** was the number. The question was
+*"would three quiet it"* and the answer is *"probably, at 70%"* — which is a
+different and more useful thing to know than either half alone.
+
+**The targeted fix is a narrower group, not a bigger number.** Only the pty
+tests that declare a language server need the third slot; the other ~1,500
+should not pay for them. nextest can filter by test name, but it cannot see
+which fixtures start a server, so the list would have to be written and kept in
+step. Worth doing if the cluster keeps costing re-runs; not worth doing
+pre-emptively, and **not** worth doing by making every test slower.
 
 ---
 
@@ -2984,8 +3023,42 @@ touches the one file three lints and the whole pty suite are written against —
 `lint-action-arms.sh` reads `crates/phosphor/src/*.rs` and strips the column-0
 `#[cfg(test)]`, which a split would multiply.
 
-**Not scheduled here.** This is a task-graph decision and Teej's to make; the
-entry exists so the allowlist line is never the only record of it.
+**PARTLY DONE, 2026-08-25 — the part that needed no design decision.**
+
+The test module moved to `crates/phosphor/src/tests.rs`. It was **5,023 lines,
+23% of the file**, and lifting it took `main.rs` from 1,057,356 bytes to 842,839
+— under the ceiling with 205 KB of headroom, without moving one line of
+production code. `scripts/allow-large-files.txt` is gone; the exception was
+never needed.
+
+It is still a `#[cfg(test)] mod tests;`, so it keeps access to private items —
+which is the whole reason it is in `src/` rather than `tests/`.
+
+**The dedent was checked before it was done, not after.** Lifting a module means
+removing four spaces from 5,020 lines, which changes any string that spans lines
+without a `\` continuation. Measured first: **zero** body lines were indented
+less than four, and every line that opens a string without closing it is
+`\`-continued, where the compiler discards leading whitespace anyway.
+
+**Five readers of the `#[cfg(test)]` anchor, and a grep of `scripts/` found
+four.** `lint-action-arms`, `lint-capability-bindings`, `lint-node-kinds` and
+`lint-refusal-tasks` each glob `crates/phosphor/src/*.rs` and strip the column-0
+attribute to find the production half — in a file that *is* the test module
+there is nothing to strip, so all four would have read 5,000 lines of fixtures
+as production. They skip it by name now, and both directions are proven: a
+production arm removed still fails `lint-action-arms`, and an Action constructed
+in `tests.rs` does not.
+
+The fifth was `crates/phosphor-steel/tests/no_bindings_in_rust.rs`, which
+asserts the attribute is followed by `mod tests {`. It is a **test**, not a
+lint, so it was outside the grep — and it is what turned the first green gate
+after the split red.
+
+**What is left is the part that is a design decision**, and the estimate above
+stands: `impl Editing` is 4,510 lines and `fn run` is 2,697, together another
+32%. Both need visibility widened across a file with no module boundaries, and
+`fn run` touches everything. Neither is forced now that the ceiling is met, and
+neither should be done by a task that merely notices.
 
 ---
 
