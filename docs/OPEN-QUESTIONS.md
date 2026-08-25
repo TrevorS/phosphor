@@ -2842,6 +2842,50 @@ example list should lose `:rr`. That is a design call, not a build one.
 
 ---
 
+### 62 · `5b`'s footer names a command that exists and does something else
+
+**Found while building `T070`.** The second instance of §61's ruling, and it
+carries a fact §61 did not have.
+
+`docs/design/TUI Mockups.dc.html`'s `5b` draws its three exits as:
+
+```text
+:rr take disk · :w keep mine · :c ask claude
+```
+
+§61 already settled the first of those: Design Language §6 says *"spell the
+whole command … never cryptic contractions like `:ca` or `:rr`"* and names `:rr`
+as its own counter-example, so the rule was written against that spelling.
+
+**What is new is `:c`.** It is not merely a contraction — it is
+**already registered**, as `c[omment]`, `T068`'s verb for opening an anchored
+thread. So a reader who follows `5b`'s footer does not get *"no such command"*;
+they get a different feature. That is worse than a contraction and worse than a
+dead key: a footer you can follow *into the wrong verb* teaches the editor
+wrongly and does it silently.
+
+**RULED: the three exits are spelled with `DiskExit`'s own wire names** —
+`:take-disk`, `:keep-mine`, `:ask-claude`. Three reasons:
+
+1. §6, exactly as §61 applied it.
+2. The collision above, which no spelling rule is needed to reject.
+3. **The vocabulary already chose these words.** `DiskExit`'s variants serialise
+   as `take-disk`, `keep-mine` and `ask-claude`, so the footer, the ex line and
+   the Action all spell the exit identically. A fourth spelling invented here
+   would be the thing this build keeps finding: two names for one idea.
+
+**`:w keep mine` is the interesting near-miss.** `:w` is vim's own and
+`w[rite]` is registered, so unlike `:c` it collides with nothing and unlike
+`:rr` it is not phosphor inventing a contraction. Writing your buffer genuinely
+*is* keeping yours. It is still not the exit: `:keep-mine` resolves the diff and
+closes `5b`, where a bare `:write` would leave the surface open over a
+disagreement it had just ended.
+
+**Not folded into the mockup**, per the standing rule — `docs/design/*.dc.html`
+round-trips to a claude.ai Design project and is never edited here.
+
+---
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

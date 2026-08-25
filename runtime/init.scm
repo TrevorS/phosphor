@@ -69,6 +69,8 @@
     "inbox.scm"
     ;; `T069` — 1d, the file that changed underneath you.
     "disk.scm"
+    ;; `T070` — 5b, your buffer against what claude wrote.
+    "diskdiff.scm"
     "languages/typescript.scm"
     "languages/javascript.scm"
     "languages/rust.scm"

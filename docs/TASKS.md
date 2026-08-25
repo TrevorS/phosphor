@@ -4725,8 +4725,68 @@ without losing your place? The recurring sweep.
   > saying `✱`, a change taken rather than offered, one save counting as two, a reload that does
   > not take what is on disk, and a reload that dumps the cursor at the end of its own splice.
   > `just gate` green — 1529 tests.
-- [ ] **T070 · `:diff-disk`** — your unsaved buffer vs Claude's disk write. Three manual exits,
+- [x] **T070 · `:diff-disk`** — your unsaved buffer vs Claude's disk write. Three manual exits,
   **no auto-merge**. Screen `5b`. *Needs:* T063, T069
+
+  > **Built and ticked 2026-08-25.** `SPC r d` and `:diff-disk` open `5b`; the buffer is the left
+  > column and claude's disk copy the right; `:take-disk`, `:keep-mine` and `:ask-claude` are the
+  > three ways out. Five planted defects, five catches.
+  >
+  > **The vocabulary had already reserved the whole seam.** `DiffSource::Disk { buffer }` was
+  > declared for this screen, `OpenDiskDiff`, `ResolveDiskDiff` and `DiskExit`'s three variants
+  > all existed, and `Resources::diff` read `DiffSource::Disk { .. } | DiffSource::Change { .. }
+  > => None` with a comment saying *"neither store exists"*. `T070` is that arm filled in and
+  > almost nothing else invented — the widget (`T063`) and the disk state (`T069`) were both
+  > already there.
+  >
+  > **The buffer is the diff's *from* side, and getting that wrong compiles.** `DiffBody` renders
+  > side-by-side with the removed side on the left — its own words, *"a row with text on the left
+  > and nothing on the right is a deletion"* — and `5b` draws `buffer · yours` against
+  > `disk · claude`. So `similar::TextDiff::from_lines(mine, theirs)`. Reversed, it produces a
+  > perfectly correct diff of the wrong two things: both versions still appear, nothing errors,
+  > and the columns are backwards. **Only a position check catches it**, which is why the test
+  > asserts *which half of the screen* each line lands in rather than that both are present. The
+  > first version of that test asserted presence, passed against the reversal, and is the reason
+  > this paragraph exists.
+  >
+  > **`5b`'s footer names a command that exists and does something else — §62.** The mockup draws
+  > `:rr take disk · :w keep mine · :c ask claude`. §61 already ruled on `:rr` (Design Language §6
+  > names it as its own counter-example); what is new here is that **`:c` is registered**, as
+  > `c[omment]`, `T068`'s thread verb. A footer you can follow *into the wrong verb* is worse than
+  > one you cannot follow. The exits take `DiskExit`'s own wire names instead, so the footer, the
+  > ex line and the Action spell each exit identically.
+  >
+  > **No auto-merge, asserted as an absence.** Each exit test checks that the *other* side is
+  > **gone** — `:take-disk` leaves nothing of yours in the buffer, `:keep-mine` leaves nothing of
+  > claude's on disk. A merge would keep both and still look like a plausible file, which is
+  > exactly why presence is not enough.
+  >
+  > **`:ask-claude` resolves nothing and says so.** It hands the disagreement over and leaves `5b`
+  > open, because whether the file changes next is claude's turn rather than the command's — the
+  > `✱` stays true until something actually moves. With no agent attached it declines by name; a
+  > planted version that quietly fell back to `:take-disk` is caught, because an editor that picks
+  > a side when nobody is listening is the auto-merge wearing a different hat. The message names
+  > the file and the disagreement and carries **neither version**: claude wrote one and can read
+  > the other, and pasting both would be the editor deciding which part of the diff mattered.
+  >
+  > **`set-diff-mode` is armed, and its `lint-action-arms` record is gone.** `4b` is *"one review
+  > block as one unified diff"* and `5b` is the design brief's `:dv`, *"a side-by-side of buffer
+  > vs disk"* — two surfaces, two modes, one widget. The mode rides in the surface args and the
+  > arm **recomposes the float**, because a float is a snapshot: setting the field alone would
+  > change a value nothing redraws, and the verb would look broken while being applied.
+  >
+  > **`similar` joined the binary and added no crate** — it is already in the graph through
+  > `vendor/ratatui-code-editor`. `phosphor-ui` takes it dev-only on purpose, and its own note
+  > says why the production side cannot live there: the two sides here *"are a buffer and a disk
+  > copy, which a widget crate cannot read"*.
+  >
+  > **`SPC r d` left the deferred-key table**, the last row `S7.2` put there.
+  >
+  > **Verification.** Four keystroke tests — the diff drawn with each version in its own column
+  > and the strip reading `DISKDIFF`, then each of the three exits taken in turn. Planted and
+  > caught: the diff running backwards, `:take-disk` merging instead of replacing, `:keep-mine`
+  > not writing, `:ask-claude` picking a side with nobody to ask, and a header that does not name
+  > which side is which. `just gate` green.
 
 ### ✋ CP-8b — Invariant 3 at its sharpest
 

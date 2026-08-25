@@ -2144,11 +2144,10 @@ mod driven {
             // *name* now — `no turn to interrupt` — which is the difference
             // this table exists to make visible, and the row going is the
             // record shrinking as designed.
-            // `SPC r r` left this table when `T069` armed `reload-from-disk`:
-            // it takes what is on disk now rather than naming a task, which is
-            // the row shrinking for the right reason. `SPC r d` stays until
-            // `T070` builds the disk diff it opens.
-            (b" rd", "diff against disk", "T070"),
+            // `SPC r r` left this table when `T069` armed `reload-from-disk`
+            // and `SPC r d` left it when `T070` armed `open-disk-diff`. Both
+            // act now rather than naming a task, which is this record shrinking
+            // for the only good reason it can.
             (b" j", "the jj timeline", "T073"),
         ];
         for (keys, what, task) in deferred {
@@ -6254,11 +6253,18 @@ mod driven {
         // thread now. That is the fourth command to graduate off this list in
         // as many tasks, which is the reason the list is written as data: each
         // departure is one line, and the line that stays is the claim.
-        let deferred: &[(&str, &str)] = &[
-            // `:reattach` left this table when `T057` built the lifecycle —
-            // with no session it declines by *name* now rather than by task.
-            ("diff-disk", "T070"),
-        ];
+        // **The table is empty, and that is the claim now.** `:reattach` left
+        // when `T057` built the lifecycle, `:comment` when `T068` built `3a`,
+        // and `:diff-disk` — the last row — when `T070` built `5b`. Every ex
+        // command this editor registers is live.
+        //
+        // A shrink-only list that reaches zero has to say something or become a
+        // loop over nothing that passes forever. So the claim inverts: the one
+        // command that left most recently is pressed, and it must decline **by
+        // name** rather than by task. That is the same rung `SPC c i` is held
+        // to one test up — *"a bound key that cannot act says what is missing
+        // rather than which task"* — and it is what a graduated command owes.
+        let deferred: &[(&str, &str)] = &[];
         for (command, task) in deferred {
             let said = editor.press_until(format!(":{command}\r").as_bytes(), task);
             assert!(
@@ -6267,6 +6273,18 @@ mod driven {
                  frame was: {said}"
             );
         }
+
+        // `:diff-disk` on a buffer that agrees with disk. Not a task id, not
+        // silence — the reason.
+        let agreed = editor.press_until(b":diff-disk\r", "already agree");
+        assert!(
+            shows(&agreed, "already agree"),
+            "`:diff-disk` is built and declines by name; frame was: {agreed}"
+        );
+        assert!(
+            !shows(&agreed, "T070"),
+            "and it names no task, because the task landed; frame was: {agreed}"
+        );
         editor.quit();
     }
 
@@ -8748,6 +8766,161 @@ mod driven {
     /// line no region covers was indistinguishable from the key being unbound —
     /// correct behaviour that reads as a bug, which is the one failure mode a
     /// test can catch and a person cannot argue with.
+    /// **`SPC r d` draws your buffer against what is on disk** (`T070`, `5b`).
+    ///
+    /// The fixture is built so a *merge* would be visible: the buffer has a
+    /// line disk does not and disk has a line the buffer does not. A surface
+    /// that showed both as though they were one file would be the auto-merge
+    /// this task's own line forbids, and it would look plausible.
+    #[test]
+    fn spc_r_d_draws_your_buffer_against_disk() {
+        let scratch = Scratch::new("diskdiff");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("both.txt");
+        fs::write(&file, "shared one\nmine only\nshared two\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // Claude rewrites it underneath, replacing the middle line.
+        fs::write(&file, "shared one\ntheirs only\nshared two\n").expect("the write underneath");
+
+        let shown = whole(&editor.shown_on_grid(b" rd", "theirs only"));
+        // **The header names which side is which**, which is the one thing two
+        // columns cannot say about themselves.
+        assert!(
+            shows(&shown, "disk ⟷ buffer"),
+            "`5b`'s header names both sides; frame was: {shown}"
+        );
+        assert!(
+            shows(&shown, "mine only") && shows(&shown, "theirs only"),
+            "both versions are drawn, neither is merged away; frame was: {shown}"
+        );
+
+        // **And each is on its own side**, which is the assertion that can
+        // actually fail. `DiffBody` puts the *removed* side on the left — its
+        // own words: *"a row with text on the left and nothing on the right is
+        // a deletion"* — and `5b` draws `buffer · yours` left against
+        // `disk · claude` right, so the buffer has to be the diff's *from*
+        // side. Swap the two arguments to `similar::TextDiff::from_lines` and
+        // you get a perfectly correct diff of the wrong two things: both lines
+        // still appear, both assertions above still pass, and the columns are
+        // backwards. Nothing but a position check sees it.
+        let grid = editor.screen();
+        let side = |needle: &str| -> usize {
+            (0..SCREEN.ws_row)
+                .find_map(|row| grid.line(row).find(needle).map(|at| (row, at)))
+                .unwrap_or_else(|| panic!("{needle} is on the screen somewhere"))
+                .1
+        };
+        let half = usize::from(SCREEN.ws_col) / 2;
+        assert!(
+            side("mine only") < half,
+            "your buffer is the left column ({} of {half}); frame was: {shown}",
+            side("mine only")
+        );
+        assert!(
+            side("theirs only") >= half,
+            "claude's disk copy is the right column ({} of {half}); frame was: {shown}",
+            side("theirs only")
+        );
+        // §5's chip is the surface, not the edit mode — `5b` draws `DISKDIFF`.
+        assert!(
+            shows(&shown, "diskdiff") || shows(&shown, "DISKDIFF"),
+            "the strip names the surface; frame was: {shown}"
+        );
+        editor.press_quietly(b"\x1b");
+        editor.quit();
+    }
+
+    /// **`:take-disk` takes all of disk and none of yours** (`T070`).
+    ///
+    /// The *"no auto-merge"* half of the acceptance, asserted as an absence:
+    /// the line that was only ever in the buffer has to be **gone**. A merge
+    /// would keep it and still look like a plausible file, which is exactly why
+    /// this is asserted rather than eyeballed.
+    #[test]
+    fn take_disk_takes_all_of_disk_and_none_of_yours() {
+        let scratch = Scratch::new("take-disk");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("both.txt");
+        fs::write(&file, "shared one\nmine only\nshared two\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        fs::write(&file, "shared one\ntheirs only\nshared two\n").expect("the write underneath");
+        editor.press_until(b" rd", "theirs only");
+
+        let taken = whole(&editor.shown_on_grid(b":take-disk\r", "took what"));
+        assert!(
+            !shows(&taken, "mine only"),
+            "nothing of yours survives a `:take-disk`; frame was: {taken}"
+        );
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "shared one\ntheirs only\nshared two\n",
+            "and disk is untouched — taking it is not writing it"
+        );
+        editor.quit();
+    }
+
+    /// **`:keep-mine` writes your buffer over what claude wrote** (`T070`).
+    ///
+    /// The mirror of the one above, and the same absence: claude's line has to
+    /// be gone from **disk**, because keeping yours means yours is what the
+    /// file now says.
+    #[test]
+    fn keep_mine_writes_your_buffer_over_what_claude_wrote() {
+        let scratch = Scratch::new("keep-mine");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("both.txt");
+        fs::write(&file, "shared one\nmine only\nshared two\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        fs::write(&file, "shared one\ntheirs only\nshared two\n").expect("the write underneath");
+        editor.press_until(b" rd", "theirs only");
+        editor.press_until(b":keep-mine\r", "kept your");
+
+        let written = fs::read_to_string(&file).expect("the file survives");
+        assert_eq!(
+            written, "shared one\nmine only\nshared two\n",
+            "your buffer is what the file says now"
+        );
+        assert!(
+            !written.contains("theirs only"),
+            "and nothing of claude's was merged into it"
+        );
+        editor.quit();
+    }
+
+    /// **`:ask-claude` with no agent declines rather than choosing** (`T070`).
+    ///
+    /// The third exit is the one that resolves nothing by itself, so with
+    /// nobody to ask it must say so — and it must **not** quietly fall back to
+    /// one of the other two. An editor that picked a side because the agent was
+    /// missing would be the auto-merge wearing a different hat.
+    #[test]
+    fn ask_claude_with_no_agent_declines_rather_than_choosing() {
+        let scratch = Scratch::new("ask-claude");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("both.txt");
+        fs::write(&file, "shared one\nmine only\nshared two\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        fs::write(&file, "shared one\ntheirs only\nshared two\n").expect("the write underneath");
+        editor.press_until(b" rd", "theirs only");
+
+        let asked = editor.press_until(b":ask-claude\r", "nobody to ask");
+        assert!(
+            shows(&asked, "nobody to ask"),
+            "no agent is a refusal by name; frame was: {asked}"
+        );
+        assert_eq!(
+            fs::read_to_string(&file).expect("the file survives"),
+            "shared one\ntheirs only\nshared two\n",
+            "and neither side was taken while nobody was listening"
+        );
+        editor.press_quietly(b"\x1b");
+        editor.quit();
+    }
+
     /// **`SPC r r` takes what is on disk** (`T069`).
     ///
     /// The narrow half of `1d`: the offer, accepted. No watcher is involved —

@@ -41,6 +41,16 @@ nucleo = "0.5.0"
 # per burst is the honest signal. `notify` alone would flash the indicator
 # several times for one save.
 notify-debouncer-full = "0.7.0"
+# `T070`'s `:diff-disk`. `phosphor-ui` takes `similar` as a *dev* dependency
+# only, and its own note says why the production side cannot live there: the
+# two sides of this diff "are a buffer and a disk copy, which a widget crate
+# cannot read". So the widget draws a `DiffVm` and the binary is what builds
+# one out of two texts.
+#
+# Adds a line and no crate — `similar` is already in the graph through
+# `vendor/ratatui-code-editor`, which is what `T008`'s spike found and `T063`'s
+# entry repeats.
+similar = "^2.7"
 phosphor-agent.workspace = true
 phosphor-buffer.workspace = true
 serde_json.workspace = true

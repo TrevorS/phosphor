@@ -3749,6 +3749,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         peek: None,
         inbox: None,
         store: Arc::clone(&host.store),
+        disk_diff: None,
+        diff_mode: phosphor_core::request::DiffMode::SideBySide,
         disk_box: None,
         // **Spawned here, before the first file opens.** `Watch::spawn` cannot
         // fail into an error — a watcher that will not start answers
@@ -4419,7 +4421,16 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // `runtime/statusline.scm`'s (`T025`) — there is no segment list, no
         // order and no shed ladder on this side of the call.
         let vm = StatusVm {
-            mode: mode_word(machine.mode()).to_owned(),
+            // **A surface outranks an edit mode in the chip**, which is what
+            // this field's own doc anticipates — *"an edit mode (`normal`,
+            // `insert`) or a surface (`repl`, `review`, `diskdiff`)"*. `5b`
+            // draws `DISKDIFF` there, and while two files are being compared
+            // `NORMAL` would be answering a question nobody asked.
+            mode: if shell.disk_diff.is_some() {
+                "diskdiff".to_owned()
+            } else {
+                mode_word(machine.mode()).to_owned()
+            },
             surface: None,
             file: editing.file.clone().map(|path| StatusFile {
                 path,
@@ -4719,8 +4730,22 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             let after = text_for(&hunk.path, &open_texts);
             Some((hunk_id, peek_vm(&hunk, after.as_deref())))
         });
+        // `T070` — `5b`, built the same way and for the same reason: the
+        // widget draws a `DiffVm` and only the binary can read a buffer and a
+        // disk copy. Rebuilt per frame so an edit to the buffer while the diff
+        // is open moves the left column, which is what makes `:diff-disk` a
+        // view rather than a snapshot.
+        let disk_vm = shell.disk_diff.as_ref().and_then(|(id, path)| {
+            let mine = text_for(path, &open_texts)?;
+            // A disk copy that has since gone answers nothing rather than an
+            // empty right-hand column, which would read as *"claude deleted
+            // everything"*.
+            let theirs = std::fs::read_to_string(path).ok()?;
+            Some((*id, disk_diff_vm(path, &mine, &theirs)))
+        });
         let overlay = Overlay {
             review: review_vm.as_ref().map(|(block, vm)| (*block, vm)),
+            disk: disk_vm.as_ref().map(|(id, vm)| (*id, vm)),
             asks: &shell.asks,
             chrome,
             status: status_tree,
@@ -6288,6 +6313,64 @@ fn hunk_key(hunk: &store::Hunk) -> String {
 /// [`hunk_lines`]. No header — `2b`'s float is three lines tall and has no room
 /// for one, which is `DiffVm::header`'s own documented empty case, from
 /// `T063`.
+/// `5b` — your unsaved buffer against what is on disk (`T070`).
+///
+/// **The binary builds this and the widget only draws it**, which is
+/// `phosphor-ui`'s own reason for taking `similar` as a dev dependency: the two
+/// sides here *"are a buffer and a disk copy, which a widget crate cannot
+/// read"*.
+///
+/// **`mine` first and `theirs` second, and the order is the screen.**
+/// [`DiffBody`] renders side-by-side with the removed side on the left —
+/// *"a row with text on the left and nothing on the right is a deletion"* — and
+/// `5b` draws `buffer · yours` on the left against `disk · claude` on the
+/// right. So the buffer is the *from* side. Reversing the arguments would draw
+/// a correct diff of the wrong two things.
+///
+/// [`DiffBody`]: phosphor_ui::diff::DiffBody
+fn disk_diff_vm(path: &Path, mine: &str, theirs: &str) -> phosphor_ui::diff::DiffVm {
+    use phosphor_ui::diff::{Change, DiffVm, Entry, File, Hunk, Line};
+
+    let diff = similar::TextDiff::from_lines(mine, theirs);
+    let lines: Vec<Line> = diff
+        .iter_all_changes()
+        .map(|change| Line {
+            change: match change.tag() {
+                similar::ChangeTag::Delete => Change::Removed,
+                similar::ChangeTag::Insert => Change::Added,
+                similar::ChangeTag::Equal => Change::Context,
+            },
+            // `similar` keeps the newline on each line and a row that draws one
+            // would run the diff onto the next row of the float.
+            text: change.value().trim_end_matches('\n').to_owned(),
+        })
+        .collect();
+
+    DiffVm {
+        // `5b`'s first row, and it names which side is which before you read a
+        // single line — the one thing a two-column diff has to say and the one
+        // thing its columns cannot.
+        header: format!("disk ⟷ buffer · {}", path.display()),
+        entries: vec![Entry::File(File {
+            path: path.display().to_string(),
+            annotation: None,
+            unseen: None,
+            folded: false,
+            hunks: vec![Hunk {
+                // **No range, because there is no hunk to number.** This is a
+                // whole-file comparison rather than a claude-declared span, and
+                // a `1–40` here would be a line range dressed up as a hunk id.
+                range: String::new(),
+                label: None,
+                seen: false,
+                folded: false,
+                lines,
+            }],
+        })],
+        selected: None,
+    }
+}
+
 fn peek_vm(hunk: &store::Hunk, source: Option<&str>) -> phosphor_ui::diff::DiffVm {
     use phosphor_ui::diff::{DiffVm, Entry, File, Hunk};
 
@@ -8196,6 +8279,29 @@ const REVIEW_SURFACE: &str = "review";
 /// The `hunk-peek` float's surface id — `runtime/review.scm` (`T066`).
 const PEEK_SURFACE: &str = "hunk-peek";
 
+/// The `disk-diff` float's surface id — `runtime/diskdiff.scm` (`T070`).
+const DISK_DIFF_SURFACE: &str = "disk-diff";
+
+/// What `5b` is composed from (`T070`).
+///
+/// **One builder for two callers**, because opening the diff and changing its
+/// mode both have to name the same buffer: a `set-diff-mode` that rebuilt the
+/// args by hand is a second place for the id to be wrong.
+///
+/// The mode rides in the args rather than being read by the layer, because a
+/// float is composed once at open (`Intent::OpenSurface`'s own rule) — so
+/// changing the mode means composing it again, which is exactly what the arm
+/// does.
+fn disk_diff_args(buffer: BufferId, mode: phosphor_core::request::DiffMode) -> Value {
+    let mut args = Args::new();
+    args.set(
+        "buffer",
+        Value::Int(i64::try_from(buffer.0).unwrap_or(i64::MAX)),
+    );
+    args.set("mode", mode.to_value());
+    Value::Record(args)
+}
+
 /// The `inbox` float's surface id — `runtime/inbox.scm` (`T067`).
 const INBOX_SURFACE: &str = "inbox";
 
@@ -8401,6 +8507,8 @@ struct Painted<'a> {
     review: Option<(BlockId, &'a phosphor_ui::diff::DiffVm)>,
     /// `T066`'s peek, the same shape one level down — see [`Painted::review`].
     peek: Option<(HunkId, &'a phosphor_ui::diff::DiffVm)>,
+    /// `5b`'s two columns (`T070`), keyed by buffer for `Hunk`'s reason.
+    disk: Option<(BufferId, &'a phosphor_ui::diff::DiffVm)>,
 }
 
 impl<'a> Overlay<'a> {
@@ -8493,8 +8601,15 @@ impl Resources for Painted<'_> {
             DiffSource::Hunk { hunk } => {
                 self.peek.filter(|(open, _)| open == hunk).map(|(_, vm)| vm)
             }
-            // `Disk` (`T070`) and `Change` (`T073`) — neither store exists.
-            DiffSource::Disk { .. } | DiffSource::Change { .. } => None,
+            // `T070`. `5b`, keyed by buffer for `Hunk`'s reason one arm up: a
+            // diff composed for one buffer must not draw another's because a
+            // second `:diff-disk` happens to be open.
+            DiffSource::Disk { buffer } => self
+                .disk
+                .filter(|(open, _)| open == buffer)
+                .map(|(_, vm)| vm),
+            // `Change` (`T073`) — no timeline store exists yet.
+            DiffSource::Change { .. } => None,
         }
     }
 }
@@ -8561,6 +8676,8 @@ struct Overlay<'a> {
     review: Option<(BlockId, &'a phosphor_ui::diff::DiffVm)>,
     /// `T066`'s peek, already built — see [`Painted::peek`].
     peek: Option<(HunkId, &'a phosphor_ui::diff::DiffVm)>,
+    /// `5b`'s two columns (`T070`), keyed by buffer for `Hunk`'s reason.
+    disk: Option<(BufferId, &'a phosphor_ui::diff::DiffVm)>,
     /// This frame's reading of the app clock (`T050`).
     ///
     /// The whole animation budget: `Node::Spinner` and `Node::Elapsed` render
@@ -8614,6 +8731,7 @@ fn draw(
 
     let painted = Painted {
         editors,
+        disk: overlay.disk,
         columns: overlay.columns,
         completion: overlay.completion,
         signature: overlay.signature,
@@ -9503,6 +9621,23 @@ struct Shell {
     /// `T041`'s store, shared with [`AppHost`] so the gutter, the statusline
     /// and the `region` queries cannot disagree about a file.
     store: Arc<store::Shared>,
+    /// `5b` — which buffer's disk diff is open, and where it lives (`T070`).
+    ///
+    /// **The path rides along with the id** because the two are wanted in
+    /// different places: `DiffSource::Disk` names a `BufferId`, and building
+    /// the diff needs a path to read the disk copy from. Resolving the second
+    /// out of the first at draw time would mean borrowing the buffer map while
+    /// the frame already holds the focused editor out of it.
+    disk_diff: Option<(BufferId, PathBuf)>,
+    /// Which way `5b` draws — `T063`'s `DiffBody` renders both (`T070`).
+    ///
+    /// **Side-by-side by default, and that is the screen rather than a
+    /// preference.** `4b`'s review block is *"one review block as one unified
+    /// diff"*; `5b` is the design brief's `:dv`, *"a side-by-side of buffer vs
+    /// disk"*. Two surfaces, two modes, one widget — which is why `set-diff-mode`
+    /// belongs to this task and was recorded against it in
+    /// `scripts/lint-action-arms.sh` until now.
+    diff_mode: phosphor_core::request::DiffMode,
     /// `1d`'s corner box, composed once per disk change (`T069`).
     ///
     /// **A cache, and the loop span it without one.** `Layer::surface` runs
@@ -12246,6 +12381,123 @@ impl Editing {
             // group rows. A setting on the open surface rather than a prop
             // rewritten into the float, because the float is a snapshot and
             // this has to change what the next frame draws.
+            // ---------------------------------------------------------------
+            // `T070` — `5b`, and the three ways out of it.
+            //
+            // **No auto-merge anywhere in here**, which is the task's own
+            // emphasis and the reason all three exits are verbs a person types.
+            // A buffer and a disk copy that disagree are two intentions, and an
+            // editor that combined them would be inventing a third nobody had.
+            // ---------------------------------------------------------------
+            Action::File(FileAction::OpenDiskDiff { target }) => {
+                if let Target::Explicit { path, .. } = target
+                    && self.file.as_deref() != Some(path.as_path())
+                {
+                    return declined("that file is not the one in this buffer");
+                }
+                let Some(path) = self.file.clone() else {
+                    return declined("no file open — nothing to compare");
+                };
+                // **A file that agrees with the buffer has no diff to draw**,
+                // and saying so is better than opening two identical columns
+                // and leaving you to notice. This is also the honest answer
+                // when nothing has changed underneath you at all.
+                match std::fs::read_to_string(&path) {
+                    Err(error) => return declined(&format!("{}: {error}", path.display())),
+                    Ok(disk) => {
+                        let code = self.editor.code_ref();
+                        if disk == code.slice(0, code.len_chars()) {
+                            return declined("this buffer and disk already agree");
+                        }
+                    }
+                }
+                // One surface, one session — the rule `T066`'s peek states two
+                // arms up.
+                cx.shell.review = None;
+                cx.shell.inbox = None;
+                cx.shell.peek = None;
+                cx.shell.disk_diff = Some((cx.buffer, path));
+                let args = disk_diff_args(cx.buffer, cx.shell.diff_mode);
+                self.float = Some((DISK_DIFF_SURFACE.to_owned(), args));
+                done()
+            }
+            Action::File(FileAction::ResolveDiskDiff { target, exit }) => {
+                if let Target::Explicit { path, .. } = target
+                    && self.file.as_deref() != Some(path.as_path())
+                {
+                    return declined("that file is not the one in this buffer");
+                }
+                let Some(path) = self.file.clone() else {
+                    return declined("no file open — nothing to resolve");
+                };
+                let outcome = match exit {
+                    // **Take disk** — `T069`'s reload, unchanged. The same verb
+                    // `:reload` runs, so there is one implementation of *"the
+                    // buffer becomes what is on disk"* and not two that can
+                    // drift.
+                    phosphor_core::request::DiskExit::TakeDisk => {
+                        self.reload().map(|()| "took what was on disk")
+                    }
+                    // **Keep mine** — an ordinary write. Your buffer becomes
+                    // what is on disk, which ends the disagreement from the
+                    // other side, and claude's version is gone because that is
+                    // what you chose.
+                    phosphor_core::request::DiskExit::KeepMine => {
+                        self.write(None).map(|()| "kept your buffer")
+                    }
+                    // **Ask claude** — the one exit that resolves nothing by
+                    // itself, and it must say so rather than pretending.
+                    //
+                    // It hands the disagreement back: the file and the fact that
+                    // two versions exist. Whether claude then rewrites the file
+                    // is claude's turn, not this arm's, so the diff stays open
+                    // and the `✱` stays true until something actually changes.
+                    phosphor_core::request::DiskExit::AskClaude => {
+                        if cx.shell.agent.is_none() {
+                            return declined("no agent attached — nobody to ask");
+                        }
+                        // **The message names the file and the disagreement,
+                        // and carries neither version.** Claude wrote one of
+                        // them and can read the other; pasting both into a
+                        // prompt would be this editor deciding what the
+                        // interesting part of the diff was.
+                        cx.shell.session.prompt(format!(
+                            "{} and my unsaved buffer disagree — you wrote the file \
+                             underneath me. Which should win, and why?",
+                            path.display()
+                        ));
+                        Ok("asked claude")
+                    }
+                };
+                match outcome {
+                    Ok(said) => {
+                        // **The diff closes on the two exits that resolved it,
+                        // and stays open on the one that did not.**
+                        if !matches!(exit, phosphor_core::request::DiskExit::AskClaude) {
+                            cx.shell.disk_diff = None;
+                            cx.shell.store.clear_disk_change(&path);
+                            self.float = None;
+                        }
+                        self.note = Some(said.to_owned());
+                        done()
+                    }
+                    Err(reason) => declined(&reason),
+                }
+            }
+            // `T070`. `4b` is unified and `5b` is side-by-side, so the mode is
+            // per surface rather than global — this sets the one `5b` reads.
+            Action::Review(phosphor_core::action::ReviewAction::SetDiffMode { mode }) => {
+                let Some((buffer, _)) = cx.shell.disk_diff else {
+                    return declined("no disk diff is open");
+                };
+                cx.shell.diff_mode = *mode;
+                // **Composed again, because a float is a snapshot.** Setting
+                // the field alone would change a value nothing redraws — the
+                // screen would keep the mode it opened with and the verb would
+                // look broken while being, technically, applied.
+                self.float = Some((DISK_DIFF_SURFACE.to_owned(), disk_diff_args(buffer, *mode)));
+                done()
+            }
             Action::Review(phosphor_core::action::ReviewAction::SetDiffGrouping { grouping }) => {
                 let Some(review) = cx.shell.review.as_mut() else {
                     return declined("no diff is open");
@@ -16758,6 +17010,8 @@ mod tests {
     fn shell() -> Shell {
         Shell {
             store: Arc::new(store::Shared::default()),
+            disk_diff: None,
+            diff_mode: phosphor_core::request::DiffMode::SideBySide,
             disk_box: None,
             // A test shell watches nothing: `Watch::idle` starts no thread, so
             // the suite pays for no filesystem watchers and no `notify` state.
@@ -19516,6 +19770,7 @@ mod tests {
             columns: &columns,
             review: None,
             peek: None,
+            disk: None,
             completion: None,
             signature: None,
             picker: None,

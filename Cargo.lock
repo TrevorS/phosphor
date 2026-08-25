@@ -2316,6 +2316,7 @@ dependencies = [
  "ratatui-core",
  "rustix",
  "serde_json",
+ "similar",
  "tokio",
 ]
 
