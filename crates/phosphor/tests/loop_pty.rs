@@ -2169,11 +2169,13 @@ mod driven {
             // *name* now — `no turn to interrupt` — which is the difference
             // this table exists to make visible, and the row going is the
             // record shrinking as designed.
-            // `SPC r r` left this table when `T069` armed `reload-from-disk`
-            // and `SPC r d` left it when `T070` armed `open-disk-diff`. Both
-            // act now rather than naming a task, which is this record shrinking
-            // for the only good reason it can.
-            (b" j", "the jj timeline", "T073"),
+            // `SPC r r` left this table when `T069` armed `reload-from-disk`,
+            // `SPC r d` when `T070` armed `open-disk-diff`, and `SPC j` when
+            // `T073` armed `open-timeline`. Each acts now rather than naming a
+            // task, which is this record shrinking for the only good reason it
+            // can. What is left above is `T109`'s and `T110`'s, and those are
+            // open tasks — so every row in this table names work that has
+            // genuinely not been done.
         ];
         for (keys, what, task) in deferred {
             // **`press_until`, not a quiet press and a grid read.** A refusal is
@@ -2766,27 +2768,59 @@ mod driven {
         editor.leave_by(b":quit\r");
     }
 
-    /// `:timeline` is not built, and names `T073`.
+    /// **`3b` declines by naming the state, in both of the two ways it can**
+    /// (`T073`).
     ///
-    /// Its own test rather than a seventh row in
-    /// `a_deferred_ex_command_names_the_task_that_builds_it`, because that
-    /// table is about commands whose *surface* is deferred and this one is a
-    /// capability the registry marks `S7`. The distinction is invisible in the
-    /// frame and worth keeping in the file.
+    /// This asserted `T073` until that task landed. What it holds now is the
+    /// harder thing, and the one `CP-8c` actually reads: *"does anything feel
+    /// degraded or apologetic?"* — a timeline is an **enhancement view, only
+    /// when jj is present**, so its absence has to read as a fact rather than a
+    /// failure. Both refusals are checked because they are different sentences
+    /// about different situations, and collapsing them would be the editor
+    /// saying *"no"* without saying *"to what"*.
+    ///
+    /// Both spellings are pressed — `SPC j` and `:timeline` — because
+    /// `lint-key-coverage` counts the key and the ex line separately, and
+    /// because a person who learned one should not find the other broken.
     #[test]
-    fn the_timeline_command_names_the_task_that_builds_it() {
+    fn the_timeline_declines_by_naming_the_state() {
         let scratch = Scratch::new("ex-timeline");
         let runtime = copy_layer(&scratch.path);
         let file = scratch.path.join("t.txt");
         fs::write(&file, "alpha\n").expect("a fixture");
-        let editor = Editor::open(&file, &scratch.state(), &runtime);
 
-        let said = editor.press_until(b":timeline\r", "T073");
-        editor.quit();
+        // **No repository.** `Editor::open` sets `PHOSPHOR_VCS=0`, so the
+        // editor is in the state `CP-8c` runs its third pass in — a bare
+        // directory, where the answer is *"there is nothing here"* rather than
+        // *"something went wrong"*.
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let bare = editor.press_until(b" j", "no repository");
         assert!(
-            shows(&said, "T073"),
-            "`:timeline` is deferred and must say which task builds it; frame was: {said}"
+            shows(&bare, "no repository here"),
+            "outside a repository the timeline names that; frame was: {bare}"
         );
+        assert!(
+            !shows(&bare, "T073"),
+            "and it names no task, because the task landed; frame was: {bare}"
+        );
+        editor.press_quietly(b"\x1b");
+        editor.quit();
+
+        // **A git repository.** Detected, supported, and simply not the tool
+        // this view belongs to — which is a third answer again, and the one a
+        // git user has to be able to read without concluding the editor is
+        // broken.
+        let git = Editor::in_a_repo(&file, &scratch.state(), &runtime);
+        let wrong = git.press_until(b":timeline\r", "jj");
+        assert!(
+            shows(&wrong, "the timeline is jj's"),
+            "in git the timeline says whose it is; frame was: {wrong}"
+        );
+        assert!(
+            !shows(&wrong, "T073"),
+            "and still names no task; frame was: {wrong}"
+        );
+        git.quit();
     }
 
     /// `gs` — the mark-seen operator.

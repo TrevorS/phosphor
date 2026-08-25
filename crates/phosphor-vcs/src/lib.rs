@@ -117,6 +117,29 @@ impl Status {
     }
 }
 
+/// One entry in the timeline (`T073`, screen `3b`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    /// The short change id — `3b`'s `a4f2`.
+    pub id: String,
+    /// Whether this is the working copy — `3b`'s `@` against `○`.
+    pub working_copy: bool,
+    /// Who authored it, as the backend records it.
+    ///
+    /// **The author's email, not an actor.** `3b` draws `· you` and
+    /// `· claude`, and this build cannot honestly produce the second: nothing
+    /// creates a change per agent turn yet, so every change in a real
+    /// repository is authored by whoever configured jj. Reporting the *recorded*
+    /// author is the truthful half — an actor column invented from a guess
+    /// would be `3b`'s one claim that no data supports.
+    pub author: String,
+    /// The first line of the description — `3b`'s `wire ws reconnect`.
+    pub description: String,
+    /// Lines added and removed — `3b`'s `+11 −18`.
+    pub added: u32,
+    pub removed: u32,
+}
+
 /// A repository, found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repo {
@@ -210,6 +233,44 @@ impl Repo {
         }
     }
 
+    /// The timeline, newest first (`T073`).
+    ///
+    /// **jj only, and an empty answer everywhere else** — the task is *"jj
+    /// timeline"* and `3b`'s own subtitle is *"enhancement view, only when jj
+    /// is present"*. A git repository is not broken for lacking one; it simply
+    /// has nothing to show here, which is `CP-8c`'s rule about absence.
+    #[must_use]
+    pub fn timeline(&self, limit: Option<u32>) -> Vec<Change> {
+        if self.backend != Backend::Jj {
+            return Vec::new();
+        }
+        let mut args = vec![
+            "log".to_owned(),
+            "--no-graph".to_owned(),
+            "--color=never".to_owned(),
+            "-r".to_owned(),
+            // **`~root()` because jj's root commit is not a change anybody
+            // made.** It has no author and no description, so it would draw as
+            // a blank row at the bottom of every timeline.
+            "all() & ~root()".to_owned(),
+            "-T".to_owned(),
+            JJ_TIMELINE.to_owned(),
+        ];
+        if let Some(limit) = limit {
+            args.push("-n".to_owned());
+            args.push(limit.to_string());
+        }
+        let out = Command::new("jj")
+            .args(&args)
+            .current_dir(&self.root)
+            .output()
+            .ok()
+            .filter(|out| out.status.success());
+        out.map_or_else(Vec::new, |out| {
+            read_jj_timeline(&String::from_utf8_lossy(&out.stdout))
+        })
+    }
+
     /// git's branch and whether the working tree is clean (`T072`).
     ///
     /// **One `git status` and not two**, for `jj_status`'s reason exactly:
@@ -234,6 +295,57 @@ impl Repo {
         };
         read_git_status(&String::from_utf8_lossy(&out.stdout))
     }
+}
+
+/// The template [`Repo::timeline`] asks jj for (`T073`).
+///
+/// Six tab-separated fields per change, in `3b`'s own reading order. Verified
+/// against a real repository before the parser was written — the same rule
+/// `T072`'s four captured `git status` states follow.
+const JJ_TIMELINE: &str = concat!(
+    r#"if(current_working_copy, "@", "o") ++ "\t" ++ "#,
+    r#"change_id.short(4) ++ "\t" ++ "#,
+    r#"author.email() ++ "\t" ++ "#,
+    r#"diff.stat().total_added() ++ "\t" ++ "#,
+    r#"diff.stat().total_removed() ++ "\t" ++ "#,
+    r#"description.first_line() ++ "\n""#,
+);
+
+/// Parse [`JJ_TIMELINE`]'s output (`T073`).
+///
+/// **A free function over the text**, so the parsing half runs on a machine
+/// with no jj — `T071`'s rule for detection and `T072`'s for `git status`.
+///
+/// **A row that does not have six fields is skipped rather than guessed at.**
+/// jj's own root commit has no author and no description, and while `~root()`
+/// filters it, a template that ever changes shape should lose a row rather
+/// than produce one with fields shifted along by one.
+fn read_jj_timeline(said: &str) -> Vec<Change> {
+    said.lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            let marker = fields.next()?;
+            let id = fields.next()?;
+            let author = fields.next()?;
+            let added = fields.next()?;
+            let removed = fields.next()?;
+            let description = fields.next()?;
+            if id.is_empty() {
+                return None;
+            }
+            Some(Change {
+                id: id.to_owned(),
+                working_copy: marker == "@",
+                author: author.to_owned(),
+                description: description.to_owned(),
+                // A count that will not parse is zero rather than a dropped
+                // row: the change is real either way and `+0 −0` is the honest
+                // rendering of *"nothing measured"*.
+                added: added.parse().unwrap_or(0),
+                removed: removed.parse().unwrap_or(0),
+            })
+        })
+        .collect()
 }
 
 /// Parse `git status --porcelain=v2 --branch` (`T072`).
@@ -439,6 +551,61 @@ mod tests {
         let fresh = super::read_git_status("# branch.oid (initial)\n# branch.head (detached)\n");
         assert_eq!(fresh.change, None);
         assert_eq!(fresh.chip(), "git ✓");
+    }
+
+    /// **The timeline, captured from a real repository.**
+    ///
+    /// The fixture is the literal output of the template in
+    /// `crates/phosphor-vcs/src/lib.rs`, recorded before this parser existed.
+    #[test]
+    fn the_timeline_reads_six_fields_a_change() {
+        let rows = super::read_jj_timeline(
+            "@\tvmsp\ttrevor@strieber.org\t1\t0\tretry logic\n\
+             o\tovkk\ttrevor@strieber.org\t88\t3\tscaffold fetch module\n",
+        );
+        assert_eq!(rows.len(), 2);
+
+        // **Newest first, and the working copy is the first row** — `3b` draws
+        // `@ a4f2` at the top and `○` beneath it.
+        assert!(rows[0].working_copy);
+        assert!(!rows[1].working_copy);
+        assert_eq!(rows[0].id, "vmsp");
+        assert_eq!(rows[0].description, "retry logic");
+        assert_eq!((rows[1].added, rows[1].removed), (88, 3));
+        assert_eq!(rows[1].author, "trevor@strieber.org");
+    }
+
+    /// **A short row is skipped rather than guessed at.**
+    ///
+    /// If the template ever changes shape, losing a row is recoverable and
+    /// producing one with its fields shifted along by one is not — a change id
+    /// that is really an email is the kind of wrong that reaches a screen
+    /// looking plausible.
+    #[test]
+    fn a_row_with_the_wrong_shape_is_dropped() {
+        let rows = super::read_jj_timeline(
+            "@\tvmsp\tme@example.com\t1\t0\tfine\n\
+             zzzz\n\
+             \t\t\t\t\t\n\
+             o\tovkk\tme@example.com\t2\t1\talso fine\n",
+        );
+        assert_eq!(rows.len(), 2, "two well-formed rows, two kept");
+        assert_eq!(rows[0].id, "vmsp");
+        assert_eq!(rows[1].id, "ovkk");
+    }
+
+    /// **A git repository has no timeline, and that is not a failure.**
+    ///
+    /// `3b` is *"an enhancement view, only when jj is present"*. `CP-8c` runs
+    /// the whole `S7` set in a git repo and fails if any message implies
+    /// something is missing — so this answers empty rather than refusing.
+    #[test]
+    fn a_git_repo_has_an_empty_timeline() {
+        let dir = scratch("git-timeline");
+        std::fs::create_dir_all(dir.join(".git")).expect("a git marker");
+        let found = detect(&dir).expect("a repo");
+        assert!(found.timeline(None).is_empty());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// **A `.jj` directory with no jj behind it is still a repository.**

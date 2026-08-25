@@ -2122,6 +2122,28 @@ impl Answers for AppHost {
                     .collect();
                 Ok(self.answered(Value::List(rows)))
             }
+            // `T073` — `3b`'s rows, newest first.
+            //
+            // **Answers an empty list outside jj rather than refusing**, which
+            // is this query group's own rule — *"every one of these answers
+            // empty in a bare directory"* — and `3b`'s subtitle: *"an
+            // enhancement view, only when jj is present"*. A git repository is
+            // not broken for having no timeline.
+            Query::Vcs(phosphor_core::query::VcsQuery::Timeline { limit, offset }) => {
+                let rows = std::env::current_dir()
+                    .ok()
+                    .and_then(|cwd| phosphor_vcs::detect(&cwd))
+                    .map_or_else(Vec::new, |repo| {
+                        // `limit` is applied by jj; `offset` here, because jj's
+                        // `-n` counts from the newest and there is no `--skip`.
+                        let take = limit.map(|n| n.saturating_add(offset.unwrap_or(0)));
+                        let mut rows = repo.timeline(take);
+                        let skip = offset.unwrap_or(0) as usize;
+                        rows.drain(..skip.min(rows.len()));
+                        rows
+                    });
+                Ok(self.answered(Value::List(rows.iter().map(change_value).collect())))
+            }
             // `T071` — the backend, the change and whether the tree is clean.
             //
             // **Read fresh rather than off the loop's cache**, and the split is
@@ -6365,6 +6387,18 @@ fn hunk_key(hunk: &store::Hunk) -> String {
 /// [`hunk_lines`]. No header — `2b`'s float is three lines tall and has no room
 /// for one, which is `DiffVm::header`'s own documented empty case, from
 /// `T063`.
+/// One timeline row as the editor layer sees it (`T073`).
+fn change_value(change: &phosphor_vcs::Change) -> Value {
+    let mut fields = Args::new();
+    fields.set("change", Value::Text(change.id.clone()));
+    fields.set("working_copy", Value::Bool(change.working_copy));
+    fields.set("author", Value::Text(change.author.clone()));
+    fields.set("description", Value::Text(change.description.clone()));
+    fields.set("added", Value::Int(i64::from(change.added)));
+    fields.set("removed", Value::Int(i64::from(change.removed)));
+    Value::Record(fields)
+}
+
 /// `5b` — your unsaved buffer against what is on disk (`T070`).
 ///
 /// **The binary builds this and the widget only draws it**, which is
@@ -8330,6 +8364,9 @@ const REVIEW_SURFACE: &str = "review";
 
 /// The `hunk-peek` float's surface id — `runtime/review.scm` (`T066`).
 const PEEK_SURFACE: &str = "hunk-peek";
+
+/// The `timeline` float's surface id — `runtime/timeline.scm` (`T073`).
+const TIMELINE_SURFACE: &str = "timeline";
 
 /// The `disk-diff` float's surface id — `runtime/diskdiff.scm` (`T070`).
 const DISK_DIFF_SURFACE: &str = "disk-diff";
@@ -12446,6 +12483,35 @@ impl Editing {
             // group rows. A setting on the open surface rather than a prop
             // rewritten into the float, because the float is a snapshot and
             // this has to change what the next frame draws.
+            // `T073` — `3b`. The rows are the `timeline` query, so this arm
+            // opens the surface and reads nothing itself; `runtime/timeline.scm`
+            // asks.
+            //
+            // **Refuses outside jj by naming the state.** `3b` is an
+            // enhancement view *"only when jj is present"*, and a git
+            // repository is not broken for lacking one — so the sentence is
+            // about jj rather than about a failure.
+            Action::Vcs(phosphor_core::action::VcsAction::OpenTimeline {}) => {
+                // **The cache, not a fresh detection**, and that is the same
+                // rule the chip follows: one answer to *"which repository are
+                // we in"*. Detecting again here would also step around
+                // `PHOSPHOR_VCS`, which is how `T071`'s chip leaked the
+                // phosphor checkout into every pty test.
+                match cx.shell.vcs.as_ref() {
+                    None => Outcome::Refused(Refusal::NoRepository),
+                    Some((repo, _)) if repo.backend != phosphor_vcs::Backend::Jj => {
+                        declined("the timeline is jj's — this repository is git")
+                    }
+                    Some(_) => {
+                        cx.shell.review = None;
+                        cx.shell.inbox = None;
+                        cx.shell.peek = None;
+                        self.float =
+                            Some((TIMELINE_SURFACE.to_owned(), Value::Record(Args::new())));
+                        done()
+                    }
+                }
+            }
             // `T071` — re-read the repository. The statusline chip is a
             // cache, and this is what makes it current.
             //

@@ -71,6 +71,8 @@
     "disk.scm"
     ;; `T070` — 5b, your buffer against what claude wrote.
     "diskdiff.scm"
+    ;; `T073` — 3b, the jj timeline.
+    "timeline.scm"
     "languages/typescript.scm"
     "languages/javascript.scm"
     "languages/rust.scm"
