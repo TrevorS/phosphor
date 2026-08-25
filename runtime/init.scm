@@ -67,6 +67,8 @@
     "review.scm"
     ;; `T067` — 5c, the inbox.
     "inbox.scm"
+    ;; `T069` — 1d, the file that changed underneath you.
+    "disk.scm"
     "languages/typescript.scm"
     "languages/javascript.scm"
     "languages/rust.scm"

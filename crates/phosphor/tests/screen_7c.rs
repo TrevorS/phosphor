@@ -226,6 +226,7 @@ fn status_vm() -> StatusVm {
         ask_pending: false,
         threads: 0,
         inbox_unread: 0,
+        disk_changed: false,
         unseen: 0,
         // No diagnostic on this screen. `2b` is the one that
         // draws `■ N`, and it has no golden frame.

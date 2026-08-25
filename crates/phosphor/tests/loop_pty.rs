@@ -2126,7 +2126,10 @@ mod driven {
             // *name* now — `no turn to interrupt` — which is the difference
             // this table exists to make visible, and the row going is the
             // record shrinking as designed.
-            (b" rr", "reload from disk", "T069"),
+            // `SPC r r` left this table when `T069` armed `reload-from-disk`:
+            // it takes what is on disk now rather than naming a task, which is
+            // the row shrinking for the right reason. `SPC r d` stays until
+            // `T070` builds the disk diff it opens.
             (b" rd", "diff against disk", "T070"),
             (b" j", "the jj timeline", "T073"),
         ];
@@ -8727,6 +8730,183 @@ mod driven {
     /// line no region covers was indistinguishable from the key being unbound —
     /// correct behaviour that reads as a bug, which is the one failure mode a
     /// test can catch and a person cannot argue with.
+    /// **`SPC r r` takes what is on disk** (`T069`).
+    ///
+    /// The narrow half of `1d`: the offer, accepted. No watcher is involved —
+    /// `reload-from-disk` reads the file itself — so this test says nothing
+    /// about timing and everything about whether the verb works.
+    ///
+    /// `.txt` on purpose: a `.rs` fixture attaches a grammar and a language
+    /// server, and both draw frames of their own that `press` would charge to
+    /// the next keystroke.
+    #[test]
+    fn spc_r_r_takes_what_is_on_disk() {
+        let scratch = Scratch::new("reload");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "before one\nbefore two\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let opened = whole(&editor.screen());
+        assert!(
+            shows(&opened, "before one"),
+            "the buffer opened on what was there; frame was: {opened}"
+        );
+
+        // Somebody else writes the file. Claude, a formatter, `git checkout` —
+        // the editor cannot tell and does not need to.
+        // **Longer than it was, and that is what makes the test able to fail.**
+        // With a same-length rewrite, "keep the line" and "jump to the end of
+        // the splice" both land on line 3 and the planted defect passes. The
+        // fixture has to be able to tell the two apart.
+        fs::write(
+            &file,
+            "after one\nafter two\nafter three\nafter four\nafter five\n",
+        )
+        .expect("the write underneath");
+
+        // **`SPC r r`, pressed as one literal.** `scripts/key_coverage.py`
+        // reads the bytes a test sends, so a binding typed in pieces is a
+        // binding it cannot see — which is the whole reason this test exists:
+        // the lint asked for it by name when `reload-from-disk` stopped
+        // refusing.
+        // Somewhere that is not the top, so a reload that dumped the cursor
+        // **The expected place is written down, not captured.** Two earlier
+        // versions of this assertion read the strip *before* the reload and
+        // compared: the first used `Screen::row`, which is the terminal's
+        // cursor and does not move under a planted `set_cursor(len)`; the
+        // second read the strip but captured it after `press_quietly` had
+        // already settled somewhere other than where this test assumed. Both
+        // passed against the defect they existed to catch.
+        //
+        // `1d` draws the buffer position on the strip (`5:9`). This fixture is
+        // three lines — two of text and the one a trailing newline makes — so
+        // `2j` is line 3, and a reload that keeps the *line* leaves it there
+        // while one that jumps to the end of its own splice does not.
+        editor.press_quietly(b"2j");
+        let place = "3:1";
+
+        let reloaded = whole(&editor.shown_on_grid(b" rr", "after one"));
+        // **The text changed and the cursor did not.** `1d`'s caption is
+        // *"nothing moves unless you asked"*, and what you asked for was the
+        // text: a reload that also threw you to the end of the file would be
+        // answering a question nobody put.
+        assert!(
+            statusline(&editor.screen()).contains(place),
+            "a reload replaces the text and leaves the cursor at {place}; strip was: {}",
+            statusline(&editor.screen())
+        );
+        assert!(
+            shows(&reloaded, "after one") && shows(&reloaded, "after two"),
+            "`SPC r r` took what was on disk; frame was: {reloaded}"
+        );
+        assert!(
+            !shows(&reloaded, "before one"),
+            "and the old text is gone rather than merged; frame was: {reloaded}"
+        );
+        editor.quit();
+    }
+
+    /// **Invariant 3, which is the whole of `1d`** (`T069`).
+    ///
+    /// *"Buffer holds stable; nothing moves unless you asked — indicate, offer
+    /// to refresh."* So the assertion is not that the editor recovered
+    /// gracefully. It is that **nothing moved**: same cursor row, same cursor
+    /// column, same text under it, while the file changed underneath.
+    ///
+    /// The `✱` is asserted in the same breath, because an editor that held
+    /// perfectly still and said nothing would pass the first half of this
+    /// screen and fail the point of it.
+    ///
+    /// **`bursts` is read through `disk-state` rather than counted on screen**,
+    /// which is the only place the debouncing claim is observable: `T069`'s
+    /// entry calls debouncing load-bearing, and one save has to move that
+    /// number by exactly one. A raw `notify` would report the truncate and the
+    /// write separately and this would read 2.
+    #[test]
+    fn a_disk_change_under_the_buffer_moves_nothing() {
+        let scratch = Scratch::new("holds-still");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("held.txt");
+        let body: String = (1..=40).map(|n| format!("line {n}\n")).collect();
+        fs::write(&file, &body).expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // Somewhere that is neither the top nor the default, so a viewport
+        // that reset to either would be visible.
+        editor.press_quietly(b"gg");
+        editor.press_quietly(b"12j");
+        editor.press_quietly(b"4l");
+
+        let before = editor.screen();
+        // **The strip's `line:column`, not `Screen::row`.** That field is the
+        // terminal's cursor and it survives a planted `set_cursor(len)` — an
+        // assertion on it passes against the defect it exists to catch. `1d`
+        // draws the buffer position on the strip (`5:9`), which is both the
+        // honest measure and the one a person reads.
+        let place = statusline(&before)
+            .split_whitespace()
+            .find(|word| word.contains(':') && word.chars().next().is_some_and(char::is_numeric))
+            .expect("the strip carries a line:column")
+            .to_owned();
+        let text = whole(&before);
+
+        // Claude writes the file underneath. Different length as well as
+        // different content, so a viewport clamped to the new length would
+        // move even if nothing else did.
+        let rewritten: String = (1..=12).map(|n| format!("rewritten {n}\n")).collect();
+        fs::write(&file, &rewritten).expect("the write underneath");
+
+        // **Wait for the `✱`, not for a duration.** The watcher debounces for
+        // 250ms and the filesystem takes what it takes; a sleep here would be
+        // the flake this harness exists to avoid.
+        let noticed = whole(&editor.shown_on_grid(b"", "disk changed"));
+        assert!(
+            shows(&noticed, "✱"),
+            "§2's glyph is what the strip spends on this; frame was: {noticed}"
+        );
+
+        // **The two halves of invariant 3, asserted separately** so a failure
+        // says which one broke.
+        let after = editor.screen();
+        assert!(
+            statusline(&after).contains(&place),
+            "the cursor did not move while the file changed underneath it — \
+             was at {place}, strip is now: {}",
+            statusline(&after)
+        );
+        assert!(
+            whole(&after).contains("line 13"),
+            "the buffer still holds what it held — the reload was offered, not taken"
+        );
+        assert!(
+            !whole(&after).contains("rewritten"),
+            "and nothing from disk leaked into it"
+        );
+        // The text is unchanged apart from the strip, which is what changed on
+        // purpose. Compared on the buffer rows alone for that reason.
+        assert_eq!(
+            text.lines().take(20).collect::<Vec<_>>(),
+            whole(&after).lines().take(20).collect::<Vec<_>>(),
+            "not one buffer row moved"
+        );
+
+        // **The burst count is asserted in `store.rs`, not here**, and that
+        // is a flake this test had before it had a name: querying `disk-state`
+        // right after the `✱` appears races the debouncer's own window, so the
+        // number read 1 on one run and 2 on the next. It caught a planted
+        // `bursts += 2` once and missed it once, which makes it worse than no
+        // assertion — a test that reports pass or fail depending on the
+        // machine teaches you to ignore it.
+        //
+        // What is deterministic is the counter itself, and
+        // `one_delivery_is_one_burst` in `crate::store` holds that with no
+        // clock in it. What is *not* deterministic anywhere is how long a
+        // filesystem takes to tell us, which is `notify-debouncer-full`'s
+        // property rather than this build's.
+        editor.quit();
+    }
+
     #[test]
     fn marking_seen_where_there_is_no_region_says_so() {
         let scratch = Scratch::new("no-region");

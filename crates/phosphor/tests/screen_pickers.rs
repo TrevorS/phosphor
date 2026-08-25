@@ -351,6 +351,7 @@ fn status_vm(unseen: u32) -> StatusVm {
         ask_pending: false,
         threads: 0,
         inbox_unread: 0,
+        disk_changed: false,
         unseen,
         trouble: 0,
         attention: 0,

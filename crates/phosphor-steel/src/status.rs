@@ -123,6 +123,21 @@ pub struct StatusVm {
     /// Distinct from [`StatusVm::unseen`] beside it, which counts regions **in
     /// this file**: closing the file changes that one and not this one.
     pub inbox_unread: u32,
+    /// This file changed on disk under the buffer (`1d`, `T069`).
+    ///
+    /// **A flag and not a count**, unlike every other number on this strip, and
+    /// the asymmetry is the honest one: *"changed"* has no degree. A file that
+    /// was written to four times while you read it is in exactly the same state
+    /// as one written once — the buffer disagrees with disk — and a `✱4` would
+    /// invite you to think the fourth write mattered more than the first.
+    /// `store::DiskChange` counts bursts because the debouncer's behaviour has
+    /// to be provable; the strip does not, because you cannot act on the number.
+    ///
+    /// **True does not mean `[+]`.** That chip is *unsaved edits of yours*, and
+    /// `1d` draws both at once — `src/fetch.rs [+]` beside `✱ disk changed` —
+    /// because they are two different disagreements and the case where you have
+    /// to choose is exactly the case `T070`'s `:diff-disk` exists for.
+    pub disk_changed: bool,
     /// Diagnostics in this file, by grade. Zero of a grade draws nothing.
     ///
     /// **§3's third diagnostic surface, and it was missing for a whole
@@ -174,6 +189,7 @@ impl Default for StatusVm {
             ask_pending: false,
             threads: 0,
             inbox_unread: 0,
+            disk_changed: false,
             unseen: 0,
             trouble: 0,
             attention: 0,
@@ -219,6 +235,7 @@ impl StatusVm {
                 .with("unseen", self.unseen.to_value())
                 .with("threads", self.threads.to_value())
                 .with("inbox_unread", self.inbox_unread.to_value())
+                .with("disk_changed", self.disk_changed.to_value())
                 .with("trouble", self.trouble.to_value())
                 .with("attention", self.attention.to_value())
                 .with("vcs", self.vcs.to_value())

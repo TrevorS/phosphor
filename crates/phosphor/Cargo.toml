@@ -24,6 +24,23 @@ crossterm.workspace = true
 # enters the graph, which is what `deny.toml`'s `deny-multiple-versions` on that
 # crate would otherwise catch.
 nucleo = "0.5.0"
+# `T069`'s disk watcher, and it is here rather than in a library crate for
+# `nucleo`'s reason one entry up: it owns a background thread, and a crate that
+# spawns one is a crate that outlives a frame. The binary owns the loop that
+# drains its events.
+#
+# **The debouncer only, though `SPIKES.md`'s manifest names `notify` beside it.**
+# `notify-debouncer-full` depends on `notify` and re-exports it whole as
+# `notify_debouncer_full::notify`, so `RecursiveMode` and `EventKind` arrive
+# either way and a second direct row would be a dependency `just unused-deps`
+# is right to ask about. The manifest's pair is one crate in the graph.
+#
+# **Debouncing is the feature, not a nicety.** `T069`'s own line calls it
+# load-bearing: an agent writing a file emits a burst — `notify` sees the
+# truncate, the writes and the metadata touch as separate events — and one `✱`
+# per burst is the honest signal. `notify` alone would flash the indicator
+# several times for one save.
+notify-debouncer-full = "0.7.0"
 phosphor-agent.workspace = true
 phosphor-buffer.workspace = true
 serde_json.workspace = true

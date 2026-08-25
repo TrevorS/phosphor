@@ -214,6 +214,7 @@ fn status_vm() -> StatusVm {
         ask_pending: false,
         threads: 0,
         inbox_unread: 0,
+        disk_changed: false,
         unseen: 2,
         trouble: 0,
         attention: 0,

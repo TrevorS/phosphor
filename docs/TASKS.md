@@ -4643,11 +4643,88 @@ without losing your place? The recurring sweep.
 
 ### S7.2 — Dirty state
 
-- [ ] **T069 · Changed-on-disk indicator** — `✱` + offer to refresh. **Buffer holds stable.**
+- [x] **T069 · Changed-on-disk indicator** — `✱` + offer to refresh. **Buffer holds stable.**
   Watching disk is `notify` + `notify-debouncer-full` (added by the spike — the design requires
   this and no document listed a dependency). **Debouncing is load-bearing:** an agent writing a
   file produces a burst of events, and one `✱` per burst is the honest signal.
   Screen `1d`. *Needs:* T015
+
+  > **Built and ticked 2026-08-25.** A `notify-debouncer-full` watcher on the focused file's
+  > *parent*, a `✱ disk changed` segment on the strip, `1d`'s corner box, and `:reload` /
+  > `SPC r r` as the way out. Five planted defects, five catches.
+  >
+  > **The dependency was recommended, not added, and the entry said otherwise.** This task's own
+  > line reads *"`notify` + `notify-debouncer-full` (added by the spike)"*. `SPIKES.md` names them
+  > in its manifest at 8.2.0 / 0.7.0 and calls them *"not named anywhere in the design docs"* —
+  > it **recommended** them; no `Cargo.toml` in the tree had ever carried either. The spike's job
+  > was to choose, and choosing is not installing. Taken as **`notify-debouncer-full` only**,
+  > because it depends on `notify` and re-exports it whole, so the manifest's pair is one crate in
+  > the graph and a second direct row is a dependency `just unused-deps` is right to ask about.
+  > In the binary rather than a library crate, on `nucleo`'s stated precedent: it owns a thread,
+  > and a crate that spawns one outlives a frame.
+  >
+  > **The two design documents disagree about this screen's own keys — [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s
+  > §61.** `1d` draws `:rr refresh · :dv diff`; Design Language §6 says *"spell the whole
+  > command … never cryptic contractions like `:ca` or `:rr`"* and names `:rr` as its own
+  > counter-example. §6 wins — it is normative where the mockup is illustrative, it was written
+  > against that exact string, and the whole-word forms are the only ones registered: `:rr`
+  > resolves to nothing, so the mockup's box offers two commands you cannot type. Ruled rather
+  > than folded, because `docs/design/*.dc.html` round-trips elsewhere.
+  >
+  > **`1d`'s box is a float, and it must not take focus — those two facts nearly collided.** The
+  > mockup's markup is `position:absolute; top:14px; right:14px` on `#171207` with a `#6b5426`
+  > border, which is §4's needs-you pair exactly, so it is a *float* rather than the notice row it
+  > reads as. But every float in this tree becomes `Surface::Float` and the keys follow it — and a
+  > box that stole the cursor to say *nothing moved your cursor* would break the invariant the
+  > screen exists to demonstrate. `T038`'s completion list already solved this: the
+  > `(Surface::Buffer, _)` arm draws a float over a buffer you are still typing into. `1d` rides
+  > that arm and borrows the **placement**, not the mood — §4 gives its box needs-you amber, not
+  > the passive green completion uses.
+  >
+  > **The editor announced its own saves back to you, and an unrelated test caught it.**
+  > `wall_writes_without_leaving` began drawing a frame no key had asked for: `:wall` wrote the
+  > file, the watcher saw its own editor's write, and the buffer was told someone had changed it
+  > underneath. Fixed by **comparing content** in the arm — `✱` means the two *disagree*, so
+  > matching bytes are not a change — rather than suppressing by timing, which was the other way
+  > out and is the wrong one: a timestamp window silently swallows a real change that lands inside
+  > it, and the window has to be guessed. Content is the actual question, and it drops `touch`, an
+  > identical rewrite and a formatter that changed nothing, for free.
+  >
+  > **`reload` preserves the line, not the character offset.** An offset is a position in a
+  > *string*, so restoring one after the string changed puts the cursor wherever that many
+  > characters now lands — reloading `before one` as `after one` moved it a column, because the
+  > first line got shorter and offset 11 stopped meaning *"start of line 2"*. vim's `:e!` keeps
+  > the line and so does this. It also goes through `Editing::splice` rather than rebuilding the
+  > editor, which buys two things: the viewport does not scroll to the top, and the reload lands
+  > in the undo tree so `u` takes you back. A refresh you cannot undo is a destructive act wearing
+  > a refresh's name.
+  >
+  > **Three cursor assertions in a row passed against the defect they existed to catch**, and
+  > that is the finding worth more than the feature. The first read `Screen::row`/`column` — the
+  > *terminal's* cursor, which does not move under a planted `set_cursor(len)`. The second read
+  > the strip's `line:column` but **captured** the expected value instead of writing it down, so
+  > it compared a drifted reading to itself. The third wrote it down but reloaded a file of the
+  > *same length*, where *"keep the line"* and *"jump to the end of the splice"* land on the same
+  > row. Only the fourth — expectation written down, fixture deliberately longer — can fail. Each
+  > was found by planting the defect; none would have been found by reading the test.
+  >
+  > **The burst count was flaky and moved out of the pty suite.** Querying `disk-state` right
+  > after the `✱` appears races the debouncer's own window: it caught a planted `bursts += 2` on
+  > one run and missed it on the next. A test whose verdict depends on the machine is worse than
+  > no test, so the counter is held by `store::tests::one_delivery_is_one_burst`, which has no
+  > clock in it. How long a filesystem takes to tell us is `notify-debouncer-full`'s property, not
+  > this build's, and nothing here re-tests it.
+  >
+  > **`SPC r r` left the deferred-key table**, which is that table shrinking for the right reason
+  > — the key acts now instead of naming a task. `SPC r d` stays until `T070`.
+  >
+  > **Verification.** `spc_r_r_takes_what_is_on_disk` presses the binding `lint-key-coverage`
+  > asked for by name; `a_disk_change_under_the_buffer_moves_nothing` holds both halves of
+  > invariant 3 — the strip says `✱ disk changed` while not one buffer row and not the cursor
+  > moved — and `one_delivery_is_one_burst` holds the counter. Planted and caught: the strip never
+  > saying `✱`, a change taken rather than offered, one save counting as two, a reload that does
+  > not take what is on disk, and a reload that dumps the cursor at the end of its own splice.
+  > `just gate` green — 1529 tests.
 - [ ] **T070 · `:diff-disk`** — your unsaved buffer vs Claude's disk write. Three manual exits,
   **no auto-merge**. Screen `5b`. *Needs:* T063, T069
 

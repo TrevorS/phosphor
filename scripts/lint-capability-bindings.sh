@@ -82,6 +82,14 @@ EMITTED = {
     # Producers post these; nobody types an answer.
     "ingest-completions": "the LSP client posts it",
     "ingest-diagnostics": "the LSP client posts it",
+    # `T069`. Both are the disk watcher's, and neither is a sentence a person
+    # has any way to mean: `note-disk-change` is a *report* that bytes moved —
+    # typing it would be claiming a change the editor could check and disprove
+    # — and `set-file-watch` follows the focused buffer once per frame, so a
+    # key for it would be a key that fights the loop. What a person types is
+    # the way *out*: `:reload` and `SPC r r`, which are bound.
+    "note-disk-change": "crate::watch's debouncer thread posts it",
+    "set-file-watch": "the loop emits it per frame, following the focused buffer",
     # `T050`. The same shape one door over: a turn boundary is something the
     # agent did, so the ACP client posts it and nobody types it. What a person
     # types is `:claude`, which is `send-message`, and that is bound.

@@ -230,6 +230,7 @@ mod events;
 mod lsp;
 mod picker;
 mod store;
+mod watch;
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -2121,6 +2122,30 @@ impl Answers for AppHost {
                     .collect();
                 Ok(self.answered(Value::List(rows)))
             }
+            // `T069` — what `✱` renders, answered off the store the watcher
+            // writes into.
+            //
+            // **A file that has not changed answers `Null`, not an error.**
+            // `region`'s rule again: *"an id that names nothing is a question
+            // with a legitimate no"*, and *"has this file changed underneath
+            // me?"* has `no` as its most common true answer. A surface polling
+            // this every frame must not have to tell absence from failure.
+            //
+            // `bursts` is in the answer because it is the only place the
+            // debouncing claim is observable from outside the process, and
+            // `T069`'s own line makes that claim load-bearing: one save must
+            // move it by exactly one.
+            Query::Buffer(phosphor_core::query::BufferQuery::DiskState { path }) => Ok(self
+                .answered(self.store.disk_change(path).map_or(Value::Null, |change| {
+                    let mut fields = Args::new();
+                    fields.set("changed", Value::Bool(true));
+                    fields.set("by", change.actor.to_value());
+                    fields.set(
+                        "bursts",
+                        Value::Int(i64::try_from(change.bursts).unwrap_or(i64::MAX)),
+                    );
+                    Value::Record(fields)
+                }))),
             Query::Review(phosphor_core::query::ReviewQuery::Thread { thread }) => {
                 self.store.thread_of(*thread).map_or_else(
                     // `region`'s rule: an id that names nothing is a question
@@ -3724,6 +3749,11 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         peek: None,
         inbox: None,
         store: Arc::clone(&host.store),
+        // **Spawned here, before the first file opens.** `Watch::spawn` cannot
+        // fail into an error — a watcher that will not start answers
+        // `Watch::idle` and the editor runs without `✱` — so there is nothing
+        // to handle and nothing that can stop the loop from booting.
+        watch: watch::Watch::spawn(poster.clone()),
         asks: BTreeMap::new(),
         next_ask: Arc::clone(&host.next_ask),
         held: BTreeMap::new(),
@@ -4194,6 +4224,18 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         }
         let editing = buffers.at_mut(held);
 
+        // **`T069` — the watcher follows whatever buffer is in front of you.**
+        //
+        // Per frame and idempotent (`Watch::follow` returns early on a path it
+        // already holds) rather than hooked to the open arm, and that is a
+        // deliberate trade: there are several ways a buffer's file can change —
+        // `:edit`, `gd`, a picker accept, an OSC 8 link, `:w <newname>` — and
+        // a hook on each is a list that goes stale the first time a sixth is
+        // added. Syncing against the truth every pass cannot drift.
+        if let Some(file) = editing.file.clone() {
+            shell.watch.follow(&file);
+        }
+
         // **`T051` — the session, published for the `session` query**, and
         // the transition said out loud.
         //
@@ -4318,6 +4360,11 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // dim means: these five hang off the pane the host composed, and
             // each used to hang off an empty root standing in for the widgets
             // that painted underneath.
+            // Composed before the match because `Layer::surface` needs `&mut`
+            // and the match holds `shell` and `editing` immutably. `None` on
+            // every frame where nothing changed underneath you, which is
+            // almost all of them.
+            let disk_notice = disk_float(&mut layer, &shell.store, editing);
             let float = match (&surface, &boot) {
                 (Surface::Boot, Some(boot)) => Some(boot.clone()),
                 // `6d`, the same way: the buffer and the statusline stay
@@ -4336,7 +4383,18 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 // as the three above and for a different reason:
                 // `Mood::Passive` *"is not in front of anything"* (§9), so the
                 // code stays at full strength behind this one.
-                (Surface::Buffer, _) => passive_float(editing),
+                // `T038`/`T039` first, then `T069`'s 1d. the order is the
+                // ranking: a completion list is a thing you are *doing* and
+                // the disk notice is a thing that *happened*, so an open
+                // completion keeps the corner.
+                //
+                // **1d rides this arm and not the float slot on purpose.**
+                // `Surface::Float` takes the keys; this must not, because the
+                // screen exists to demonstrate that nothing moved. Drawn over
+                // a live buffer is exactly what `Mood::Passive` already does
+                // for completion — 1d borrows the *placement*, not the mood,
+                // since §4 gives its box the needs-you amber.
+                (Surface::Buffer, _) => passive_float(editing).or(disk_notice),
                 _ => None,
             };
             let tree = Tree::new(compose_panes(
@@ -4430,6 +4488,12 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             .unwrap_or(u32::MAX),
             inbox_unread: u32::try_from(inbox_unread(&shell.store, &shell.asks))
                 .unwrap_or(u32::MAX),
+            // `T069` — `1d`'s `✱ disk changed`, read off the store the watcher
+            // writes into. A buffer with no file cannot disagree with disk.
+            disk_changed: editing
+                .file
+                .as_deref()
+                .is_some_and(|file| shell.store.disk_change(file).is_some()),
             // **The count `2b` draws and nothing computed until now.** It is
             // over the whole file, never over what the rows drew: bounding the
             // inline rows (`RowPolicy`) is only honest if the ones that stay
@@ -8246,6 +8310,27 @@ fn signed(signature: phosphor_buffer::lsp::Signature) -> WireSignature {
 /// painted"*; the widgets are gone and the pane underneath is a composition,
 /// so the caller hangs this over [`compose_panes`] instead. Four other surfaces
 /// took the same shape and changed the same way.
+/// `1d` — the corner box, when this buffer's file changed underneath it
+/// (`T069`).
+///
+/// **Composed by the editor layer, like every other surface `T093` opened the
+/// door for.** `runtime/disk.scm` owns the two rows and the wording; this
+/// answers *whether* to draw one and hands over the one fact scheme cannot
+/// derive — who the change is attributed to.
+///
+/// [`None`] far more often than not, and cheaply: the store lookup is one map
+/// hit on a path this frame already resolved.
+fn disk_float(layer: &mut Layer, store: &store::Shared, editing: &Editing) -> Option<ViewFloat> {
+    let file = editing.file.as_deref()?;
+    let change = store.disk_change(file)?;
+    let mut args = Args::new();
+    args.set("by", change.actor.to_value());
+    // A layer that cannot compose the surface draws nothing rather than
+    // failing the frame: the `✱` on the strip is still true, and a broken
+    // `disk.scm` must not be able to take the editor down with it.
+    layer.surface("disk", &Value::Record(args)).ok()
+}
+
 fn passive_float(editing: &Editing) -> Option<ViewFloat> {
     let body = if editing.completion.is_some() {
         Node::Completion {}
@@ -9402,6 +9487,15 @@ struct Shell {
     /// `T041`'s store, shared with [`AppHost`] so the gutter, the statusline
     /// and the `region` queries cannot disagree about a file.
     store: Arc<store::Shared>,
+    /// `T069`'s disk watcher, and the loop owns it because dropping it stops
+    /// the thread.
+    ///
+    /// **On `Shell` rather than beside the store**, even though what it
+    /// produces lands in the store: this is a *handle to a thread*, and the
+    /// store is shared with [`AppHost`] across the Steel barrier. Putting a
+    /// thread handle there would make the barrier's own rule — plain data,
+    /// no locks it did not ask for — untrue for one field.
+    watch: watch::Watch,
     /// `T059`'s questions, oldest first, by id.
     ///
     /// **A map on `Shell` rather than widget state**, which is `T060`'s rule
@@ -11321,6 +11415,101 @@ impl Editing {
                 self.open_at = *at;
                 done()
             }
+            // ---------------------------------------------------------------
+            // `T069` — the three that make a disk change visible, and the split
+            // between them *is* invariant 3.
+            //
+            // `note-disk-change` and `set-file-watch` only ever record; they
+            // cannot touch a buffer and there is no path from either to one.
+            // `reload-from-disk` is the single verb that closes the gap, and
+            // nothing calls it but a person or a door. That is the whole design:
+            // *"buffer holds stable; nothing moves unless you asked"* is true
+            // because the code that learns about the change and the code that
+            // acts on it are different arms with no edge between them.
+            // ---------------------------------------------------------------
+
+            // **The loop re-attributes; the watcher cannot.**
+            //
+            // `crate::watch` posts `Actor::System` every time, because a
+            // filesystem event has no author — `notify` reports that bytes
+            // moved, not who moved them. What the loop has and the thread does
+            // not is whether a turn was running, which is §7's rule for tracking
+            // claude and is exactly the condition `1d` draws: its statusline
+            // reads `✻ claude working` beside the `✱`.
+            //
+            // A caller that names an actor outright keeps it. `System` is the
+            // watcher saying *"I do not know"*, not a value to be overridden
+            // wholesale, so only that one is re-read.
+            Action::File(FileAction::NoteDiskChange { path, changed_by }) => {
+                // **`✱` means the two *disagree*, so bytes that match are not a
+                // change.** Found by `wall_writes_without_leaving`, which
+                // started drawing a frame nobody pressed a key for: `:wall`
+                // wrote the file, the watcher saw its own editor's write, and
+                // the buffer was told someone had changed it underneath. The
+                // editor announcing your own save back to you is worse than
+                // useless — it is `1d`'s message being false the first time
+                // most people would ever see it.
+                //
+                // **Comparing content rather than suppressing by timing**,
+                // which was the other way out and is the wrong one: a
+                // timestamp window silently swallows a *real* change that
+                // lands inside it, and the window has to be guessed. Content
+                // is the actual question. It also, for free, drops the cases a
+                // timing guard would miss — `touch`, a rewrite of identical
+                // bytes, an agent that formatted and changed nothing.
+                //
+                // Only for *this* buffer's file. Another buffer's change is
+                // recorded unread, because this arm holds one editor and
+                // cannot see that one's text.
+                if self.file.as_deref() == Some(path.as_path()) {
+                    let code = self.editor.code_ref();
+                    let held = code.slice(0, code.len_chars());
+                    if std::fs::read_to_string(path).is_ok_and(|disk| disk == held) {
+                        cx.shell.store.clear_disk_change(path);
+                        return done();
+                    }
+                }
+                let actor = if *changed_by == Actor::System && cx.shell.turn.is_some() {
+                    Actor::Claude
+                } else {
+                    *changed_by
+                };
+                cx.shell.store.note_disk_change(path, actor);
+                done()
+            }
+            Action::File(FileAction::SetFileWatch { path, on }) => {
+                if *on {
+                    cx.shell.watch.follow(path);
+                } else {
+                    cx.shell.watch.unfollow(path);
+                }
+                done()
+            }
+            // **The only thing that moves a buffer because of disk**, and it
+            // moves it because you asked.
+            //
+            // The cursor is put back where it was rather than left where the
+            // splice ends. `1d`'s caption is *"nothing moves unless you
+            // asked"*, and what you asked for was the *text* — a reload that
+            // also threw you to the end of the file would be answering a
+            // question nobody put. It is clamped, because the new text may be
+            // shorter than the old offset.
+            Action::File(FileAction::ReloadFromDisk { target }) => {
+                if let Target::Explicit { path, .. } = target
+                    && self.file.as_deref() != Some(path.as_path())
+                {
+                    return declined("that file is not the one in this buffer");
+                }
+                match self.reload() {
+                    Ok(()) => {
+                        if let Some(file) = self.file.clone() {
+                            cx.shell.store.clear_disk_change(&file);
+                        }
+                        done()
+                    }
+                    Err(reason) => declined(&reason),
+                }
+            }
             // **`T056`'s jump, and it is `open-file` with a different name.**
             // The capability's own sentence names its three callers — *"a
             // picker accept, a transcript tool row, an OSC 8 link"* — and what
@@ -13141,6 +13330,57 @@ impl Editing {
     /// written to `notes.md` kept undoing for the rest of the session and then
     /// reopened with an empty history, which is the one failure `T030`'s
     /// journal exists to prevent and the one shape nothing was watching.
+    /// Take what is on disk (`T069`).
+    ///
+    /// **[`Editing::write`]'s inverse, and it goes through [`Editing::splice`]
+    /// rather than rebuilding the editor.** Two reasons, and both are
+    /// invariant 3 read carefully:
+    ///
+    /// * a rebuilt editor is a new viewport, so the file would silently scroll
+    ///   to the top on reload — motion nobody asked for, in the one verb whose
+    ///   whole job is to be the thing you *did* ask for;
+    /// * a splice is an ordinary edit, so the reload lands in the undo tree and
+    ///   `u` takes you back to what you had. A refresh you cannot undo is a
+    ///   destructive act wearing a refresh's name.
+    ///
+    /// The cursor is restored, clamped to the new length. Reload changes the
+    /// text; it is not a motion.
+    fn reload(&mut self) -> Result<(), String> {
+        let target = self
+            .file
+            .clone()
+            .ok_or_else(|| "no file to reload — this buffer has no name".to_owned())?;
+        let text = std::fs::read_to_string(&target)
+            .map_err(|error| format!("{}: {error}", target.display()))?;
+        // **Line and column, not the character offset**, and the difference
+        // is a bug this test caught: an offset is a position in a *string*, so
+        // restoring it after the string changed puts the cursor wherever that
+        // many characters now lands. Reloading `before one\nbefore two` as
+        // `after one\nafter two` moved the cursor a column, because the first
+        // line got a character shorter and offset 11 stopped meaning
+        // "start of line 2".
+        //
+        // vim'''s `:e!` keeps the line, and that is the right answer for the
+        // same reason: you were on line 2 of this file and you still are.
+        let (row, column) = self.editor.code_ref().point(self.editor.get_cursor());
+        let was = Position {
+            line: u32::try_from(row).unwrap_or(0) + 1,
+            column: u32::try_from(column).unwrap_or(0) + 1,
+        };
+        let end = self.editor.code_ref().len_chars();
+        self.splice(0, end, &text);
+        // Clamped by falling back to the last line — a reload that shortened
+        // the file past your cursor has to put it somewhere, and the end of
+        // the text is the only place that always exists.
+        let now = self.editor.code_ref().len_chars();
+        let landed = offset_of(&self.editor, was).unwrap_or(now);
+        self.editor.set_cursor(landed.min(now));
+        // The buffer agrees with disk again, so it is not dirty — this is the
+        // same statement `write` makes from the other side.
+        self.dirty.set(false);
+        Ok(())
+    }
+
     fn write(&mut self, path: Option<&Path>) -> Result<(), String> {
         let named = self.file.is_some();
         let target = path
@@ -16485,6 +16725,9 @@ mod tests {
     fn shell() -> Shell {
         Shell {
             store: Arc::new(store::Shared::default()),
+            // A test shell watches nothing: `Watch::idle` starts no thread, so
+            // the suite pays for no filesystem watchers and no `notify` state.
+            watch: crate::watch::Watch::idle(),
             review: None,
             peek: None,
             inbox: None,

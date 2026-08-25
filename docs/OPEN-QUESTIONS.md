@@ -2793,6 +2793,55 @@ ruled.
 
 ---
 
+### 61 · The two design documents disagree about `1d`'s own keys, and one of them names the other's spelling as the thing not to do
+
+**Found while building `T069`**, and it is the first disagreement in this build
+that is *inside* the design rather than between the design and the tree. Both
+documents were read this session.
+
+`docs/design/TUI Mockups.dc.html`'s `1d` draws its corner box as two rows:
+
+```text
+✱ changed on disk by claude
+:rr refresh · :dv diff
+```
+
+`docs/design/Design Language.dc.html` §6 rules on exactly that:
+
+> spell the whole command: "s mark seen", ":reattach", ":transcript",
+> ":diff-disk" — never cryptic contractions like `:ca` or `:rr`
+
+**It names `:rr`.** Not a contraction of that shape — that string, as its own
+counter-example. So the rule was written against the mockup's spelling, which
+makes the mockup the older artifact rather than the two being equally current.
+
+**RULED: §6 wins, and `runtime/disk.scm` spells `:reload` and `:diff-disk`.**
+Three reasons, in the order they matter:
+
+1. **§6 is normative and `1d` is illustrative.** A screen shows one state of one
+   surface; a language rule is a claim about every surface. Where they collide
+   the rule is the one that was written knowing about the other.
+2. **The whole-word forms are the only ones that exist.** `:diff-disk` has been
+   a registered ex command since `T070`'s scaffolding and `:reload` is
+   registered by `disk.scm` itself; `:rr` and `:dv` resolve to nothing. A box
+   offering two commands you cannot type would be worse than either spelling —
+   it is an offer that declines itself.
+3. **Every shipped footer already follows §6.** `8b`/`4b` draw *"next file"*,
+   *"fold"*, *"mark seen"*, *"close"*; `5c` draws *"open"*, *"mark seen"*,
+   *"close"*. Drawing `:rr` here would make `1d` the only surface in the build
+   that contracts, which is the inconsistency §6 exists to prevent.
+
+**Not folded into the mockup**, per this repo's own rule — `docs/design/*.dc.html`
+round-trips to a claude.ai Design project and is never edited here. The
+disagreement is recorded instead, and `disk.scm` carries the ruling at the site
+so the next reader of that file does not have to find this entry to understand
+why the box says something the screen does not.
+
+**What would change the ruling:** Teej deciding the mockup is right and §6's
+example list should lose `:rr`. That is a design call, not a build one.
+
+---
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

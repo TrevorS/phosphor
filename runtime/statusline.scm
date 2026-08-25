@@ -289,6 +289,7 @@
   (let ([unseen (hash-try-get vm "unseen")]
         [inbox (hash-try-get vm "inbox_unread")]
         [threads (hash-try-get vm "threads")]
+        [disk (hash-try-get vm "disk_changed")]
         [trouble (hash-try-get vm "trouble")]
         [attention (hash-try-get vm "attention")]
         [server (status/present? (hash-try-get vm "server"))]
@@ -376,6 +377,28 @@
                                                            (number->string inbox)
                                                            " unread")
                                             'meta 'plain)
+                                'bar))
+          '())
+      ;; `T069` — 1d draws `✱ disk changed` in the attention amber, between the
+      ;; counters and the session. it is the only segment on this strip that is
+      ;; a *state* rather than a count, and §11's rung treats it the same way:
+      ;; the word goes, the glyph stays.
+      ;;
+      ;; **`✱` carries the meaning alone, which is why the contraction is not a
+      ;; number.** §2's lexicon owns the glyph and it says exactly one thing —
+      ;; this file and disk disagree — so `✱` at forty columns is the whole
+      ;; fact, not an abbreviation of it. the counters contract to a digit
+      ;; because a digit is what they were; this contracts to the glyph because
+      ;; the glyph is what it was.
+      ;;
+      ;; **amber, not meta**, and that is read off the mockup rather than
+      ;; assumed: 1d's span is `#e0a94e`, the same value the `[+]` chip beside
+      ;; it uses, because both are asking you to decide something. `unseen` and
+      ;; `inbox` are meta — they are news, not a question.
+      (if (eq? disk #true)
+          (list (status/segment 'counter-words
+                                (view/label "✱" 'attention 'plain)
+                                (view/label "✱ disk changed" 'attention 'plain)
                                 'bar))
           '())
       (if server

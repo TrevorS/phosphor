@@ -38,6 +38,7 @@
 //!
 //! Owned by `spine` — everything here is the loop's half of the seam.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
@@ -305,6 +306,43 @@ pub(crate) struct Thread {
     pub(crate) resolved: bool,
 }
 
+/// A file that changed on disk under an open buffer (`T069`, screen `1d`).
+///
+/// **This is a fact about the file, not a decision about the buffer.**
+/// Invariant 3 is that nothing moves unless you asked, so the store records
+/// that disk and buffer disagree and stops there; `reload-from-disk` is the
+/// only thing that closes the gap, and only a person or a door can call it.
+#[derive(Debug, Clone)]
+pub(crate) struct DiskChange {
+    /// Who the change is attributed to. [`Actor::System`] is the honest
+    /// answer, not a missing one.
+    ///
+    /// **A watcher cannot see an author** — `notify` reports that bytes moved,
+    /// not who moved them — so this is a stated heuristic rather than a
+    /// measurement: a turn was running when the burst landed, and §7's rule is
+    /// that the machine tracks claude. `1d` draws *"changed on disk by
+    /// claude"* on a statusline that also reads `✻ claude working`, which is
+    /// the same condition.
+    ///
+    /// With no turn running this is [`Actor::System`] and the notice drops the
+    /// *"by …"* clause rather than guessing, because *"by claude"* over a
+    /// `git checkout` would be the editor asserting something it does not know.
+    /// The vocabulary already framed it this way: `note-disk-change`'s own
+    /// parameter doc reads *"who is **claimed** to have changed it"*, so the
+    /// Action carries an attribution and this field is the same attribution
+    /// held still. There is no `Option` here for that reason — a change with no
+    /// known author is `System`, which is a name, not an absence.
+    pub(crate) actor: Actor,
+    /// How many debounced bursts have landed since the buffer last agreed with
+    /// disk.
+    ///
+    /// Recorded so the load-bearing half of `T069` is assertable directly
+    /// rather than by counting glyphs on a screen: the task's own line is that
+    /// *"an agent writing a file produces a burst of events, and one `✱` per
+    /// burst is the honest signal"*. One save must move this by exactly one.
+    pub(crate) bursts: u64,
+}
+
 /// The store, shared.
 #[derive(Debug, Default)]
 pub(crate) struct Shared {
@@ -350,6 +388,15 @@ pub(crate) struct Shared {
     /// ever removed. Nothing removes one today, and this is the field that
     /// keeps that from being load-bearing.
     groups: Mutex<u64>,
+    /// Files that changed on disk under an open buffer (`T069`), keyed the
+    /// way every other path in this module is keyed.
+    ///
+    /// Beside the region store and not journalled, for `blocks`'s reason one
+    /// field up and one more of its own: this is a disagreement between two
+    /// things that both exist *now*. Restoring it would mean restoring a claim
+    /// about a file the editor has not looked at since, and the first thing
+    /// `T069`'s watcher does on open is establish the truth anyway.
+    disk: Mutex<BTreeMap<PathBuf, DiskChange>>,
     /// The seen-state journal (`T044`), or [`None`] when there is nowhere to
     /// put one.
     ///
@@ -396,6 +443,7 @@ impl Shared {
             threads: Mutex::new(Vec::new()),
             notes: Mutex::new(Vec::new()),
             groups: Mutex::new(0),
+            disk: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -766,6 +814,52 @@ impl Shared {
                 phosphor_core::store::region::overlaps(thread.span, Span { start: at, end: at })
             })
             .map(|thread| thread.span)
+    }
+
+    /// Record that this file changed on disk, and answer how many bursts have
+    /// landed since the buffer last agreed with it (`T069`).
+    ///
+    /// **Counting rather than setting a flag**, because the count is what
+    /// makes debouncing provable. The caller is `T069`'s debouncer, which has
+    /// already collapsed one save's worth of `notify` events into a single
+    /// call; a second increment means a second *save*, not a second write
+    /// syscall.
+    ///
+    /// The actor is taken from the first burst and never overwritten by a
+    /// later one. Two writes from different sources between one reload and the
+    /// next is a case this cannot describe honestly either way, and keeping the
+    /// first is the one that matches what the notice already said.
+    pub(crate) fn note_disk_change(&self, path: &Path, actor: Actor) -> u64 {
+        let key = key_for(path);
+        let mut disk = self.disk.lock().unwrap_or_else(|held| held.into_inner());
+        let entry = disk.entry(key).or_insert(DiskChange { actor, bursts: 0 });
+        entry.bursts += 1;
+        entry.bursts
+    }
+
+    /// Forget that this file disagreed with disk — answers whether it did
+    /// (`T069`).
+    ///
+    /// Called when the gap is actually closed: a reload took what was on disk,
+    /// or a save made the buffer the thing on disk. Not called when the notice
+    /// is dismissed, because dismissing a message does not make two files agree.
+    pub(crate) fn clear_disk_change(&self, path: &Path) -> bool {
+        let key = key_for(path);
+        self.disk
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
+            .remove(&key)
+            .is_some()
+    }
+
+    /// What this file's disk disagreement is, if it has one (`T069`).
+    pub(crate) fn disk_change(&self, path: &Path) -> Option<DiskChange> {
+        let key = key_for(path);
+        self.disk
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
+            .get(&key)
+            .cloned()
     }
 
     /// A fresh arrival stamp — the clock [`Block::arrival`]/[`Note::arrival`]
@@ -1378,6 +1472,50 @@ mod tests {
 
     /// **`T064`'s acceptance, at the store.** Marking one hunk seen leaves the
     /// rest unseen.
+    /// **One delivery is one burst** (`T069`).
+    ///
+    /// The counter, held with no clock in it. `T069`'s entry calls debouncing
+    /// load-bearing — *"an agent writing a file produces a burst of events, and
+    /// one `✱` per burst is the honest signal"* — and this is the half of that
+    /// claim this build owns: `notify-debouncer-full` decides what a burst *is*,
+    /// and `note_disk_change` must count each one exactly once.
+    ///
+    /// **It lives here rather than in the pty suite deliberately.** The
+    /// keyboard-driven version raced the debouncer's own window: it read 1 on
+    /// one run and 2 on the next, and caught a planted `bursts += 2` once while
+    /// missing it once. A test whose verdict depends on the machine is worse
+    /// than no test.
+    #[test]
+    fn one_delivery_is_one_burst() {
+        let shared = Shared::default();
+        let path = std::path::Path::new("counted.txt");
+
+        assert_eq!(shared.note_disk_change(path, Actor::Claude), 1);
+        assert_eq!(shared.note_disk_change(path, Actor::Claude), 2);
+
+        // **The actor is the first one's and does not drift.** Two writes from
+        // different sources between one reload and the next is a case this
+        // cannot describe honestly either way, and keeping the first is the one
+        // that matches what the notice already said.
+        assert_eq!(shared.note_disk_change(path, Actor::System), 3);
+        assert_eq!(
+            shared
+                .disk_change(path)
+                .expect("a change is recorded")
+                .actor,
+            Actor::Claude,
+        );
+
+        // Closing the gap forgets it, and forgetting it twice is not an error.
+        assert!(shared.clear_disk_change(path));
+        assert!(!shared.clear_disk_change(path));
+        assert!(shared.disk_change(path).is_none());
+
+        // And the count starts again rather than resuming, because the question
+        // is *"how many since the buffer last agreed with disk"*.
+        assert_eq!(shared.note_disk_change(path, Actor::Claude), 1);
+    }
+
     #[test]
     fn marking_one_hunk_seen_leaves_the_rest_unseen() {
         let shared = Shared::default();

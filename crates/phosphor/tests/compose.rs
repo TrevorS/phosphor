@@ -204,6 +204,7 @@ fn the_last_standing_set_survives_every_width() {
         ask_pending: true,
         threads: 0,
         inbox_unread: 0,
+        disk_changed: false,
         ..screen_9c()
     };
     let line = compose(&mut runtime, &vm).expect("composes");
