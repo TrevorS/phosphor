@@ -4,7 +4,7 @@ Decomposed from [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md), which is itsel
 the four design docs in [design/](design/). The plan says *what each phase is for*; this file
 says *what to build, in what order, and where we stop and look at it*.
 
-**110 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
+**111 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
 Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids
 are stable and assigned in order of creation — reference them in commits. New tasks append
 rather than renumber, so `T078`+ sit inside earlier phases.
@@ -6186,6 +6186,33 @@ RULED: add the tasks."* An unowned debt recorded in a lint is a debt nobody is g
   *Done when:* `/` and `?` search the buffer from the cursor in the running binary, `n` and `N`
   walk the matches and wrap, the ruling above is recorded at this entry, and a pty test presses
   all four. *Needs:* T058, T049
+
+---
+
+- [ ] **T111 · The query answers** 📌
+  **Twelve declared queries answer `not built yet` and every task they name is ticked.** Found
+  2026-08-25 while building `T069`, by the same method that found `T109` and `T110`: reading a
+  refusal and checking the task it cites. Measured against the built binary this session, not
+  inferred —
+  ```text
+  phosphor --eval '(capabilities)'     #raised · not built yet — T024 builds it
+  phosphor --eval '(options)'          #raised · not built yet — T021 builds it
+  phosphor --eval '(dirty-buffers)'    #raised · not built yet — T033 builds it
+  ```
+  and `T024`, `T021` and `T033` are all ticked. The other nine are `describe-capability`,
+  `describe-key`, `buffer-text`, `buffer-lines`, `mode`, `pending-keys`, `next-region-by`,
+  `block-regions` and `floats`.
+  **`scripts/lint-refusal-tasks.sh` could not see any of them**, and that is the finding inside
+  the finding: it was written a day earlier against exactly this defect, and it reads capability
+  rows in `action.rs` while `query.rs` carries the same `[phase / "task"]` stamp through the same
+  `NotYetImplemented` sentence. A lint that covers one of two identical tables is a lint that
+  reports clean on half a problem. It reads both now.
+  **`capabilities` is the sharp one.** It is how a door enumerates what it can do, `T024`'s own
+  *done when* is about that enumeration, and `6b`'s help surface is built on it — so the query
+  the introspection story rests on has been refusing by name since `S2`.
+  *Done when:* each of the twelve answers its own row from the host rather than refusing, a
+  door test calls every one of them through `--eval` and asserts none raises, and the row is
+  re-stamped back off `T111` as each lands. *Needs:* T024
 
 ---
 

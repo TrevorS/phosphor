@@ -316,12 +316,12 @@ queries! {
             "how many regions are seen in scope" {
             within: Option<Target> = "scope; absent means the workspace",
         }
-        NextRegionBy = "next-region-by" [S5 / "T049"] -> ParamType::Any,
+        NextRegionBy = "next-region-by" [S5 / "T111"] -> ParamType::Any,
             "the next region by an author, from a position — 6b binds ]r to this" {
             author: Actor = "whose region",
             from: Option<Position> = "start here; absent means the cursor",
         }
-        BlockRegions = "block-regions" [S5 / "T041"] -> ParamType::List(&ParamType::Any),
+        BlockRegions = "block-regions" [S5 / "T111"] -> ParamType::List(&ParamType::Any),
             "the regions of a review block, named by its title as 6b draws it" {
             block: String = "the block's title",
         }
@@ -344,11 +344,11 @@ queries! {
             "one buffer: path, language, dirty state, disk state" {
             buffer: Option<BufferId> = "which buffer; absent means the focused one",
         }
-        BufferText = "buffer-text" [S3 / "T026"] -> ParamType::Text,
+        BufferText = "buffer-text" [S3 / "T111"] -> ParamType::Text,
             "the text of a target" {
             target: Target = "what to read",
         }
-        BufferLines = "buffer-lines" [S3 / "T026"] -> ParamType::List(&ParamType::Text),
+        BufferLines = "buffer-lines" [S3 / "T111"] -> ParamType::List(&ParamType::Text),
             "the lines of a target" {
             target: Target = "what to read",
         }
@@ -364,7 +364,7 @@ queries! {
             "what is on screen: first row, height, and whether soft wrap is on" {
             pane: PaneRef = "which pane",
         }
-        DirtyBuffers = "dirty-buffers" [S3 / "T033"] -> ParamType::List(&ParamType::Any),
+        DirtyBuffers = "dirty-buffers" [S3 / "T111"] -> ParamType::List(&ParamType::Any),
             "every buffer with unsaved changes" {
         }
         DiskState = "disk-state" [S7 / "T069"] -> ParamType::Any,
@@ -376,10 +376,10 @@ queries! {
     /// The input machine and the keymap. `T034`'s which-key and `T086`'s help
     /// are both compositions over these.
     Input(InputQuery) = "input" {
-        Mode = "mode" [S3 / "T026"] -> <EditMode as Wire>::TYPE,
+        Mode = "mode" [S3 / "T111"] -> <EditMode as Wire>::TYPE,
             "the current edit mode — not the statusline chip, which is a surface label" {
         }
-        PendingKeys = "pending-keys" [S3 / "T026"] -> ParamType::Text,
+        PendingKeys = "pending-keys" [S3 / "T111"] -> ParamType::Text,
             "the keys typed so far in an unfinished sequence — 3c's SPC pending" {
         }
         Register = "register" [S3 / "T099"] -> ParamType::Text,
@@ -394,15 +394,15 @@ queries! {
             prefix: Option<KeySeq> = "the prefix; absent means the root",
             mode: Option<EditMode> = "which mode; absent means the current one",
         }
-        DescribeKey = "describe-key" [S3 / "T086"] -> ParamType::Any,
+        DescribeKey = "describe-key" [S3 / "T111"] -> ParamType::Any,
             "what a key does, and where that is defined" {
             keys: KeySeq = "the key sequence",
         }
-        DescribeCapability = "describe-capability" [S2 / "T024"] -> ParamType::Any,
+        DescribeCapability = "describe-capability" [S2 / "T111"] -> ParamType::Any,
             "one capability's row: doc, arguments, phase, and its name at each door" {
             name: String = "the door name",
         }
-        Capabilities = "capabilities" [S2 / "T024"] -> ParamType::List(&ParamType::Any),
+        Capabilities = "capabilities" [S2 / "T111"] -> ParamType::List(&ParamType::Any),
             "the whole registry, as data — what the door-parity test and :help both read" {
             domain: Option<String> = "one domain; absent means all of them",
         }
@@ -413,7 +413,7 @@ queries! {
         Panes = "panes" [S6 / "T088"] -> ParamType::Any,
             "the pane tree, with which one has focus" {
         }
-        Floats = "floats" [S2 / "T021"] -> ParamType::List(&ParamType::Any),
+        Floats = "floats" [S2 / "T111"] -> ParamType::List(&ParamType::Any),
             "the open floats; at most one has focus (Design Language §9)" {
         }
         PickerRows = "picker-rows" [S5 / "T045"] -> ParamType::List(&ParamType::Any),
@@ -426,7 +426,7 @@ queries! {
         Theme = "theme" [S1 / "T010"] -> ParamType::Any,
             "the active theme: slug, ground, and the actor hues" {
         }
-        Options = "options" [S2 / "T021"] -> ParamType::Any,
+        Options = "options" [S2 / "T111"] -> ParamType::Any,
             "every declared option and its value" {
         }
         Languages = "languages" [S4 / "T037"] -> ParamType::List(&ParamType::Any),

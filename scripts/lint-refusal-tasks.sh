@@ -38,12 +38,31 @@
 # that asked whether the task was still *open*, which is the only property that
 # makes the sentence true.
 #
+# **AND IT MISSED HALF THE SURFACE ON ITS FIRST DAY.** This lint was written
+# against `action.rs` alone. `crates/phosphor-core/src/query.rs` stamps its rows
+# in exactly the same shape — `Capabilities = "capabilities" [S2 / "T024"]` —
+# and an unanswered query reaches the caller through
+# `QueryError::NotYetImplemented`, which renders the same sentence from the same
+# stamp. Twelve query rows were stale the whole time, measured on the built
+# binary the next morning:
+#
+#     phosphor --eval '(capabilities)'   #raised · not built yet — T024 builds it
+#
+# with `T024` ticked since `S2`. `T111` is the creditor all twelve were
+# re-stamped to. The lesson is the one this file already teaches one level down:
+# a check that covers one of two identical tables reports clean on half a
+# problem, and the clean line's own count is what makes the omission visible —
+# it read 171 while the vocabulary had 220 rows.
+#
 # WHAT IT CHECKS. Two sources, because the id reaches the user two ways.
 #
-#   A. Capability rows in the macro table whose variant the binary never names —
-#      the derived refusals. Their stamped task must be UNTICKED.
+#   A. Rows in the macro tables — BOTH `action.rs` and `query.rs` — whose
+#      variant the binary never names, so the door answers a derived refusal.
+#      Their stamped task must be UNTICKED.
 #   B. Task-id literals in the binary's production code — `Some("T###")`,
-#      `task: "T###"`, `const …TASK: &str = "T###"`. Same rule.
+#      `task: "T###"`, `const …TASK: &str = "T###"`, and any task id inside a
+#      string literal, which is how two `declined(…)` sentences got through the
+#      first pattern. Same rule.
 #
 # Column-0 `#[cfg(test)]` is stripped for (B), the same anchor
 # `lint-action-arms.sh` uses and for the same reason: a literal inside a test
@@ -137,6 +156,7 @@ RECORDED_ROWS = {
 }
 
 ACTIONS = pathlib.Path("crates/phosphor-core/src/action.rs")
+QUERIES = pathlib.Path("crates/phosphor-core/src/query.rs")
 TASKS = pathlib.Path("docs/TASKS.md")
 SOURCES = [
     pathlib.Path("crates/phosphor/src"),
@@ -158,16 +178,37 @@ if not ticked or not known:
     fail(f"read no tasks from {TASKS} — the checklist's shape moved. Fix the pattern.")
 
 # -- (A) the derived refusals -----------------------------------------------
-declared = re.findall(
+ROW = re.compile(
     r'^\s+([A-Z][A-Za-z0-9]*) = "([a-z0-9-]+)" \[\s*(\w+)\s*/\s*"([^"]+)"',
-    ACTIONS.read_text(encoding="utf-8"),
     re.M,
 )
+declared = ROW.findall(ACTIONS.read_text(encoding="utf-8"))
 if len(declared) < 100:
     fail(
         f"read only {len(declared)} action variants from {ACTIONS} — the macro's shape moved "
         "and check (A) is now checking nothing. Fix the pattern, do not delete the lint."
     )
+
+# **`query.rs` carries the same table, and leaving it out hid twelve rows.**
+#
+# This lint was written on 2026-08-24 against refusals that name a finished
+# task, and it read capability rows only. `query.rs` stamps its rows in exactly
+# the same shape — `Capabilities = "capabilities" [S2 / "T024"]` — and an
+# unanswered query reaches the caller through `QueryError::NotYetImplemented`,
+# which renders the same sentence. So half the surface was unchecked, and the
+# half that was unchecked had twelve stale rows in it: `(capabilities)` answered
+# *"not built yet — T024 builds it"* against a ticked `T024`, measured on the
+# built binary. `T111` is the creditor they were re-stamped to.
+#
+# A lint that covers one of two identical tables reports clean on half a
+# problem. Both are read here, and the count in the clean line says both.
+queried = ROW.findall(QUERIES.read_text(encoding="utf-8"))
+if len(queried) < 20:
+    fail(
+        f"read only {len(queried)} query rows from {QUERIES} — the macro's shape moved and "
+        "half of check (A) is now checking nothing. Fix the pattern, do not delete the lint."
+    )
+declared = declared + queried
 
 # The binary's production text, test modules stripped. Same anchor as
 # `lint-action-arms.sh`: column-0 `#[cfg(test)]` is the test *module*; the
@@ -303,7 +344,7 @@ cited = len(seen_snippets)
 records = len(RECORDED) + len(RECORDED_ROWS)
 owed = sum(1 for _, (blocker, _) in list(RECORDED.items()) + list(RECORDED_ROWS.items()) if not blocker)
 print(
-    f"lint-refusal-tasks: clean — {len(declared)} capability rows, {cited} task-id literals in "
+    f"lint-refusal-tasks: clean — {len(declared)} capability and query rows, {cited} literals in "
     f"production, {records} recorded ({owed} with no task that closes them)"
 )
 PYEOF
