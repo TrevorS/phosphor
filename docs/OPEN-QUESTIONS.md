@@ -2884,6 +2884,15 @@ disagreement it had just ended.
 **Not folded into the mockup**, per the standing rule — `docs/design/*.dc.html`
 round-trips to a claude.ai Design project and is never edited here.
 
+**§61 and this are one decision, not two.** Both are the same question asked of
+two screens: *should the mockups' contracted command names become the
+whole-word forms the build uses?* The build has already ruled and shipped — `1d`
+spells `:reload` and `:diff-disk`, `5b` spells `:take-disk`, `:keep-mine` and
+`:ask-claude` — so nothing is blocked either way. What remains is whether the
+**drawings** should be brought into line, which is one edit in the Design
+project covering both screens, or whether §6's example list should lose `:rr`
+instead. Answering either way closes both entries.
+
 ---
 
 ### 63 · Three LSP pty tests flake under load, and it is the cluster rather than the tests

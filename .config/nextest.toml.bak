@@ -1,0 +1,98 @@
+# nextest configuration.
+#
+# **One rule: a test that runs a second process is charged for both.**
+#
+# The `justfile`'s `test-shard` recipe argues at length that sharding beats
+# raising the thread count, and ends *"each shard runs at the concurrency that
+# is proven clean"*. It measured the cliff on the pty suite — 2 threads → 146s,
+# 4 → 74s, 8 → 46s, and at 12 it went **back up** to 52s with a test failing —
+# and diagnosed it: the harness has 30s deadlines, a starved child editor blows
+# them, and *"flakes appeared exactly when threads exceeded logical CPUs"*.
+#
+# That recipe passes no `--test-threads`, so nothing ever pinned the number it
+# called proven clean. Each shard takes nextest's default of one thread per
+# logical CPU, which tracks whatever runner we land on rather than what was
+# measured — and it held only while `ubuntu-latest` was the 2-vCPU box the
+# comment was written against. Four of the twenty-five runs after that stopped
+# being true went red, each on a *different* pty test, each a 30s timeout:
+#
+#     grep_rows_carry_the_store_and_tab_cycles_the_source   files drew 0/0
+#     enter_on_a_picker_row_opens_it_whichever_way_…        repl never ran the line
+#     gr_fills_the_picker_from_a_real_server
+#     a_jump_inside_the_open_file_moves_the_cursor_…
+#
+# All four pass locally and on a re-run. Nothing was wrong with any of them.
+
+# A test in this group starts a **child process** and then waits on a wall clock
+# for it — a pty child editor, a language server over a pipe, the shipping
+# binary at a door. nextest schedules the test and cannot see the child, so a
+# run at one-thread-per-core is really two runnable processes per core, and the
+# one holding the deadline is the one that loses.
+#
+# `max-threads` is a **ceiling, not the working limit** — `threads-required`
+# below is what binds on every machine either of us runs today. It is here
+# because a ceiling is the one thing that number cannot express: the justfile
+# measured 8 threads clean and 12 flaking, so 8 is where the evidence stops. A
+# 32-core box would otherwise put 16 pty children on a cliff nobody has
+# measured past.
+[test-groups.spawns-a-child]
+max-threads = 8
+
+# **Two threads per test, because there are two processes.**
+#
+# This models the missing child directly, and it is why the fix is not
+# `--test-threads 2` on the whole shard: the ~1100 tests that never leave their
+# own process keep running at full width, and only these pay.
+#
+# A flat `max-threads = 2` was written here first and measured before it was
+# believed: `just test` went from 109s to 206s on this machine. That is the
+# right bound for a 4-thread runner and the wrong one everywhere else, because
+# it answers *"how many cores does this box have"* with a constant.
+# `threads-required` gives the same 2 on that runner — the number the justfile
+# proved clean — and scales where there is room. Measured at 131s here, against
+# the 109s baseline.
+#
+# The membership is by binary, and exact: `binary(lsp)` would substring-match
+# every `lsp_*` file, and a substring is not a decision.
+#
+# **This paragraph used to end *"neither of which spawns anything"*, and it was
+# false about `lsp_documents`** — that file builds a `ServerSpec` around `sh -c`
+# and hands it to the client, which spawns it. It is in the group now, and
+# `scripts/lint-nextest-group.sh` counts a spec that names a command as a spawn
+# marker so the next one cannot be missed by eye.
+#
+# `scripts/lint-nextest-group.sh` holds this list against the tree. A filter
+# that silently matches nothing is the failure mode this file exists to prevent
+# — it would go green, run at full width, and flake exactly as before — and the
+# list is not something a reader can derive by eye: writing it by hand missed
+# `phosphor-core::journal` and `phosphor-term::owning_the_terminal`, both of
+# which spawn the test binary again and wait on it, and the second of which
+# opens a pty exactly as `loop_pty` does.
+#
+# `phosphor-buffer::lsp` is in the group and has no `Command::new` of its own:
+# it spawns servers *through the client under test*. The lint requires every
+# spawner to be here and permits extras for that reason — a library can start a
+# process on a test's behalf, and the deadline is the test's either way.
+#
+# **`phosphor-agent::session_client` is the second of those, and it cost a
+# whole-suite failure to learn.** `T050`'s tests drive a toy ACP agent that the
+# SDK spawns for them, so the file carries neither marker and `lint-nextest-group`
+# said clean. Added at full width, they starved
+# `phosphor-buffer::lsp_documents`, whose 20-second poll for a `didChange` came
+# back with a log holding nothing but `initialize` — a test that has nothing to
+# do with ACP, failing in the shape this file was written to prevent, on the run
+# that introduced six new child processes.
+[[profile.default.overrides]]
+filter = '''
+    binary_id(=phosphor::loop_pty)
+  + binary_id(=phosphor::door)
+  + binary_id(=phosphor::parity)
+  + binary_id(=phosphor-agent::session_client)
+  + binary_id(=phosphor-buffer::lsp)
+  + binary_id(=phosphor-buffer::lsp_documents)
+  + binary_id(=phosphor-buffer::lsp_servers)
+  + binary_id(=phosphor-core::journal)
+  + binary_id(=phosphor-term::owning_the_terminal)
+'''
+test-group = 'spawns-a-child'
+threads-required = 2

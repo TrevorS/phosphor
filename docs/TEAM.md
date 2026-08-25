@@ -3,7 +3,7 @@
 Derived from [TASKS.md](TASKS.md) and [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md).
 Five teammates, owning crates rather than features, gated by the twelve checkpoints.
 
-**110 of 120 tasks are assigned**, each to exactly one owner. `T005` is the single deliberate
+**111 of 121 tasks are assigned**, each to exactly one owner. `T005` is the single deliberate
 co-ownership and is called out where it appears. The ten with no owner are `T008` and `T009` — the
 dependency spikes, already complete ([SPIKES.md](SPIKES.md)) — and `T101`–`T108`, which no role
 list below names.
@@ -28,7 +28,7 @@ Computed from `TASKS.md`, the longest-path wave widths are:
 
 ```
 wave    0   1   2   3    4    5    6    7   8   9  10
-tasks   2   5   8   6   15   24   22   18   14   3   1
+tasks   2   5   8   6   15   24   22   19   14   3   1
 ```
 
 By the graph, wave 4 is 15-wide and includes `T050` (ACP session client, S6) and `T069`
@@ -44,8 +44,8 @@ Three other numbers worth carrying:
 
 | | |
 |---|---|
-| `T001` gates **110 of 120** tasks | The workspace skeleton is the whole build's front door. |
-| `T019` gates **80** | The `Action` enum. The plan calls it "reversible: no in practice." |
+| `T001` gates **111 of 121** tasks | The workspace skeleton is the whole build's front door. |
+| `T019` gates **81** | The `Action` enum. The plan calls it "reversible: no in practice." |
 | `T041` has **14 direct dependents** | Store core — the second serialisation point. |
 
 And the shape that matters most for staffing: **waves 0–3 are 2, 5, 8 and 6 tasks wide.** The

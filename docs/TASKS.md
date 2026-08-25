@@ -4,7 +4,7 @@ Decomposed from [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md), which is itsel
 the four design docs in [design/](design/). The plan says *what each phase is for*; this file
 says *what to build, in what order, and where we stop and look at it*.
 
-**111 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
+**112 tasks + 9 harness tasks · 12 checkpoints · 9 phases**, covering all 34 screens v1 builds.
 Phase ids (`M-0`, `S1`…`S8`) match the plan and the Component Breakdown's build order. Task ids
 are stable and assigned in order of creation — reference them in commits. New tasks append
 rather than renumber, so `T078`+ sit inside earlier phases.
@@ -6515,6 +6515,40 @@ RULED: add the tasks."* An unowned debt recorded in a lint is a debt nobody is g
   *Done when:* each of the twelve answers its own row from the host rather than refusing, a
   door test calls every one of them through `--eval` and asserts none raises, and the row is
   re-stamped back off `T111` as each lands. *Needs:* T024
+
+---
+
+## F · What `S7` left aspirational
+
+One task, and it exists because `T073` ticked with a claim its own title makes
+and its own build could not meet. Recorded as a task rather than swallowed,
+because the alternative was drawing something the data does not support.
+
+- [ ] **T112 · An agent turn is a change** 📌
+  **`T073`'s title says *"agent turns are changes"* and nothing makes that true.** `3b` draws
+  `· you` and `· claude` against each row; what the timeline actually draws is the *recorded*
+  author, which in every real repository is whoever configured jj. `T073` shipped the truthful
+  version and said so at the field — inventing `claude` from a heuristic would be `3b`'s one
+  claim no data supports.
+  **What would make it true, and the decision inside it.** A turn would have to *become* a jj
+  change: `jj new` when a turn begins, `jj describe` with the prompt when it ends. `S6` built
+  every part of the turn lifecycle — `turn-began` and `turn-ended` already exist as capabilities
+  — so the hook has somewhere to go.
+  **The reason this is not obviously right.** It makes the editor *write to your repository* on
+  the agent's behalf, which is a different promise from anything `S7` shipped: `T069` watches
+  disk and never refreshes, `T070` offers three exits and merges nothing, `T071` reads and never
+  commits. Every VCS surface so far has been strictly read-only, and this would be the first
+  that is not. Invariant 5 — *"VCS is the safety net that lets there be no review ceremony"* —
+  is an argument **for** it, and `7a`'s permission gate is the shape that would make it
+  acceptable; but it is a promise change and belongs to Teej rather than to whichever task
+  notices it is missing.
+  **Cheaper half, if the full one is unwanted:** attribute from the author *email* when it
+  differs from the repo's configured user. That costs one `jj config get` and makes `3b`'s two
+  names real for anyone whose agent already commits under its own identity — without this
+  editor ever writing a change itself.
+  *Done when:* either a turn creates a change and `3b` draws `· claude` against it from recorded
+  data, or the entry is closed with a ruling that it should not and `3b`'s actor column is
+  amended to what the build can honestly draw. *Needs:* T050, T073
 
 ---
 
