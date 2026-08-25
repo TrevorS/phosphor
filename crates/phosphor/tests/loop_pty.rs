@@ -8856,17 +8856,25 @@ mod driven {
         editor.press_quietly(b"12j");
         editor.press_quietly(b"4l");
 
-        let before = editor.screen();
-        // **The strip's `line:column`, not `Screen::row`.** That field is the
-        // terminal's cursor and it survives a planted `set_cursor(len)` — an
-        // assertion on it passes against the defect it exists to catch. `1d`
-        // draws the buffer position on the strip (`5:9`), which is both the
-        // honest measure and the one a person reads.
-        let place = statusline(&before)
-            .split_whitespace()
-            .find(|word| word.contains(':') && word.chars().next().is_some_and(char::is_numeric))
-            .expect("the strip carries a line:column")
-            .to_owned();
+        // **The strip's `line:column`, written down, and *waited* for.**
+        //
+        // Three things this had to learn, each found by a failure rather than
+        // by reading it. `Screen::row` is the *terminal's* cursor and survives
+        // a planted `set_cursor(len)`, so an assertion on it passes against the
+        // defect it exists to catch — `1d` draws the buffer position on the
+        // strip (`5:9`) and that is the honest measure.
+        //
+        // **Capturing** the expectation is the second trap: reading the strip
+        // straight after the three quiet presses returned `1:1` on CI, because
+        // they had not landed on it yet, and the test then compared a stale
+        // reading to a correct one and failed claiming the cursor had moved.
+        // `gg` then `12j` then `4l` is line 13 column 5, so say so.
+        //
+        // And **waiting** is the third: writing the value down is not enough if
+        // the screen is read before it arrives. `shown_on_grid` with no keys
+        // waits for the needle, which is the same tool the `✱` below uses.
+        let place = "13:5";
+        let before = editor.shown_on_grid(b"", place);
         let text = whole(&before);
 
         // Claude writes the file underneath. Different length as well as
@@ -8888,7 +8896,7 @@ mod driven {
         // says which one broke.
         let after = editor.screen();
         assert!(
-            statusline(&after).contains(&place),
+            statusline(&after).contains(place),
             "the cursor did not move while the file changed underneath it — \
              was at {place}, strip is now: {}",
             statusline(&after)
