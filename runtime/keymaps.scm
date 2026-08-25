@@ -1630,6 +1630,12 @@
 (ex-set! "ti[meline]" "agent turns are changes — 3b"
          (lambda (rest bang) (key/run (key/cmd "open-timeline"))))
 
+;; `T071` — re-read the repository. the chip is a cache; this is the door that
+;; makes it current, and outside a repo it declines by naming that state rather
+;; than failing.
+(ex-set! "refresh-vcs" "re-read the repository — :refresh-vcs"
+         (lambda (rest bang) (key/run (key/cmd "refresh-vcs"))))
+
 (ex-set! "in[box]" "everything claude has said to you"
          (lambda (rest bang) (key/run (key/cmd "open-inbox"))))
 

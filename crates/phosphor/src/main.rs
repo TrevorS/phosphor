@@ -2122,6 +2122,38 @@ impl Answers for AppHost {
                     .collect();
                 Ok(self.answered(Value::List(rows)))
             }
+            // `T071` — the backend, the change and whether the tree is clean.
+            //
+            // **Read fresh rather than off the loop's cache**, and the split is
+            // deliberate: the statusline chip is *"what it was at the last
+            // refresh"* because it is redrawn many times a second and shelling
+            // out per frame would be absurd, while a query is somebody asking
+            // *now*. `refresh-vcs` is what reconciles the two.
+            //
+            // **A bare directory answers `Null`, not an error** — this query's
+            // own declaration says *"every one of these answers empty in a bare
+            // directory — no repository is a normal state, not an error"*.
+            Query::Vcs(phosphor_core::query::VcsQuery::VcsStatus {}) => {
+                let found = std::env::current_dir()
+                    .ok()
+                    .and_then(|cwd| phosphor_vcs::detect(&cwd));
+                Ok(self.answered(found.map_or(Value::Null, |repo| {
+                    let status = repo.status();
+                    let mut fields = Args::new();
+                    fields.set("backend", Value::Text(status.backend.name().to_owned()));
+                    fields.set("root", Value::Text(repo.root.display().to_string()));
+                    // `change` and `clean` are absent rather than guessed when
+                    // the backend's own binary could not be run — see
+                    // `phosphor_vcs::Status`.
+                    if let Some(change) = status.change {
+                        fields.set("change", Value::Text(change));
+                    }
+                    if let Some(clean) = status.clean {
+                        fields.set("clean", Value::Bool(clean));
+                    }
+                    Value::Record(fields)
+                })))
+            }
             // `T069` — what `✱` renders, answered off the store the watcher
             // writes into.
             //
@@ -3749,6 +3781,15 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         peek: None,
         inbox: None,
         store: Arc::clone(&host.store),
+        // Detected once at boot. A bare directory answers `None` here and
+        // every VCS surface is simply absent — never an error.
+        vcs: std::env::current_dir()
+            .ok()
+            .and_then(|cwd| phosphor_vcs::detect(&cwd))
+            .map(|repo| {
+                let status = repo.status();
+                (repo, status)
+            }),
         disk_diff: None,
         diff_mode: phosphor_core::request::DiffMode::SideBySide,
         disk_box: None,
@@ -4500,6 +4541,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             .unwrap_or(u32::MAX),
             inbox_unread: u32::try_from(inbox_unread(&shell.store, &shell.asks))
                 .unwrap_or(u32::MAX),
+            // `T071` — `jj qpvuntsm ✓`, or absent outside a repo. The chip is
+            // built by `phosphor_vcs` so the word and the tick have one author.
+            vcs: shell.vcs.as_ref().map(|(_, status)| status.chip()),
             // `T069` — `1d`'s `✱ disk changed`, read off the store the watcher
             // writes into. A buffer with no file cannot disagree with disk.
             disk_changed: editing
@@ -4512,7 +4556,6 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // quiet are still counted somewhere, and this is that somewhere.
             trouble: tally.trouble,
             attention: tally.attention,
-            vcs: None,
             // `7c`'s `rust-analyzer ✓`, and the only place a failed server is
             // ever heard from — see `server_chip`.
             server: editing.language.as_ref().and_then(|language| {
@@ -9621,6 +9664,19 @@ struct Shell {
     /// `T041`'s store, shared with [`AppHost`] so the gutter, the statusline
     /// and the `region` queries cannot disagree about a file.
     store: Arc<store::Shared>,
+    /// The repository this session is in, and its last-read state (`T071`).
+    ///
+    /// **Read on demand and cached, not polled.** `refresh-vcs` exists because
+    /// the answer is *re-read* rather than watched, and that is a correctness
+    /// decision as much as a cost one: the pty harness counts a frame per draw,
+    /// so a background poller would put an asynchronous producer into every
+    /// test in the suite. `T069`'s disk watcher had to be switched off in tests
+    /// for exactly that reason; this never needs the switch.
+    ///
+    /// **[`None`] is a bare directory and a normal state.** No feature may
+    /// assume a repo exists (`T071`), so this being absent changes nothing
+    /// except that the chip is not drawn.
+    vcs: Option<(phosphor_vcs::Repo, phosphor_vcs::Status)>,
     /// `5b` — which buffer's disk diff is open, and where it lives (`T070`).
     ///
     /// **The path rides along with the id** because the two are wanted in
@@ -12381,6 +12437,28 @@ impl Editing {
             // group rows. A setting on the open surface rather than a prop
             // rewritten into the float, because the float is a snapshot and
             // this has to change what the next frame draws.
+            // `T071` — re-read the repository. The statusline chip is a
+            // cache, and this is what makes it current.
+            //
+            // **Refuses `NoRepository` in a bare directory**, which is the
+            // vocabulary's own instruction for this whole action group — *"an
+            // enhancement, never a dependency … refuses with
+            // `Refusal::NoRepository` in a bare directory, and that is a normal
+            // state rather than an error path"*. The refusal names the state,
+            // not a failure, and nothing about the editor changes.
+            Action::Vcs(phosphor_core::action::VcsAction::RefreshVcs {}) => {
+                let Some(cwd) = std::env::current_dir().ok() else {
+                    return declined("no working directory");
+                };
+                let Some(repo) = phosphor_vcs::detect(&cwd) else {
+                    cx.shell.vcs = None;
+                    return Outcome::Refused(Refusal::NoRepository);
+                };
+                let status = repo.status();
+                self.note = Some(status.chip());
+                cx.shell.vcs = Some((repo, status));
+                done()
+            }
             // ---------------------------------------------------------------
             // `T070` — `5b`, and the three ways out of it.
             //
@@ -17010,6 +17088,8 @@ mod tests {
     fn shell() -> Shell {
         Shell {
             store: Arc::new(store::Shared::default()),
+            // A test shell is in no repository unless a test says so.
+            vcs: None,
             disk_diff: None,
             diff_mode: phosphor_core::request::DiffMode::SideBySide,
             disk_box: None,
@@ -17393,22 +17473,32 @@ mod tests {
     #[test]
     fn a_posted_action_with_no_arm_names_its_task_and_its_producer() {
         let mut editing = editing("hello");
-        // `refresh-vcs` is `Allow`, so it reaches `Editing::act` and falls to
-        // the `_` arm — which is the case this test is about. It used to be
-        // `ingest-diagnostics`; that one has an arm now (`T040`), and the test
-        // below is what took its place.
+        // `expand-diff-context` is `Allow`, so it reaches `Editing::act` and
+        // falls to the `_` arm — which is the case this test is about.
+        //
+        // **Third occupant of this slot, and each move is the good news.** It
+        // was `ingest-diagnostics` until `T040` armed it, then `refresh-vcs`
+        // until `T071` armed it. This one is different in kind and should be
+        // the last: `expand-diff-context` is one of the two capabilities
+        // `scripts/lint-action-arms.sh` records with **no creditor at all** —
+        // no mockup draws a key for it — so unlike its predecessors it is not
+        // waiting for a task, and nothing is going to graduate it out from
+        // under this test.
         let (buffer, mut cx) = editing.split();
         let note = deliver(
             buffer,
             &mut cx,
             &super::events::Posted {
-                source: "vcs",
-                action: Action::Vcs(phosphor_core::action::VcsAction::RefreshVcs {}),
+                source: "review",
+                action: Action::Review(phosphor_core::action::ReviewAction::ExpandDiffContext {
+                    hunk: phosphor_core::request::HunkId(0),
+                    lines: 3,
+                }),
             },
         );
         assert_eq!(
             note.as_deref(),
-            Some("vcs: not built yet — T071 builds it"),
+            Some("review: not built yet — T066 builds it"),
             "a producer whose Action has no arm is told which task builds it"
         );
     }

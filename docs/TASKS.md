@@ -4810,8 +4810,70 @@ and the most damaging when it is.
 
 ### S7.3 — VCS
 
-- [ ] **T071 · VCS trait + jj adapter** — compiled in, activated on detection. **No feature may
+- [x] **T071 · VCS trait + jj adapter** — compiled in, activated on detection. **No feature may
   assume a repo exists.** *Needs:* T041
+
+  > **Built and ticked 2026-08-25.** `phosphor-vcs` was a six-line stub; it is now detection, a
+  > `Status`, a jj reader and the `jj qpvuntsm ✓` chip. Five planted defects, five catches.
+  >
+  > **`None` rather than `Result`, and that is the acceptance line in the type.** *"No feature may
+  > assume a repo exists"* — so `detect` answers an `Option` and there is no error to format
+  > anywhere above it. The vocabulary had already said this twice before the crate did anything:
+  > `vcs-status`'s own declaration reads *"every one of these answers empty in a bare directory —
+  > no repository is a normal state, not an error"*, and the `Vcs` action group's reads *"an
+  > enhancement, never a dependency"*. `Refusal::NoRepository` already existed for the actions.
+  >
+  > **Read on demand, never polled — and that is a correctness decision as much as a cost one.**
+  > `refresh-vcs` exists precisely because the answer is *re-read*, so the binary caches a `Status`
+  > and asks again. A poller would have put an asynchronous producer into every pty test in the
+  > suite: the harness counts a frame per draw, `press` asserts one frame per key byte, and
+  > `T069`'s watcher had to be switched off in tests for exactly that reason. This never needs the
+  > switch. The statusline chip is the cache; the `vcs-status` query reads **fresh**, because a
+  > chip is redrawn many times a second and a query is somebody asking now.
+  >
+  > **Detection is filesystem-only, and that is what makes it testable.** `detect` walks up for a
+  > marker and never runs a subprocess, so *"is this a jj repo"* is answerable on a machine with
+  > no jj installed. All six unit tests run identically with and without it — a fixture that
+  > shelled out to a binary CI may not have would be a test that is quietly skipped there.
+  >
+  > **jj before git, and a colocated repo answers jj.** `jj git init --colocate` produces both
+  > markers, and in that repo the jj store is the truth while `.git` is an export of it. Answering
+  > `git` would describe the file the tool writes rather than the tool you are using. A planted
+  > reversal is caught.
+  >
+  > **A `.git` *file* is a repository.** This very worktree is one — git marks a linked worktree
+  > with a file pointing at the real gitdir, not a directory — so detection tests existence rather
+  > than directory-ness. Found by running the query against the tree rather than by reasoning
+  > about it: `(vcs-status)` answered `backend "git"` from inside the worktree.
+  >
+  > **The chip has three states, not two.** `jj qpvuntsm ✓`, `jj qpvuntsm ●`, and a bare `jj`.
+  > *"I could not ask"* is not *"nothing to report"*: a backend whose binary is missing is still a
+  > detected repository, and a chip that claimed clean would be inventing the one fact it failed
+  > to read. A planted version that ticks on `None` is caught.
+  >
+  > **One `jj log` and not two.** `jj status` would answer the clean question directly, but a
+  > second subprocess per refresh is a second chance to be slow on a big repo — and the template
+  > already knows both, because `empty` is jj's own word for *"this change touches nothing"*,
+  > which for `@` is exactly *"the working copy matches its change"*. Verified against a real jj
+  > repo rather than assumed: `clean` before a write and `dirty` after.
+  >
+  > **`git` is detected here and read at `T072`**, so the chip says `git` and nothing it has not
+  > earned. Detection could not wait for that task, because the colocated case has to be decided
+  > in one place or not at all.
+  >
+  > **A test slot graduated for the third time.**
+  > `a_posted_action_with_no_arm_names_its_task_and_its_producer` needs an Action with no arm; it
+  > used `ingest-diagnostics` until `T040`, then `refresh-vcs` until this task. It is
+  > `expand-diff-context` now, which is different in kind and should be the last: that is one of
+  > the two capabilities `lint-action-arms.sh` records with **no creditor at all**, so nothing is
+  > going to graduate it out from under the test.
+  >
+  > **Verification.** Six unit tests over detection and the chip — bare, nested, colocated, git,
+  > a marker with no backend behind it, and the three chip states — plus a keystroke test that
+  > `:refresh-vcs` reaches an arm and names the backend rather than a task. Planted and caught:
+  > detection that does not walk up, a colocated repo answering git, a bare directory reporting a
+  > repo, a chip that claims clean when it could not ask, and a status that forgets which backend
+  > it detected. `just gate` green — 1542 tests.
 - [ ] **T072 · git adapter** — same trait. *Needs:* T071
 - [ ] **T073 · jj timeline** — agent turns are changes; undo is time travel. Screen `3b`.
   *Needs:* T071

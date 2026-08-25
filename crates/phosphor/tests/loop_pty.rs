@@ -8766,6 +8766,42 @@ mod driven {
     /// line no region covers was indistinguishable from the key being unbound —
     /// correct behaviour that reads as a bug, which is the one failure mode a
     /// test can catch and a person cannot argue with.
+    /// **`:refresh-vcs` re-reads the repository and says what it found**
+    /// (`T071`).
+    ///
+    /// **The child inherits this runner's working directory**, which is inside
+    /// the phosphor checkout — so the repository it detects is a real one and
+    /// the chip is a real answer rather than a fixture's. That is deliberate:
+    /// a fixture repo would test `detect` against a directory this test made,
+    /// and `detect` is already held to that in `phosphor_vcs`'s own suite
+    /// against a bare directory, a nested one and a colocated one.
+    ///
+    /// What this adds is the half those cannot reach: that a person can type
+    /// the command, that it reaches an arm, and that the arm answers by naming
+    /// the backend rather than by naming a task.
+    #[test]
+    fn refresh_vcs_re_reads_the_repository() {
+        let scratch = Scratch::new("refresh-vcs");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // `git`, because a git worktree marks itself with a `.git` *file*
+        // rather than a directory — which `detect` handles, and which is the
+        // shape this very checkout has.
+        let said = editor.press_until(b":refresh-vcs\r", "git");
+        assert!(
+            shows(&said, "git"),
+            "`:refresh-vcs` names the backend it found; frame was: {said}"
+        );
+        assert!(
+            !shows(&said, "T071"),
+            "and it names no task, because the task landed; frame was: {said}"
+        );
+        editor.quit();
+    }
+
     /// **`SPC r d` draws your buffer against what is on disk** (`T070`, `5b`).
     ///
     /// The fixture is built so a *merge* would be visible: the buffer has a
