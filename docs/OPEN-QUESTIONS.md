@@ -2928,6 +2928,58 @@ measured before it is believed.
 
 ---
 
+### 64 · `main.rs` crossed the 1 MB ceiling, and the ceiling was right
+
+**Found on 2026-08-25**, by `scripts/lint-repo-hygiene.sh` failing on `T073`'s
+last commit:
+
+```text
+crates/phosphor/src/main.rs: 1057356 bytes — over the 1048576-byte ceiling
+```
+
+**22,123 lines.** The ceiling exists because a tracked file that large is almost
+always a mistake, and this is the first time anything has hit it.
+
+**It is a symptom of a real thing.** `main.rs` is the binary in the sense that
+almost everything the binary does lives in one file: the event loop, `AppHost`,
+both appliers (`Editing::act` and `AppHost::apply`), the key routing for every
+float, the draw path, `Resources`, and every view-model builder. It has grown by
+accretion across every window — `S6` put the session in it, `S7` put four
+surfaces in it — and nothing has ever taken anything out.
+
+**Allowlisted, not permitted.** `scripts/allow-large-files.txt` now carries it
+with a comment saying exactly this. That was the only move available inside a
+task about the jj timeline: deciding the shape of the binary is not `T073`'s
+call, and it should certainly not be made by whichever task happens to add the
+byte that crosses the line.
+
+**What a split would plausibly be**, from reading the file rather than guessing
+at it — the seams are already there and already commented:
+
+* **`loop.rs`** — the event loop and its key routing. The largest single piece
+  and the one with the most callers, so the hardest to move.
+* **`host.rs`** — `AppHost`, `HostState`, `Layer`, the query answers. Already a
+  coherent unit behind one `&self`.
+* **`editing.rs`** — `Editing`, `Timeline`, `splice`/`write`/`reload`, and
+  `Editing::act`'s arms.
+* **`vm.rs`** — `review_vm`, `peek_vm`, `disk_diff_vm`, `change_diff_vm`,
+  `inbox_rows`, `thread_runs`. These are pure functions over store data and
+  would move with almost no friction; this is where a split should *start*,
+  precisely because it is the piece that proves the seam without risking the
+  loop.
+
+**What it would cost, honestly:** the file has 22k lines and no module
+boundaries, so every extracted item needs its visibility widened from private to
+`pub(crate)` and every caller re-pathed. That is mechanical but wide, and it
+touches the one file three lints and the whole pty suite are written against —
+`lint-action-arms.sh` reads `crates/phosphor/src/*.rs` and strips the column-0
+`#[cfg(test)]`, which a split would multiply.
+
+**Not scheduled here.** This is a task-graph decision and Teej's to make; the
+entry exists so the allowlist line is never the only record of it.
+
+---
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

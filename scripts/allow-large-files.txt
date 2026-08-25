@@ -1,0 +1,21 @@
+# Tracked files permitted to exceed `lint-repo-hygiene.sh`'s 1 MB ceiling.
+#
+# One path per line, each with a comment saying why. An entry here is a
+# *recorded exception*, not a decision that the file is fine — the ceiling
+# exists because a tracked file that large is almost always a mistake, and the
+# one entry below is the almost.
+
+# 22,123 lines and 1.05 MB, crossed during `T073` on 2026-08-25.
+#
+# **This is a symptom, not a decision.** `main.rs` is the binary: the loop, the
+# host, both appliers, the key routing for every float, the draw path and the
+# view-model builders. It has grown by accretion across every window — `S6` put
+# the session in it, `S7` put four surfaces in it — and nothing has ever taken
+# anything out.
+#
+# **Recorded rather than silently permitted**, and filed at OPEN-QUESTIONS.md
+# §64 with what a split would actually cost. Allowlisting it was the only move
+# available inside a task about the jj timeline; deciding the shape of the
+# binary is not `T073`'s call and should not be made by whichever task happens
+# to add the byte that crosses the line.
+crates/phosphor/src/main.rs

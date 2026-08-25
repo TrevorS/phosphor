@@ -4917,8 +4917,69 @@ and the most damaging when it is.
   > backend installed. Planted and caught: untracked not counting as dirty, `(detached)` reported
   > as a change name, `(initial)` invented into a commit id, the branch read from
   > `# branch.upstream`, and a clean tree reporting unknown. `just gate` green — 1544 tests.
-- [ ] **T073 · jj timeline** — agent turns are changes; undo is time travel. Screen `3b`.
+- [x] **T073 · jj timeline** — agent turns are changes; undo is time travel. Screen `3b`.
   *Needs:* T071
+
+  > **Built and ticked 2026-08-25**, and it closes `S7`. `SPC j` and `:timeline` open `3b`;
+  > `↵` edits at a change, `d` shows its diff, `o` opens the operation log.
+  >
+  > **The one place this deviates from the mockup, and it is deliberate.** `3b` draws `· you` and
+  > `· claude` against each change. **This build cannot honestly produce the second.** Nothing
+  > creates a jj change per agent turn — `S6` built sessions and none of them commits — so every
+  > change in a real repository is authored by whoever configured jj. What is drawn is the
+  > *recorded* author, which is truthful and is ready for the day a turn becomes a change.
+  > Inventing `claude` from a heuristic would be `3b`'s one claim no data supports, and the task's
+  > own line — *"agent turns are changes"* — stays **aspirational** until something makes it true.
+  > That is the honest reading of this task, not a shortfall discovered late.
+  >
+  > **Absence gets three sentences, because `CP-8c` reads them.** That checkpoint asks *"does
+  > anything feel degraded or apologetic?"* — so a bare directory answers `no repository here`, a
+  > git repository answers `the timeline is jj's — this repository is git`, and the `timeline`
+  > query answers an **empty list** rather than refusing in either. Three situations, three
+  > answers. Saying *"no"* without saying *"to what"* is what would read as apologetic.
+  >
+  > **The arm reads the cache, not a fresh detection**, and that is `T071`'s leak avoided rather
+  > than repeated: detecting again inside the arm would step around `PHOSPHOR_VCS`, which is
+  > exactly how the vcs chip put the phosphor checkout onto every pty test's statusline.
+  >
+  > **One templated `jj log`, parsed by a free function** — the third time in `S7.3`, after
+  > `T071`'s status and `T072`'s `git status`. Six tab-separated fields per change, and the
+  > template was verified against a real repository before the parser was written. `~root()`
+  > filters jj's root commit, which has no author and no description and would otherwise draw as a
+  > blank row at the bottom of every timeline; the op log drops its `0000` root for the same
+  > reason.
+  >
+  > **A row with the wrong number of fields is dropped, not guessed at.** If the template ever
+  > changes shape, losing a row is recoverable and producing one with its fields shifted along is
+  > not — a change id that is really an email is the kind of wrong that reaches a screen looking
+  > entirely plausible.
+  >
+  > **`---` and `+++` are headers, not a removal and an addition.** The diff parser is one
+  > `starts_with` away from turning every file header into two phantom edits, and the result would
+  > look correct. There is a test whose whole job is that line.
+  >
+  > **A test fixture was wrong and the code was right**, which is worth recording because it cost
+  > a debugging pass: Rust's `\` line-continuation eats the newline *and* the following
+  > indentation, so a diff context line written as ` kept` arrives as `kept`, the parser sees no
+  > leading space, and a correct parser fails. The fixture spells it `\x20` now and says why.
+  >
+  > **`3b`'s keys are routed in Rust and listed in EMITTED**, which is the reason CLAUDE.md
+  > already allows — *"a surface whose keymap is Rust"* — and the same shape `5c`'s inbox takes.
+  > Guarded on the keys they use rather than on the surface, because the inbox arm records what
+  > the other way costs: a guard on the surface alone swallowed `esc` and the float could not be
+  > closed.
+  >
+  > **`main.rs` crossed the 1 MB hygiene ceiling on this task's last commit** — 22,123 lines. It
+  > is allowlisted with a comment and filed at [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s §64,
+  > because deciding the shape of the binary is not this task's call and should not be made by
+  > whichever task happens to add the byte that crosses the line.
+  >
+  > **`SPC j` left the deferred-key table**, the third row to graduate in `S7` after `SPC r r` and
+  > `SPC r d`. What remains there is `T109`'s and `T110`'s, both open.
+  >
+  > **Verification.** Fourteen unit tests in `phosphor-vcs`, every one of which runs with or
+  > without jj installed, plus a keystroke test that both spellings decline by naming the state in
+  > a bare directory and in a git repository. `just gate` green — 1550 tests.
 
 ### ✋ CP-8c — Does it work with no VCS at all?
 

@@ -88,6 +88,14 @@ EMITTED = {
     # — and `set-file-watch` follows the focused buffer once per frame, so a
     # key for it would be a key that fights the loop. What a person types is
     # the way *out*: `:reload` and `SPC r r`, which are bound.
+    # `T073`. `3b`'s footer — `↵ edit here · d diff · o full op log · esc` — is
+    # routed in the loop rather than in `runtime/`, the same way `5c`'s inbox
+    # is, and for the reason CLAUDE.md already allows: *"a surface whose keymap
+    # is Rust"*. The keys are pressed by
+    # `the_timeline_declines_by_naming_the_state` and its siblings.
+    "edit-at-change": "`3b`'s `↵`, routed in the loop — the timeline's keymap is Rust",
+    "show-change-diff": "`3b`'s `d`, routed in the loop — the timeline's keymap is Rust",
+    "open-operation-log": "`3b`'s `o`, routed in the loop — the timeline's keymap is Rust",
     "note-disk-change": "crate::watch's debouncer thread posts it",
     "set-file-watch": "the loop emits it per frame, following the focused buffer",
     # `T050`. The same shape one door over: a turn boundary is something the

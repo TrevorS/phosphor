@@ -140,6 +140,35 @@ pub struct Change {
     pub removed: u32,
 }
 
+/// One line of a change's diff (`T073`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mark {
+    /// Unchanged, drawn on both sides.
+    Context,
+    /// Added by this change.
+    Added,
+    /// Removed by this change.
+    Removed,
+}
+
+/// One file's worth of a change's diff (`T073`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeFile {
+    /// The path, as the diff names it.
+    pub path: String,
+    /// The lines, in order.
+    pub lines: Vec<(Mark, String)>,
+}
+
+/// One entry in `jj op log` — `3b`'s `o full op log` (`T073`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Operation {
+    /// The short operation id.
+    pub id: String,
+    /// What jj says it did.
+    pub description: String,
+}
+
 /// A repository, found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repo {
@@ -271,6 +300,89 @@ impl Repo {
         })
     }
 
+    /// One change's diff (`T073`) — `3b`'s `d diff`.
+    #[must_use]
+    pub fn change_diff(&self, change: &str) -> Vec<ChangeFile> {
+        self.jj_text(&["diff", "-r", change, "--git", "--color=never"])
+            .map_or_else(Vec::new, |text| read_jj_diff(&text))
+    }
+
+    /// The operation log (`T073`) — `3b`'s `o full op log`.
+    ///
+    /// **This is the *"undo is time travel"* half.** A change is what you
+    /// wrote; an operation is what the tool did, including the undos — so the
+    /// op log is the only view in which reverting is itself an event you can
+    /// see rather than a hole where work used to be.
+    #[must_use]
+    pub fn operations(&self, limit: Option<u32>) -> Vec<Operation> {
+        let mut args = vec![
+            "op".to_owned(),
+            "log".to_owned(),
+            "--no-graph".to_owned(),
+            "--color=never".to_owned(),
+            "-T".to_owned(),
+            JJ_OPERATIONS.to_owned(),
+        ];
+        if let Some(limit) = limit {
+            args.push("-n".to_owned());
+            args.push(limit.to_string());
+        }
+        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+        self.jj_text(&borrowed)
+            .map_or_else(Vec::new, |text| read_jj_operations(&text))
+    }
+
+    /// Move the working copy to this change — `3b`'s `↵ edit here` (`T073`).
+    ///
+    /// **The `Err` carries jj's own words.** A refusal this editor invented
+    /// would be a second opinion about a repository it does not own; jj knows
+    /// why it would not move and says so better than a paraphrase.
+    pub fn edit_at(&self, change: &str) -> Result<String, String> {
+        self.jj_run(&["edit", change])
+            .map(|()| format!("editing {change}"))
+    }
+
+    /// Restore the working copy from this change (`T073`).
+    ///
+    /// **Not the same verb as `edit_at` and not a synonym for it.** `edit`
+    /// moves *where you are*; `restore` brings *what was there* to where you
+    /// already are. `3b`'s subtitle calls undo time travel, and these are its
+    /// two directions.
+    pub fn restore_from(&self, change: &str) -> Result<String, String> {
+        self.jj_run(&["restore", "--from", change])
+            .map(|()| format!("restored from {change}"))
+    }
+
+    /// Run jj for its output, or [`None`] when it will not run.
+    fn jj_text(&self, args: &[&str]) -> Option<String> {
+        let out = Command::new("jj")
+            .args(args)
+            .current_dir(&self.root)
+            .output()
+            .ok()
+            .filter(|out| out.status.success())?;
+        Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    /// Run jj for effect, carrying its own complaint back on failure.
+    fn jj_run(&self, args: &[&str]) -> Result<(), String> {
+        let out = Command::new("jj")
+            .args(args)
+            .current_dir(&self.root)
+            .output()
+            .map_err(|error| format!("jj: {error}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let said = String::from_utf8_lossy(&out.stderr);
+        Err(said
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("jj refused")
+            .trim()
+            .to_owned())
+    }
+
     /// git's branch and whether the working tree is clean (`T072`).
     ///
     /// **One `git status` and not two**, for `jj_status`'s reason exactly:
@@ -346,6 +458,72 @@ fn read_jj_timeline(said: &str) -> Vec<Change> {
             })
         })
         .collect()
+}
+
+/// The template [`Repo::operations`] asks jj for (`T073`).
+const JJ_OPERATIONS: &str = r#"id.short(4) ++ "\t" ++ description ++ "\n""#;
+
+/// Parse [`JJ_OPERATIONS`]'s output (`T073`).
+///
+/// **jj's root operation is dropped**, the way the timeline drops the root
+/// commit: it has an id of zeroes and no description, and it is not something
+/// anybody did.
+fn read_jj_operations(said: &str) -> Vec<Operation> {
+    said.lines()
+        .filter_map(|line| {
+            let (id, description) = line.split_once('\t')?;
+            if id.is_empty() || description.trim().is_empty() {
+                return None;
+            }
+            Some(Operation {
+                id: id.to_owned(),
+                description: description.to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// Parse `jj diff --git` (`T073`).
+///
+/// **A free function over the text**, so the parsing half needs no jj — the
+/// rule `T071`'s detection, `T072`'s `git status` and `T073`'s timeline all
+/// follow.
+///
+/// **Headers are dropped and hunk boundaries are not drawn.** `index`, `---`
+/// and `+++` say nothing a reader of `3b` needs, and `@@` lines are jj's own
+/// coordinates rather than content. What is kept is the three kinds of line
+/// that *are* the diff.
+fn read_jj_diff(said: &str) -> Vec<ChangeFile> {
+    let mut files: Vec<ChangeFile> = Vec::new();
+    for line in said.lines() {
+        if let Some(rest) = line.strip_prefix("diff --git a/") {
+            let path = rest.split_once(" b/").map_or(rest, |(left, _)| left);
+            files.push(ChangeFile {
+                path: path.to_owned(),
+                lines: Vec::new(),
+            });
+            continue;
+        }
+        let Some(file) = files.last_mut() else {
+            continue;
+        };
+        // Order matters: `+++` and `---` start with `+` and `-`.
+        if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@") {
+            continue;
+        }
+        if line.starts_with("index ") || line.starts_with("new file") || line.starts_with("deleted")
+        {
+            continue;
+        }
+        let mark = match line.chars().next() {
+            Some('+') => Mark::Added,
+            Some('-') => Mark::Removed,
+            Some(' ') => Mark::Context,
+            _ => continue,
+        };
+        file.lines.push((mark, line[1..].to_owned()));
+    }
+    files
 }
 
 /// Parse `git status --porcelain=v2 --branch` (`T072`).
@@ -587,11 +765,100 @@ mod tests {
             "@\tvmsp\tme@example.com\t1\t0\tfine\n\
              zzzz\n\
              \t\t\t\t\t\n\
-             o\tovkk\tme@example.com\t2\t1\talso fine\n",
+             o\tovkk\tme@example.com\t2\t1\tsomething\tspare\n\
+             o\tabcd\tme@example.com\t3\t2\n\
+             o\tefgh\tme@example.com\t2\t1\talso fine\n",
         );
-        assert_eq!(rows.len(), 2, "two well-formed rows, two kept");
+        // **The five-field row is the one that matters.** A row that is one
+        // field *short* is the case a lenient parser turns into a change whose
+        // description is really its removed-count — fields shifted along by
+        // one, and entirely plausible on screen. A row with a spare field is
+        // kept, because the six this parser needs are all present and jj
+        // gaining a seventh should not blank the timeline.
+        assert_eq!(rows.len(), 3, "three rows have all six fields");
         assert_eq!(rows[0].id, "vmsp");
         assert_eq!(rows[1].id, "ovkk");
+        assert_eq!(rows[2].id, "efgh");
+        assert!(
+            rows.iter().all(|row| row.id != "abcd"),
+            "the five-field row is dropped rather than shifted"
+        );
+    }
+
+    /// **A change's diff, captured from a real repository.**
+    ///
+    /// The literal output of `jj diff -r <id> --git`, recorded before this
+    /// parser existed — `T072`'s rule about writing fixtures from memory.
+    #[test]
+    fn a_change_diff_keeps_the_lines_and_drops_the_headers() {
+        let files = super::read_jj_diff(
+            "diff --git a/b.txt b/b.txt\n\
+             new file mode 100644\n\
+             index 0000000000..ef49dd86a6\n\
+             --- /dev/null\n\
+             +++ b/b.txt\n\
+             @@ -0,0 +1,1 @@\n\
+             +more\n",
+        );
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "b.txt");
+        // **One line kept out of seven.** `index`, `---`, `+++` and `@@` are
+        // coordinates rather than content, and `---`/`+++` in particular would
+        // otherwise read as a removed and an added line.
+        assert_eq!(
+            files[0].lines,
+            vec![(super::Mark::Added, "more".to_owned())]
+        );
+    }
+
+    /// **`---` and `+++` are headers, not a removal and an addition.**
+    ///
+    /// The trap this parser is one `starts_with` away from: both begin with the
+    /// character that marks a changed line, so a naïve match turns every file
+    /// header into two phantom edits — and the result looks entirely plausible
+    /// on screen.
+    ///
+    /// **The context line's leading space is written `\x20`** because Rust's
+    /// `\` line-continuation eats the newline *and* the indentation after it —
+    /// so ` kept` written naturally arrives as `kept`, the parser sees no
+    /// space, and the test fails against correct code. It did, once.
+    #[test]
+    fn a_file_header_is_not_two_changed_lines() {
+        let files = super::read_jj_diff(
+            "diff --git a/a.txt b/a.txt\n\
+             --- a/a.txt\n\
+             +++ b/a.txt\n\
+             @@ -1,2 +1,2 @@\n\
+             -was\n\
+             +now\n\
+             \x20kept\n",
+        );
+        assert_eq!(
+            files[0].lines,
+            vec![
+                (super::Mark::Removed, "was".to_owned()),
+                (super::Mark::Added, "now".to_owned()),
+                (super::Mark::Context, "kept".to_owned()),
+            ]
+        );
+    }
+
+    /// **The op log, captured, with jj's root operation dropped.**
+    ///
+    /// That row has an id of zeroes and no description; it is not something
+    /// anybody did, the same way the timeline's root commit is not a change.
+    #[test]
+    fn the_op_log_drops_the_root_operation() {
+        let ops = super::read_jj_operations(
+            "63f0\tsnapshot working copy\n\
+             58e1\tnew empty commit\n\
+             79a0\tadd workspace 'default'\n\
+             0000\t\n",
+        );
+        assert_eq!(ops.len(), 3);
+        assert_eq!(ops[0].id, "63f0");
+        assert_eq!(ops[0].description, "snapshot working copy");
+        assert!(ops.iter().all(|op| op.id != "0000"));
     }
 
     /// **A git repository has no timeline, and that is not a failure.**
@@ -599,6 +866,16 @@ mod tests {
     /// `3b` is *"an enhancement view, only when jj is present"*. `CP-8c` runs
     /// the whole `S7` set in a git repo and fails if any message implies
     /// something is missing — so this answers empty rather than refusing.
+    ///
+    /// **The `backend != Jj` guard inside `timeline` is an equivalent mutant to
+    /// this test, and is named rather than covered.** Removing it does not
+    /// change what a git repository answers: `jj log` fails in a directory with
+    /// no `.jj`, `jj_text` filters on the exit status, and the result is the
+    /// same empty vector. What the guard actually buys is *not spawning a
+    /// process to be told so* — a cost property, which no assertion about the
+    /// return value can distinguish. Planting its removal is caught by nothing
+    /// here, and inventing a test that watched for a subprocess would be
+    /// testing the guard rather than the behaviour.
     #[test]
     fn a_git_repo_has_an_empty_timeline() {
         let dir = scratch("git-timeline");

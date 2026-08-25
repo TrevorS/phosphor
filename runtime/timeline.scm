@@ -66,11 +66,37 @@
 ;; a git repository and a bare directory both land here, and neither is broken.
 ;; CP-8c reads this line: *"does anything feel degraded or apologetic?"* — so it
 ;; says what is true and offers nothing.
-(define (timeline/rows)
-  (let ([rows (timeline)])
-    (if (null? rows)
-        (list (list (view/run "no changes to show — the timeline is jj's" 'meta)))
-        (map timeline/row rows))))
+;; the op log's rows — `3b`'s `o full op log`.
+;;
+;; **handed in rather than queried**, because the vocabulary declares `timeline`
+;; and no `operations`. widening the wire to feed one float would be the
+;; opposite of the rule the three doors are built on, so the arm reads them and
+;; passes them through the surface args.
+(define (timeline/op-row row)
+  (list (view/run "· " 'meta)
+        (view/run (hash-try-get row "operation") 'text)
+        (view/run (string-append "  " (hash-try-get row "description")) 'meta)))
+
+;; the cursor `3b` draws on the row you are on.
+(define (timeline/mark rows selected)
+  (let loop ([left rows] [at 0] [out '()])
+    (if (null? left)
+        (reverse out)
+        (loop (cdr left)
+              (+ at 1)
+              (cons (cons (view/run (if (= at selected) "› " "  ") 'you) (car left)) out)))))
+
+(define (timeline/rows args)
+  (let ([ops (hash-try-get args "operations")]
+        [selected (let ([n (hash-try-get args "selected")]) (if (number? n) n 0))])
+    (cond
+     ;; the op log, when the arm handed one over
+     [(and (list? ops) (not (null? ops))) (map timeline/op-row ops)]
+     [else
+      (let ([rows (timeline)])
+        (if (null? rows)
+            (list (list (view/run "no changes to show — the timeline is jj's" 'meta)))
+            (timeline/mark (map timeline/row rows) selected)))])))
 
 (define (timeline/footer)
   (view/key-hints 'footer
@@ -80,10 +106,27 @@
                         (view/key-hint "esc" "close"))))
 
 ;; **informational.** the timeline asks nothing; it is a place you go to look.
+;; `:restore-change` — bring what was there to where you are.
+;;
+;; **an ex command rather than a key, because 3b draws no key for it.** the
+;; footer is `↵ edit here · d diff · o full op log · esc`, and adding a fifth
+;; would be this file editing the screen rather than building it. the verb is
+;; real and declared, so it gets the door a person can type instead.
+;;
+;; **not the same verb as `↵`.** `edit-at-change` moves *where you are*;
+;; `restore-change` brings *what was there* to where you already are. 3b's
+;; subtitle calls undo time travel, and those are its two directions.
+;;
+;; the argument is a change id — text, not a choice — so an empty or wrong one
+;; reaches jj and comes back in jj's own words rather than as "no such command".
+(ex-set! "restore-change" "bring a change's content here — :restore-change <id>"
+         (lambda (rest bang)
+           (key/run (key/cmd "restore-change" "change" (trim rest)))))
+
 (define-float-surface!
   "timeline"
   "(lambda (args)
      (view/float 'informational
                  (view/float-header \"jj\" \"timeline\")
-                 (view/spans (timeline/rows))
+                 (view/spans (timeline/rows args))
                  (timeline/footer)))")

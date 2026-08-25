@@ -3810,6 +3810,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // `Editor::started_with`. A test's child inherits the runner's working
         // directory, so without this every test draws the phosphor checkout's
         // own chip on a strip that is about a fixture in `/tmp`.
+        timeline: None,
+        disk_change_diff: None,
         vcs: if std::env::var("PHOSPHOR_VCS").is_ok_and(|on| on == "0") {
             None
         } else {
@@ -4820,6 +4822,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         let overlay = Overlay {
             review: review_vm.as_ref().map(|(block, vm)| (*block, vm)),
             disk: disk_vm.as_ref().map(|(id, vm)| (*id, vm)),
+            change_diff: shell.disk_change_diff.as_ref().map(|(id, vm)| (id, vm)),
             asks: &shell.asks,
             chrome,
             status: status_tree,
@@ -5061,6 +5064,104 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     // guarded on `shell.inbox.is_some()` alone and its `_ =>
                     // {}` swallowed `esc`, which never reached
                     // `closes_surface` below — the inbox would not close.
+                    // **`3b`'s footer, routed here because its keymap is
+                    // Rust** — the same shape `5c`'s inbox below takes, and
+                    // listed in `lint-capability-bindings.sh`'s EMITTED for the
+                    // reason CLAUDE.md gives: *"a surface whose keymap is
+                    // Rust"*.
+                    //
+                    // **Guarded on the keys it uses, never on the surface
+                    // alone.** The inbox arm below records what that costs: a
+                    // version guarded on the surface swallowed `esc` with its
+                    // `_ => {}` and the float could not be closed.
+                    Event::Key(key)
+                        if matches!(surface, Surface::Float)
+                            && shell.timeline.is_some()
+                            && matches!(
+                                key.code,
+                                KeyCode::Char('j' | 'k' | 'd' | 'o')
+                                    | KeyCode::Down
+                                    | KeyCode::Up
+                                    | KeyCode::Enter
+                            ) =>
+                    {
+                        let at = shell.timeline.unwrap_or(0);
+                        // One read per keystroke rather than a cached list: a
+                        // timeline is live (`runtime/timeline.scm` draws it off
+                        // the query every frame), so the rows a key acts on
+                        // have to be the rows on screen.
+                        let rows = shell
+                            .vcs
+                            .as_ref()
+                            .map_or_else(Vec::new, |(repo, _)| repo.timeline(Some(50)));
+                        let here = rows
+                            .get(at)
+                            .map(|change| phosphor_core::request::ChangeId(change.id.clone()));
+                        match key.code {
+                            // **Recomposed, because a float is a snapshot.**
+                            // `Intent::OpenSurface`'s rule, and the same move
+                            // `5c`'s inbox makes below: setting the index alone
+                            // would change a value nothing redraws.
+                            KeyCode::Char('j') | KeyCode::Down => {
+                                let next = at.saturating_add(1).min(rows.len().saturating_sub(1));
+                                shell.timeline = Some(next);
+                                editing.float = Some((
+                                    TIMELINE_SURFACE.to_owned(),
+                                    Value::Record(timeline_args(next)),
+                                ));
+                            }
+                            KeyCode::Char('k') | KeyCode::Up => {
+                                let next = at.saturating_sub(1);
+                                shell.timeline = Some(next);
+                                editing.float = Some((
+                                    TIMELINE_SURFACE.to_owned(),
+                                    Value::Record(timeline_args(next)),
+                                ));
+                            }
+                            KeyCode::Enter => {
+                                if let Some(change) = here {
+                                    let outcome = editing.apply(
+                                        &mut Cx::new(held, focus, &mut panes, &mut shell),
+                                        &Action::Vcs(
+                                            phosphor_core::action::VcsAction::EditAtChange {
+                                                change,
+                                            },
+                                        ),
+                                    );
+                                    if let Outcome::Refused(why) = outcome {
+                                        notice = Some(phosphor_steel::answer::why(&why));
+                                    }
+                                }
+                            }
+                            KeyCode::Char('d') => {
+                                if let Some(change) = here {
+                                    let outcome = editing.apply(
+                                        &mut Cx::new(held, focus, &mut panes, &mut shell),
+                                        &Action::Vcs(
+                                            phosphor_core::action::VcsAction::ShowChangeDiff {
+                                                change,
+                                            },
+                                        ),
+                                    );
+                                    if let Outcome::Refused(why) = outcome {
+                                        notice = Some(phosphor_steel::answer::why(&why));
+                                    }
+                                }
+                            }
+                            KeyCode::Char('o') => {
+                                let outcome = editing.apply(
+                                    &mut Cx::new(held, focus, &mut panes, &mut shell),
+                                    &Action::Vcs(
+                                        phosphor_core::action::VcsAction::OpenOperationLog {},
+                                    ),
+                                );
+                                if let Outcome::Refused(why) = outcome {
+                                    notice = Some(phosphor_steel::answer::why(&why));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                     Event::Key(key)
                         if matches!(surface, Surface::Float)
                             && shell.inbox.is_some()
@@ -6387,6 +6488,63 @@ fn hunk_key(hunk: &store::Hunk) -> String {
 /// [`hunk_lines`]. No header — `2b`'s float is three lines tall and has no room
 /// for one, which is `DiffVm::header`'s own documented empty case, from
 /// `T063`.
+/// `3b`'s `d diff` — one change, as `DiffBody` draws it (`T073`).
+///
+/// **Unified, not side-by-side.** `5b` compares two versions of one file and
+/// needs two columns; a change is a set of edits already agreed on, and `4b`'s
+/// own words — *"one review block as one unified diff"* — are the shape that
+/// fits.
+fn change_diff_vm(
+    change: &phosphor_core::request::ChangeId,
+    files: &[phosphor_vcs::ChangeFile],
+) -> phosphor_ui::diff::DiffVm {
+    use phosphor_ui::diff::{Change, DiffVm, Entry, File, Hunk, Line};
+
+    DiffVm {
+        header: format!("change {}", change.0),
+        entries: files
+            .iter()
+            .map(|file| {
+                Entry::File(File {
+                    path: file.path.clone(),
+                    annotation: None,
+                    unseen: None,
+                    folded: false,
+                    hunks: vec![Hunk {
+                        range: String::new(),
+                        label: None,
+                        seen: false,
+                        folded: false,
+                        lines: file
+                            .lines
+                            .iter()
+                            .map(|(mark, text)| Line {
+                                change: match mark {
+                                    phosphor_vcs::Mark::Added => Change::Added,
+                                    phosphor_vcs::Mark::Removed => Change::Removed,
+                                    phosphor_vcs::Mark::Context => Change::Context,
+                                },
+                                text: text.clone(),
+                            })
+                            .collect(),
+                    }],
+                })
+            })
+            .collect(),
+        selected: None,
+    }
+}
+
+/// What `3b` is composed from (`T073`).
+///
+/// One builder for the two callers — opening and moving — so the surface
+/// cannot be handed a shape that differs between them.
+fn timeline_args(selected: usize) -> Args {
+    let mut args = Args::new();
+    args.set("selected", Value::Int(i64::try_from(selected).unwrap_or(0)));
+    args
+}
+
 /// One timeline row as the editor layer sees it (`T073`).
 fn change_value(change: &phosphor_vcs::Change) -> Value {
     let mut fields = Args::new();
@@ -8598,6 +8756,11 @@ struct Painted<'a> {
     peek: Option<(HunkId, &'a phosphor_ui::diff::DiffVm)>,
     /// `5b`'s two columns (`T070`), keyed by buffer for `Hunk`'s reason.
     disk: Option<(BufferId, &'a phosphor_ui::diff::DiffVm)>,
+    /// `3b`'s `d diff` (`T073`), keyed by change.
+    change_diff: Option<(
+        &'a phosphor_core::request::ChangeId,
+        &'a phosphor_ui::diff::DiffVm,
+    )>,
 }
 
 impl<'a> Overlay<'a> {
@@ -8697,8 +8860,11 @@ impl Resources for Painted<'_> {
                 .disk
                 .filter(|(open, _)| open == buffer)
                 .map(|(_, vm)| vm),
-            // `Change` (`T073`) — no timeline store exists yet.
-            DiffSource::Change { .. } => None,
+            // `T073` — `3b`'s `d diff`, keyed by change for `Hunk`'s reason.
+            DiffSource::Change { change } => self
+                .change_diff
+                .filter(|(open, _)| *open == change)
+                .map(|(_, vm)| vm),
         }
     }
 }
@@ -8767,6 +8933,11 @@ struct Overlay<'a> {
     peek: Option<(HunkId, &'a phosphor_ui::diff::DiffVm)>,
     /// `5b`'s two columns (`T070`), keyed by buffer for `Hunk`'s reason.
     disk: Option<(BufferId, &'a phosphor_ui::diff::DiffVm)>,
+    /// `3b`'s `d diff` (`T073`), keyed by change.
+    change_diff: Option<(
+        &'a phosphor_core::request::ChangeId,
+        &'a phosphor_ui::diff::DiffVm,
+    )>,
     /// This frame's reading of the app clock (`T050`).
     ///
     /// The whole animation budget: `Node::Spinner` and `Node::Elapsed` render
@@ -8821,6 +8992,7 @@ fn draw(
     let painted = Painted {
         editors,
         disk: overlay.disk,
+        change_diff: overlay.change_diff,
         columns: overlay.columns,
         completion: overlay.completion,
         signature: overlay.signature,
@@ -9723,6 +9895,10 @@ struct Shell {
     /// assume a repo exists (`T071`), so this being absent changes nothing
     /// except that the chip is not drawn.
     vcs: Option<(phosphor_vcs::Repo, phosphor_vcs::Status)>,
+    /// `3b`'s selected row, while the timeline is open (`T073`).
+    timeline: Option<usize>,
+    /// `3b`'s `d diff` — which change's diff is open (`T073`).
+    disk_change_diff: Option<(phosphor_core::request::ChangeId, phosphor_ui::diff::DiffVm)>,
     /// `5b` — which buffer's disk diff is open, and where it lives (`T070`).
     ///
     /// **The path rides along with the id** because the two are wanted in
@@ -12506,10 +12682,88 @@ impl Editing {
                         cx.shell.review = None;
                         cx.shell.inbox = None;
                         cx.shell.peek = None;
+                        cx.shell.timeline = Some(0);
                         self.float =
-                            Some((TIMELINE_SURFACE.to_owned(), Value::Record(Args::new())));
+                            Some((TIMELINE_SURFACE.to_owned(), Value::Record(timeline_args(0))));
                         done()
                     }
+                }
+            }
+            // `T073` — `3b`'s `d diff`. One change, shown.
+            Action::Vcs(phosphor_core::action::VcsAction::ShowChangeDiff { change }) => {
+                let Some((repo, _)) = cx.shell.vcs.as_ref() else {
+                    return Outcome::Refused(Refusal::NoRepository);
+                };
+                let files = repo.change_diff(&change.0);
+                if files.is_empty() {
+                    return declined("that change touches nothing");
+                }
+                cx.shell.disk_change_diff = Some((change.clone(), change_diff_vm(change, &files)));
+                self.float = None;
+                done()
+            }
+            // `T073` — `3b`'s `o full op log`, and the *"undo is time travel"*
+            // half of this task.
+            //
+            // **The rows ride in the surface args rather than through a
+            // query**, because the vocabulary declares `timeline` and no
+            // `operations`. Adding a query to feed one float would be widening
+            // the wire for a screen, which is the opposite of the rule the
+            // three doors are built on.
+            Action::Vcs(phosphor_core::action::VcsAction::OpenOperationLog {}) => {
+                let Some((repo, _)) = cx.shell.vcs.as_ref() else {
+                    return Outcome::Refused(Refusal::NoRepository);
+                };
+                if repo.backend != phosphor_vcs::Backend::Jj {
+                    return declined("the operation log is jj's — this repository is git");
+                }
+                let rows: Vec<Value> = repo
+                    .operations(Some(50))
+                    .iter()
+                    .map(|op| {
+                        let mut fields = Args::new();
+                        fields.set("operation", Value::Text(op.id.clone()));
+                        fields.set("description", Value::Text(op.description.clone()));
+                        Value::Record(fields)
+                    })
+                    .collect();
+                let mut args = Args::new();
+                args.set("operations", Value::List(rows));
+                cx.shell.review = None;
+                cx.shell.inbox = None;
+                cx.shell.peek = None;
+                self.float = Some((TIMELINE_SURFACE.to_owned(), Value::Record(args)));
+                done()
+            }
+            // `T073` — `3b`'s `↵ edit here`. Move the working copy.
+            Action::Vcs(phosphor_core::action::VcsAction::EditAtChange { change }) => {
+                let Some((repo, _)) = cx.shell.vcs.as_ref() else {
+                    return Outcome::Refused(Refusal::NoRepository);
+                };
+                match repo.edit_at(&change.0) {
+                    Ok(said) => {
+                        self.note = Some(said);
+                        self.float = None;
+                        done()
+                    }
+                    // **jj's own words.** A refusal this editor invented would
+                    // be a second opinion about a repository it does not own.
+                    Err(why) => declined(&why),
+                }
+            }
+            // `T073` — restore the working copy from a change. Not `edit`: that
+            // moves *where you are*, this brings *what was there* to where you
+            // already are.
+            Action::Vcs(phosphor_core::action::VcsAction::RestoreChange { change }) => {
+                let Some((repo, _)) = cx.shell.vcs.as_ref() else {
+                    return Outcome::Refused(Refusal::NoRepository);
+                };
+                match repo.restore_from(&change.0) {
+                    Ok(said) => {
+                        self.note = Some(said);
+                        done()
+                    }
+                    Err(why) => declined(&why),
                 }
             }
             // `T071` — re-read the repository. The statusline chip is a
@@ -17163,6 +17417,8 @@ mod tests {
     fn shell() -> Shell {
         Shell {
             store: Arc::new(store::Shared::default()),
+            timeline: None,
+            disk_change_diff: None,
             // A test shell is in no repository unless a test says so.
             vcs: None,
             disk_diff: None,
@@ -19936,6 +20192,7 @@ mod tests {
             review: None,
             peek: None,
             disk: None,
+            change_diff: None,
             completion: None,
             signature: None,
             picker: None,
