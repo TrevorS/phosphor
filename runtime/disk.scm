@@ -43,11 +43,35 @@
 ;;
 ;; the whole-word forms are also the ones that exist: `:reload` and
 ;; `:diff-disk` are registered ex commands, and `:rr` would resolve to nothing.
+;; **`view/run` takes three arguments**, and every other surface in this
+;; directory defines this same two-argument helper rather than repeating
+;; `'plain` at each call — arch.scm, inbox.scm, dashboard.scm and pickers.scm
+;; all do. This file did not, and passed two: an `ArityMismatch` that only fires
+;; when the float is *composed*, so it survived `T069` entirely because nothing
+;; opened `1d`. `CP-8c`'s matrix found it by opening a different float.
+(define (disk/run text tone) (view/run text tone 'plain))
+
+;; **`view/spans` takes rows, and a row is a `view/span-row`** — not a bare
+;; list of runs. arch.scm and inbox.scm both wrap: `(view/span-row runs tint)`.
+;; This file passed the runs directly, which is a `TypeMismatch` raised only
+;; when the float composes — the second of two faults `1d` carried out of
+;; `T069` for want of a test that opened it.
+(define (disk/row . runs) (view/span-row runs void))
+
+;; **the footer is `view/key-hints`, not `view/spans`.**
+;;
+;; the third fault this file carried out of `T069`, and the quietest: a
+;; `view/spans` in the footer slot draws **nothing at all** — no error, just an
+;; empty row between two rules. every other surface in this directory uses
+;; `view/key-hints` for a footer (`5b`, `5c`, `8b`, `4a`), and `view/spans` is
+;; T080's escape hatch for a *body*.
+;;
+;; all three faults — the arity, the bare runs, and this — were invisible until
+;; something opened the box, which nothing did for the whole of `T069`.
 (define (disk/ways)
-  (view/spans (list (view/run ":reload" 'you)
-                    (view/run " refresh · " 'meta)
-                    (view/run ":diff-disk" 'you)
-                    (view/run " diff" 'meta))))
+  (view/key-hints 'footer
+                  (list (view/key-hint ":reload" "take what is on disk")
+                        (view/key-hint ":diff-disk" "compare them"))))
 
 ;; 1d, composed.
 ;;
@@ -60,7 +84,7 @@
   "(lambda (args)
      (view/float 'needs-you
                  void
-                 (view/spans (list (view/run (disk/said (hash-try-get args \"by\")) 'attention)))
+                 (view/spans (list (disk/row (disk/run (disk/said (hash-try-get args \"by\")) 'attention))))
                  (disk/ways)))")
 
 ;; `:reload` — take what is on disk, spelled the way §6 asks.

@@ -177,6 +177,22 @@ mod driven {
             Self::started_with(Some(file), state, runtime, &[], &[("NO_COLOR", "1")])
         }
 
+        /// **The editor standing in `cwd`, with VCS detection running.**
+        ///
+        /// `CP-8c`'s three passes are built on this: the fixture directory
+        /// carries the marker — `.jj`, `.git`, or neither — and detection walks
+        /// up from where the child stands.
+        fn in_repo_at(file: &Path, state: &Path, runtime: &Path, cwd: &Path) -> Self {
+            Self::started_in(
+                Some(file),
+                state,
+                runtime,
+                &[],
+                &[("PHOSPHOR_VCS", "1")],
+                Some(cwd),
+            )
+        }
+
         /// **The editor with `T071`'s VCS detection actually running.**
         ///
         /// Every other spawn turns it off — see the `PHOSPHOR_VCS` line in
@@ -207,6 +223,25 @@ mod driven {
             flags: &[&str],
             extra: &[(&str, &str)],
         ) -> Self {
+            Self::started_in(file, state, runtime, flags, extra, None)
+        }
+
+        /// [`Editor::started_with`], standing in `cwd`.
+        ///
+        /// **`CP-8c` is why this exists.** That checkpoint runs the whole `S7`
+        /// set three times — in a jj repo, a git repo and a bare directory —
+        /// and `T071`'s detection walks up from the *working directory*. Every
+        /// other spawn lets the child inherit this runner's, which is inside
+        /// the phosphor checkout, so without this a test cannot be *in* a
+        /// repository of its own choosing.
+        fn started_in(
+            file: Option<&Path>,
+            state: &Path,
+            runtime: &Path,
+            flags: &[&str],
+            extra: &[(&str, &str)],
+            cwd: Option<&Path>,
+        ) -> Self {
             let binary = PathBuf::from(env!("CARGO_BIN_EXE_phosphor"));
             let (master, slave_path) = open_pty();
             let slave = OpenOptions::new()
@@ -236,6 +271,9 @@ mod driven {
                     command.arg(file);
                 }
                 command.args(flags);
+                if let Some(cwd) = cwd {
+                    command.current_dir(cwd);
+                }
                 command
                     .env("PHOSPHOR_RUNTIME", runtime)
                     .env("XDG_STATE_HOME", state)
@@ -2780,6 +2818,109 @@ mod driven {
 
         // `:quit` — and the child exits. `leave_by` fails if it does not.
         editor.leave_by(b":quit\r");
+    }
+
+    /// **`CP-8c` — the same editor in a jj repo, a git repo and a bare
+    /// directory** (`S7.3`).
+    ///
+    /// That checkpoint's Claude-half is *"the entire `S7` acceptance set runs
+    /// twice — once in a jj repo, once in a bare directory. Plus once in a git
+    /// repo"*, and its stance is the thing being checked: **VCS is an
+    /// enhancement and its absence is a normal state**. It fails if any surface
+    /// is unavailable or any message implies something is missing.
+    ///
+    /// So this drives one fixture three times, changing **only the marker**,
+    /// and asserts two things each pass:
+    ///
+    /// * the editor is *whole* — the buffer opens, a key edits, `:write` saves.
+    ///   None of that is VCS's business and none of it may vary.
+    /// * the timeline answers **differently but honestly** in each, because
+    ///   `3b` genuinely is *"an enhancement view, only when jj is present"*.
+    ///
+    /// **No jj is required to run this.** `phosphor_vcs::detect` is
+    /// filesystem-only — a `.jj` directory *is* a jj repository as far as
+    /// detection is concerned — and `Repo::timeline` answers empty when the
+    /// binary will not run. CI has no jj installed, and a test that skipped
+    /// itself there would be a checkpoint nobody actually checks. What jj's
+    /// real output parses to is held by `phosphor_vcs`'s own fixtures.
+    #[test]
+    fn cp8c_the_editor_is_whole_in_all_three_repository_kinds() {
+        // `(marker, what the timeline should say)` — the whole matrix.
+        let passes: &[(Option<&str>, &str)] = &[
+            // A bare directory. Not an error, and the sentence says so.
+            (None, "no repository here"),
+            // Detected, supported, and simply not this view's tool.
+            (Some(".git"), "the timeline is jj's"),
+            // A jj repository with no jj behind it: the surface opens and is
+            // honest about having nothing to show.
+            (Some(".jj"), "no changes to show"),
+        ];
+
+        for (marker, expected) in passes {
+            let scratch = Scratch::new(&format!(
+                "cp8c-{}",
+                marker.unwrap_or("bare").trim_matches('.')
+            ));
+            let runtime = copy_layer(&scratch.path);
+            // **The repository lives beside the fixture, not around it.** A
+            // marker in `scratch.path` is what the child stands in, so
+            // detection finds this fixture's answer rather than the checkout's.
+            let repo = scratch.path.join("work");
+            fs::create_dir_all(&repo).expect("a working directory");
+            if let Some(marker) = marker {
+                fs::create_dir_all(repo.join(marker)).expect("a marker");
+            }
+            let file = repo.join("sample.txt");
+            fs::write(&file, "alpha\nbeta\n").expect("a fixture");
+
+            let editor = Editor::in_repo_at(&file, &scratch.state(), &runtime, &repo);
+
+            // **The editor is whole.** Nothing here is VCS's business, so
+            // nothing here may differ between the three passes — this is the
+            // half of `CP-8c` that fails if a feature became unavailable.
+            let opened = whole(&editor.screen());
+            assert!(
+                shows(&opened, "alpha"),
+                "[{marker:?}] the buffer opened; frame was: {opened}"
+            );
+            editor.press_quietly(b"A!");
+            editor.press_quietly(b"\x1b");
+            // **Settled, not waited on a needle.** `:write` answers `done()`
+            // with no note — it redraws and says nothing — so there is no word
+            // to wait for and the file itself is the assertion.
+            editor.press_quietly(b":write\r");
+            assert_eq!(
+                fs::read_to_string(&file).expect("the file survives"),
+                "alpha!\nbeta\n",
+                "[{marker:?}] editing and saving are unaffected by the repository"
+            );
+
+            // **And the timeline answers honestly, differently.** Three
+            // situations, three sentences — an enhancement that is absent says
+            // *what* is absent rather than failing.
+            // **Pressed, then waited for on the composed grid.** Two of these
+            // three answers are notices and one is a float, and the read has to
+            // work for both: a bare `screen()` races the redraw, and
+            // `press_until` waits on the byte *delta*, where a settled row
+            // arrives split across cursor moves — which is exactly how the jj
+            // pass first failed here, and the same artifact the deferred survey
+            // records.
+            editor.press_quietly(b" j");
+            let said = shown_on_grid_text(&editor, expected);
+            assert!(
+                shows(&said, expected),
+                "[{marker:?}] expected {expected:?}; grid was: {said}"
+            );
+            // **Never apologetic, and never a task id.** `CP-8c`'s own
+            // question is whether anything feels degraded; these are the two
+            // words that would mean it did.
+            assert!(
+                !shows(&said, "error") && !shows(&said, "failed"),
+                "[{marker:?}] absence is a state, not a failure; frame was: {said}"
+            );
+            editor.press_quietly(b"\x1b");
+            editor.quit();
+        }
     }
 
     /// **`3b` declines by naming the state, in both of the two ways it can**
@@ -9193,10 +9334,42 @@ mod driven {
         );
         // The text is unchanged apart from the strip, which is what changed on
         // purpose. Compared on the buffer rows alone for that reason.
-        assert_eq!(
-            text.lines().take(20).collect::<Vec<_>>(),
-            whole(&after).lines().take(20).collect::<Vec<_>>(),
-            "not one buffer row moved"
+        // **The row-by-row comparison is gone, and its absence is the
+        // finding.**
+        //
+        // It compared the first twenty rows before and after, and it passed
+        // for the wrong reason: `runtime/disk.scm` raised on compose, so no
+        // float was ever drawn and the rows matched trivially. With the box
+        // fixed it draws — and it is **much wider than `1d`'s**, starting
+        // around column thirteen rather than sitting in the top-right corner,
+        // because `view/float` produces one size and the mockup draws a small
+        // notice. So the comparison could only be kept by asserting that the
+        // notice never appears, which is the opposite of this screen.
+        //
+        // What invariant 3 actually claims is held by the three assertions
+        // above and below: the cursor did not move (`13:5` on the strip), the
+        // buffer still holds `line 13`, and nothing from disk leaked into it.
+        // The geometry gap is recorded at OPEN-QUESTIONS.md §65.
+        let _ = &text;
+
+        // **`1d`'s box is actually drawn, and this is the assertion that was
+        // missing.** `T069` shipped `runtime/disk.scm` with two faults that
+        // only fire when a float *composes* — `view/run` passed two arguments
+        // where it takes three, and `view/spans` passed bare runs where it
+        // takes `view/span-row`s. Both survived the whole task, because every
+        // assertion was about the strip and the buffer and nothing ever opened
+        // the box. `CP-8c`'s matrix found them by opening a different float.
+        //
+        // Asserted on the *grid* rather than the delta: a float is composed
+        // once and then sits there, so what matters is that it is on screen.
+        let box_shown = whole(&editor.shown_on_grid(b"", "changed on disk"));
+        assert!(
+            shows(&box_shown, "✱ changed on disk"),
+            "`1d`'s box says what happened; grid was: {box_shown}"
+        );
+        assert!(
+            shows(&box_shown, ":reload") && shows(&box_shown, ":diff-disk"),
+            "…and offers both ways out, spelled whole (§61); grid was: {box_shown}"
         );
 
         // **And the editor goes quiet with the box up.** `press` asserts one

@@ -145,6 +145,12 @@ Hygiene and truthfulness — each of these exists because the thing it catches a
   green forever, and `doc_claims.py` checks a cited task exists rather than whether it is still
   open. Re-stamping shrank `lint-action-arms.sh` from nine recorded gaps to two; `T109` and `T110`
   were added as the creditors that never existed.
+- **Buffer refresh** — `CP-8b`'s third bullet made mechanical: *"no code path can refresh a
+  buffer without an explicit Action"*. `Editing::reload` is called only from `Editing::act`, and
+  `code_mut()` — the one handle that mutates the rope — only from `splice` and its transaction
+  pair. Both are confined by *enclosing function name*, not by a count, so the diff that widens
+  the list has to say whose code may now move a buffer. It protects the invariant `CP-8b` calls
+  the most likely to be violated by accident and the most damaging when it is.
 - **Doc line citations** — prose is cited by heading or quoted phrase, never by a markdown path with a line number stapled to it.
   `file:line` is right for *code*, where a moved line usually means a moved fact and two other
   lints already check the references; nothing holds a line number pointed at a paragraph. Two
@@ -167,7 +173,7 @@ Hygiene and truthfulness — each of these exists because the thing it catches a
 - **Fuzz targets** — the `fuzz/` crate's targets are checked against the parsers they claim.
 - **Counts nothing else recomputes** — the capability and parity counts (`209`/`627` went stale in
   six places at once), and the lint count in CI's own prose, which said "six" while sixteen
-  existed. **Twenty-four lints now** — and this paragraph itself said seventeen for a window after the
+  existed. **Twenty-five lints now** — and this paragraph itself said seventeen for a window after the
   eighteenth landed, because `doc_claims.py` section 6 globbed `.github/workflows/*.yml` and could
   not see the file every agent reads on entry. It reads this one too now, so the sentence you are
   reading is recomputed rather than remembered.

@@ -2980,6 +2980,61 @@ entry exists so the allowlist line is never the only record of it.
 
 ---
 
+## Raised by the `CP-8` verification pass
+
+### 65 · `1d`'s box carried three runtime faults through a whole task, and its geometry is still wrong
+
+**Found on 2026-08-25**, building `CP-8c`'s three-repository matrix. Opening a
+*different* float raised an error that turned out to be in `runtime/disk.scm` —
+`T069`'s screen `1d` — and pulling on it found three faults, all of which had
+shipped, all of which only fire when a float is **composed**:
+
+1. **`view/run` passed two arguments** where it takes three
+   (`text tone emphasis`). Every other surface in `runtime/` defines a local
+   two-argument helper — `arch/run`, `inbox/run`, `dash/run`, `picker/run` — and
+   this file did not.
+2. **`view/spans` passed bare runs** where it takes `view/span-row` records.
+3. **The footer was a `view/spans`**, which in a footer slot draws *nothing at
+   all* — no error, just an empty row between two rules. Footers take
+   `view/key-hints`; `view/spans` is `T080`'s escape hatch for a **body**.
+
+**None of the three was reachable by any test `T069` wrote**, and that is the
+finding rather than the bugs. Every assertion in that task was about the
+statusline `✱`, the cursor, and the buffer — all correct, all passing, and none
+of them ever opened the box. A float that nothing opens is a float that can be
+arbitrarily broken.
+
+**The row-by-row invariant-3 assertion passed for the wrong reason**, which is
+the sharpest version of the same point: it compared twenty buffer rows before
+and after and matched *trivially*, because `disk.scm` raised on compose and no
+float was ever drawn. Fixing the box made that assertion fail — the box covers
+the rows it was comparing.
+
+**What is still wrong: the geometry.** `1d` draws a small notice in the top-right
+corner — `position:absolute; top:14px; right:14px`, about thirty columns wide.
+What `view/float` produces is a large centred box starting around column
+thirteen and covering most of the buffer. On this screen that is not cosmetic:
+`1d`'s entire subject is that **the buffer did not move**, and a box that covers
+the buffer is arguing against the screen it is on.
+
+**Three ways out, and the choice is a design one:**
+
+1. **A size or placement prop on `Float`.** Honest, and it is a vocabulary
+   change — `Float` currently carries mood, header, body, footer and no
+   geometry. `7c`'s completion list has the same shape of need and solves it by
+   being a different node.
+2. **Make `1d` a notice rather than a float.** The notice row already exists,
+   already does not take focus, and already borrows the statusline. It cannot
+   draw two lines, so the `:reload` / `:diff-disk` offer would have to move into
+   the sentence.
+3. **Leave it.** The box is legible and reachable and says the right words; it
+   is simply larger than drawn.
+
+**Not decided here.** It is a change to what `Float` means, and that belongs
+with whoever owns the design language rather than with the task that noticed.
+
+---
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

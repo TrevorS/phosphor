@@ -15,6 +15,14 @@
 ;; **`○` is the mockup's glyph and `o` is what the template emits** — the
 ;; backend answers a boolean and this file spends the glyph, which keeps §2's
 ;; lexicon on this side of the barrier where the rest of it lives.
+;; `view/run` takes three arguments; this is the two-argument helper every
+;; other surface in this directory defines. See disk.scm's note for what
+;; skipping it costs — an arity error that only fires when the float composes.
+(define (timeline/run text tone) (view/run text tone 'plain))
+
+;; a row is a `view/span-row`, not a bare list of runs — see disk.scm's note.
+(define (timeline/row-of runs) (view/span-row runs void))
+
 (define (timeline/glyph row)
   (if (eq? (hash-try-get row "working_copy") #true) "@" "○"))
 
@@ -28,8 +36,8 @@
   (let ([added (hash-try-get row "added")]
         [removed (hash-try-get row "removed")])
     (if (and (number? added) (number? removed) (or (> added 0) (> removed 0)))
-        (list (view/run (string-append "  +" (number->string added)) 'claude)
-              (view/run (string-append " −" (number->string removed)) 'trouble))
+        (list (timeline/run (string-append "  +" (number->string added)) 'claude)
+              (timeline/run (string-append " −" (number->string removed)) 'trouble))
         '())))
 
 (define (timeline/before-at text)
@@ -55,10 +63,10 @@
 
 (define (timeline/row row)
   (append
-   (list (view/run (timeline/glyph row) 'claude)
-         (view/run (string-append " " (hash-try-get row "change")) 'text)
-         (view/run (string-append " · " (timeline/who row) "  ") 'meta)
-         (view/run (hash-try-get row "description") 'text))
+   (list (timeline/run (timeline/glyph row) 'claude)
+         (timeline/run (string-append " " (hash-try-get row "change")) 'text)
+         (timeline/run (string-append " · " (timeline/who row) "  ") 'meta)
+         (timeline/run (hash-try-get row "description") 'text))
    (timeline/stat row)))
 
 ;; **the empty case is a sentence, not a blank float.**
@@ -73,9 +81,9 @@
 ;; opposite of the rule the three doors are built on, so the arm reads them and
 ;; passes them through the surface args.
 (define (timeline/op-row row)
-  (list (view/run "· " 'meta)
-        (view/run (hash-try-get row "operation") 'text)
-        (view/run (string-append "  " (hash-try-get row "description")) 'meta)))
+  (list (timeline/run "· " 'meta)
+        (timeline/run (hash-try-get row "operation") 'text)
+        (timeline/run (string-append "  " (hash-try-get row "description")) 'meta)))
 
 ;; the cursor `3b` draws on the row you are on.
 (define (timeline/mark rows selected)
@@ -84,19 +92,21 @@
         (reverse out)
         (loop (cdr left)
               (+ at 1)
-              (cons (cons (view/run (if (= at selected) "› " "  ") 'you) (car left)) out)))))
+              (cons (cons (timeline/run (if (= at selected) "› " "  ") 'you) (car left)) out)))))
 
 (define (timeline/rows args)
   (let ([ops (hash-try-get args "operations")]
         [selected (let ([n (hash-try-get args "selected")]) (if (number? n) n 0))])
     (cond
      ;; the op log, when the arm handed one over
-     [(and (list? ops) (not (null? ops))) (map timeline/op-row ops)]
+     [(and (list? ops) (not (null? ops)))
+      (map (lambda (op) (timeline/row-of (timeline/op-row op))) ops)]
      [else
       (let ([rows (timeline)])
         (if (null? rows)
-            (list (list (view/run "no changes to show — the timeline is jj's" 'meta)))
-            (timeline/mark (map timeline/row rows) selected)))])))
+            (list (timeline/row-of
+                   (list (timeline/run "no changes to show — the timeline is jj's" 'meta))))
+            (map timeline/row-of (timeline/mark (map timeline/row rows) selected))))])))
 
 (define (timeline/footer)
   (view/key-hints 'footer
