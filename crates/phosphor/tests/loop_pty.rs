@@ -177,6 +177,17 @@ mod driven {
             Self::started_with(Some(file), state, runtime, &[], &[("NO_COLOR", "1")])
         }
 
+        /// **The editor with `T069`'s disk watcher actually running.**
+        ///
+        /// Every other spawn turns it off — see the `PHOSPHOR_WATCH` line in
+        /// [`Editor::started_with`] for why — so the two tests that are *about*
+        /// the watcher turn it back on here. `degraded` above is the same shape
+        /// for the same reason: a producer the suite does not want by default,
+        /// named where it is wanted.
+        fn watching(file: &Path, state: &Path, runtime: &Path) -> Self {
+            Self::started_with(Some(file), state, runtime, &[], &[("PHOSPHOR_WATCH", "1")])
+        }
+
         fn started_with(
             file: Option<&Path>,
             state: &Path,
@@ -218,6 +229,13 @@ mod driven {
                     .env("XDG_STATE_HOME", state)
                     .env("XDG_CONFIG_HOME", config_home(state))
                     .env("TERM", "xterm-256color")
+                    // **No disk watcher unless the test asks for one.**
+                    // `press` asserts one frame per key byte and the editor
+                    // emits a frame marker on every draw, so an asynchronous
+                    // producer attached to every buffer breaks every test that
+                    // counts. `Editor::watching` opts back in. Set before
+                    // `extra` so that override wins.
+                    .env("PHOSPHOR_WATCH", "0")
                     .envs(extra.iter().copied())
                     .stdin(Stdio::from(slave.try_clone().expect("the slave clones")))
                     .stdout(Stdio::from(slave.try_clone().expect("the slave clones")))
@@ -8746,7 +8764,7 @@ mod driven {
         let file = scratch.path.join("sample.txt");
         fs::write(&file, "before one\nbefore two\n").expect("a fixture");
 
-        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let editor = Editor::watching(&file, &scratch.state(), &runtime);
         let opened = whole(&editor.screen());
         assert!(
             shows(&opened, "before one"),
@@ -8831,7 +8849,7 @@ mod driven {
         let body: String = (1..=40).map(|n| format!("line {n}\n")).collect();
         fs::write(&file, &body).expect("a fixture");
 
-        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let editor = Editor::watching(&file, &scratch.state(), &runtime);
         // Somewhere that is neither the top nor the default, so a viewport
         // that reset to either would be visible.
         editor.press_quietly(b"gg");
@@ -8890,6 +8908,18 @@ mod driven {
             whole(&after).lines().take(20).collect::<Vec<_>>(),
             "not one buffer row moved"
         );
+
+        // **And the editor goes quiet with the box up.** `press` asserts one
+        // frame per key byte, so a loop that keeps redrawing fails here — which
+        // is exactly what shipped once: `disk_float` composed `1d` inside the
+        // draw path, `Layer::surface` runs scheme, running scheme marks the
+        // layer stale, and the frame invalidated itself for as long as a change
+        // was pending. Nine pty tests went red on CI with *"the editor never
+        // stopped drawing"* and this machine never reproduced it, because
+        // `notify` on macOS reports fewer of the writes those tests make than
+        // inotify does. The box is composed once now, and this is the assertion
+        // that says so.
+        editor.press(b"j");
 
         // **The burst count is asserted in `store.rs`, not here**, and that
         // is a flake this test had before it had a name: querying `disk-state`

@@ -3749,6 +3749,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         peek: None,
         inbox: None,
         store: Arc::clone(&host.store),
+        disk_box: None,
         // **Spawned here, before the first file opens.** `Watch::spawn` cannot
         // fail into an error — a watcher that will not start answers
         // `Watch::idle` and the editor runs without `✱` — so there is nothing
@@ -4364,7 +4365,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             // and the match holds `shell` and `editing` immutably. `None` on
             // every frame where nothing changed underneath you, which is
             // almost all of them.
-            let disk_notice = disk_float(&mut layer, &shell.store, editing);
+            let disk_notice = disk_float(&mut layer, &mut shell, editing);
             let float = match (&surface, &boot) {
                 (Surface::Boot, Some(boot)) => Some(boot.clone()),
                 // `6d`, the same way: the buffer and the statusline stay
@@ -8320,15 +8321,30 @@ fn signed(signature: phosphor_buffer::lsp::Signature) -> WireSignature {
 ///
 /// [`None`] far more often than not, and cheaply: the store lookup is one map
 /// hit on a path this frame already resolved.
-fn disk_float(layer: &mut Layer, store: &store::Shared, editing: &Editing) -> Option<ViewFloat> {
-    let file = editing.file.as_deref()?;
-    let change = store.disk_change(file)?;
-    let mut args = Args::new();
-    args.set("by", change.actor.to_value());
-    // A layer that cannot compose the surface draws nothing rather than
-    // failing the frame: the `✱` on the strip is still true, and a broken
-    // `disk.scm` must not be able to take the editor down with it.
-    layer.surface("disk", &Value::Record(args)).ok()
+fn disk_float(layer: &mut Layer, shell: &mut Shell, editing: &Editing) -> Option<ViewFloat> {
+    let Some(file) = editing.file.as_deref() else {
+        shell.disk_box = None;
+        return None;
+    };
+    let Some(change) = shell.store.disk_change(file) else {
+        // The disagreement is over — a reload took it or a save closed it — so
+        // the box goes with it rather than lingering as a snapshot of
+        // something that is no longer true.
+        shell.disk_box = None;
+        return None;
+    };
+    // **Composed once.** Re-composing per frame is what span the loop: see the
+    // field's own note.
+    if shell.disk_box.as_ref().is_none_or(|(held, _)| held != file) {
+        let mut args = Args::new();
+        args.set("by", change.actor.to_value());
+        // A layer that cannot compose the surface draws nothing rather than
+        // failing the frame: the `✱` on the strip is still true, and a broken
+        // `disk.scm` must not be able to take the editor down with it.
+        let composed = layer.surface("disk", &Value::Record(args)).ok()?;
+        shell.disk_box = Some((file.to_path_buf(), composed));
+    }
+    shell.disk_box.as_ref().map(|(_, float)| float.clone())
 }
 
 fn passive_float(editing: &Editing) -> Option<ViewFloat> {
@@ -9487,6 +9503,23 @@ struct Shell {
     /// `T041`'s store, shared with [`AppHost`] so the gutter, the statusline
     /// and the `region` queries cannot disagree about a file.
     store: Arc<store::Shared>,
+    /// `1d`'s corner box, composed once per disk change (`T069`).
+    ///
+    /// **A cache, and the loop span it without one.** `Layer::surface` runs
+    /// scheme, and running scheme marks the layer stale — which is the
+    /// mechanism that makes *"arbitrary scheme ran, invalidate the frame"*
+    /// structural. Composing this inside the draw path therefore invalidated
+    /// the frame it was drawing, so the editor redrew forever for as long as a
+    /// change was pending. CI found it across nine pty tests at once, all
+    /// reporting *"the editor never stopped drawing"*; this machine never did,
+    /// because `notify` on macOS reported fewer of the writes those tests make
+    /// than inotify does.
+    ///
+    /// Keyed on the path so a change in a different buffer composes a new one,
+    /// and dropped when the disagreement is over. This is `Intent::OpenSurface`'s
+    /// own rule — *"composed once, at open … a float is a snapshot of an
+    /// answer"* — arriving at the one surface that opens itself.
+    disk_box: Option<(PathBuf, phosphor_core::view::Float)>,
     /// `T069`'s disk watcher, and the loop owns it because dropping it stops
     /// the thread.
     ///
@@ -16725,6 +16758,7 @@ mod tests {
     fn shell() -> Shell {
         Shell {
             store: Arc::new(store::Shared::default()),
+            disk_box: None,
             // A test shell watches nothing: `Watch::idle` starts no thread, so
             // the suite pays for no filesystem watchers and no `notify` state.
             watch: crate::watch::Watch::idle(),

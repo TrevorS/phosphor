@@ -106,6 +106,24 @@ impl Watch {
     /// watcher is that `✱` never appears, and every other thing the editor does
     /// is unaffected.
     pub(crate) fn spawn(poster: Poster) -> Self {
+        // **`PHOSPHOR_WATCH=0` starts no thread**, and this exists for the pty
+        // harness rather than for a user.
+        //
+        // The harness counts frames by the synchronised-update terminator
+        // (`\x1b[?2026l`), which the editor emits on **every** draw whether or
+        // not a cell changed — so any asynchronous producer costs a frame, and
+        // `press` asserts exactly one frame per key byte while `settle` needs
+        // 250ms with none. A watcher attached to every buffer therefore puts an
+        // async producer into all ~175 pty tests, including the ones with
+        // nothing to do with disk.
+        //
+        // That is the same hazard the suite already manages by choosing `.txt`
+        // fixtures so no language server attaches, and this is the same answer
+        // one layer down: the producer does not attach unless the test is about
+        // it. `T069`'s own tests set it to `1` and exercise the real thing.
+        if std::env::var("PHOSPHOR_WATCH").is_ok_and(|on| on == "0") {
+            return Self::idle();
+        }
         let (commands, orders) = mpsc::channel();
         match std::thread::Builder::new()
             .name("phosphor-disk-watch".to_owned())
@@ -238,5 +256,106 @@ fn run(poster: &Poster, orders: &mpsc::Receiver<Command>) {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **A sibling write is not this buffer changing.**
+    ///
+    /// The watcher watches the buffer file's *parent* (see [`run`]), so
+    /// everything else in that directory arrives at the filter. In the pty
+    /// harness that includes the child editor's whole XDG state home —
+    /// `Scratch::state()` puts it at `scratch.path/state`, a direct child of
+    /// the very directory being watched — so the undo journal and the seen
+    /// journal are written inside the watched tree on every edit.
+    ///
+    /// This is the assertion that the filter holds against that. It exists
+    /// because CI went red on six pty tests with *"the editor never stopped
+    /// drawing"* while this machine stayed green, and the first two
+    /// explanations were both wrong.
+    #[test]
+    fn a_sibling_write_is_not_this_buffer_changing() {
+        let dir = std::env::temp_dir().join(format!("ph-sib-{}", std::process::id()));
+        let state = dir.join("state");
+        std::fs::create_dir_all(&state).expect("a state home");
+        let file = dir.join("held.txt");
+        std::fs::write(&file, "one\n").expect("a fixture");
+
+        let (queue, poster) = crate::events::open();
+        let mut watch = Watch::spawn(poster);
+        watch.follow(&file);
+
+        // Give the watch time to establish before anything is written.
+        std::thread::sleep(Duration::from_millis(400));
+
+        // The editor's own journals, written the way an edit writes them.
+        for n in 0..6 {
+            std::fs::write(state.join("undo.log"), format!("edit {n}\n")).expect("a journal");
+            std::fs::write(dir.join("other.txt"), format!("unrelated {n}\n")).expect("a sibling");
+            std::thread::sleep(Duration::from_millis(60));
+        }
+
+        // Well past the debounce window, then read whatever arrived.
+        std::thread::sleep(Duration::from_millis(900));
+        drop(watch);
+
+        let mut posted = Vec::new();
+        while let Some(event) = queue.recv() {
+            if let AppEvent::Posted(Posted { source, action }) = event
+                && source == SOURCE
+                && let Action::File(FileAction::NoteDiskChange { path, .. }) = action
+            {
+                posted.push(path);
+            }
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(
+            posted.is_empty(),
+            "a write to a sibling reached the buffer's watcher: {posted:?}"
+        );
+    }
+
+    /// **A quiet directory delivers nothing.**
+    ///
+    /// The question `settle()` in the pty harness asks: it needs 250ms with no
+    /// frame, and this watcher debounces for 250ms — so a debouncer that ticked
+    /// deliveries out on a timer rather than on a change would make that window
+    /// unreachable, and every pty test would report *"the editor never stopped
+    /// drawing"*. Which is exactly what CI reported.
+    #[test]
+    fn a_quiet_directory_delivers_nothing() {
+        let dir = std::env::temp_dir().join(format!("ph-watch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a scratch dir");
+        let file = dir.join("held.txt");
+        std::fs::write(&file, "one\n").expect("a fixture");
+
+        let (events, incoming) = mpsc::channel();
+        let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
+            let _ = events.send(result);
+        })
+        .expect("a debouncer");
+        debouncer
+            .watch(&dir, RecursiveMode::NonRecursive)
+            .expect("a watch");
+
+        // Let the fixture write settle out of the way.
+        while incoming.recv_timeout(Duration::from_millis(600)).is_ok() {}
+
+        // Now nothing happens for well over the debounce window.
+        let mut delivered = 0;
+        let until = std::time::Instant::now() + Duration::from_millis(1500);
+        while std::time::Instant::now() < until {
+            if incoming.recv_timeout(Duration::from_millis(100)).is_ok() {
+                delivered += 1;
+            }
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(
+            delivered, 0,
+            "a quiet directory delivered {delivered} time(s)"
+        );
     }
 }
