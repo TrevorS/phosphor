@@ -2886,6 +2886,48 @@ round-trips to a claude.ai Design project and is never edited here.
 
 ---
 
+### 63 · Three LSP pty tests flake under load, and it is the cluster rather than the tests
+
+**Observed across `S7.2`–`S7.3`, 2026-08-25**, three separate times, on three
+different tests, none of which the work touched:
+
+* `driven::gd_lands_on_the_column_the_server_named` — macOS CI, run 32882091057.
+  Passed on re-run.
+* `driven::a_server_that_cannot_start_says_so_on_the_statusline` — macOS CI, run
+  32887904281.
+* `driven::a_jump_inside_the_open_file_moves_the_cursor_and_keeps_the_edits` —
+  local, under a full `just gate`. Passed twice in isolation immediately after.
+
+**What they have in common** is the whole of the observation: each starts a
+language server, then presses keys, then asserts on buffer content or a chip.
+Each passes alone. The failures are *off-by-one keystrokes* — a character
+deleted from the line above the intended one, an edit landing a column early —
+rather than timeouts, which is what distinguishes this from the deadline
+failures `.config/nextest.toml`'s header already records.
+
+**`.config/nextest.toml` already anticipated this shape and its mitigation may
+have stopped short.** That file documents four runs going red *"each on a
+different pty test, each a 30s timeout"* and answers with the `spawns-a-child`
+group at `threads-required = 2`. These three are not timeouts, so the group's
+accounting does not obviously cover them: a starved child that misses a deadline
+is one failure mode, and a child whose *keystrokes interleave wrongly* under
+scheduling pressure may be another.
+
+**Not diagnosed, and deliberately not folded into an S7 task.** Each occurrence
+was checked against the work in flight and cleared — `T072` touches only
+`phosphor-vcs`, and the vcs statusline chip was ruled out separately by
+measuring the strip (that turned out to be a real, different problem, fixed by
+`PHOSPHOR_VCS=0`; see the `Editor::in_a_repo` note). Chasing this properly means
+reproducing under controlled concurrency, which is its own piece of work.
+
+**What would settle it:** run the `spawns-a-child` group at
+`threads-required = 3` (the child, the server, and the test) and see whether the
+cluster goes quiet. That is a one-line experiment and a measurement, not a
+guess — and it is exactly the kind of number `.config/nextest.toml` insists be
+measured before it is believed.
+
+---
+
 ## Repair pass — queued work, not questions
 
 These need no ruling. They were collected here because every one of them lands in a file that no

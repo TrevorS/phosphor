@@ -3783,13 +3783,22 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         store: Arc::clone(&host.store),
         // Detected once at boot. A bare directory answers `None` here and
         // every VCS surface is simply absent — never an error.
-        vcs: std::env::current_dir()
-            .ok()
-            .and_then(|cwd| phosphor_vcs::detect(&cwd))
-            .map(|repo| {
-                let status = repo.status();
-                (repo, status)
-            }),
+        // **`PHOSPHOR_VCS=0` detects nothing**, and this exists for the pty
+        // harness rather than for a user — see the env line in
+        // `Editor::started_with`. A test's child inherits the runner's working
+        // directory, so without this every test draws the phosphor checkout's
+        // own chip on a strip that is about a fixture in `/tmp`.
+        vcs: if std::env::var("PHOSPHOR_VCS").is_ok_and(|on| on == "0") {
+            None
+        } else {
+            std::env::current_dir()
+                .ok()
+                .and_then(|cwd| phosphor_vcs::detect(&cwd))
+        }
+        .map(|repo| {
+            let status = repo.status();
+            (repo, status)
+        }),
         disk_diff: None,
         diff_mode: phosphor_core::request::DiffMode::SideBySide,
         disk_box: None,

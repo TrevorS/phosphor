@@ -177,6 +177,18 @@ mod driven {
             Self::started_with(Some(file), state, runtime, &[], &[("NO_COLOR", "1")])
         }
 
+        /// **The editor with `T071`'s VCS detection actually running.**
+        ///
+        /// Every other spawn turns it off — see the `PHOSPHOR_VCS` line in
+        /// [`Editor::started_with`] — so the one test that is *about* the chip
+        /// turns it back on. The repository it then finds is this checkout,
+        /// because the child inherits the runner's working directory; that is
+        /// incidental to the test and is why the test asserts the *backend*
+        /// rather than any particular branch.
+        fn in_a_repo(file: &Path, state: &Path, runtime: &Path) -> Self {
+            Self::started_with(Some(file), state, runtime, &[], &[("PHOSPHOR_VCS", "1")])
+        }
+
         /// **The editor with `T069`'s disk watcher actually running.**
         ///
         /// Every other spawn turns it off — see the `PHOSPHOR_WATCH` line in
@@ -229,6 +241,19 @@ mod driven {
                     .env("XDG_STATE_HOME", state)
                     .env("XDG_CONFIG_HOME", config_home(state))
                     .env("TERM", "xterm-256color")
+                    // **No VCS chip unless the test asks for one**, and the
+                    // reason is the same shape as the watcher below.
+                    //
+                    // The child inherits *this runner's* working directory,
+                    // which is inside the phosphor checkout — so with detection
+                    // on, every pty test drew `git worktree-… ●` on its strip:
+                    // twenty-four columns of a repository that has nothing to do
+                    // with a fixture in `/tmp`. §11 sheds the **server** chip
+                    // before the vcs one, so an LSP test lost the chip it was
+                    // asserting about, on macOS CI where the path is longest.
+                    //
+                    // `Editor::in_a_repo` opts back in.
+                    .env("PHOSPHOR_VCS", "0")
                     // **No disk watcher unless the test asks for one.**
                     // `press` asserts one frame per key byte and the editor
                     // emits a frame marker on every draw, so an asynchronous
@@ -8786,7 +8811,7 @@ mod driven {
         let file = scratch.path.join("sample.txt");
         fs::write(&file, "one\ntwo\n").expect("a fixture");
 
-        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let editor = Editor::in_a_repo(&file, &scratch.state(), &runtime);
         // `git`, because a git worktree marks itself with a `.git` *file*
         // rather than a directory — which `detect` handles, and which is the
         // shape this very checkout has.
