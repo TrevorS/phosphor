@@ -4874,7 +4874,49 @@ and the most damaging when it is.
   > detection that does not walk up, a colocated repo answering git, a bare directory reporting a
   > repo, a chip that claims clean when it could not ask, and a status that forgets which backend
   > it detected. `just gate` green — 1542 tests.
-- [ ] **T072 · git adapter** — same trait. *Needs:* T071
+- [x] **T072 · git adapter** — same trait. *Needs:* T071
+
+  > **Built and ticked 2026-08-25.** `Repo::status`'s git arm, which `T071` left answering
+  > all-`None` with a comment naming this task. Five planted defects, five catches.
+  >
+  > **Same trait, and *"same trait"* turned out to be the whole design.** Nothing here is new
+  > shape: one subprocess, a `Status`, three chip states. What differs is only which two facts get
+  > read and out of what — `git status --porcelain=v2 --branch` against jj's templated `log`.
+  >
+  > **The four states were captured before the parser was written**, from a real repository, and
+  > they are the test fixtures verbatim: clean (headers only), untracked-only (`? b.txt`),
+  > modified-tracked (`1 .M N… a.txt`), and detached (`# branch.head (detached)`). Writing those
+  > from memory is how a parser ends up matching a format nobody emits — and two of the four would
+  > have been guessed wrong, because the header set is larger than the docs' example and
+  > `(detached)` is a literal rather than an absence.
+  >
+  > **The parser is a free function over the text**, so the parsing half runs on a machine with no
+  > git — the same rule `T071` set for detection. Only the one-line subprocess needs the binary.
+  >
+  > **Untracked counts as dirty, and both backends agree.** git reports it as `? path`, and a tree
+  > holding a file git has never seen is not one you could walk away from. jj reaches the same
+  > answer from the other side, because its `empty` counts untracked files into the change — so
+  > `●` means the same thing on both, which is what makes the chip readable at all.
+  >
+  > **A detached head names the short commit.** *"Which change am I on"* has an answer even with
+  > nothing pointing at it, and that answer is exactly what jj's change id already is — so the two
+  > backends produce the same *kind* of string rather than one of them producing a hole. A
+  > repository with no commits reports `(initial)` as its oid and gets no id at all, because there
+  > is genuinely no commit to name.
+  >
+  > **Verified live, not only against fixtures.** `(vcs-status)` from inside this worktree
+  > answered `backend "git" change "worktree-s7-finish" clean #f` while the tree was dirty with
+  > this very task's work.
+  >
+  > **One test was renamed rather than deleted.**
+  > `a_git_repo_is_detected_before_its_adapter_exists` was true while `T072` was open; the adapter
+  > exists now and what the test actually holds is the other thing — a `.git` marker with no git
+  > behind it is still a repository, and reports the backend and nothing it has not earned.
+  >
+  > **Verification.** Eight unit tests in `phosphor-vcs`, all of which run with or without either
+  > backend installed. Planted and caught: untracked not counting as dirty, `(detached)` reported
+  > as a change name, `(initial)` invented into a commit id, the branch read from
+  > `# branch.upstream`, and a clean tree reporting unknown. `just gate` green — 1544 tests.
 - [ ] **T073 · jj timeline** — agent turns are changes; undo is time travel. Screen `3b`.
   *Needs:* T071
 

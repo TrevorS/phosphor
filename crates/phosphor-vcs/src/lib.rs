@@ -159,13 +159,7 @@ impl Repo {
     pub fn status(&self) -> Status {
         match self.backend {
             Backend::Jj => self.jj_status(),
-            // `T072`. Detection knows git; reading it is that task, and until
-            // then the chip says `git` and nothing it has not earned.
-            Backend::Git => Status {
-                backend: Backend::Git,
-                change: None,
-                clean: None,
-            },
+            Backend::Git => self.git_status(),
         }
     }
 
@@ -214,6 +208,79 @@ impl Repo {
                 _ => None,
             },
         }
+    }
+
+    /// git's branch and whether the working tree is clean (`T072`).
+    ///
+    /// **One `git status` and not two**, for `jj_status`'s reason exactly:
+    /// `--porcelain=v2 --branch` answers both questions in a single call, and
+    /// the format is the one git documents as stable for machines. Verified
+    /// against a real repository in four states before this parser was written
+    /// — clean, untracked-only, modified-tracked, and detached.
+    fn git_status(&self) -> Status {
+        let out = Command::new("git")
+            .args(["status", "--porcelain=v2", "--branch"])
+            .current_dir(&self.root)
+            .output()
+            .ok()
+            .filter(|out| out.status.success());
+
+        let Some(out) = out else {
+            return Status {
+                backend: Backend::Git,
+                change: None,
+                clean: None,
+            };
+        };
+        read_git_status(&String::from_utf8_lossy(&out.stdout))
+    }
+}
+
+/// Parse `git status --porcelain=v2 --branch` (`T072`).
+///
+/// **A free function taking the text**, so the parsing half is testable on a
+/// machine with no git — the same reason `detect` never shells out. The four
+/// captured fixtures in this module's tests came from a real repository rather
+/// than from memory.
+///
+/// The two facts:
+///
+/// * **the branch** is the word after `# branch.head`. Detached answers the
+///   literal `(detached)`, and there the short commit is the honest name —
+///   *"which change am I on"* has an answer even with no branch pointing at it,
+///   which is exactly what jj's change id is on the other side.
+/// * **clean** is *"no line that is not a header"*. Untracked counts as dirty:
+///   git's porcelain reports it as `? path`, and a tree with a file git has
+///   never seen is not one you could walk away from. jj agrees on the other
+///   side, because its `empty` counts untracked files into the change.
+fn read_git_status(said: &str) -> Status {
+    let mut branch = None;
+    let mut oid = None;
+    let mut clean = true;
+
+    for line in said.lines() {
+        if let Some(rest) = line.strip_prefix("# branch.head ") {
+            branch = Some(rest.trim().to_owned());
+        } else if let Some(rest) = line.strip_prefix("# branch.oid ") {
+            oid = Some(rest.trim().to_owned());
+        } else if !line.starts_with('#') && !line.trim().is_empty() {
+            clean = false;
+        }
+    }
+
+    let change = match branch.as_deref() {
+        // A repository with no commits yet reports `(initial)` as its oid, and
+        // there the branch name is the only thing there is.
+        Some("(detached)") => oid
+            .filter(|oid| oid != "(initial)")
+            .map(|oid| oid.chars().take(8).collect()),
+        other => other.map(str::to_owned),
+    };
+
+    Status {
+        backend: Backend::Git,
+        change,
+        clean: Some(clean),
     }
 }
 
@@ -270,15 +337,23 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    /// Git is detected even though `T072` is what reads it.
+    /// **A `.git` marker with no git behind it is still a repository** — the
+    /// git side of the rule two tests down.
+    ///
+    /// This was named `a_git_repo_is_detected_before_its_adapter_exists` while
+    /// `T072` was open. The adapter exists now, and what the test actually
+    /// holds is the *other* thing: a directory that looks like a repository but
+    /// cannot be read reports the backend and nothing it has not earned.
     #[test]
-    fn a_git_repo_is_detected_before_its_adapter_exists() {
+    fn a_git_marker_with_no_git_behind_it_is_still_a_repo() {
         let dir = scratch("git");
         std::fs::create_dir_all(dir.join(".git")).expect("a git marker");
 
         let found = detect(&dir).expect("a repo");
         assert_eq!(found.backend, Backend::Git);
-        // Detected, and honest about knowing nothing else yet.
+        // **A `.git` directory with nothing behind it.** `git status` fails in
+        // there, so every field it could not learn is `None` and the chip says
+        // only the backend — the same three-state rule the jj side follows.
         let status = found.status();
         assert_eq!(status.change, None);
         assert_eq!(status.clean, None);
@@ -311,6 +386,59 @@ mod tests {
             clean: None,
         };
         assert_eq!(unknown.chip(), "jj");
+    }
+
+    /// **The four states, captured from a real repository.**
+    ///
+    /// Each fixture below is the literal output of
+    /// `git status --porcelain=v2 --branch` in that state, recorded before the
+    /// parser existed. Writing them from memory is how a parser ends up
+    /// matching a format nobody emits.
+    #[test]
+    fn git_status_reads_the_branch_and_whether_the_tree_is_clean() {
+        let clean = super::read_git_status(
+            "# branch.oid 292f9839007423bf469a07accaff8c85d776e0a3\n# branch.head main\n",
+        );
+        assert_eq!(clean.change.as_deref(), Some("main"));
+        assert_eq!(clean.clean, Some(true));
+        assert_eq!(clean.chip(), "git main ✓");
+
+        // **Untracked counts as dirty.** A tree holding a file git has never
+        // seen is not one you could walk away from.
+        let untracked = super::read_git_status(
+            "# branch.oid 292f9839007423bf469a07accaff8c85d776e0a3\n\
+             # branch.head main\n\
+             ? b.txt\n",
+        );
+        assert_eq!(untracked.clean, Some(false));
+        assert_eq!(untracked.chip(), "git main ●");
+
+        let modified = super::read_git_status(
+            "# branch.oid 292f9839007423bf469a07accaff8c85d776e0a3\n\
+             # branch.head main\n\
+             1 .M N... 100644 100644 100644 5626abf 5626abf a.txt\n",
+        );
+        assert_eq!(modified.clean, Some(false));
+    }
+
+    /// **Detached HEAD has no branch, and the short commit is the honest
+    /// name.**
+    ///
+    /// *"Which change am I on"* has an answer even with nothing pointing at
+    /// it — which is exactly what jj's change id is on the other side.
+    #[test]
+    fn a_detached_head_names_the_commit_rather_than_a_branch() {
+        let detached = super::read_git_status(
+            "# branch.oid 292f9839007423bf469a07accaff8c85d776e0a3\n# branch.head (detached)\n",
+        );
+        assert_eq!(detached.change.as_deref(), Some("292f9839"));
+        assert_eq!(detached.chip(), "git 292f9839 ✓");
+
+        // A repository with no commits reports `(initial)` — there is no
+        // commit to name, so the chip says what it knows and no more.
+        let fresh = super::read_git_status("# branch.oid (initial)\n# branch.head (detached)\n");
+        assert_eq!(fresh.change, None);
+        assert_eq!(fresh.chip(), "git ✓");
     }
 
     /// **A `.jj` directory with no jj behind it is still a repository.**
