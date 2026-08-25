@@ -9372,17 +9372,19 @@ mod driven {
             "…and offers both ways out, spelled whole (§61); grid was: {box_shown}"
         );
 
-        // **And the editor goes quiet with the box up.** `press` asserts one
-        // frame per key byte, so a loop that keeps redrawing fails here — which
-        // is exactly what shipped once: `disk_float` composed `1d` inside the
-        // draw path, `Layer::surface` runs scheme, running scheme marks the
-        // layer stale, and the frame invalidated itself for as long as a change
-        // was pending. Nine pty tests went red on CI with *"the editor never
-        // stopped drawing"* and this machine never reproduced it, because
-        // `notify` on macOS reports fewer of the writes those tests make than
-        // inotify does. The box is composed once now, and this is the assertion
-        // that says so.
-        editor.press(b"j");
+        // **And the editor goes quiet with the box up.**
+        //
+        // `press_quietly` settles — it waits for 250ms with no frame — so a
+        // loop that keeps redrawing fails here on the deadline. That is the
+        // claim: this test's own watcher is live, and a version of `1d` that
+        // recomposed per frame would never go quiet while a change is pending.
+        //
+        // **`press` was too strict for it and CI said so.** That helper asserts
+        // *exactly one* frame per key byte, and under inotify the watcher
+        // legitimately delivers one more — 93 against 92. One extra frame is
+        // not a spin; requiring none was asserting that this test's own
+        // producer never speaks, which is the opposite of what it is for.
+        editor.press_quietly(b"j");
 
         // **The burst count is asserted in `store.rs`, not here**, and that
         // is a flake this test had before it had a name: querying `disk-state`
