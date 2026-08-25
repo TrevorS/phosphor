@@ -2178,12 +2178,26 @@ mod driven {
             // genuinely not been done.
         ];
         for (keys, what, task) in deferred {
-            // **`press_until`, not a quiet press and a grid read.** A refusal is
-            // a notice, so the claim is that it was *drawn*; the final grid is a
-            // race with whatever redraws next, and reading it that way is what
-            // made an early version of this survey report four working keys as
-            // silently broken.
-            let said = editor.press_until(keys, task);
+            // **Pressed, then read off the *grid* — and it took both halves to
+            // get here.**
+            //
+            // A bare `press_quietly` and a grid read raced whatever redrew
+            // next, and an early version of this survey reported four working
+            // keys as silently broken. So it became `press_until`, which waits.
+            //
+            // But `press_until` waits on the **byte delta**, which is what
+            // ratatui's *diff* renderer emitted — and a settled row arrives in
+            // pieces separated by cursor moves. CI caught that on 2026-08-25
+            // with the frame reading `search needs the matcher — T 0 buil s
+            // it`: every character present, none of them adjacent. The same
+            // artifact is recorded one test up, where `T058`'s row came back as
+            // `search is T058's oth  half`.
+            //
+            // `shown_on_grid_text` is both halves at once: it waits for the
+            // needle, so nothing races it, and it reads the composed grid, so
+            // nothing is split across an escape.
+            editor.press_quietly(keys);
+            let said = shown_on_grid_text(&editor, task);
             assert!(
                 shows(&said, task),
                 "{what} is deferred and must say so by name; frame was: {said}"
