@@ -5106,7 +5106,7 @@ fn snapshot_carrying(
         &super::builtin("phosphor-dark").expect("a shipped theme"),
         "phosphor-dark",
         Surface::Buffer,
-        Vec::new(),
+        &Arc::default(),
         &mut carried,
     )
 }
@@ -5566,7 +5566,7 @@ fn two_snapshots_of_an_unchanged_buffer_share_one_text() {
             &super::builtin("phosphor-dark").expect("a shipped theme"),
             "phosphor-dark",
             Surface::Buffer,
-            Vec::new(),
+            &Arc::default(),
             text,
         )
     };

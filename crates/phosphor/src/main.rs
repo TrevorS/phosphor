@@ -1182,7 +1182,15 @@ struct EditorSnapshot {
     /// The active theme: slug, ground and the actor hues.
     theme: Value,
     /// The live keymap, flattened — every bound sequence with what it runs.
-    keymap: Vec<Value>,
+    ///
+    /// **Shared for [`EditorSnapshot::text`]'s reason**, found by looking for
+    /// the same mistake twice rather than by waiting for CI to find it again:
+    /// this was `keymap_rows.clone()` at the call site, so **141 records were
+    /// copied every frame** to publish a table that changes when somebody
+    /// rebinds a key. The refresh was already narrowed to the three events that
+    /// can change it; the *publish* was not, which is the identical
+    /// rebuild-versus-publish split that reddened `main`.
+    keymap: Arc<Vec<Value>>,
 }
 
 /// The boot file's name, and it names two different files.
@@ -4659,7 +4667,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // **`T111`'s carried keymap.** Refreshed only on a frame where scheme
     // already ran, for the reason spelled out at the refresh:
     // [`Layer::entries`] is not a call that may happen every frame.
-    let mut keymap_rows: Vec<Value> = Vec::new();
+    let mut keymap_rows: Arc<Vec<Value>> = Arc::default();
     // Starts true so the first pass fills it in — an editor that has drawn a
     // frame should be able to answer `keymap` without waiting for a rebind.
     let mut keymap_dirty = true;
@@ -5283,7 +5291,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             &theme,
             &cli.theme,
             surface,
-            keymap_rows.clone(),
+            &keymap_rows,
             &mut text_snapshot,
         ));
         let editing = buffers.at_mut(held);
@@ -5449,19 +5457,21 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         //   (`a_repl_rebind_reaches_the_leader_popup` is the test); it is only
         //   the *published* answer that lags.
         if core::mem::take(&mut keymap_dirty) {
-            keymap_rows = layer
-                .entries()
-                .iter()
-                .map(|entry| {
-                    Value::Record(
-                        Args::new()
-                            .with("keys", Value::Text(entry.keys.0.clone()))
-                            .with("mode", Value::Text(entry.scope.clone()))
-                            .with("runs", Value::Text(entry.verb.clone()))
-                            .with("group", Value::Bool(entry.group)),
-                    )
-                })
-                .collect();
+            keymap_rows = Arc::new(
+                layer
+                    .entries()
+                    .iter()
+                    .map(|entry| {
+                        Value::Record(
+                            Args::new()
+                                .with("keys", Value::Text(entry.keys.0.clone()))
+                                .with("mode", Value::Text(entry.scope.clone()))
+                                .with("runs", Value::Text(entry.verb.clone()))
+                                .with("group", Value::Bool(entry.group)),
+                        )
+                    })
+                    .collect(),
+            );
             let _ = layer.stale();
         }
 
@@ -10642,7 +10652,7 @@ fn editor_snapshot(
     theme: &Theme,
     slug: &str,
     surface: Surface,
-    keymap: Vec<Value>,
+    keymap: &Arc<Vec<Value>>,
     text: &mut Arc<BTreeMap<u64, (u64, Vec<String>)>>,
 ) -> EditorSnapshot {
     let focused = panes.get(panes.focus).and_then(|pane| pane.buffer);
@@ -10827,7 +10837,7 @@ fn editor_snapshot(
                 .with("trouble", hex_of(theme.actors.trouble))
                 .with("transient", hex_of(theme.actors.transient)),
         ),
-        keymap,
+        keymap: Arc::clone(keymap),
     }
 }
 
