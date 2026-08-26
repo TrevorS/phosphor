@@ -6596,7 +6596,7 @@ which no capability row governs and which no creditor existed for at all. `docs/
 §18 set the precedent for exactly this: *"Eleven declared mutations that no task will ever close.
 RULED: add the tasks."* An unowned debt recorded in a lint is a debt nobody is going to pay.
 
-- [ ] **T109 · The sequence walks** 📌
+- [x] **T109 · The sequence walks** 📌
   `Editing::goto_sequence` walks `Sequence::UnseenRegion` off the store and answers
   `Sequence::Ask` from the queue. **Four of the remaining sequences refuse, and every store they
   would walk is already built** — `Hunk` named `T063`, `BlockFile` named `T053`, `Diagnostic`
@@ -6619,6 +6619,48 @@ RULED: add the tasks."* An unowned debt recorded in a lint is a debt nobody is g
   says something honest when its store is empty rather than refusing, a row in another file opens
   that file rather than declining — for the walks and for `jump` alike — and a pty test presses
   all eight. *Needs:* T049, T063, T064, T068, T085
+
+  > **DONE 2026-08-25.**
+  >
+  > **One walk, four row sources.** All four sequences go through `Editing::walk_rows`, and the
+  > only thing that varies is `sequence_rows` — which store the `(path, line)` pairs come from.
+  > Four separate walks would be four places for the wrap to be subtly different, and the wrap is
+  > the part that is easy to get almost right.
+  >
+  > **Every store already answered the shape.** `Hunk` and `Thread` carry a path and a span
+  > outright; a block's groups are one entry per file; a diagnostic's record says which file it is
+  > in, because that query may answer for every file at once. The entry's *"what is missing is the
+  > walk, not the rows"* was exactly right.
+  >
+  > **`]b` lands at the file's first hunk, not at line 1.** Its help text is *"next file in the
+  > review block"*, and a walk that arrived at the top of a file whose changes start at line 400
+  > would be a walk that arrives nowhere.
+  >
+  > **Ordered by `(path, line)` across the workspace, and it wraps** — so running off the end of
+  > one file continues into the next and off the end of the last comes back to the first. That is
+  > `]u`'s rule one scope wider, and it is the same ordering `T111`'s `next-region-by` had to rule
+  > on for the same reason: a line number without a path is not an ordering.
+  >
+  > **Cross-file opening is one capability with two callers**, which the entry predicted.
+  > `Editing::jump` declined an anchor in another file — naming `T109` after being re-stamped off
+  > a ticked `T056` — and it opens now, through the same `Editing::open` ask `open-file` uses.
+  > Opening needs a theme and a language table, so the arm records and the loop performs; both
+  > callers land *at* the row, because an open that arrived at line 1 would make every cross-file
+  > step a second motion the person has to make themselves.
+  >
+  > **An empty store gets its own sentence.** `no hunks — claude has not declared a review block`,
+  > `no review blocks`, `no diagnostics`, `no threads`. A shared *"nothing to walk"* would be one
+  > answer to four questions, and the whole reason to answer instead of refusing is that the
+  > reader learns which store is empty — which is the state a person is in most of the time.
+  >
+  > **Six of the eight keys had no binding at all.** Only `]b`/`[b` were bound; hunk, diagnostic
+  > and thread refused through Steel, MCP and the CLI, which is a motion nobody's hands could
+  > reach. `lint-key-coverage.sh` asked for the presses, as the entry said it would.
+  >
+  > **Three planted defects, three catches**: the walk declining across files instead of opening,
+  > all four empty stores sharing one sentence, and the walk not moving the cursor. `]b` and `[b`
+  > left `a_deferred_binding_names_the_task_that_builds_it`'s table — the fifth pair to leave that
+  > record for the good reason.
 
 - [x] **T110 · Search machinery** 📌
   `/` and `?` are bound to `open-prompt` with `kind` `search`, and `n`/`N` to `goto-sequence` over

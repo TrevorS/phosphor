@@ -743,7 +743,23 @@
   (list "]b" (key/run (key/cmd "goto-sequence" "sequence" "block-file" "seek" "next"))
         "next file in the review block")
   (list "[b" (key/run (key/cmd "goto-sequence" "sequence" "block-file" "seek" "prev"))
-        "previous file in the review block")))
+        "previous file in the review block")
+  ;; T109 — the other three walks. Their stores were built long before the walk
+  ;; was, and until this task none of the six had a key at all: hunk, diagnostic
+  ;; and thread refused only through steel, mcp and the cli, which is a motion
+  ;; nobody's hands could reach.
+  (list "]h" (key/run (key/cmd "goto-sequence" "sequence" "hunk" "seek" "next"))
+        "next hunk")
+  (list "[h" (key/run (key/cmd "goto-sequence" "sequence" "hunk" "seek" "prev"))
+        "previous hunk")
+  (list "]d" (key/run (key/cmd "goto-sequence" "sequence" "diagnostic" "seek" "next"))
+        "next diagnostic")
+  (list "[d" (key/run (key/cmd "goto-sequence" "sequence" "diagnostic" "seek" "prev"))
+        "previous diagnostic")
+  (list "]t" (key/run (key/cmd "goto-sequence" "sequence" "thread" "seek" "next"))
+        "next thread")
+  (list "[t" (key/run (key/cmd "goto-sequence" "sequence" "thread" "seek" "prev"))
+        "previous thread")))
 
 ;; ---------------------------------------------------------------------------
 ;; the deliberately deferred keys — T098

@@ -4192,6 +4192,23 @@ fn start_search(
     })
 }
 
+/// What a store-backed sequence says when it has no rows (`T109`).
+///
+/// **One sentence per sequence, naming the thing that is missing.** A shared
+/// *"nothing to walk"* would be the same answer to four different questions,
+/// and the whole point of saying something rather than refusing is that the
+/// reader learns which store is empty.
+const fn empty_sequence(sequence: Sequence) -> &'static str {
+    match sequence {
+        Sequence::Hunk => "no hunks — claude has not declared a review block",
+        Sequence::BlockFile => "no review blocks",
+        Sequence::Diagnostic => "no diagnostics",
+        Sequence::Thread => "no threads",
+        // Unreachable: `walk_rows` is only called for the four above.
+        _ => "nothing to walk",
+    }
+}
+
 /// Every match of `pattern` in `text`, as character offsets.
 ///
 /// A free function over captured text, which is the discipline `read_jj_timeline`
@@ -16209,6 +16226,171 @@ impl Editing {
         snapshot
     }
 
+    /// The rows one sequence walks, as `(path, line)`, in file order
+    /// (`T109`).
+    ///
+    /// **One shape for four stores**, and each of them already answered it —
+    /// `Hunk` and `Thread` carry a path and a span outright, a block's groups
+    /// are one entry per file, and a diagnostic's record says which file it is
+    /// in because the query may answer for every file at once.
+    ///
+    /// **Deduplicated and sorted**, because two hunks on one line is one place
+    /// to go and the store's own order is declaration order — which is the
+    /// order claude happened to say things in, not the order they appear in the
+    /// file. `]u` already sorts its lines for the same reason.
+    fn sequence_rows(&self, cx: &Cx<'_>, sequence: Sequence) -> Vec<(PathBuf, u32)> {
+        let store = &cx.shell.store;
+        let mut rows: Vec<(PathBuf, u32)> = match sequence {
+            // Every declared block's hunks. Not one block's, because `]h` is
+            // *"the next hunk"* and a person reviewing does not think in block
+            // ids — `4b`'s screen is one block at a time and this motion is
+            // not the screen.
+            Sequence::Hunk => store
+                .blocks()
+                .iter()
+                .flat_map(|block| store.hunks(block.id))
+                .map(|hunk| (store::key_for(&hunk.path), hunk.span.start.line))
+                .collect(),
+            // **One row per file, at its first hunk.** `]b`'s help text is
+            // *"next file in the review block"*, so the row is the *file* and
+            // the line is where its work starts — landing at line 1 of a file
+            // whose changes are at line 400 would be a walk that arrives
+            // nowhere.
+            Sequence::BlockFile => store
+                .blocks()
+                .iter()
+                .flat_map(|block| {
+                    block.groups.iter().map(|group| {
+                        let first = store
+                            .group_regions(group.id)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter_map(|region| store.region_span(region))
+                            .map(|(_, span)| span.start.line)
+                            .min()
+                            .unwrap_or(1);
+                        (store::key_for(&group.path), first)
+                    })
+                })
+                .collect(),
+            Sequence::Diagnostic => store
+                .answer_diagnostics(None)
+                .iter()
+                .filter_map(|value| {
+                    let path = match field_of(value, "path") {
+                        Value::Text(path) => PathBuf::from(path),
+                        _ => return None,
+                    };
+                    let line = match field_of(&field_of(value, "span"), "start") {
+                        Value::Record(_) => {
+                            match field_of(&field_of(&field_of(value, "span"), "start"), "line") {
+                                Value::Int(line) => u32::try_from(line).unwrap_or(1),
+                                _ => return None,
+                            }
+                        }
+                        _ => return None,
+                    };
+                    Some((store::key_for(&path), line))
+                })
+                .collect(),
+            Sequence::Thread => store
+                .threads()
+                .iter()
+                .map(|thread| (store::key_for(&thread.path), thread.span.start.line))
+                .collect(),
+            // The three that are answered elsewhere; this function is only
+            // reached for the four above.
+            Sequence::UnseenRegion | Sequence::Ask | Sequence::SearchMatch | Sequence::Jump => {
+                Vec::new()
+            }
+        };
+        rows.sort_unstable();
+        rows.dedup();
+        rows
+    }
+
+    /// Walks the rows of a store-backed sequence, across files (`T109`).
+    ///
+    /// # It opens the file, and `]b` is why it has no choice
+    ///
+    /// That key's own help text is *"next file in the review block"* — a walk
+    /// that could not leave the current buffer is not the feature. The same
+    /// wall was already reachable from the other side: [`Editing::jump`]
+    /// declined an anchor in another file, and until 2026-08-24 it declined by
+    /// naming `T056`, which is OSC 8 links and is ticked. Cross-file navigation
+    /// from a store row is one capability with two callers, and this is it.
+    ///
+    /// Opening is the *loop's* — `Editing` holds one rope and cannot swap it —
+    /// so this records the ask the way `open-file` already does and the loop
+    /// performs it, cursor and all.
+    ///
+    /// # An empty store says so
+    ///
+    /// Rather than refusing. `T109`'s own criterion asks for it, and the
+    /// difference matters: *"not built yet"* sends a reader to a task, and
+    /// *"no threads in this workspace"* tells them the truth about their
+    /// session.
+    fn walk_rows(&mut self, cx: &mut Cx<'_>, sequence: Sequence, seek: Seek) -> Outcome {
+        let rows = self.sequence_rows(cx, sequence);
+        if rows.is_empty() {
+            return declined(empty_sequence(sequence));
+        }
+        // Where the walk starts. A buffer with no file still walks — it just
+        // starts before the first row, which is what an unnamed buffer being
+        // *nowhere* in the workspace honestly means.
+        let here = self
+            .file
+            .clone()
+            .map(|path| (store::key_for(&path), self.text(cx).cursor().line));
+
+        let to = match (seek, here.as_ref()) {
+            (Seek::First, _) | (Seek::Next, None) => rows[0].clone(),
+            (Seek::Last, _) | (Seek::Prev, None) => rows[rows.len() - 1].clone(),
+            // **Ordered by (path, line) across the workspace, and it wraps.**
+            // Running off the end of one file continues into the next and off
+            // the end of the last comes back to the first, which is `]u`'s rule
+            // one scope wider.
+            (Seek::Next, Some(at)) => rows
+                .iter()
+                .find(|row| row > &at)
+                .unwrap_or(&rows[0])
+                .clone(),
+            (Seek::Prev, Some(at)) => rows
+                .iter()
+                .rev()
+                .find(|row| row < &at)
+                .unwrap_or(&rows[rows.len() - 1])
+                .clone(),
+        };
+
+        let (path, line) = to;
+        let at = Position { line, column: 1 };
+        if here.as_ref().is_none_or(|(current, _)| *current != path) {
+            // Another file. The loop opens it *at* the row, because an open
+            // that landed at the top would make every cross-file step a second
+            // motion the person has to make themselves.
+            self.open = Some(path);
+            self.open_at = Some(at);
+            return Outcome::Done(Receipt {
+                capability: "goto-sequence",
+                value: Value::Int(i64::from(line)),
+                note: None,
+            });
+        }
+        self.push_jump(cx);
+        let offset = self
+            .editor
+            .code_ref()
+            .offset(usize::try_from(line.saturating_sub(1)).unwrap_or(0), 0);
+        self.editor.set_cursor(offset);
+        self.editor.fit_cursor();
+        Outcome::Done(Receipt {
+            capability: "goto-sequence",
+            value: Value::Int(i64::from(line)),
+            note: None,
+        })
+    }
+
     /// **`goto-sequence`.** Walks a sequence of store rows (`T049`).
     ///
     /// Only [`Sequence::UnseenRegion`] has a store to walk, and
@@ -16245,10 +16427,17 @@ impl Editing {
             // they were blocked; `T109` is the walk over them.
             // `scripts/lint-refusal-tasks.sh` fails if any of these names a
             // ticked task again.
-            Sequence::Hunk => Some("T109"),
-            Sequence::BlockFile => Some("T109"),
-            Sequence::Diagnostic => Some("T109"),
-            Sequence::Thread => Some("T109"),
+            // **`T109` — four walks over four stores that were already
+            // built.** What was missing was never the rows; it was the walk.
+            //
+            // All four go through one function because they are one motion
+            // over four row sources, and the thing that makes them different —
+            // *where the rows come from* — is the only thing
+            // [`Editing::sequence_rows`] varies. Writing four walks would be
+            // four places for the wrap to be subtly different.
+            Sequence::Hunk | Sequence::BlockFile | Sequence::Diagnostic | Sequence::Thread => {
+                return self.walk_rows(cx, sequence, seek);
+            }
             // `T060`. **A motion over the queue, answered here rather than by
             // walking a store of rows** — the sequences below this one are
             // spans in a file and this one is a float, so what *"the next one"*
@@ -16640,8 +16829,24 @@ impl Editing {
         if !anchor.tier.resolves() {
             return declined("that anchor is lost — the code it named is gone");
         }
+        // **`T109` — it opens the file instead of declining.** This said
+        // *"that anchor is in another file — T109 opens it"*, and before that
+        // it named `T056`, which is OSC 8 links and is ticked. Cross-file
+        // navigation from a store row is one capability with two callers —
+        // this and [`Editing::walk_rows`] — and both record the ask the way
+        // `open-file` does, because opening needs a theme and a language table
+        // and neither is this struct's.
         if focused.as_deref() != Some(anchor.path.as_path()) {
-            return declined("that anchor is in another file — T109 opens it");
+            if record {
+                self.push_jump(cx);
+            }
+            self.open = Some(anchor.path.clone());
+            self.open_at = Some(anchor.span.start);
+            return Outcome::Done(Receipt {
+                capability: "jump",
+                value: Value::Int(i64::from(anchor.span.start.line)),
+                note: None,
+            });
         }
         if record {
             self.push_jump(cx);

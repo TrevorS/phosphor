@@ -2194,14 +2194,16 @@ mod driven {
         // refusal was: it checks the key does the thing rather than that it
         // says which task will make it.
         let deferred: &[(&[u8], &str, &str)] = &[
-            // The review-block walk. Added when the audit noticed the table had
-            // nine rows and the deferred surface had eleven, and re-pointed on
-            // 2026-08-24: `goto_sequence` named `T053` for `BlockFile` while
-            // `T053` was ticked, so both rows advertised finished work. `T109`
-            // is the walk itself, and it owns opening the file — which is what
-            // *"next file in the review block"* has always required.
-            (b"]b", "next file in the review block", "T109"),
-            (b"[b", "previous file in the review block", "T109"),
+            // **`]b` and `[b` left this table when `T109` built the walk**, and
+            // their history is the shape this record exists to make visible.
+            // Added when an audit found the table had nine rows and the
+            // deferred surface eleven; re-pointed on 2026-08-24 because
+            // `goto_sequence` named `T053` for `BlockFile` while `T053` was
+            // ticked, so both rows advertised finished work; and gone now,
+            // because the walk exists and opens the file — which is what
+            // *"next file in the review block"* always required. They are
+            // pressed in earnest by `the_bracket_walks_say_which_store_is_empty`
+            // along with the six keys that had no binding at all.
             // `SPC c p` and `SPC c s` left this table when `T058` built the
             // claude prompt — they raise the line now rather than refusing.
             // `SPC c i` left it when `T062` built the interrupt: it declines by
@@ -11481,6 +11483,131 @@ fn retry_with_backoff(base: u64) -> u64 {
             shows(&whole(&still), "4:1"),
             "the previous search still walks: {}",
             whole(&still)
+        );
+
+        editor.leave_by(b":q!\r");
+    }
+
+    // -----------------------------------------------------------------------
+    // `T109` — the sequence walks
+    // -----------------------------------------------------------------------
+
+    /// **All eight bracket walks, pressed** (`T109`).
+    ///
+    /// Four sequences refused while every store they walk was already built —
+    /// `Hunk` named `T063`, `BlockFile` named `T053`, `Diagnostic` named
+    /// `T085`, `Thread` named `T068`, and all four of those tasks are ticked,
+    /// so the sentence sent a reader to finished work. What was missing was the
+    /// walk, not the rows. And only `]b`/`[b` had a key at all: hunk,
+    /// diagnostic and thread refused through Steel, MCP and the CLI, which is a
+    /// motion nobody's hands could reach.
+    ///
+    /// **An empty store says which store is empty**, which is `T109`'s own
+    /// criterion — *"says something honest when its store is empty rather than
+    /// refusing"*. This session declares nothing, so all four are empty, and
+    /// that is the point: it is the state a person is in most of the time, and
+    /// the four sentences have to be different or the answer teaches nothing.
+    #[test]
+    fn the_bracket_walks_say_which_store_is_empty() {
+        let scratch = Scratch::new("walks-empty");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // Each pair, forward and back, and each says its own sentence rather
+        // than a shared "nothing to walk" — the whole reason to answer instead
+        // of refusing is that the reader learns *which* store is empty.
+        for (keys, wanted) in [
+            (&b"]h"[..], "no hunks"),
+            (&b"[h"[..], "no hunks"),
+            (&b"]d"[..], "no diagnostics"),
+            (&b"[d"[..], "no diagnostics"),
+            (&b"]t"[..], "no threads"),
+            (&b"[t"[..], "no threads"),
+            (&b"]b"[..], "no review blocks"),
+            (&b"[b"[..], "no review blocks"),
+        ] {
+            let said = editor.shown_on_grid(keys, wanted);
+            assert!(
+                shows(&whole(&said), wanted),
+                "{} answers {wanted:?} rather than a refusal; frame was: {}",
+                String::from_utf8_lossy(keys),
+                whole(&said)
+            );
+        }
+
+        editor.leave_by(b":q!\r");
+    }
+
+    /// **`]t` walks to a thread, and `]b` opens the file it is in** (`T109`).
+    ///
+    /// The half that cannot be tested on an empty store, and the half `]b`'s
+    /// own help text has always required: *"next file in the review block"* is
+    /// not a feature a walk confined to one buffer can have. The same wall was
+    /// reachable from the other side — `Editing::jump` declined an anchor in
+    /// another file — so cross-file navigation from a store row is one
+    /// capability with two callers.
+    ///
+    /// **Seeded through `--eval`**, which is `V006`'s discipline: no test-only
+    /// backdoor, the same door a script would use.
+    #[test]
+    fn a_walk_lands_on_a_row_and_opens_another_file_for_one_that_is_elsewhere() {
+        let scratch = Scratch::new("walks-rows");
+        let runtime = copy_layer(&scratch.path);
+        let here = scratch.path.join("here.txt");
+        let there = scratch.path.join("there.txt");
+        fs::write(&here, "one\ntwo\nthree\nfour\nfive\n").expect("a fixture");
+        fs::write(&there, "alpha\nbeta\ngamma\n").expect("a second fixture");
+
+        let editor = Editor::open(&here, &scratch.state(), &runtime);
+
+        // A thread in *this* file, on line 4. `]t` should move the cursor
+        // rather than open anything.
+        let seed = format!(
+            r#"(start-thread! (hash "kind" "explicit" "path" "{}" "span" (hash "start" (hash "line" 4 "column" 1) "end" (hash "line" 4 "column" 4))) "look at this")"#,
+            here.display()
+        );
+        editor.press_quietly(format!(":repl\r{seed}\r").as_bytes());
+        editor.press_quietly(b"\x1b");
+
+        let walked = editor.shown_on_grid(b"]t", "4:1");
+        assert!(
+            shows(&whole(&walked), "4:1"),
+            "]t moved to the thread's own line: {}",
+            whole(&walked)
+        );
+
+        // A second thread, in the *other* file. The walk orders rows by
+        // (path, line) across the workspace, so `there.txt` sorts after
+        // `here.txt` and one more `]t` runs off the end of this file into it.
+        let elsewhere = format!(
+            r#"(start-thread! (hash "kind" "explicit" "path" "{}" "span" (hash "start" (hash "line" 2 "column" 1) "end" (hash "line" 2 "column" 4))) "and this")"#,
+            there.display()
+        );
+        editor.press_quietly(format!(":repl\r{elsewhere}\r").as_bytes());
+        editor.press_quietly(b"\x1b");
+
+        // **The file opens.** `]b`'s help text is *"next file in the review
+        // block"* and a walk confined to one buffer cannot be that; the same
+        // wall was reachable from the other side, where `jump` declined an
+        // anchor in another file. Both open now, through the one ask
+        // `open-file` already uses — an `Editing` holds one rope and cannot
+        // swap it, so the loop performs the open.
+        let opened = editor.shown_on_grid(b"]t", "there.txt");
+        assert!(
+            shows(&whole(&opened), "there.txt"),
+            "]t ran off the end of this file and opened the next: {}",
+            whole(&opened)
+        );
+        // And landed *at* the row rather than at the top, because an open that
+        // arrived at line 1 would make every cross-file step a second motion
+        // the person has to make themselves.
+        assert!(
+            shows(&whole(&opened), "2:1"),
+            "the file opened at the thread's line: {}",
+            whole(&opened)
         );
 
         editor.leave_by(b":q!\r");
