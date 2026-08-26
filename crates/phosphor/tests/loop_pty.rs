@@ -11219,4 +11219,104 @@ fn retry_with_backoff(base: u64) -> u64 {
 
         editor.leave_by(b":q!\r");
     }
+
+    // -----------------------------------------------------------------------
+    // `T092` — the theme, switched without a restart
+    // -----------------------------------------------------------------------
+
+    /// **`:theme <slug>` redraws in the new palette** (`T092`).
+    ///
+    /// The theme was an immutable local baked into each `Editor` at
+    /// construction and every widget takes a `&Theme`, so switching it is a
+    /// *rebuild path* rather than an arm: the loop hands the new palette to
+    /// every open buffer and invalidates the frame cache in the same beat.
+    /// `--theme <slug>` already worked, and `:theme` answered a refusal —
+    /// Teej's ruling on 2026-08-13 was that the ex command stays bound *"but
+    /// only if something is going to close it"*, and this is that something.
+    ///
+    /// **It asserts the colour, not the text.** A theme switch changes no
+    /// characters at all, so every text assertion in this file would pass
+    /// against an editor that ignored the command completely. The background
+    /// escape sequence the terminal was actually sent is the only honest
+    /// witness, and comparing it before and after is what makes this a test:
+    /// the *ground* of `phosphor-dark` and of `tokyo-night` are different
+    /// colours, so a `:theme` that did nothing leaves the two readings equal.
+    #[test]
+    fn switching_theme_redraws_the_buffer_in_the_new_ground() {
+        let scratch = Scratch::new("theme-switch");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // The far right of a row is never selected and never anything but
+        // background — the same reference `Screen::tinted` takes.
+        let before = editor.screen().background(0, SCREEN.ws_col - 1);
+
+        // The switch is accepted before the palette is looked at, so a failure
+        // below says *"the redraw did not happen"* rather than *"something
+        // about themes did not work"*.
+        let said = editor.shown_on_grid(b":theme tokyo-night\r", "theme tokyo-night");
+        let notice = (0..SCREEN.ws_row)
+            .map(|row| said.line(row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            notice.contains("theme tokyo-night"),
+            "the switch is accepted and says so: {notice}"
+        );
+        // **One more key, and the reason is the loop's order rather than a
+        // weakness in the claim.** The frame is composed near the top of a pass
+        // and the Action's ask is drained near the bottom, so the palette that
+        // changes during pass N is the one pass N+1 draws with — and a pass
+        // happens when something arrives. In a session that is invisible,
+        // because the next thing that arrives is you typing. Here it has to be
+        // asked for. `j` is the smallest thing that certainly *produces* one —
+        // `<esc>` in normal mode can be a no-op, and a key that draws no frame
+        // would leave this waiting for a redraw that never comes.
+        editor.press_quietly(b"j");
+        let after = editor.screen().background(0, SCREEN.ws_col - 1);
+
+        assert_ne!(
+            before, after,
+            "the buffer is drawn on the new theme's ground without a restart"
+        );
+
+        editor.leave_by(b":q!\r");
+    }
+
+    /// **An unknown theme is refused, and the editor keeps the one it has**
+    /// (`T092`).
+    ///
+    /// The slug is resolved in the Action's arm rather than in the loop, so
+    /// `:theme nonesuch`, an MCP call and a CLI verb all answer one sentence.
+    /// What this adds is the half the door cannot prove: that a refused switch
+    /// leaves the palette alone rather than half-applying it.
+    #[test]
+    fn an_unknown_theme_is_refused_and_changes_nothing() {
+        let scratch = Scratch::new("theme-unknown");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        let before = editor.screen().background(0, SCREEN.ws_col - 1);
+
+        let said = editor.shown_on_grid(b":theme nonesuch\r", "no theme called");
+        let notice = (0..SCREEN.ws_row)
+            .map(|row| said.line(row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            notice.contains("no theme called nonesuch"),
+            "the refusal names what was asked for: {notice}"
+        );
+        assert_eq!(
+            before,
+            editor.screen().background(0, SCREEN.ws_col - 1),
+            "a refused switch leaves the palette it had"
+        );
+
+        editor.leave_by(b":q!\r");
+    }
 }

@@ -5063,7 +5063,7 @@ each says so at the task.
 `T098` is the seventh and a slightly different animal — a *binding* that is missing rather than
 an arm — but it is the same failure to a user's hands, and it comes from the same ruling pass.
 
-- [ ] **T092 · Runtime theme switching — the rebuild path** 📌
+- [x] **T092 · Runtime theme switching — the rebuild path** 📌
   `set-theme` and `reload-theme` are declared and unapplied; `runtime/keymaps.scm:965` binds
   `:th[eme]` to `set-theme` and the ex command **answers a refusal**. The blocker is structural rather than
   lazy: the theme is an immutable local at `crates/phosphor/src/main.rs:794` — `let theme =
@@ -5077,6 +5077,50 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   something.
   *Done when:* `:theme <slug>` in the running binary draws the next frame in the new theme with
   no restart, and a pty test proves it. *Needs:* T012, T026
+
+  > **DONE 2026-08-25.**
+  >
+  > **Re-configured, not rebuilt.** `buffer_view::configure` and `soft_wrap::configure` are the
+  > same two calls `buffer` makes at construction, and applying them to a live `Editor` keeps its
+  > text, its cursor and its undo history — a `buffer(…)` rebuild would throw all three away. That
+  > is the difference between switching theme and reopening every file, and it is why this is a
+  > *rebuild path* rather than an arm: every widget takes a `&Theme`, so all of them have to be
+  > handed the new one in the same beat, and the frame cache invalidated with them.
+  >
+  > **Both appliers needed an arm, and the pty test is what found that.** `AppHost::apply` serves
+  > the three doors and `Editing::act` serves the loop; `:theme tokyo-night` is a *keystroke*, so
+  > the door's arm never sees it. `phosphor --eval '(set-theme! "tokyo-night")'` answered `#ok`
+  > while the running editor still said *"not built yet — T092 builds it"*. This is the same
+  > two-appliers seam `T103` records, met from the keyboard side.
+  >
+  > **The slug is validated in the arm, not in the loop**, so `:theme nonesuch`, an MCP call and a
+  > CLI verb answer one sentence — and the loop never has to invent a notice for a name it could
+  > not resolve. Teej's ruling of 2026-08-13 was that `:theme` stays bound *"but only if something
+  > is going to close it"*; this is that something.
+  >
+  > **`reload-theme` re-applies the palette that is drawing.** For a built-in that is the same work
+  > as switching to it — the palette is a `const fn` and re-running it re-validates the actor hues
+  > `T011`'s validator locks — and it is not a no-op, because `configure` is what puts a palette
+  > *into* an `Editor`. A theme loaded from disk would re-read the file; none is, and saying so
+  > beats pretending the two cases differ.
+  >
+  > **The test asserts the colour, not the text**, and it has to: a theme switch changes no
+  > characters at all, so every text assertion in `loop_pty.rs` would pass against an editor that
+  > ignored the command. `Screen::background` gives the escape sequence the terminal was actually
+  > sent; `phosphor-dark`'s ground is `#0c0f0c` and `tokyo-night`'s is `#1a1b26`, so a `:theme`
+  > that did nothing leaves the two readings equal — which is exactly how the missing keystroke arm
+  > was found.
+  >
+  > **Two things about the loop's order, learned by getting them wrong.** The frame is composed
+  > near the top of a pass and the Action's ask is drained near the bottom, so the palette that
+  > changes during pass N is the one pass N+1 draws with — in a session that is invisible because
+  > the next thing to arrive is you typing, but a test has to ask for it. And `press_quietly`
+  > settles on *quiet* rather than on a frame, so it read the screen before the redraw landed;
+  > `shown_on_grid` waits for the frame and is the right instrument. Neither was a defect in the
+  > build, and both cost a run to find.
+  >
+  > Two planted defects, two catches: the theme local never reassigned, and an unknown slug
+  > accepted.
 
 - [x] **T093 · Floats from the doors** 📌
   `open-float`, `close-float` and `close-all-floats` are declared and unapplied, so **Steel and

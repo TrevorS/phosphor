@@ -875,6 +875,13 @@ fn indent_style(
 /// revision instead of a queue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Intent {
+    /// `(set-theme! slug)` / `(reload-theme!)` — `T092`.
+    ///
+    /// **The slug, already validated.** `builtin` is resolved in the arm rather
+    /// than here, so an unknown theme is one refusal with one sentence at all
+    /// three doors instead of a notice the loop invents after the fact. What
+    /// crosses is a name the host has already proved resolves.
+    SetTheme(String),
     /// `(reload-runtime!)` — invariant 1's *"redefinable at runtime"* (`T094`).
     ///
     /// **An Intent rather than an arm, because the layer is the loop's.** The
@@ -2834,6 +2841,41 @@ impl Host for AppHost {
             })
         };
         match &request.action {
+            // **`T092` — the rebuild path.**
+            //
+            // The theme is an immutable local built into each `Editor` at
+            // construction and every widget takes a `&Theme`, so switching it
+            // is not an arm that flips a field: the loop has to hand the new
+            // one to every open buffer and invalidate the frame cache in the
+            // same beat. That is the loop's work, so this validates and queues.
+            //
+            // **Validated here rather than there**, so `:theme nonesuch`, an
+            // MCP call and a CLI verb all get the same sentence — and the loop
+            // never has to invent a notice for a name it could not resolve.
+            Action::Runtime(RuntimeAction::SetTheme { slug }) => {
+                if builtin(&slug.0).is_none() {
+                    return declined(&format!(
+                        "no theme called {} — try phosphor-dark or tokyo-night",
+                        slug.0
+                    ));
+                }
+                self.ask(Intent::SetTheme(slug.0.clone()));
+                done(Value::Null)
+            }
+            // **Re-reads the *current* theme**, which for a built-in is the
+            // same work as switching to it: the palette is a `const fn` and
+            // re-running it re-validates the actor hues `T011`'s validator
+            // locks. A theme loaded from disk would re-read the file here; none
+            // is, and saying so is better than pretending the two cases differ.
+            Action::Runtime(RuntimeAction::ReloadTheme {}) => {
+                self.ask(Intent::SetTheme(
+                    self.editor(|held| match field_of(&held.theme, "slug") {
+                        Value::Text(slug) => slug,
+                        _ => String::new(),
+                    }),
+                ));
+                done(Value::Null)
+            }
             // **`T094` — invariant 1, made true.** *"The editor layer is Steel
             // in `runtime/*.scm`, redefinable at runtime"* is the invariant
             // `CP-2` is the checkpoint for, and until now the only way to see a
@@ -4329,7 +4371,10 @@ fn report(error: &dyn Error) {
 }
 
 fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
-    let theme = builtin(&cli.theme).ok_or_else(|| unknown_theme(&cli.theme))?;
+    // **`mut` since `T092`.** `--theme <slug>` picks the one the session starts
+    // with; `:theme <slug>` replaces it without a restart, which is a rebuild
+    // path rather than an arm — see `Intent::SetTheme`.
+    let mut theme = builtin(&cli.theme).ok_or_else(|| unknown_theme(&cli.theme))?;
 
     // The editor layer, before the terminal: a boot fault has to be able to
     // reach the float, and a fault reading the file has to be able to reach
@@ -4409,6 +4454,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // already ran, for the reason spelled out at the refresh:
     // [`Layer::entries`] is not a call that may happen every frame.
     let mut keymap_rows: Vec<Value> = Vec::new();
+    // `T092` — a theme change is pending, and every open buffer has to be
+    // handed the new one before the next frame is assembled.
+    let mut rethemed = false;
 
     // `T079`, on the shipping path. `revision` is bumped when the statusline's
     // facts change and never per frame, so the composer runs on a state change
@@ -4946,6 +4994,23 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             }
             unseen_per_buffer.insert(*id, u32::try_from(decorated.unseen).unwrap_or(u32::MAX));
             columns.insert(*id, decorated.marks);
+        }
+
+        // **`T092`'s rebuild, before the frame takes its mutable borrow.**
+        //
+        // Every open buffer is re-configured rather than rebuilt.
+        // `buffer_view::configure` and `soft_wrap::configure` are the same two
+        // calls `buffer` makes at construction, and applying them to a live
+        // `Editor` keeps its text, its cursor and its undo history — which a
+        // `buffer(…)` rebuild would throw away. That is the difference between
+        // switching theme and reopening every file.
+        if core::mem::take(&mut rethemed) {
+            for buffer in buffers.map.values_mut() {
+                // Order matters, and it is `buffer`'s order:
+                // `soft_wrap::configure` puts folds back on, so it goes second.
+                buffer_view::configure(&mut buffer.editor, &theme);
+                soft_wrap::configure(&mut buffer.editor, &theme);
+            }
         }
 
         // **`T111`'s editor snapshot, published before the frame takes its
@@ -6512,6 +6577,33 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             }
         }
 
+        // **`T092` — the theme a keystroke asked for.** The arm validated the
+        // slug, so `builtin` resolving here is the same answer twice; keeping
+        // the `if let` rather than unwrapping is what makes a theme that
+        // vanished between the two leave the palette that is drawing.
+        if let Some(slug) = editing.theme.take()
+            && let Some(next) = if slug.is_empty() {
+                // `reload-theme` — the palette that is drawing, re-applied.
+                Some(theme.clone())
+            } else {
+                builtin(&slug)
+            }
+        {
+            theme = next;
+            // Deferred by one pass for the reason `Intent::SetTheme` gives: the
+            // frame holds `&mut` on the focused buffer from here on, and every
+            // open buffer needs the new palette.
+            rethemed = true;
+            status_cache.invalidate();
+            help_page = None;
+            open_float = None;
+            notice = Some(if slug.is_empty() {
+                format!("theme {} reloaded", theme.name)
+            } else {
+                format!("theme {slug}")
+            });
+        }
+
         // `T045`. **The rows come from nowhere yet, and that is the task
         // boundary rather than an oversight**: `T046` is *"Steel picker sources
         // — unseen, files"*, and `define-picker-source` is its capability. What
@@ -6738,6 +6830,41 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     let id = shell.mint_ask();
                     shell.enqueue_ask(id, held_question(&action, &source));
                     shell.held.insert(id, action);
+                }
+                // **`T092` — the rebuild, performed where the theme lives.**
+                //
+                // Every open buffer is re-configured rather than rebuilt.
+                // `buffer_view::configure` and `soft_wrap::configure` are the
+                // same two calls `buffer` makes at construction, and applying
+                // them to a live `Editor` keeps its text, its cursor and its
+                // undo history — which a `buffer(…)` rebuild would throw away.
+                // That is the difference between switching theme and reopening
+                // every file.
+                //
+                // An unknown slug cannot arrive: the arm resolved it before
+                // queueing, so the `else` here is a theme that vanished between
+                // the two, and keeping the one that is drawing is the right
+                // answer to that.
+                Intent::SetTheme(slug) => {
+                    if let Some(next) = builtin(&slug) {
+                        theme = next;
+                        // **The buffers are re-configured at the top of the
+                        // next pass, not here**, and the borrow checker is
+                        // right to insist: the frame holds `&mut` on the
+                        // focused buffer from `buffers.at_mut(held)` onwards,
+                        // and handing every buffer a new theme needs all of
+                        // them. Deferring by one pass is also the truthful
+                        // shape — this is a *rebuild path*, and the rebuild
+                        // happens where the frame is assembled.
+                        rethemed = true;
+                        // Everything composed against the old palette is now
+                        // wrong: the statusline's cached frame, and any float
+                        // that was composed once and kept.
+                        status_cache.invalidate();
+                        help_page = None;
+                        open_float = None;
+                        editing.note = Some(format!("theme {slug}"));
+                    }
                 }
                 // **`T094` — the reload, performed where the layer lives.**
                 //
@@ -12256,6 +12383,15 @@ struct Editing {
     /// A `:help` `open-help` asked for (`T097`), drained the same way — the
     /// page is composed from the live keymap and the keymap is the layer's.
     help: Option<Help>,
+    /// A theme `set-theme` asked for (`T092`), drained the same way.
+    ///
+    /// **Because there are two appliers and a keystroke reaches the other
+    /// one.** `AppHost::apply` serves the three doors and `Editing::act` serves
+    /// the loop; `:theme tokyo-night` is a keystroke, so the door's arm never
+    /// sees it. The pty test found that by pressing the key — the door probe
+    /// answered `#ok` while the running editor still said *"not built yet — T092
+    /// builds it"*.
+    theme: Option<String>,
     /// What the last key's Actions were refused with, if they were.
     ///
     /// **`T098`'s enabling half.** A refusal from the ex line has always been
@@ -12523,6 +12659,7 @@ impl Editing {
             prompt: None,
             anchor: None,
             help: None,
+            theme: None,
             refused: None,
             note: None,
             unknown: None,
@@ -12965,6 +13102,34 @@ impl Editing {
             // side of.
             Action::App(AppAction::OpenHelp { topic }) => {
                 self.help = Some(topic.clone().map_or(Help::Index, Help::Topic));
+                done()
+            }
+            // **`T092` — the keystroke half.** The slug is validated here for
+            // the same reason the door's arm validates it: one sentence for a
+            // theme that does not exist, wherever it was asked for. The loop
+            // performs the rebuild, because handing a new palette to every open
+            // buffer needs all of them and this arm holds one.
+            Action::Runtime(RuntimeAction::SetTheme { slug }) => {
+                if builtin(&slug.0).is_none() {
+                    return declined(&format!(
+                        "no theme called {} — try phosphor-dark or tokyo-night",
+                        slug.0
+                    ));
+                }
+                self.theme = Some(slug.0.clone());
+                done()
+            }
+            Action::Runtime(RuntimeAction::ReloadTheme {}) => {
+                // **The empty slug means "the one that is drawing"**, and the
+                // loop is the only thing that knows which that is — `Editing`
+                // holds no palette and `Cx` carries none. Re-applying it is not
+                // a no-op: `buffer_view::configure` and `soft_wrap::configure`
+                // are what put a palette *into* an `Editor`, so this is the
+                // repair for a buffer whose decoration has drifted, which is
+                // what `reload-theme` is for on a built-in. A theme loaded from
+                // disk would re-read the file; none is, and saying so is better
+                // than pretending the two cases differ.
+                self.theme = Some(String::new());
                 done()
             }
             // `T033`'s four file capabilities. The seed table's own note said
