@@ -3879,3 +3879,17 @@ or the flag's semantics — the rule that follows is unconditional:
 
 Every place this repository's practice says *"a local gate is NOT a CI result"* now has a
 companion: *a watcher's exit status is not a CI result either*. Ask for the conclusion and read it.
+
+**And the third thing, which is what would stop the next one.** Nothing in the build measures the
+loop's per-frame cost. There are nine bench targets — `vm_invocations` is `CP-2`'s *"VM invocations
+per second flat while FPS climbs"*, and `frame_cache` is `phosphor-ui`'s — and not one of them
+covers the *binary's* frame path, because that code is in `main.rs` and a bench target cannot reach
+it. So the only thing in this repository that can detect a per-frame cost regression is
+`loop_pty`'s `settle`, which asserts the editor goes quiet — and it fires **only on Linux, only
+under load, and only when a live watcher is producing events**. That is a very narrow instrument
+for a whole class of defect, and it is the one that caught this.
+
+The second instance proves the point: `keymap_rows.clone()` was copying 141 records every frame for
+the same rebuild-versus-publish reason, and it was found by *reading the publish site looking for
+the same mistake* rather than by any measurement. A third would be found the same way or not at
+all.
