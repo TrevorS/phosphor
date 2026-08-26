@@ -84,6 +84,14 @@ EMITTED = {
     "feed-keys": "the machine replaying, for `.` and macros",
     "repeat-last": "the machine replaying the last change",
     "commit-undo-group": "the machine closing a batch after an edit",
+    # `T095`. **A key cannot carry the argument.** The row takes a
+    # `CheckpointId`, which is a number minted by the undo tree — a person has
+    # nowhere to read one from and nothing to type it into, and inventing an
+    # ex command that took a raw node id would be a door onto the tree's
+    # internals rather than a feature. Its caller is the agent: a turn records
+    # the checkpoint it began at and spends it to come back, which is what
+    # makes an agent turn a unit of undo (`T073`'s timeline reads that shape).
+    "undo-to-checkpoint": "the agent's door — a turn spends the checkpoint it recorded",
     "set-case": "the machine emits it from `key/operator \"toggle-case\"`",
     # Producers post these; nobody types an answer.
     "ingest-completions": "the LSP client posts it",

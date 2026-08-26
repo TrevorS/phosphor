@@ -171,3 +171,21 @@
 ;; makes `<bs>` eat a whole spaces-indent — a backspace behaviour, and a real
 ;; gap rather than a rejected one.
 (set-option! "expand-tab" #t)
+
+;; T095 — whether the editor sweeps its own undo journals.
+;;
+;; `journal.rs` has implemented compaction since T030 and proves it under a real
+;; SIGKILL; what it never had was a caller, so a history only ever grew and the
+;; first person to keep a long session was the one who found out.
+;;
+;; The sweep is the layer's policy rather than a rust constant because that is
+;; T095's whole shape: *"a journal compacts on a policy the editor layer names
+;; rather than on nothing"*. Turning it off is a legitimate thing to want — the
+;; journal is how `u` survives a restart, and a person debugging one wants it
+;; append-only — so the option exists rather than the behaviour being wired in.
+;;
+;; When it is on, the loop asks each buffer whose edit stream moved whether its
+;; log wants compacting, and `Log::should_compact` decides: at least a floor of
+;; records, and at least twice as many as the last compaction left. So a quiet
+;; buffer is never rewritten and a busy one is rewritten less and less often.
+(set-option! "history-compaction" #t)

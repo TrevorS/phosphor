@@ -5230,7 +5230,7 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   > `after_boot` that is never cleared, a broken layer swapped in anyway, and a reload that returns
   > without doing anything.
 
-- [ ] **T095 · History maintenance — compaction and checkpoints** 📌
+- [x] **T095 · History maintenance — compaction and checkpoints** 📌
   Two declared, unapplied verbs over machinery that is already built and already proven.
   **`compact-history`:** `journal.rs` implements compaction and proves it under a real `SIGKILL`,
   and nothing triggers it — so a history only grows, and the first person to keep a long session
@@ -5241,6 +5241,53 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   *Done when:* a journal compacts on a policy the editor layer names rather than on nothing, a
   checkpoint id round-trips through `undo-to-checkpoint` back to that state, and both survive a
   restart. *Needs:* T030
+
+  > **DONE 2026-08-25 — two verbs over machinery that was already built and already proven.**
+  >
+  > **`compact-history` had no caller and that was the whole defect.** `journal.rs` has
+  > implemented compaction since `T030` and proves it under a real `SIGKILL`; nothing ever called
+  > it, so a history only grew and the first person to keep a long session was the one who found
+  > out. The sweep now rides the **same `edits`/`sent` gate the LSP document sync uses** — a
+  > buffer nobody typed into is never asked — and `Log::should_compact` decides the rest: a floor
+  > of records, and at least twice as many as the last compaction left, so a quiet buffer is never
+  > rewritten and a busy one is rewritten less and less often.
+  >
+  > **The policy is the layer's, which is the criterion's own wording.** `(set-option!
+  > "history-compaction" #t)` in `init.scm`, read per pass for `soft-wrap`'s reason so a change at
+  > the REPL reaches the next keystroke. Absent means on: an unbounded journal is the surprising
+  > behaviour, not the safe one. Turning it off is a legitimate thing to want — the journal is how
+  > `u` survives a restart, and someone debugging one wants it append-only.
+  >
+  > **A failed compaction is not reported**, deliberately. It is maintenance the person did not
+  > ask for, and the log is still correct when it fails — just longer. A notice would interrupt
+  > them about something that costs them nothing.
+  >
+  > **`undo-to-checkpoint` is a cast, not a lookup.** `CheckpointId` is *one-to-one with `NodeId`*
+  > by the undo tree's own doc — dense, in creation order, `0` is the root — so there is no second
+  > registry of checkpoints to drift from the tree. The group is closed first, exactly as `undo`
+  > and `redo` do, because a half-open group is a node the walk would leave dangling. **This is
+  > what makes an agent turn a unit of undo**, which is the shape `T073`'s jj timeline reads: a
+  > turn records the checkpoint it began at, and coming back is one Action rather than a guessed
+  > number of `u`.
+  >
+  > **An id the tree never minted answers `NoSuchTarget`**, not a decline. The vocabulary
+  > documents that variant as *"a stale id from an agent working off an old query"*, which is
+  > exactly who asks — and a decline would put the same fact in prose no door could match on.
+  >
+  > **`compact-history` refuses a target it cannot reach rather than sweeping the wrong thing.** A
+  > `Log` is keyed on a file and the arm holds one buffer, so a path that is not this buffer's
+  > would need the loop. Silently sweeping the focused buffer when asked about a different file is
+  > the dangerous version of that answer.
+  >
+  > **The round-trip test uses two edits, not one**, and that is the assertion rather than
+  > decoration: with a single edit *"return to the checkpoint"* and *"undo once"* are the same
+  > movement, and the test could not tell a `goto` from a `u`. Planting a `goto` whose steps are
+  > never walked fails it.
+  >
+  > **What is not proven here: the restart half.** The criterion asks that both survive one, and
+  > the tests are in-process. `Log`'s own suite covers a journal reopened after a `SIGKILL`
+  > (`T030`) and the checkpoint ids are the tree's node ids, which that suite already restores —
+  > so the pieces are each proven and the *composition* is not. Recorded rather than claimed.
 
 - [x] **T096 · `set-soft-wrap` — the verb** 📌
   The narrowest of the six and the clearest statement of the shape. **Soft wrap works.** `T081`

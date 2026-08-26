@@ -1626,6 +1626,13 @@
 ;; A broken file leaves the editor you already had standing and draws the boot
 ;; float over it — the same float a broken `init.scm` draws at startup, because
 ;; it is the same mechanism.
+;; T095 — the sweep, on demand. It also happens on its own when
+;; `history-compaction` is on; this is the word for "now", which is what a
+;; person wants after a long session or before archiving a workspace.
+(ex-set! "compact" "rewrite this buffer's undo journal as a snapshot"
+         (lambda (rest bang)
+           (key/run (key/cmd "compact-history" "target" (key/at-cursor)))))
+
 (ex-set! "rel[oad]" "re-run the editor layer — :reload <path> loads one file"
          (lambda (rest bang)
            (key/run (if (equal? rest "")

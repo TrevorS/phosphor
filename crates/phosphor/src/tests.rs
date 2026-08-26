@@ -5404,3 +5404,129 @@ fn a_reload_runs_the_users_own_layer_again() {
         "and the reload ran it again, at its current contents"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `T095` — history maintenance
+// ---------------------------------------------------------------------------
+
+/// **A checkpoint id round-trips back to that state** (`T095`).
+///
+/// `UndoTree::goto` and `CheckpointId` both existed and nothing routed one to
+/// the other, so the id was a number an agent could hold and not spend. This is
+/// what makes *an agent turn* a unit of undo — the shape `T073`'s jj timeline
+/// reads — because a turn can record the checkpoint it began at and coming back
+/// is one Action rather than a guessed number of `u`.
+///
+/// **Two edits, not one.** With a single edit, "return to the checkpoint" and
+/// "undo once" are the same movement and the test could not tell a `goto` from
+/// a `u`. The second edit is what makes the walk have to cross two nodes.
+#[test]
+fn a_checkpoint_id_returns_the_buffer_to_that_state() {
+    let mut bench = editing("one\n");
+
+    bench.editing.editor.set_cursor(4);
+    bench.apply(&Action::Buffer(
+        phosphor_core::action::BufferAction::Insert {
+            at: Position { line: 1, column: 4 },
+            text: "-two".to_owned(),
+        },
+    ));
+    bench.apply(&Action::History(
+        phosphor_core::action::HistoryAction::CommitUndoGroup {},
+    ));
+    // The point to come back to, taken the way a caller would: the tree's
+    // current node after the edit it wants to keep.
+    let checkpoint = bench.editing.timeline.tree.current();
+    let kept = bench.editing.contents();
+
+    bench.apply(&Action::Buffer(
+        phosphor_core::action::BufferAction::Insert {
+            at: Position { line: 1, column: 8 },
+            text: "-three".to_owned(),
+        },
+    ));
+    bench.apply(&Action::History(
+        phosphor_core::action::HistoryAction::CommitUndoGroup {},
+    ));
+    assert_ne!(
+        bench.editing.contents(),
+        kept,
+        "the second edit moved the buffer off the checkpoint"
+    );
+
+    let outcome = bench.apply(&Action::History(
+        phosphor_core::action::HistoryAction::UndoToCheckpoint {
+            checkpoint: phosphor_core::request::CheckpointId(checkpoint.0),
+        },
+    ));
+    assert!(matches!(outcome, Outcome::Done(_)), "{outcome:?}");
+    assert_eq!(
+        bench.editing.contents(),
+        kept,
+        "the checkpoint id put the buffer back where it was"
+    );
+}
+
+/// **An id the tree never minted is `NoSuchTarget`** (`T095`).
+///
+/// Not a `Declined`, and the distinction is the vocabulary's own: `NoSuchTarget`
+/// is documented as *"a stale id from an agent working off an old query"*, which
+/// is exactly who asks this. A decline would put the same fact in prose that no
+/// door could match on.
+#[test]
+fn an_unminted_checkpoint_is_no_such_target() {
+    let mut bench = editing("one\n");
+    let outcome = bench.apply(&Action::History(
+        phosphor_core::action::HistoryAction::UndoToCheckpoint {
+            checkpoint: phosphor_core::request::CheckpointId(9_999),
+        },
+    ));
+    assert!(
+        matches!(outcome, Outcome::Refused(Refusal::NoSuchTarget)),
+        "{outcome:?}"
+    );
+}
+
+/// **A buffer with no journal says so rather than pretending** (`T095`).
+///
+/// A scratch buffer, and a workspace with no state directory, both reach this —
+/// and neither is a failure: `Timeline::detached`'s own doc says *"a session
+/// that cannot persist still undoes"*. What would be wrong is answering `#ok` to
+/// a compaction that did not happen, because a script sweeping histories would
+/// read that as success.
+#[test]
+fn compacting_a_buffer_with_no_journal_declines_by_saying_so() {
+    let mut bench = editing("one\n");
+    let outcome = bench.apply(&Action::History(
+        phosphor_core::action::HistoryAction::CompactHistory {
+            target: phosphor_core::request::Target::Cursor {},
+        },
+    ));
+    let Outcome::Refused(Refusal::Declined { reason }) = outcome else {
+        panic!("a buffer with nowhere to persist has no history to compact");
+    };
+    assert!(reason.contains("no history on disk"), "{reason}");
+}
+
+/// **`compact-history` names whose history, and says so when it cannot** (`T095`).
+///
+/// The row takes a `Target` and this arm holds one buffer, so anything that is
+/// not *this* buffer is a question it cannot answer — a `Log` is keyed on a
+/// file, and reaching another buffer's is the loop's. Refusing by saying which
+/// scope it does work on is the honest half; silently sweeping the focused
+/// buffer when asked about a different file would be the dangerous one.
+#[test]
+fn compacting_names_the_scope_it_can_reach() {
+    let mut bench = editing("one\n");
+    let outcome = bench.apply(&Action::History(
+        phosphor_core::action::HistoryAction::CompactHistory {
+            target: phosphor_core::request::Target::File {
+                path: PathBuf::from("somewhere/else.rs"),
+            },
+        },
+    ));
+    let Outcome::Refused(Refusal::Declined { reason }) = outcome else {
+        panic!("a path that is not this buffer is not this arm's to sweep");
+    };
+    assert!(reason.contains("focused buffer"), "{reason}");
+}

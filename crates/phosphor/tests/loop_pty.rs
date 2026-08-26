@@ -2821,6 +2821,17 @@ mod driven {
             whole(&themed)
         );
 
+        // `:compact` — `T095`'s sweep on demand. This fixture's buffer has a
+        // file, so it has a journal, and the answer is a receipt rather than
+        // the *"no history on disk"* a scratch buffer gets. What it proves here
+        // is reach: the ex command exists and lands on the arm.
+        let swept = editor.shown_on_grid(b":compact\r", "NORMAL");
+        assert!(
+            !shows(&whole(&swept), "not built yet"),
+            "`:compact` reaches its arm; frame was: {}",
+            whole(&swept)
+        );
+
         // `:quit` — and the child exits. `leave_by` fails if it does not.
         editor.leave_by(b":quit\r");
     }

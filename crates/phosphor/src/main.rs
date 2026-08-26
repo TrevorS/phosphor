@@ -4986,6 +4986,12 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // seeds the option once at boot (see `soft_wrap_default`); this reads
         // the option and nothing else.
         let soft_wrap = host.flag("soft-wrap") == Some(true);
+        // `T095`'s policy, read per pass for `soft-wrap`'s reason: a
+        // `(set-option! "history-compaction" #f)` typed at the REPL has to
+        // reach the next keystroke. Absent means on — a layer that says nothing
+        // gets the sweep, because an unbounded journal is the surprising
+        // behaviour rather than the safe one.
+        let sweeping = host.flag("history-compaction") != Some(false);
         // **`T050` — the session follows the option, and only when it moves.**
         // Read per frame for the reason `soft-wrap` is: the value is the editor
         // layer's and `(set-option! "agent-command" …)` at the REPL has to
@@ -5164,6 +5170,25 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 (buffer.language.clone(), buffer.synced.as_ref())
             {
                 servers.change(&language, document.path.clone(), buffer.contents());
+            }
+            // **`T095` — the sweep, on the policy the editor layer names.**
+            //
+            // `journal.rs` has implemented compaction since `T030` and proved
+            // it under a real `SIGKILL`; it never had a caller, so a history
+            // only grew. This is the caller, and it is here rather than beside
+            // the edit because it rides the gate that already answers *"this
+            // buffer changed"* — the same `edits`/`sent` pair the document sync
+            // above uses, so a buffer nobody typed into is never asked.
+            //
+            // `Log::should_compact` is what decides: a floor of records, and at
+            // least twice as many as the last compaction left. A quiet buffer
+            // is never rewritten and a busy one is rewritten less and less
+            // often. **A failure is not reported**, and that is deliberate —
+            // compaction is maintenance the person did not ask for, and a
+            // notice about it would interrupt them about something that costs
+            // them nothing: the log is still correct, just longer.
+            if sweeping && let Some(log) = buffer.timeline.log.as_mut() {
+                let _ = log.compact_if_needed();
             }
         }
 
@@ -13377,6 +13402,63 @@ impl Editing {
                 let steps = self.timeline.tree.redo((*count).max(1));
                 self.walk(&steps);
                 done()
+            }
+            // **`T095` — a checkpoint id back to that state.**
+            //
+            // `UndoTree::goto` and `CheckpointId` both existed and nothing
+            // routed one to the other. The id is *one-to-one with `NodeId`* by
+            // the tree's own doc — dense, in creation order, `0` is the root —
+            // so this is a cast rather than a lookup table, and there is no
+            // second registry of checkpoints to drift from the tree.
+            //
+            // **This is what makes an agent turn a unit of undo**, which is the
+            // shape `T073`'s jj timeline reads: a turn records the checkpoint
+            // it started at, and coming back is one Action rather than a
+            // guessed number of `u`.
+            //
+            // The group is closed first, exactly as `undo` and `redo` do — a
+            // half-open group is a node the walk would leave dangling.
+            Action::History(HistoryAction::UndoToCheckpoint { checkpoint }) => {
+                let after = self.caret();
+                self.timeline.close(after);
+                let Some(steps) = self.timeline.tree.goto(NodeId(checkpoint.0)) else {
+                    // **`NoSuchTarget`, not a decline.** An id the tree has
+                    // never minted is the stale-id case the vocabulary has a
+                    // refusal for — an agent working off an old query asks
+                    // exactly this.
+                    return Outcome::Refused(Refusal::NoSuchTarget);
+                };
+                self.walk(&steps);
+                done()
+            }
+            // **`T095` — compaction, triggered.**
+            //
+            // `journal.rs` implements it and proves it under a real `SIGKILL`,
+            // and nothing called it — so a history only grew, and the first
+            // person to keep a long session was the one who found out.
+            //
+            // **The target names whose history**, and the honest answer for
+            // anything but this buffer is to say so: a `Log` is keyed on a file
+            // and this arm holds one buffer. `Target::Cursor`/`Buffer` mean
+            // *this* one; a path that is not this buffer's would need the loop,
+            // which is a caller this capability does not have yet.
+            Action::History(HistoryAction::CompactHistory { target }) => {
+                if !matches!(
+                    target,
+                    Target::Cursor {} | Target::Selection {} | Target::Buffer { .. }
+                ) {
+                    return declined("compact-history works on the focused buffer");
+                }
+                let Some(log) = self.timeline.log.as_mut() else {
+                    // A scratch buffer, or a workspace with no state directory.
+                    // Not a failure: a session that cannot persist still
+                    // undoes, and there is genuinely no log to compact.
+                    return declined("this buffer has no history on disk");
+                };
+                match log.compact() {
+                    Ok(()) => done(),
+                    Err(error) => declined(&format!("history not compacted — {error}")),
+                }
             }
             // The group boundary the machine marks, and now the only thing that
             // closes one. `input.rs` emits it at exactly the three places vim
