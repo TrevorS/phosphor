@@ -11167,4 +11167,56 @@ fn retry_with_backoff(base: u64) -> u64 {
             "undo walked the history the write installed, not the one it invalidated"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // `T094` — the editor layer, reloaded
+    // -----------------------------------------------------------------------
+
+    /// **A broken file leaves the previous layer standing** (`T094`).
+    ///
+    /// The requirement that shapes the whole implementation: the new runtime is
+    /// built *beside* the old one and only swapped in if its boot produced no
+    /// fault. Reloading in place and repairing on failure cannot work — half
+    /// the load order has already run by the time the fault appears, and there
+    /// is nothing to roll back to.
+    ///
+    /// **What is asserted is that the editor still edits.** A float saying
+    /// something went wrong is easy; an editor that still has your buffer, your
+    /// cursor and a working keymap behind that float is the claim. So this
+    /// types after the failed reload and checks the text moved.
+    #[test]
+    fn a_broken_reload_leaves_the_editor_that_was_working() {
+        let scratch = Scratch::new("reload-broken");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "one\ntwo\nthree\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // An unbalanced paren: the file parses as far as this and then stops,
+        // which is the ordinary way a hand-edited layer breaks.
+        let keymaps = runtime.join("keymaps.scm");
+        let mut layer = fs::read_to_string(&keymaps).expect("the copied layer");
+        layer.push_str("\n(ex-set! \"broken\" \"unbalanced\n");
+        fs::write(&keymaps, layer).expect("the layer is writable");
+
+        editor.press_quietly(b":reload\r");
+
+        // The editor is still an editor: `x` deletes a character, which needs
+        // the keymap the reload just failed to replace. If the broken layer had
+        // been swapped in, there would be no `x`.
+        editor.press_quietly(b"\x1b");
+        editor.press_quietly(b"x");
+        let after = editor.screen();
+        let grid = (0..SCREEN.ws_row)
+            .map(|row| after.line(row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            grid.contains("ne") && !grid.contains("one"),
+            "the previous layer is still running, so `x` still deletes: {grid}"
+        );
+
+        editor.leave_by(b":q!\r");
+    }
 }

@@ -1593,6 +1593,22 @@
 (ex-set! "th[eme]" "switch theme"
          (lambda (rest bang) (key/run (key/cmd "set-theme" "slug" rest))))
 
+;; T094 — invariant 1's "redefinable at runtime", reachable by typing.
+;;
+;; `:reload` with no argument re-runs the whole boot sequence, so a file you
+;; have just edited takes effect on the next frame. With a path it loads that
+;; one file on top of what is already there, which is the difference between
+;; "pick up my changes" and "run this".
+;;
+;; A broken file leaves the editor you already had standing and draws the boot
+;; float over it — the same float a broken `init.scm` draws at startup, because
+;; it is the same mechanism.
+(ex-set! "rel[oad]" "re-run the editor layer — :reload <path> loads one file"
+         (lambda (rest bang)
+           (key/run (if (equal? rest "")
+                        (key/cmd "reload-runtime")
+                        (key/cmd "load-runtime-file" "path" rest)))))
+
 ;; vim's three window commands, the spellings a person's fingers already know.
 ;; `:split` and `:vsplit` are the <C-w>s / <C-w>v pair under their other names,
 ;; and go the same way for the same reason.

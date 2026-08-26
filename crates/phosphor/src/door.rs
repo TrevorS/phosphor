@@ -682,6 +682,21 @@ mod tests {
                 note: Some("evaluated".to_owned()),
             })
         }
+
+        /// **Refuses, because this stub has no editor** — which is the honest
+        /// answer for a fixture that exists to compare two front-ends of the
+        /// *evaluation* path. The tests below are about `--eval` and the verb
+        /// assembling the same `Call`; giving this a real host would make them
+        /// tests of the host instead.
+        fn act(&mut self, request: &Request) -> Outcome {
+            not_yet(request.action.spec().since.task)
+        }
+
+        fn ask(&mut self, query: &Query) -> Result<phosphor_core::query::Answer, QueryError> {
+            Err(QueryError::NotYetImplemented {
+                task: query.spec().since.task,
+            })
+        }
     }
 
     fn parse(argv: &[&str]) -> ArgMatches {

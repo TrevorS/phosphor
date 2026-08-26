@@ -875,6 +875,16 @@ fn indent_style(
 /// revision instead of a queue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Intent {
+    /// `(reload-runtime!)` — invariant 1's *"redefinable at runtime"* (`T094`).
+    ///
+    /// **An Intent rather than an arm, because the layer is the loop's.** The
+    /// host is behind the Steel barrier and holds no `Layer`; `Layer` is the
+    /// one door into the VM and the loop owns it. That is the same seam
+    /// [`Intent::Keymap`] sits on, and the reason is stronger here: the thing
+    /// being replaced is the runtime the arm would be running inside.
+    ReloadRuntime,
+    /// `(load-runtime-file! path)` — one file, on top of what is loaded.
+    LoadRuntimeFile(PathBuf),
     /// `(open-repl!)` — `6b`.
     OpenRepl,
     /// `(close-repl!)`.
@@ -2824,6 +2834,25 @@ impl Host for AppHost {
             })
         };
         match &request.action {
+            // **`T094` — invariant 1, made true.** *"The editor layer is Steel
+            // in `runtime/*.scm`, redefinable at runtime"* is the invariant
+            // `CP-2` is the checkpoint for, and until now the only way to see a
+            // change to a `runtime/*.scm` file was to restart: `init.scm` reads
+            // the load order once at boot and the REPL evaluates forms, and
+            // neither of those is a reload. A layer you restart to reload is a
+            // config file with a longer reload cycle.
+            //
+            // Queued rather than applied for [`Intent::ReloadRuntime`]'s
+            // reason: this arm is running *inside* the runtime it would be
+            // replacing.
+            Action::Runtime(RuntimeAction::ReloadRuntime {}) => {
+                self.ask(Intent::ReloadRuntime);
+                done(Value::Null)
+            }
+            Action::Runtime(RuntimeAction::LoadRuntimeFile { path }) => {
+                self.ask(Intent::LoadRuntimeFile(path.clone()));
+                done(Value::Null)
+            }
             Action::Runtime(RuntimeAction::OpenRepl {}) => {
                 self.ask(Intent::OpenRepl);
                 done(Value::Null)
@@ -3904,6 +3933,68 @@ impl Layer {
     fn stale(&mut self) -> bool {
         core::mem::take(&mut self.ran)
     }
+
+    /// Re-runs the whole boot sequence, in place (`T094`).
+    ///
+    /// **Invariant 1's second half.** *"The editor layer is Steel in
+    /// `runtime/*.scm`, redefinable at runtime"* — and it was not, because
+    /// `init.scm` reads the load order once at boot and the REPL evaluates
+    /// *forms*. Neither is a reload: a form redefines one name, and a load
+    /// order that ran once cannot pick up a file you have since edited.
+    ///
+    /// # A broken file leaves the previous layer standing
+    ///
+    /// This is the requirement that shapes the whole method. The new runtime is
+    /// built **beside** the old one and only swapped in if its boot produced no
+    /// fault, so a `runtime/keymaps.scm` with an unbalanced paren leaves you
+    /// with the editor you already had rather than an editor with no keymap.
+    /// The alternative — reload in place and repair on failure — cannot work:
+    /// half the load order has already run by the time the fault appears, and
+    /// there is nothing to roll back to.
+    ///
+    /// The fault is reported **the way a broken `init.scm` already is**: the
+    /// report is kept, so [`Layer::boot_float`] draws the same float over the
+    /// same editor. One mechanism, not two.
+    ///
+    /// # What it returns
+    ///
+    /// The number of units the new layer loaded on success, or the report of
+    /// what went wrong on failure — the caller turns the second into the notice
+    /// row and the float.
+    fn reload(&mut self, root: Option<&Path>, host: &Arc<AppHost>) -> Result<usize, BootReport> {
+        // Running scheme, by any measure: a whole load order is about to run,
+        // or a whole load order has just been read and thrown away. Either way
+        // the composer's cache cannot be trusted across this call.
+        self.ran = true;
+
+        let fresh = boot(root, host);
+        let report = fresh.report().clone();
+        if !report.faults.is_empty() {
+            // **Kept, not swapped.** The editor you are looking at goes on
+            // working; the float says what did not load.
+            self.report = report.clone();
+            return Err(report);
+        }
+
+        let units = report.units.len();
+        self.runtime = fresh;
+        self.booted_units = units;
+        self.report = report;
+        // **The stack is re-run, not remembered.** `after_boot` is what
+        // `booted_already` reads to stop a file running twice *within one
+        // boot*; a reload is a new boot, so the list starts empty or the user's
+        // own layer would be skipped as already-loaded. That is `stack`'s order
+        // arriving here rather than a second copy of it — the same two calls,
+        // in the same order, guarded by the same two `Option`s.
+        self.after_boot.clear();
+        if let Some(path) = host.user_layer() {
+            self.load_user_layer(&path);
+        }
+        if let Some(path) = host.persist_target() {
+            self.load_persisted(&path);
+        }
+        Ok(units)
+    }
 }
 
 /// The evaluator the CLI door takes, over the one layer **and the one host**
@@ -4261,7 +4352,10 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     if cli.soft_wrap {
         host.set_flag("soft-wrap", true);
     }
-    let boot = layer.boot_float();
+    // **`mut` since `T094`.** A reload can produce a boot fault after startup,
+    // and it reports it the way the startup path already does — the same float,
+    // over an editor that is still the one you were using.
+    let mut boot = layer.boot_float();
 
     // Whether the file named on the command line has nothing behind it yet, so
     // the first frame can say so. `None` for `--repl`, which has no file at all
@@ -6644,6 +6738,59 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     let id = shell.mint_ask();
                     shell.enqueue_ask(id, held_question(&action, &source));
                     shell.held.insert(id, action);
+                }
+                // **`T094` — the reload, performed where the layer lives.**
+                //
+                // The boot float is how a broken layer already reports itself,
+                // so a broken *reload* reports itself the same way: `boot` is
+                // reassigned, `surface` becomes `Surface::Boot`, and the reader
+                // gets the float they would have got had they restarted into
+                // the same fault. The difference — and the whole point — is
+                // that the editor behind the float is the one that was working
+                // a moment ago, with its buffers and its cursor where they
+                // were.
+                Intent::ReloadRuntime => match layer.reload(Runtime::root().as_deref(), &host) {
+                    Ok(units) => {
+                        editing.note = Some(match units {
+                            1 => "runtime reloaded — 1 file".to_owned(),
+                            many => format!("runtime reloaded — {many} files"),
+                        });
+                        // Everything composed from the layer is now composed
+                        // from a *different* layer. The keymap the machine
+                        // resolves against, the statusline, every registered
+                        // surface and source: all of them are the new
+                        // runtime's, and a cache filled by the old one would
+                        // draw the editor that was just replaced.
+                        status_cache.invalidate();
+                        help_page = None;
+                        open_float = None;
+                    }
+                    Err(_) => {
+                        boot = layer.boot_float();
+                        if boot.is_some() {
+                            surface = Surface::Boot;
+                        }
+                        editing.note =
+                            Some("runtime not reloaded — the previous layer is still running"
+                                .to_owned());
+                    }
+                },
+                // One file, on top of what is already loaded. **Not a
+                // reload** — `load_after_boot` is the same path the user's
+                // layer and the persisted layer take, so a fault in it lands in
+                // the same report and draws the same float, and the files that
+                // were already loaded stay loaded.
+                Intent::LoadRuntimeFile(path) => {
+                    let named = config::abbreviated(&path);
+                    let before = layer.report.faults.len();
+                    layer.load_after_boot(&path, named);
+                    if layer.report.faults.len() > before {
+                        boot = layer.boot_float();
+                        if boot.is_some() {
+                            surface = Surface::Boot;
+                        }
+                    }
+                    status_cache.invalidate();
                 }
                 Intent::OpenRepl => surface = Surface::Repl,
                 Intent::CloseRepl => surface = Surface::Buffer,

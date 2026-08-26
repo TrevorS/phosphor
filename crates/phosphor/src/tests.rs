@@ -2869,9 +2869,13 @@ fn the_repl_and_the_cli_door_are_the_same_call_into_the_same_runtime() {
     // `T023`'s criterion, held where the two front-ends meet: `Vm` and
     // `Repl::submit` reach one `Runtime::evaluate` and one renderer, so the
     // answer is the same object rather than two that agree.
-    let (mut layer, _host) = booted();
+    let (mut layer, host) = booted();
     let source = "(+ 1 2)";
-    let door = Vm(&mut layer).eval(source);
+    let door = Vm {
+        layer: &mut layer,
+        host: &host,
+    }
+    .eval(source);
 
     let mut session = Repl::new();
     for character in source.chars() {
@@ -5192,5 +5196,163 @@ fn the_snapshot_forgets_a_buffer_that_is_no_longer_open() {
     assert!(
         !held.text.contains_key(&99),
         "a buffer nothing has open is dropped rather than carried for the session"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `T094` — the editor layer, reloaded
+// ---------------------------------------------------------------------------
+
+/// The value an evaluation produced, or [`None`] if it did not produce one.
+///
+/// A refusal and a raise both answer `None` here, which is right for every
+/// caller below: each is asking *"what does this global say now"*, and a form
+/// that did not run has not said anything.
+fn answered(outcome: Outcome) -> Option<Value> {
+    match outcome {
+        Outcome::Done(receipt) => Some(receipt.value),
+        Outcome::Refused(_) | Outcome::Raised(_) => None,
+    }
+}
+
+/// A minimal runtime tree: an `init.scm` naming one file, and that file.
+///
+/// **Minimal rather than a copy of the shipped layer**, because what is being
+/// tested is the *reload*, and a fifteen-file tree would make every assertion
+/// here depend on all fifteen still parsing. The load order is the mechanism
+/// under test — `init.scm` reads it once at boot, which is exactly why a
+/// reload is a different thing from evaluating a form.
+fn tiny_layer(root: &Path, body: &str) {
+    std::fs::create_dir_all(root).expect("a runtime tree");
+    std::fs::write(
+        root.join("init.scm"),
+        "(define phosphor/boot-files (list \"extra.scm\"))\n",
+    )
+    .expect("an init.scm");
+    std::fs::write(root.join("extra.scm"), body).expect("a layer file");
+}
+
+/// **A reload picks up a file edited since boot** (`T094`).
+///
+/// Invariant 1 is *"the editor layer is Steel in `runtime/*.scm`, **redefinable
+/// at runtime**"*, and `CP-2` is the checkpoint that asks whether that is true.
+/// It was not: `init.scm` reads the load order once at boot and the REPL
+/// evaluates *forms*, and neither picks up a file you have since changed.
+///
+/// **The before-half is what makes this a test rather than a demonstration.**
+/// The same global is read twice, so a `reload` that did nothing at all would
+/// leave the second read answering what the first did.
+#[test]
+fn a_reload_runs_the_load_order_again_against_the_file_on_disk() {
+    let root = scratch("t094-reload");
+    let config = scratch("t094-reload-config");
+    tiny_layer(&root, "(define phosphor/probe \"before\")\n");
+
+    let (mut layer, host) = booted_with_config(Some(&root), &config);
+    assert_eq!(
+        answered(layer.evaluate("phosphor/probe")),
+        Some(Value::Text("before".to_owned())),
+        "the booted layer defines the global"
+    );
+
+    // The file changes on disk, the way a person editing their own layer
+    // changes it. Nothing has restarted.
+    std::fs::write(root.join("extra.scm"), "(define phosphor/probe \"after\")\n")
+        .expect("the layer is writable");
+
+    let units = layer.reload(Some(&root), &host).expect("a clean layer reloads");
+    // `init.scm` is a unit too — the load order is a file that runs, not a
+    // manifest that is parsed — so a one-entry `phosphor/boot-files` is two.
+    assert_eq!(units, 2, "init.scm and the one file it names");
+    assert_eq!(
+        answered(layer.evaluate("phosphor/probe")),
+        Some(Value::Text("after".to_owned())),
+        "the reloaded layer is the file that is on disk now"
+    );
+}
+
+/// **A broken file leaves the previous layer standing** (`T094`).
+///
+/// The requirement that shapes the implementation. The new runtime is built
+/// *beside* the old one and swapped in only if its boot produced no fault —
+/// reloading in place and repairing on failure cannot work, because half the
+/// load order has already run by the time the fault appears and there is
+/// nothing to roll back to.
+///
+/// **What is asserted is that the old layer still answers**, not merely that
+/// the reload reported a failure. An editor that returned an error and left
+/// itself with no keymap would pass the weaker claim.
+#[test]
+fn a_broken_reload_keeps_the_layer_that_was_working() {
+    let root = scratch("t094-broken");
+    let config = scratch("t094-broken-config");
+    tiny_layer(&root, "(define phosphor/probe \"before\")\n");
+
+    let (mut layer, host) = booted_with_config(Some(&root), &config);
+
+    // An unbalanced paren: the ordinary way a hand-edited layer breaks.
+    std::fs::write(
+        root.join("extra.scm"),
+        "(define phosphor/probe \"after\"\n(define phosphor/other 1)\n",
+    )
+    .expect("the layer is writable");
+
+    let report = layer
+        .reload(Some(&root), &host)
+        .expect_err("a layer that does not parse is not swapped in");
+    assert!(
+        !report.faults.is_empty(),
+        "the failure carries what went wrong, for the same float a broken init.scm draws"
+    );
+    assert_eq!(
+        answered(layer.evaluate("phosphor/probe")),
+        Some(Value::Text("before".to_owned())),
+        "the layer that was working is the layer that is still running"
+    );
+}
+
+/// **A reload re-runs the user's own layer, not just the shipped tree**
+/// (`T094`, §34).
+///
+/// `stack` loads three things in order — the shipped tree, the file you
+/// hand-wrote, then the file `persist!` wrote — and a reload that re-ran only
+/// the first would silently drop the other two. It is a live hazard rather
+/// than a hypothetical: `Layer::after_boot` exists to stop a file running
+/// *twice within one boot*, so a reload that forgot to clear it would skip the
+/// user's layer as already-loaded and leave the editor missing exactly the
+/// customisations the person just asked to reload.
+#[test]
+fn a_reload_runs_the_users_own_layer_again() {
+    let root = scratch("t094-user");
+    let config = scratch("t094-user-config");
+    tiny_layer(&root, "(define phosphor/probe \"shipped\")\n");
+    // **The config *home* already ends in `phosphor`** — `config::config_dir`
+    // resolves `$XDG_CONFIG_HOME/phosphor`, and `AppHost::user_layer` joins the
+    // bare file name onto it. Writing to `<config>/phosphor/init.scm` here put
+    // the file one directory below where the layer looks, and the boot quietly
+    // loaded nothing; the first version of this test asserted the reload and
+    // would have passed on an editor that never ran the user's file at all.
+    std::fs::create_dir_all(&config).expect("a config home");
+    std::fs::write(config.join(super::INIT), "(define phosphor/mine \"yours\")\n")
+        .expect("a user layer");
+
+    let (mut layer, host) = booted_with_config(Some(&root), &config);
+    assert_eq!(
+        answered(layer.evaluate("phosphor/mine")),
+        Some(Value::Text("yours".to_owned())),
+        "the boot ran the user's file"
+    );
+
+    std::fs::write(
+        config.join(super::INIT),
+        "(define phosphor/mine \"still yours\")\n",
+    )
+    .expect("the user layer is writable");
+
+    layer.reload(Some(&root), &host).expect("a clean layer reloads");
+    assert_eq!(
+        answered(layer.evaluate("phosphor/mine")),
+        Some(Value::Text("still yours".to_owned())),
+        "and the reload ran it again, at its current contents"
     );
 }

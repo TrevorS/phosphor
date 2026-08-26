@@ -5130,7 +5130,7 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   > - Risk: public API change yes (one capability) · data migration no · cross-module yes ·
   >   reversible yes · external blocker no
 
-- [ ] **T094 · Reloading the editor layer** 📌
+- [x] **T094 · Reloading the editor layer** 📌
   `load-runtime-file` and `reload-runtime` are declared and unapplied: **the layer cannot be
   reloaded without restarting the editor.** `init.scm` reads the load order once at startup and
   the REPL evaluates forms; neither of those is this. It matters more than the other five,
@@ -5140,6 +5140,51 @@ an arm — but it is the same failure to a user's hands, and it comes from the s
   *Done when:* editing a `runtime/*.scm` file and calling `reload-runtime` takes effect on the
   next frame with no restart; a broken file leaves the previous layer standing and reports the
   error the way a broken `init.scm` already does; a pty test covers both. *Needs:* T021, T026
+
+  > **DONE 2026-08-25 — invariant 1's second half, and `CP-2` was the checkpoint for it.**
+  >
+  > `Layer::reload` re-runs the whole boot sequence in place. **The new runtime is built beside
+  > the old one and swapped in only if its boot produced no fault**, which is the requirement
+  > that shapes everything else: reloading in place and repairing on failure cannot work, because
+  > half the load order has already run by the time the fault appears and there is nothing to roll
+  > back to. A broken file therefore leaves the editor you already had — buffers, cursor, keymap —
+  > and draws the boot float over it, which is *the same mechanism* a broken `init.scm` uses at
+  > startup rather than a second one.
+  >
+  > **It is an Intent, not an arm.** The host is behind the Steel barrier and holds no `Layer`;
+  > `Layer` is the one door into the VM and the loop owns it. The reason is sharper here than for
+  > `Intent::Keymap`, which sits on the same seam: the thing being replaced is the runtime the arm
+  > would be running inside.
+  >
+  > **The stack is re-run, not remembered.** `after_boot` exists to stop a file running twice
+  > *within one boot*; a reload is a new boot, so the list is cleared or the user's own layer is
+  > skipped as already-loaded — leaving the editor missing exactly the customisations the person
+  > just asked to reload. `a_reload_runs_the_users_own_layer_again` is the test for it, and a
+  > planted `after_boot` that survives is caught by that test alone.
+  >
+  > **Reachable by typing**: `:rel[oad]` re-runs the layer, `:reload <path>` loads one file on top
+  > — the difference between *"pick up my changes"* and *"run this"*. Whole words, per Design
+  > Language §6.
+  >
+  > **The pty test was the wrong instrument for the happy path, and finding out is the useful
+  > part.** Intents drain *after* the frame is drawn, so a note set by the reload does not appear
+  > until something else causes a redraw — and `press_quietly` settles on quiet, so the test saw a
+  > screen with no notice on it and no way to tell *"the reload did nothing"* from *"the reload ran
+  > and the new form did not take"*. Three unit tests over `Layer::reload` answer that directly and
+  > in a second and a half; the pty test keeps the half it is genuinely good at — that after a
+  > failed reload `x` still deletes a character, which needs the keymap the reload just failed to
+  > replace.
+  >
+  > **A fixture bug worth recording, because it is this repository's recurring shape.** The
+  > user-layer test first wrote to `<config>/phosphor/init.scm` — but `config::config_dir` already
+  > resolves `$XDG_CONFIG_HOME/phosphor` and `AppHost::user_layer` joins the bare file name onto
+  > it, so the file sat one directory below where the layer looks and the *boot* loaded nothing.
+  > Had the test asserted only the reload, it would have passed against an editor that never ran
+  > the user's file at all. The before-half is what caught it.
+  >
+  > **Three planted defects, three catches**, each by exactly the test written for it: an
+  > `after_boot` that is never cleared, a broken layer swapped in anyway, and a reload that returns
+  > without doing anything.
 
 - [ ] **T095 · History maintenance — compaction and checkpoints** 📌
   Two declared, unapplied verbs over machinery that is already built and already proven.
