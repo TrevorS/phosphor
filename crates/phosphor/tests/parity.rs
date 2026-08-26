@@ -1467,3 +1467,116 @@ fn the_two_cli_routes_agree_on_what_a_refusal_exits() {
         "one door, one refusal, one exit code"
     );
 }
+
+// ---------------------------------------------------------------------------
+// `T111` — every query answers
+// ---------------------------------------------------------------------------
+
+/// A [`Value`] as the Steel source that produces it.
+///
+/// Only the shapes [`sample`] emits, because that is the only caller. A shape
+/// it grows later shows up as an unparseable expression the door rejects out
+/// loud, rather than as a call that silently tests nothing.
+fn steel_literal(value: &Value) -> String {
+    match value {
+        Value::Null => "#false".to_owned(),
+        Value::Bool(flag) => if *flag { "#true" } else { "#false" }.to_owned(),
+        Value::Int(number) => number.to_string(),
+        Value::Text(text) => format!("{text:?}"),
+        Value::List(items) => format!(
+            "(list {})",
+            items.iter().map(steel_literal).collect::<Vec<_>>().join(" ")
+        ),
+        Value::Record(fields) => format!(
+            "(hash {})",
+            fields
+                .clone()
+                .into_pairs()
+                .map(|(name, held)| format!("{name:?} {}", steel_literal(&held)))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+    }
+}
+
+/// The queries that are still allowed to answer *"not built yet"*, and the task
+/// that will build each.
+///
+/// **A shrink-only table**, the shape `lint-action-arms.sh` and the two
+/// reachability lints already use: a row may leave when its task lands, and a
+/// row may not be added without a task id that is genuinely open. Both of these
+/// are `S8`'s — watches are the last phase, and nothing before it can answer
+/// about a watch that cannot exist yet.
+const OWED: &[(&str, &str)] = &[("watches", "T074"), ("watch-values", "T075")];
+
+/// **Every query answers from the host, or names an open task** (`T111`).
+///
+/// This is the walk `T111`'s *done when* asks for — *"a door test calls every
+/// one of them through `--eval` and asserts none raises"* — and it is a
+/// **process** test rather than a call into `AppHost`, because the defect it
+/// exists to catch lived in the seam: the arms were missing, the registry was
+/// complete, and every in-process test that asked the registry what existed
+/// said yes.
+///
+/// **What it would have caught.** Twenty queries answered *"not built yet"*
+/// against a task that was already ticked, and twelve of them were found by
+/// hand, one refusal at a time. `(theme)` said `T010` builds it; `T010` shipped
+/// at `S1`. Nothing in the suite pressed any of them.
+///
+/// An **empty answer is a pass**, and that is deliberate: `--eval` never draws
+/// a frame, so the editor genuinely has no buffers, no panes and no mode. The
+/// question here is whether the door answers at all, and `query.rs`'s *"an
+/// absent thing answers empty"* is the right answer for a process with no
+/// screen. What the answers *say* in a live editor is a pty test's job.
+#[test]
+fn every_query_answers_or_names_a_task_that_is_open() {
+    let owed: std::collections::BTreeMap<&str, &str> = OWED.iter().copied().collect();
+    let queries: Vec<Capability> = capabilities()
+        .into_iter()
+        .filter(|cap| cap.kind == CapabilityKind::Query)
+        .collect();
+    assert!(
+        queries.len() > 40,
+        "read {} queries — the registry's shape moved and this walk is checking nothing",
+        queries.len()
+    );
+
+    let mut refused = Vec::new();
+    for cap in &queries {
+        // Required arguments only. An optional one omitted is the call a person
+        // actually writes — `(keymap)`, not `(keymap #false #false)` — and it is
+        // the shape a caller reaches the arity check with.
+        let args: Vec<String> = cap
+            .params
+            .iter()
+            .filter(|param| param.required)
+            .map(|param| steel_literal(&sample(&param.ty)))
+            .collect();
+        let call = if args.is_empty() {
+            format!("({})", cap.name)
+        } else {
+            format!("({} {})", cap.name, args.join(" "))
+        };
+        let out = run(&["--eval".to_owned(), call.clone()]);
+        let said = String::from_utf8_lossy(&out.stdout).to_string()
+            + &String::from_utf8_lossy(&out.stderr);
+
+        if let Some(task) = owed.get(cap.name) {
+            assert!(
+                said.contains(task),
+                "`{}` is recorded as owed to {task}, and it answered: {}",
+                cap.name,
+                said.trim()
+            );
+            continue;
+        }
+        if said.contains("not built yet") {
+            refused.push(format!("{call} -> {}", said.trim()));
+        }
+    }
+    assert!(
+        refused.is_empty(),
+        "these queries still refuse, and every task they name is finished:\n  {}",
+        refused.join("\n  ")
+    );
+}

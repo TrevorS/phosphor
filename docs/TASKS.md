@@ -6491,7 +6491,7 @@ RULED: add the tasks."* An unowned debt recorded in a lint is a debt nobody is g
 
 ---
 
-- [ ] **T111 · The query answers** 📌
+- [x] **T111 · The query answers** 📌
   **Twelve declared queries answer `not built yet` and every task they name is ticked.** Found
   2026-08-25 while building `T069`, by the same method that found `T109` and `T110`: reading a
   refusal and checking the task it cites. Measured against the built binary this session, not
@@ -6515,6 +6515,80 @@ RULED: add the tasks."* An unowned debt recorded in a lint is a debt nobody is g
   *Done when:* each of the twelve answers its own row from the host rather than refusing, a
   door test calls every one of them through `--eval` and asserts none raises, and the row is
   re-stamped back off `T111` as each lands. *Needs:* T024
+
+  > **DONE 2026-08-25 — and it was twelve in the task and twenty in the tree.**
+  >
+  > The twelve above were found the way the entry says, one refusal at a time. Auditing every
+  > row mechanically — declared queries against the arms actually matched in
+  > `impl Answers for AppHost` — found **22 refusing, and 20 of them naming a task that is
+  > ticked**. The eight the entry does not list are `buffer`, `buffers`, `cursor`, `selection`,
+  > `viewport`, `keymap`, `review-block` and `theme`, naming `T033`, `T026`, `T010` and `T066`.
+  > Measured on the built binary, not inferred: `(theme)` answered *"not built yet — T010 builds
+  > it"* about a task that shipped at `S1`.
+  >
+  > **`lint-refusal-tasks.sh` could not see any of the eight, and the reason is the finding.**
+  > Its arming check asked `re.search(r"\bVariant\b", production)` — *"does this name appear
+  > anywhere?"* — and every one of those eight variant names is also an ordinary Rust identifier
+  > in `main.rs`. `Buffers` occurs 28 times, `Cursor` 16, `Theme` 9, `Keymap` 9. All eight read
+  > as armed. The check now requires the name to appear as an **enum path** —
+  > `\w*(?:Query|Action)::Variant` — which `phosphor_ui::theme::Theme` fails and `UiQuery::Theme`
+  > passes. **Third widening of this lint, and the third one found by measuring the binary rather
+  > than by reading the lint**: actions-only, then both tables, now both tables precisely.
+  >
+  > **Where the answers come from, and what each costs.** Two are pure registry reads
+  > (`capabilities`, `describe-capability`) and cost nothing — a `const` table cannot move, so
+  > they answer at `Revision::INITIAL`. One reads the options map the host already holds. Three
+  > read the store. The remaining fourteen are questions about the *editor*, and everything the
+  > editor is made of is on the loop's side of the barrier — `Editing` holds an `Rc<Cell<bool>>`
+  > and is not `Send`. So they read a per-frame `EditorSnapshot`, which is
+  > `HostState::panes`' published-rather-than-reached-for pattern applied to the rest of the
+  > screen.
+  >
+  > **The text is the one field that could not be published naively**, and the guard is
+  > `Editing::edits` — the same counter the LSP document sync in the same loop already uses, so
+  > a buffer nobody typed into is not copied and the cost is one copy per committed edit batch
+  > rather than per frame. `the_snapshot_reuses_text_the_edit_counter_says_has_not_moved` is
+  > built to fail if that guard is ever removed: the carried entry claims the counter the buffer
+  > really has and holds text the buffer never contained, so a rebuild overwrites it and the
+  > guard keeps it.
+  >
+  > **The keymap is the one that cannot be read per frame at all.** `Layer::entries` sets the
+  > stale flag *on purpose* — `keymap-entries` is a name the layer owns and may redefine — so
+  > calling it every frame would recompose the statusline every frame and delete the point of
+  > `T079`'s cache and `CP-2`'s benchmark. It is refreshed only on a frame where scheme had
+  > already run, and the flag its own call raises is taken back immediately, because letting it
+  > survive would ratchet the editor into permanently-stale. **The narrow cost is recorded
+  > rather than hidden**: a `keymap-entries` that mutated state would not invalidate the
+  > following frame. This is the same self-invalidating-frame trap `1d` fell into at `T069`,
+  > met from the other side and avoided by reading the flag's own doc first.
+  >
+  > **One ruling the build had to make**, at the `next-region-by` arm. The row takes a bare
+  > `from: Option<Position>` with no path, and regions live in files — line 12 of one file does
+  > not sort against line 12 of another, so a position alone cannot order the walk. The file
+  > therefore always comes from focus and `from` only moves the position *within* it; the order
+  > is (path, line, column) across the workspace and it wraps, so `]r` runs off the end of one
+  > file into the next the way `]u` already does. With no buffer focused it answers `Null`
+  > rather than guessing at the first region in the workspace.
+  >
+  > **`floats` answers by surface rather than by body**, which is what makes it cheap enough to
+  > publish every frame: a float's `body` is the whole composed subtree, and copying it would
+  > put the picker's contents into every frame that has a picker open. A passive float —
+  > completion, signature help, `1d`'s notice — is deliberately not listed as focused, because
+  > §9's rule is about which surface takes the keys and `Mood::Passive` takes none.
+  >
+  > **Verification, and every one of it was watched failing.** `parity.rs`'s
+  > `every_query_answers_or_names_a_task_that_is_open` walks the registry, builds each call from
+  > `registry::sample` with **required arguments only** — `(keymap)`, not `(keymap #false
+  > #false)` — and runs it through the real binary; the two `S8` watch queries are a shrink-only
+  > `OWED` table. Removing the `theme` arm makes it fail with `(theme) -> #raised · not built
+  > yet — T010 builds it`. Three unit tests cover what `--eval` cannot see, because an empty
+  > answer is a pass there: three planted defects — the text guard bypassed, the closed-buffer
+  > `retain` removed, and a 0-based cursor — were each caught by exactly the test written for
+  > them.
+  >
+  > **What is left refusing is two rows, and both are honest**: `watches` (`T074`) and
+  > `watch-values` (`T075`), which are `S8` and cannot answer about a watch that has no model
+  > yet.
 
 ---
 

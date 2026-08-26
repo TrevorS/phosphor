@@ -5038,3 +5038,159 @@ fn a_terminal_that_will_not_paint_a_background_asks_for_the_marker() {
     assert_eq!(crate::state_fill(true), phosphor_ui::gutter::Fill::Block);
     assert_eq!(crate::state_fill(false), phosphor_ui::gutter::Fill::Marker);
 }
+
+// ---------------------------------------------------------------------------
+// `T111` — the editor snapshot the queries read
+// ---------------------------------------------------------------------------
+
+/// The snapshot every `T111` editor query answers from, over one buffer.
+fn snapshot_of(text: &str) -> super::EditorSnapshot {
+    snapshot_carrying(text, BTreeMap::new())
+}
+
+/// The same, with a text map carried in from a previous frame.
+fn snapshot_carrying(
+    text: &str,
+    carried: BTreeMap<u64, (u64, Vec<String>)>,
+) -> super::EditorSnapshot {
+    let bench = editing(text);
+    let (buffers, _) = Buffers::new(bench.editing);
+    super::editor_snapshot(
+        &buffers,
+        &bench.panes,
+        phosphor_core::request::EditMode::Normal,
+        "",
+        &super::builtin("phosphor-dark").expect("a shipped theme"),
+        "phosphor-dark",
+        Surface::Buffer,
+        Vec::new(),
+        carried,
+    )
+}
+
+/// **The snapshot describes the buffer that is actually open** (`T111`).
+///
+/// The fourteen editor queries are reads of this structure and nothing else, so
+/// a snapshot that described the wrong buffer would make every one of them
+/// wrong at once while each still *answered* — which is exactly the failure the
+/// `--eval` walk in `parity.rs` cannot see, because an empty answer is a pass
+/// there.
+#[test]
+fn the_snapshot_describes_the_open_buffer() {
+    let held = snapshot_of("one\ntwo\nthree\n");
+
+    assert_eq!(held.buffers.len(), 1, "one buffer is open");
+    assert_eq!(
+        held.focused,
+        Some(0),
+        "and it is the focused one — `buffer` with no argument answers about it"
+    );
+    // Three lines, not four: a trailing newline ends the last line rather than
+    // starting an empty one, which is what `str::lines` means and what a person
+    // counting the rows on screen would say.
+    assert_eq!(
+        super::field_of(&held.buffers[0], "lines"),
+        Value::Int(3),
+        "the line count is the buffer's, not the rope's byte length"
+    );
+    assert_eq!(
+        super::field_of(&held.buffers[0], "dirty"),
+        Value::Bool(false),
+        "nothing has been typed into it"
+    );
+    assert_eq!(held.mode, "normal", "the mode is the machine's spelling");
+
+    // The cursor is **1-based**, which is what `1a` and `8e` draw and what the
+    // `12:1` counter means. A 0-based answer here would put every `goto`
+    // composed in Steel one line off.
+    let pane = held.panes.get(&0).expect("the focused pane is described");
+    assert_eq!(
+        super::field_of(&super::field_of(pane, "cursor"), "line"),
+        Value::Int(1),
+        "line 1, not line 0"
+    );
+    assert_eq!(
+        super::field_of(&super::field_of(pane, "cursor"), "column"),
+        Value::Int(1),
+        "column 1, not column 0"
+    );
+    // No selection is `Null` rather than an empty span at the cursor — an empty
+    // span reads as a real selection of nothing.
+    assert_eq!(
+        super::field_of(pane, "selection"),
+        Value::Null,
+        "there is no live selection"
+    );
+
+    assert_eq!(
+        held.refs.get("focused"),
+        Some(&0),
+        "`{{focused}}` resolves, so `(cursor (hash \"kind\" \"focused\"))` has a pane"
+    );
+    assert_eq!(
+        super::field_of(&held.theme, "slug"),
+        Value::Text("phosphor-dark".to_owned()),
+        "the theme answers the slug the frame was drawn with"
+    );
+}
+
+/// **The text is copied only when the edit stream moved** (`T111`).
+///
+/// This is the assertion that the guard is *consulted* rather than decorative,
+/// and it is deliberately built so that a snapshot which rebuilt the text
+/// unconditionally would fail: the carried entry claims the same edit counter
+/// the buffer really has, and holds text the buffer has never contained. A
+/// rebuild overwrites it; the guard keeps it.
+///
+/// **Why it matters enough to test.** Without the guard this is a full copy of
+/// every open buffer on every frame, which would make an idle editor's cost a
+/// function of file size — the exact shape `HostState::transcript` already
+/// refuses one field over. With it, the cost is one copy per committed edit
+/// batch, which is the price the LSP document sync in the same loop already
+/// pays off the same counter.
+#[test]
+fn the_snapshot_reuses_text_the_edit_counter_says_has_not_moved() {
+    let mut carried = BTreeMap::new();
+    // Edit counter 0 is what an untouched buffer reports, so this entry claims
+    // to be current — and its text is a sentinel no buffer here ever held.
+    carried.insert(0_u64, (0_u64, vec!["carried, not rebuilt".to_owned()]));
+
+    let held = snapshot_carrying("one\ntwo\nthree\n", carried);
+
+    assert_eq!(
+        held.text.get(&0).map(|(_, lines)| lines.clone()),
+        Some(vec!["carried, not rebuilt".to_owned()]),
+        "the counter had not moved, so the previous frame's copy was kept"
+    );
+    // And the row's line count is read off the same map, so the two cannot
+    // disagree about a buffer — one derivation, not two.
+    assert_eq!(
+        super::field_of(&held.buffers[0], "lines"),
+        Value::Int(1),
+        "the line count comes off the text that was published"
+    );
+}
+
+/// **A closed buffer's text leaves the map** (`T111`).
+///
+/// Ids are never reused, so a stale entry could never answer about the wrong
+/// file — but it would never be freed either, and a long session that opened
+/// and closed many files would carry every one of them forever. `retain` is the
+/// whole fix and this is what proves it runs.
+#[test]
+fn the_snapshot_forgets_a_buffer_that_is_no_longer_open() {
+    let mut carried = BTreeMap::new();
+    carried.insert(0_u64, (0_u64, vec!["current".to_owned()]));
+    carried.insert(99_u64, (7_u64, vec!["closed long ago".to_owned()]));
+
+    let held = snapshot_carrying("one\n", carried);
+
+    assert!(
+        held.text.contains_key(&0),
+        "the open buffer is still described"
+    );
+    assert!(
+        !held.text.contains_key(&99),
+        "a buffer nothing has open is dropped rather than carried for the session"
+    );
+}

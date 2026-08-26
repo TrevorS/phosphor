@@ -1289,6 +1289,55 @@ impl Shared {
         self.lock().regions().get(id).map(Region::to_value)
     }
 
+    /// The `next-region-by` query — `6b`'s `]r` (`T111`).
+    ///
+    /// **Ordered by (path, line, column) across the workspace, and it wraps.**
+    /// The caller's `from` carries the focused file, because a bare `Position`
+    /// cannot order regions that live in different files — the reasoning is at
+    /// the arm in `main.rs`. Running off the end answers the *first* region by
+    /// that author rather than nothing, which is what makes it a walk; `]u`
+    /// already behaves this way and a walk that stopped at the last row would
+    /// be the one motion in the editor that silently did nothing.
+    ///
+    /// [`Value::Null`] when the author has no regions at all, and when there is
+    /// no focused file to walk from. Both are questions with a legitimate no.
+    pub(crate) fn next_region_by(
+        &self,
+        author: Actor,
+        from: Option<&(PathBuf, Position)>,
+    ) -> Value {
+        let Some((path, at)) = from else {
+            return Value::Null;
+        };
+        let here = key_for(path);
+        let held = self.lock();
+        let lens = Lens {
+            author: Some(author),
+            ..Lens::everything()
+        };
+        // Collected and sorted rather than answered off the store's own order:
+        // `Regions::matching` yields in id order, which is *declaration* order,
+        // and a walk that followed the order claude happened to declare things
+        // in would jump around the file.
+        let mut ordered: Vec<&Region> = held.regions().matching(&lens).collect();
+        ordered.sort_by(|left, right| {
+            key_for(&left.path)
+                .cmp(&key_for(&right.path))
+                .then(left.span.start.line.cmp(&right.span.start.line))
+                .then(left.span.start.column.cmp(&right.span.start.column))
+        });
+        let after = |region: &Region| {
+            let path = key_for(&region.path);
+            (path.as_path(), region.span.start.line, region.span.start.column)
+                > (here.as_path(), at.line, at.column)
+        };
+        ordered
+            .iter()
+            .find(|region| after(region))
+            .or_else(|| ordered.first())
+            .map_or(Value::Null, |region| region.to_value())
+    }
+
     /// The `unseen-count` query — the statusline's `●n`.
     pub(crate) fn unseen_count(&self, scope: &Scope) -> usize {
         self.lock().regions().unseen_count(scope)

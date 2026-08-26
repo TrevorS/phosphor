@@ -1083,6 +1083,66 @@ struct HostState {
     /// be two truths however carefully they were kept in step, so this is a
     /// copy of the one and never a second original.
     asks: Vec<Value>,
+    /// The editor's own shape, as the loop last drew it (`T111`).
+    ///
+    /// **The fourteen queries that had nowhere to read from.** `buffers`,
+    /// `cursor`, `mode`, `theme` and their neighbours are questions about the
+    /// *editor*, and everything the editor is made of lives on the loop's side
+    /// of the barrier: `Editing` holds an `Rc<Cell<bool>>` and is not `Send`,
+    /// `Panes` is the loop's, and the input machine is the loop's. So this is
+    /// [`HostState::panes`]' pattern applied to the rest of the screen —
+    /// derived once per frame by the thread that owns those things, and read
+    /// here.
+    ///
+    /// [`None`] before the first frame, which is `query.rs`'s *"an absent thing
+    /// answers empty"*: there is genuinely no screen yet, and a `--eval` that
+    /// never draws one is the ordinary case rather than a failure.
+    editor: Option<EditorSnapshot>,
+}
+
+/// What the loop last knew about the editor, for `T111`'s queries.
+///
+/// **Owned values, never borrows**, which is `query.rs`'s second prohibition
+/// and not a convenience: *"Steel is garbage-collected and holds what it is
+/// given across mutations; owned snapshots make that stale rather than
+/// unsound."*
+#[derive(Debug, Default)]
+struct EditorSnapshot {
+    /// One record per open buffer, by id: path, language, dirty, line count.
+    buffers: Vec<Value>,
+    /// Which buffer has focus, for the `buffer` query's *"absent means the
+    /// focused one"*.
+    focused: Option<u64>,
+    /// Each buffer's lines, and the edit counter they were copied at.
+    ///
+    /// **Guarded on `Editing::edits`, which is the gate `didChange` already
+    /// uses.** A full-text copy per frame would make an idle editor's cost a
+    /// function of file size; a copy per *committed edit batch* is the same
+    /// order the LSP document sync in this loop already pays, for the same
+    /// buffers, off the same counter. A buffer nobody typed into is not copied
+    /// at all.
+    text: BTreeMap<u64, (u64, Vec<String>)>,
+    /// One record per pane: cursor, selection and viewport.
+    panes: BTreeMap<u64, Value>,
+    /// What each non-`Id` [`PaneRef`] resolved to on this frame.
+    ///
+    /// **Resolved by the loop because only the loop has the tree.**
+    /// `PaneRef::Direction` is *"the nearest ancestor split on the matching
+    /// axis, then that neighbour's nearest leaf"* — a fact about arrangement,
+    /// and a query thread that guessed at it would answer about a screen that
+    /// is not the one on screen.
+    refs: BTreeMap<String, u64>,
+    /// The edit mode, as the machine reports it — not the statusline's chip,
+    /// which is a surface label (`mode`'s own row says so).
+    mode: String,
+    /// The keys typed so far in an unfinished sequence — `3c`'s `SPC` pending.
+    pending: String,
+    /// The open floats, at most one of them focused (Design Language §9).
+    floats: Vec<Value>,
+    /// The active theme: slug, ground and the actor hues.
+    theme: Value,
+    /// The live keymap, flattened — every bound sequence with what it runs.
+    keymap: Vec<Value>,
 }
 
 /// The boot file's name, and it names two different files.
@@ -1834,6 +1894,141 @@ impl AppHost {
         }
     }
 
+    /// Publish the editor's shape, so `T111`'s fourteen have somewhere to read
+    /// from. See [`HostState::editor`].
+    ///
+    /// **The text carries forward across a frame that did not change it.** The
+    /// caller builds [`EditorSnapshot::text`] by asking each buffer whether its
+    /// edit counter moved, and needs the previous answer to do that — so this
+    /// hands it back rather than making the loop keep a second copy that could
+    /// drift from the published one.
+    fn publish_editor(&self, snapshot: EditorSnapshot) {
+        if let Ok(mut state) = self.state.lock() {
+            state.editor = Some(snapshot);
+        }
+    }
+
+    /// What was published last frame, for the text carry-forward above.
+    ///
+    /// Returns the map rather than the whole snapshot because that is the only
+    /// part that is expensive to rebuild; everything else is a handful of
+    /// fields the loop already has in hand.
+    fn published_text(&self) -> BTreeMap<u64, (u64, Vec<String>)> {
+        self.state
+            .lock()
+            .ok()
+            .and_then(|state| state.editor.as_ref().map(|held| held.text.clone()))
+            .unwrap_or_default()
+    }
+
+    /// Reads one thing out of the published snapshot, or its default.
+    ///
+    /// **`T::default()` before the first frame and on a poisoned lock**, which
+    /// is one decision made once rather than fourteen `unwrap_or_default`s that
+    /// could each drift: an editor that has not drawn yet has no buffers, no
+    /// panes and no mode, and every one of those is honestly empty rather than
+    /// an error.
+    fn editor<T: Default>(&self, read: impl FnOnce(&EditorSnapshot) -> T) -> T {
+        self.state
+            .lock()
+            .ok()
+            .and_then(|state| state.editor.as_ref().map(read))
+            .unwrap_or_default()
+    }
+
+    /// One field of the pane a [`PaneRef`] names.
+    ///
+    /// The four relative arms are looked up in [`EditorSnapshot::refs`], which
+    /// the loop filled in with [`Panes::resolve`] — the same resolver every
+    /// Action uses, so a query and a mutation naming `{direction: "left"}`
+    /// cannot mean different panes.
+    fn pane_field(&self, pane: &PaneRef, field: &str) -> Value {
+        self.editor(|held| {
+            let id = match pane {
+                PaneRef::Id { id } => Some(id.0),
+                PaneRef::Focused {} => held.refs.get("focused").copied(),
+                PaneRef::Next {} => held.refs.get("next").copied(),
+                PaneRef::Prev {} => held.refs.get("prev").copied(),
+                PaneRef::Direction { direction } => {
+                    held.refs.get(direction_name(*direction)).copied()
+                }
+            };
+            id.and_then(|id| held.panes.get(&id))
+                .map_or(Value::Null, |row| field_of(row, field))
+        })
+    }
+
+    /// Where the cursor is, and in which file — for `next-region-by`'s
+    /// *"absent means the cursor"*.
+    ///
+    /// **Both halves, because a `Position` alone cannot order a walk.**
+    /// `next-region-by` takes a bare `from: Option<Position>` with no path, and
+    /// regions live in files: comparing line 12 of one file against line 12 of
+    /// another is not an ordering. So the file comes from focus and the row's
+    /// argument only ever moves the position within it. See the arm for the
+    /// ruling that follows from this.
+    fn published_place(&self) -> Option<(PathBuf, Position)> {
+        let cursor = <Position as phosphor_core::value::Wire>::from_value(&self.pane_field(
+            &PaneRef::Focused {},
+            "cursor",
+        ))
+        .ok()?;
+        let path = self.editor(|held| {
+            held.focused
+                .and_then(|id| {
+                    held.buffers
+                        .iter()
+                        .find(|row| buffer_id_of(row) == Some(id))
+                        .cloned()
+                })
+                .and_then(|row| match field_of(&row, "path") {
+                    Value::Text(path) => Some(PathBuf::from(path)),
+                    _ => None,
+                })
+        })?;
+        Some((path, cursor))
+    }
+
+    /// The lines a [`Target`] names, from the published text.
+    ///
+    /// **Five arms answer and the rest answer empty**, and the split is what a
+    /// *pure, synchronous* read can honestly do: a buffer, a file that is open,
+    /// an explicit span, the cursor's line and the selection are all in the
+    /// snapshot. A region, an anchor, a hunk or a picker row would each need a
+    /// second lookup this side of the barrier does not have — and `file` naming
+    /// something nobody has open answers empty rather than reading the disk,
+    /// which `query.rs` forbids outright.
+    fn target_lines(&self, target: &Target) -> Vec<String> {
+        self.editor(|held| {
+            let of = |id: u64| held.text.get(&id).map(|(_, lines)| lines.clone());
+            let by_path = |path: &Path| {
+                held.buffers
+                    .iter()
+                    .find(|row| {
+                        matches!(field_of(row, "path"), Value::Text(held)
+                            if Path::new(&held) == path)
+                    })
+                    .and_then(buffer_id_of)
+            };
+            match target {
+                Target::Buffer { id } => of(id.0),
+                Target::File { path } => by_path(path).and_then(of),
+                Target::Explicit { path, span } => by_path(path).and_then(of).map(|lines| {
+                    let first = span.start.line.saturating_sub(1) as usize;
+                    let last = span.end.line as usize;
+                    lines
+                        .into_iter()
+                        .skip(first)
+                        .take(last.saturating_sub(first))
+                        .collect()
+                }),
+                Target::Cursor {} | Target::Selection {} => held.focused.and_then(of),
+                _ => None,
+            }
+            .unwrap_or_default()
+        })
+    }
+
     /// **`5c`, merged from the three places claude's news already lives**
     /// (`T067`).
     ///
@@ -2359,6 +2554,257 @@ impl Answers for AppHost {
                     || Ok(self.answered(Value::Null)),
                     |value| Ok(self.answered(value)),
                 ),
+            // `T111` — the registry as data, and it is **the** query the
+            // introspection story rests on: `T024`'s own *done when* is about
+            // this enumeration, `6b`'s help surface composes over it, and it
+            // answered *"not built yet — T024 builds it"* against a ticked
+            // `T024` from `S2` until now.
+            //
+            // Derived from [`phosphor_core::registry::capabilities`] and never
+            // assembled here, so a capability added to the table appears in
+            // this answer with no edit — which is the whole mechanism the
+            // one-registry lint protects.
+            Query::Input(phosphor_core::query::InputQuery::Capabilities { domain }) => {
+                let rows = phosphor_core::registry::capabilities()
+                    .into_iter()
+                    // An unknown domain answers an empty list rather than an
+                    // error, which is `query.rs`'s *"an absent thing answers
+                    // empty"*: asking what is in a domain nobody declared is a
+                    // question with a legitimate nothing.
+                    .filter(|cap| domain.as_ref().is_none_or(|want| cap.domain == want))
+                    .map(|cap| capability_value(&cap))
+                    .collect();
+                Ok(Answer {
+                    value: Value::List(rows),
+                    // The registry is a `const`. It cannot move, so every read
+                    // of it is true at every revision — `Revision::INITIAL` is
+                    // the honest token rather than a borrowed store number that
+                    // would make a frame cache re-run this for no reason.
+                    revision: Revision::INITIAL,
+                })
+            }
+            // One row by its door name. `Null` for a name the table does not
+            // have, on `region`'s rule — a surface holding a name across a
+            // version is asking a question with a legitimate no.
+            Query::Input(phosphor_core::query::InputQuery::DescribeCapability { name }) => {
+                Ok(Answer {
+                    value: phosphor_core::registry::lookup(name)
+                        .map_or(Value::Null, |cap| capability_value(&cap)),
+                    revision: Revision::INITIAL,
+                })
+            }
+            // `T111` — every declared option and its value.
+            //
+            // **Off the same map `option-value` reads**, so `(set-option!
+            // "tab-width" 8)` and this answer cannot disagree: there is one
+            // table on [`HostState`] and both go through it. An editor where
+            // nothing has been set answers an empty record, which is the
+            // truthful shape — `Null` would say *"there are no options"* about
+            // a vocabulary that declares plenty.
+            Query::Ui(phosphor_core::query::UiQuery::Options {}) => Ok(Answer {
+                value: Value::Record(self.state.lock().ok().map_or_else(Args::new, |state| {
+                    state
+                        .options
+                        .iter()
+                        .fold(Args::new(), |args, (key, held)| {
+                            args.with(key, held.clone())
+                        })
+                })),
+                revision: Revision::INITIAL,
+            }),
+            // `T111` — the editor's own shape, all fourteen off one published
+            // snapshot. See [`HostState::editor`] for why it is published
+            // rather than reached for, and [`EditorSnapshot`] for what each
+            // field costs.
+            //
+            // **Every one of these answers empty before the first frame**
+            // rather than refusing, which is `query.rs`'s *"an absent thing
+            // answers empty"*. A `--eval` that never draws a screen is the
+            // ordinary case for the CLI door, not a failure — and a refusal
+            // there would be the same wrong answer this task exists to remove.
+            Query::Buffer(phosphor_core::query::BufferQuery::Buffers {}) => {
+                Ok(self.answered(Value::List(self.editor(|held| held.buffers.clone()))))
+            }
+            Query::Buffer(phosphor_core::query::BufferQuery::Buffer { buffer }) => {
+                Ok(self.answered(self.editor(|held| {
+                    let wanted = buffer.map(|id| id.0).or(held.focused);
+                    wanted
+                        .and_then(|id| {
+                            held.buffers
+                                .iter()
+                                .find(|row| buffer_id_of(row) == Some(id))
+                                .cloned()
+                        })
+                        // `Null` for a buffer id nothing has open, on
+                        // `region`'s rule: an agent holding an id across a
+                        // `close-buffer` is asking a question with a
+                        // legitimate no. Ids are never reused
+                        // ([`Buffers::next`]), so this can never answer about
+                        // the wrong file.
+                        .unwrap_or(Value::Null)
+                })))
+            }
+            // Every buffer with unsaved changes — the set `:quit` refuses over
+            // and the statusline's `[+]` counts. Filtered here rather than
+            // published twice, so it cannot disagree with `buffers`.
+            Query::Buffer(phosphor_core::query::BufferQuery::DirtyBuffers {}) => {
+                Ok(self.answered(Value::List(self.editor(|held| {
+                    held.buffers
+                        .iter()
+                        .filter(|row| field_of(row, "dirty") == Value::Bool(true))
+                        .cloned()
+                        .collect()
+                }))))
+            }
+            // The text of a target, and the lines of a target — one resolver,
+            // two shapes.
+            //
+            // **A file nobody has open answers empty rather than reading the
+            // disk**, and that is `query.rs`'s hard prohibition rather than a
+            // shortcut: *"No disk, no network … A query runs inside the frame
+            // path when the frame cache misses, and a query that can block can
+            // drop a frame."* `open-file!` is the capability that makes a file
+            // readable here.
+            Query::Buffer(phosphor_core::query::BufferQuery::BufferText { target }) => {
+                Ok(self.answered(Value::Text(self.target_lines(target).join("\n"))))
+            }
+            Query::Buffer(phosphor_core::query::BufferQuery::BufferLines { target }) => {
+                Ok(self.answered(Value::List(
+                    self.target_lines(target)
+                        .into_iter()
+                        .map(Value::Text)
+                        .collect(),
+                )))
+            }
+            // The three per-pane reads. `PaneRef`'s five arms are resolved by
+            // the *loop* and published — see [`EditorSnapshot::refs`] for why a
+            // compass direction cannot be answered from this side.
+            Query::Buffer(phosphor_core::query::BufferQuery::Cursor { pane }) => {
+                Ok(self.answered(self.pane_field(pane, "cursor")))
+            }
+            Query::Buffer(phosphor_core::query::BufferQuery::Selection { pane }) => {
+                Ok(self.answered(self.pane_field(pane, "selection")))
+            }
+            Query::Buffer(phosphor_core::query::BufferQuery::Viewport { pane }) => {
+                Ok(self.answered(self.pane_field(pane, "viewport")))
+            }
+            // `T111` — the machine's own two. **The mode the machine reports,
+            // not the statusline's chip**, which is the row's own distinction:
+            // a chip is a surface label and `Replace` folds into the insert
+            // scope for keymap purposes while still being `R` to the user.
+            Query::Input(phosphor_core::query::InputQuery::Mode {}) => {
+                Ok(self.answered(Value::Text(self.editor(|held| held.mode.clone()))))
+            }
+            Query::Input(phosphor_core::query::InputQuery::PendingKeys {}) => {
+                Ok(self.answered(Value::Text(self.editor(|held| held.pending.clone()))))
+            }
+            // The open floats, at most one focused (Design Language §9).
+            Query::Ui(phosphor_core::query::UiQuery::Floats {}) => {
+                Ok(self.answered(Value::List(self.editor(|held| held.floats.clone()))))
+            }
+            // The active theme. **Answers the theme the last frame was drawn
+            // with**, which is what makes it a truthful answer during `T092`'s
+            // rebuild: a slug read off the CLI argument would go on saying
+            // `phosphor-dark` after `:theme tokyo-night` had already redrawn.
+            Query::Ui(phosphor_core::query::UiQuery::Theme {}) => {
+                Ok(self.answered(self.editor(|held| held.theme.clone())))
+            }
+            // The live keymap under a prefix — *"redefining a binding changes
+            // this at once"*, which is true here because the rows are read off
+            // the layer every frame rather than cached at boot.
+            Query::Input(phosphor_core::query::InputQuery::Keymap { prefix, mode }) => {
+                let want_prefix = prefix.as_ref().map(|keys| keys.0.clone());
+                let want_mode = mode.map(mode_name);
+                Ok(self.answered(Value::List(self.editor(|held| {
+                    held.keymap
+                        .iter()
+                        .filter(|row| {
+                            want_prefix.as_ref().is_none_or(|want| {
+                                matches!(field_of(row, "keys"), Value::Text(keys)
+                                    if keys.starts_with(want.as_str()))
+                            })
+                        })
+                        .filter(|row| {
+                            want_mode.as_ref().is_none_or(|want| {
+                                field_of(row, "mode") == Value::Text((*want).to_owned())
+                            })
+                        })
+                        .cloned()
+                        .collect()
+                }))))
+            }
+            // What one key does, and where that is defined. `Null` for a key
+            // nothing is bound to — which is a question with a legitimate no,
+            // and the answer `T035`'s *"nothing is bound to this"* notice is
+            // already built on.
+            Query::Input(phosphor_core::query::InputQuery::DescribeKey { keys }) => {
+                let wanted = keys.0.clone();
+                Ok(self.answered(self.editor(|held| {
+                    held.keymap
+                        .iter()
+                        .find(|row| field_of(row, "keys") == Value::Text(wanted.clone()))
+                        .cloned()
+                        .unwrap_or(Value::Null)
+                })))
+            }
+            // `T111` — the three that read the store rather than the screen.
+            //
+            // `6b` draws `(next-region-by claude)` composing into a `goto`, and
+            // that is the shape: this answers the *region*, and the walk is
+            // Steel's. **From the cursor when `from` is absent**, which the row
+            // promises and which is why it needs the published snapshot at all.
+            // **The ruling this arm needed, made here and recorded at `T111`.**
+            // The row's `from` is a bare `Position` with no path, and regions
+            // live in files — line 12 of one file does not sort against line 12
+            // of another, so a position alone cannot order the walk. The file
+            // therefore always comes from focus and `from` only moves the
+            // position *within* it; the order is (path, line, column) across
+            // the workspace, so `]r` runs off the end of one file into the next
+            // and wraps to the first, which is how `]u` already behaves and
+            // what makes `6b`'s `(next-region-by claude)` a walk rather than a
+            // lookup.
+            //
+            // With no buffer focused there is no file to walk from, and the
+            // answer is `Null` rather than a guess at the first region in the
+            // workspace.
+            Query::Region(RegionQuery::NextRegionBy { author, from }) => {
+                let start = self
+                    .published_place()
+                    .map(|(path, cursor)| (path, from.unwrap_or(cursor)));
+                Ok(self.answered(self.store.next_region_by(*author, start.as_ref())))
+            }
+            // A block's regions, **named by its title as `6b` draws it**. Two
+            // blocks with one title is a state the store permits, so this takes
+            // the first and says nothing clever about the rest — a title is
+            // what a person types, and an ambiguity here is a question for the
+            // person rather than an error for the door.
+            Query::Region(RegionQuery::BlockRegions { block }) => {
+                let found = self
+                    .store
+                    .blocks()
+                    .into_iter()
+                    .find(|candidate| candidate.title == *block);
+                Ok(self.answered(Value::List(
+                    found
+                        .and_then(|found| self.store.block_regions(found.id))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|id| self.store.answer_region(id))
+                        .collect(),
+                )))
+            }
+            // One block: its files, groups and annotations. The same
+            // [`block_value`] `review-blocks` answers with, so the list and the
+            // single read cannot disagree about a block.
+            Query::Review(phosphor_core::query::ReviewQuery::ReviewBlock { block }) => {
+                Ok(self.answered(
+                    self.store
+                        .blocks()
+                        .iter()
+                        .find(|candidate| candidate.id == *block)
+                        .map_or(Value::Null, block_value),
+                ))
+            }
             // Everything else, by its own row. Derived, never listed.
             query => Err(QueryError::NotYetImplemented {
                 task: query.spec().since.task,
@@ -3762,6 +4208,11 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         (None, false, None) => Surface::Buffer,
     };
 
+    // **`T111`'s carried keymap.** Refreshed only on a frame where scheme
+    // already ran, for the reason spelled out at the refresh:
+    // [`Layer::entries`] is not a call that may happen every frame.
+    let mut keymap_rows: Vec<Value> = Vec::new();
+
     // `T079`, on the shipping path. `revision` is bumped when the statusline's
     // facts change and never per frame, so the composer runs on a state change
     // and only then; `last_vm` is what "changed" is measured against until
@@ -4299,6 +4750,40 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             unseen_per_buffer.insert(*id, u32::try_from(decorated.unseen).unwrap_or(u32::MAX));
             columns.insert(*id, decorated.marks);
         }
+
+        // **`T111`'s editor snapshot, published before the frame takes its
+        // mutable borrow.** See [`HostState::editor`] for why it is published
+        // rather than reached for.
+        //
+        // Everything here is already in the loop's hand this pass, and each
+        // field answers the cost question differently: the buffer rows, panes,
+        // mode and floats are a handful of small values, the same order
+        // [`Panes::describe`] already costs; the **text** is guarded on
+        // `Editing::edits`, the gate the LSP document sync above already uses,
+        // so a buffer nobody typed into is not copied.
+        //
+        // **The keymap is last frame's**, and deliberately: it is refreshed
+        // further down, on frames where scheme already ran, because
+        // [`Layer::entries`] may not be called every frame. That makes this one
+        // field a frame behind the rest — the same rule [`HostState::panes`]
+        // states for the shape of the screen, and a keymap changed during this
+        // pass is published by the end of it.
+        //
+        // It sits here rather than beside `publish_panes` because the next line
+        // takes `&mut` on the focused buffer and holds it for the rest of the
+        // frame; a snapshot of every buffer cannot be built while one of them
+        // is exclusively borrowed.
+        host.publish_editor(editor_snapshot(
+            &buffers,
+            &panes,
+            machine.mode(),
+            &key::notation_of(&machine.pending().keys).0,
+            &theme,
+            &cli.theme,
+            surface,
+            keymap_rows.clone(),
+            host.published_text(),
+        ));
         let editing = buffers.at_mut(held);
 
         // **`T069` — the watcher follows whatever buffer is in front of you.**
@@ -4418,8 +4903,48 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // this reads. `CP-2` found the keybinding half of the old rule missing
         // by running it; this is what makes that unfindable-by-running rather
         // than merely fixed.
-        if layer.stale() {
+        let ran_scheme = layer.stale();
+        if ran_scheme {
             status_cache.invalidate();
+        }
+
+        // **`T111`'s editor snapshot** — the fourteen queries that had nowhere
+        // to read from. See [`HostState::editor`].
+        //
+        // Everything here is already in the loop's hand this pass; the only
+        // question was cost, and each field answers it differently:
+        //
+        // * the **buffer rows, panes, mode and floats** are a handful of small
+        //   values per frame, the same order [`Panes::describe`] already costs,
+        // * the **text** is guarded on `Editing::edits`, which is the gate the
+        //   LSP document sync above already uses — a buffer nobody typed into
+        //   is not copied,
+        // * the **keymap** is the one that cannot be read per frame at all.
+        //   [`Layer::entries`] sets the stale flag on purpose, because
+        //   `keymap-entries` is a name the layer owns and may redefine — so
+        //   calling it every frame would recompose the statusline every frame
+        //   and delete the whole point of `T079`'s cache and `CP-2`'s
+        //   benchmark. It is refreshed only on a frame where scheme had
+        //   *already* run, and the flag its own call raises is taken back
+        //   immediately: this call is bookkeeping and letting its flag survive
+        //   would ratchet the editor into permanently-stale. The narrow cost is
+        //   recorded rather than hidden — a `keymap-entries` that mutated state
+        //   would not invalidate the following frame.
+        if ran_scheme {
+            keymap_rows = layer
+                .entries()
+                .iter()
+                .map(|entry| {
+                    Value::Record(
+                        Args::new()
+                            .with("keys", Value::Text(entry.keys.0.clone()))
+                            .with("mode", Value::Text(entry.scope.clone()))
+                            .with("runs", Value::Text(entry.verb.clone()))
+                            .with("group", Value::Bool(entry.group)),
+                    )
+                })
+                .collect();
+            let _ = layer.stale();
         }
 
         // What the interpreter draws this frame. **One tree, always** — the
@@ -6922,6 +7447,130 @@ fn review_rows(store: &store::Shared, review: &Review) -> Vec<Option<ReviewRow>>
     rows
 }
 
+/// One field out of a record, or [`Value::Null`].
+///
+/// **`Null` for a missing field rather than a panic**, which is the same rule
+/// every `T111` arm keeps: these records are built one frame and read the next,
+/// and a reader that could crash on a shape that moved would make the query
+/// layer the most fragile thing in the process rather than the most inert.
+fn field_of(value: &Value, name: &str) -> Value {
+    match value {
+        Value::Record(fields) => fields.get(name).cloned().unwrap_or(Value::Null),
+        _ => Value::Null,
+    }
+}
+
+/// The `buffer` field of a published buffer record, as a raw id.
+fn buffer_id_of(value: &Value) -> Option<u64> {
+    match field_of(value, "buffer") {
+        Value::Int(id) => u64::try_from(id).ok(),
+        _ => None,
+    }
+}
+
+/// A compass direction's key in [`EditorSnapshot::refs`].
+///
+/// The **wire** spelling, off [`Direction`]'s own `wire_choice!`, so the key the
+/// loop writes and the key a query reads are one name rather than two literals
+/// that drift.
+fn direction_name(direction: Direction) -> &'static str {
+    match direction {
+        Direction::Up => "up",
+        Direction::Down => "down",
+        Direction::Left => "left",
+        Direction::Right => "right",
+    }
+}
+
+/// An edit mode's wire spelling, for the `mode` query and the keymap filter.
+///
+/// Through [`Wire`] rather than a second `match`, because `wire_choice!` already
+/// declares these names and a hand-written copy is the drift `PERSIST_VERB`'s
+/// doc refuses: *"two spellings of one name drift, and the one that drifts
+/// silently is the Rust one."*
+fn mode_name(mode: EditMode) -> String {
+    match <EditMode as phosphor_core::value::Wire>::to_value(&mode) {
+        Value::Text(name) => name,
+        _ => String::new(),
+    }
+}
+
+/// One capability's row as plain data, for `capabilities` and
+/// `describe-capability` (`T111`).
+///
+/// **Derived from the registry, never listed here.** That is the same rule
+/// `lint-one-registry.sh` holds the three doors to, arriving at the query that
+/// *enumerates* them: a field invented in this function would be a second
+/// definition of a row that already exists, and the door-parity test could not
+/// see it drift. Every value below is read off [`Capability`].
+///
+/// **The three door names are the point.** `capabilities` is what `6b`'s help
+/// surface is built on, and a help page that could not say *"this is
+/// `mark-seen!` in scheme, `phosphor/mark-seen` over MCP and `phosphor
+/// mark-seen` at the shell"* would be a list of names with no way to use them.
+/// [`Capability::name_in`] is a total function over [`Door`], so a fourth door
+/// is a compile error here rather than a column that silently goes missing.
+fn capability_value(cap: &phosphor_core::registry::Capability) -> Value {
+    use phosphor_core::registry::{CapabilityKind, Door, McpPolicy};
+    let mut fields = Args::new();
+    fields.set("name", Value::Text(cap.name.to_owned()));
+    fields.set("domain", Value::Text(cap.domain.to_owned()));
+    fields.set("doc", Value::Text(cap.doc.to_owned()));
+    fields.set(
+        "kind",
+        Value::Text(
+            match cap.kind {
+                CapabilityKind::Action => "action",
+                CapabilityKind::Query => "query",
+            }
+            .to_owned(),
+        ),
+    );
+    fields.set("phase", Value::Text(cap.since.phase.as_str().to_owned()));
+    fields.set("task", Value::Text(cap.since.task.to_owned()));
+    fields.set(
+        "mcp",
+        Value::Text(
+            match cap.mcp {
+                McpPolicy::Allow => "allow",
+                McpPolicy::Ask => "ask",
+                McpPolicy::Deny => "deny",
+            }
+            .to_owned(),
+        ),
+    );
+    fields.set("steel", Value::Text(cap.name_in(Door::Steel)));
+    fields.set("mcp-name", Value::Text(cap.name_in(Door::Mcp)));
+    fields.set("cli", Value::Text(cap.name_in(Door::Cli)));
+    fields.set(
+        "params",
+        Value::List(
+            cap.params
+                .iter()
+                .map(|param| {
+                    Value::Record(
+                        Args::new()
+                            .with("name", Value::Text(param.name.to_owned()))
+                            .with("doc", Value::Text(param.doc.to_owned()))
+                            .with("type", Value::Text(param.ty.label()))
+                            .with("required", Value::Bool(param.required)),
+                    )
+                })
+                .collect(),
+        ),
+    );
+    // A query's declared result shape; absent for an Action, whose result is an
+    // `Outcome` rather than a value with a type. `Null` and not the empty
+    // string, because *"this row does not have one"* and *"this row returns
+    // nothing"* are different answers.
+    fields.set(
+        "returns",
+        cap.returns
+            .map_or(Value::Null, |ty| Value::Text(ty.label())),
+    );
+    Value::Record(fields)
+}
+
 /// One review block as plain data, for the `review-blocks` query (`T053`).
 ///
 /// Region **ids**, not spans — see [`store::Block`] for why a block that
@@ -9270,6 +9919,243 @@ fn cursor_of(editor: &Editor) -> status::Cursor {
         line: u32::try_from(row.saturating_add(1)).unwrap_or(u32::MAX),
         col: u32::try_from(col.saturating_add(1)).unwrap_or(u32::MAX),
     }
+}
+
+/// A colour as `#rrggbb`, for the `theme` query.
+///
+/// **Not a theme decision and not a palette**, which is what keeps this out of
+/// `phosphor-ui`'s no-literal-colours rule: it renders whatever the active
+/// theme already holds, and inventing a value here would be impossible — there
+/// is no literal to invent.
+fn hex_of(color: ratatui::style::Color) -> Value {
+    match color {
+        ratatui::style::Color::Rgb(red, green, blue) => {
+            Value::Text(format!("#{red:02x}{green:02x}{blue:02x}"))
+        }
+        // An indexed or named colour has no hex to report, and saying so is
+        // better than converting it to one this build did not choose.
+        other => Value::Text(format!("{other:?}").to_lowercase()),
+    }
+}
+
+/// The editor's shape for `T111`'s queries, derived once per frame.
+///
+/// See [`HostState::editor`] for why this is published rather than reached for,
+/// and the call site for what each field costs. Everything here is a read of
+/// something the loop already holds; nothing in it enters the VM.
+#[allow(clippy::too_many_arguments)]
+fn editor_snapshot(
+    buffers: &Buffers,
+    panes: &Panes,
+    mode: EditMode,
+    pending: &str,
+    theme: &Theme,
+    slug: &str,
+    surface: Surface,
+    keymap: Vec<Value>,
+    mut text: BTreeMap<u64, (u64, Vec<String>)>,
+) -> EditorSnapshot {
+    let focused = panes.get(panes.focus).and_then(|pane| pane.buffer);
+
+    // **The text, only where the edit stream moved.** Same gate as the LSP
+    // document sync — see [`EditorSnapshot::text`]. A closed buffer's entry is
+    // dropped so the map cannot grow without bound across a long session.
+    text.retain(|id, _| buffers.map.contains_key(&BufferId(*id)));
+    for (id, editing) in &buffers.map {
+        let edits = editing.edits.get();
+        let fresh = text.get(&id.0).is_none_or(|(at, _)| *at != edits);
+        if fresh {
+            text.insert(
+                id.0,
+                (edits, editing.contents().lines().map(str::to_owned).collect()),
+            );
+        }
+    }
+
+    let rows = buffers
+        .map
+        .iter()
+        .map(|(id, editing)| {
+            Value::Record(
+                Args::new()
+                    .with("buffer", Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)))
+                    .with(
+                        "path",
+                        editing
+                            .file
+                            .as_ref()
+                            .map_or(Value::Null, |path| {
+                                Value::Text(path.display().to_string())
+                            }),
+                    )
+                    .with(
+                        "language",
+                        editing
+                            .language
+                            .as_ref()
+                            .map_or(Value::Null, |language| Value::Text(language.0.clone())),
+                    )
+                    .with(
+                        "server",
+                        editing
+                            .server
+                            .as_ref()
+                            .map_or(Value::Null, |name| Value::Text(name.clone())),
+                    )
+                    .with("dirty", Value::Bool(editing.dirty.get()))
+                    .with(
+                        "lines",
+                        Value::Int(
+                            text.get(&id.0)
+                                .map_or(0, |(_, lines)| i64::try_from(lines.len()).unwrap_or(0)),
+                        ),
+                    ),
+            )
+        })
+        .collect();
+
+    // Per pane: the cursor, the selection and the viewport. **The height is
+    // this frame's**, read off `Pane::area` — the layout loop above already
+    // assigned it, so `viewport` answers about the screen being drawn rather
+    // than the one before it. Zero before the first layout, which is honest:
+    // a pane that has never been laid out has no height.
+    let mut pane_rows = BTreeMap::new();
+    for id in panes.tree.leaves() {
+        let Some(pane) = panes.get(id) else { continue };
+        let held = pane.buffer.and_then(|buffer| buffers.map.get(&buffer));
+        let cursor = held.map_or(Value::Null, |editing| {
+            let at = cursor_of(&editing.editor);
+            Value::Record(
+                Args::new()
+                    .with("line", Value::Int(i64::from(at.line)))
+                    .with("column", Value::Int(i64::from(at.col))),
+            )
+        });
+        // **`Null` when there is no live selection**, which is the row's own
+        // *"the live selection, if there is one"* and not an empty span: an
+        // empty span at the cursor would read as a real selection of nothing.
+        let selection = held.map_or(Value::Null, |editing| {
+            editing.selection_from.map_or(Value::Null, |from| {
+                let to = editing.editor.get_cursor();
+                Value::Record(
+                    Args::new()
+                        .with("from", Value::Int(i64::try_from(from.min(to)).unwrap_or(0)))
+                        .with("to", Value::Int(i64::try_from(from.max(to)).unwrap_or(0))),
+                )
+            })
+        });
+        let viewport = held.map_or(Value::Null, |editing| {
+            Value::Record(
+                Args::new()
+                    .with(
+                        "first",
+                        Value::Int(
+                            i64::try_from(editing.editor.get_offset_y().saturating_add(1))
+                                .unwrap_or(1),
+                        ),
+                    )
+                    .with(
+                        "height",
+                        Value::Int(i64::from(panes.get(id).map_or(0, |pane| pane.area.height))),
+                    )
+                    .with(
+                        "soft-wrap",
+                        Value::Bool(editing.editor.soft_wrap_width().is_some()),
+                    ),
+            )
+        });
+        pane_rows.insert(
+            id.0,
+            Value::Record(
+                Args::new()
+                    .with("pane", Value::Int(i64::try_from(id.0).unwrap_or(0)))
+                    .with("cursor", cursor)
+                    .with("selection", selection)
+                    .with("viewport", viewport),
+            ),
+        );
+    }
+
+    // The four relative [`PaneRef`]s, resolved by the only thing that can —
+    // see [`EditorSnapshot::refs`].
+    let mut refs = BTreeMap::new();
+    let mut note = |key: &str, reference: &PaneRef| {
+        if let Some(id) = panes.resolve(reference) {
+            refs.insert(key.to_owned(), id.0);
+        }
+    };
+    note("focused", &PaneRef::Focused {});
+    note("next", &PaneRef::Next {});
+    note("prev", &PaneRef::Prev {});
+    for direction in [
+        Direction::Up,
+        Direction::Down,
+        Direction::Left,
+        Direction::Right,
+    ] {
+        note(direction_name(direction), &PaneRef::Direction { direction });
+    }
+
+    EditorSnapshot {
+        buffers: rows,
+        focused: focused.map(|id| id.0),
+        text,
+        panes: pane_rows,
+        refs,
+        mode: mode_name(mode),
+        pending: pending.to_owned(),
+        floats: float_rows(surface),
+        theme: Value::Record(
+            Args::new()
+                .with("slug", Value::Text(slug.to_owned()))
+                .with("name", Value::Text(theme.name.to_string()))
+                .with(
+                    "variant",
+                    Value::Text(format!("{:?}", theme.variant).to_lowercase()),
+                )
+                .with("ground", hex_of(theme.neutrals.ground))
+                .with("text", hex_of(theme.neutrals.text))
+                .with("claude", hex_of(theme.actors.claude))
+                .with("you", hex_of(theme.actors.you))
+                .with("attention", hex_of(theme.actors.attention))
+                .with("trouble", hex_of(theme.actors.trouble))
+                .with("transient", hex_of(theme.actors.transient)),
+        ),
+        keymap,
+    }
+}
+
+/// What the `floats` query answers, off the surface the loop is drawing.
+///
+/// **Named by surface rather than by body**, and the difference is what makes
+/// this cheap enough to publish every frame: a float's `body` is the whole
+/// composed subtree, and copying it per frame would put the cost of the picker's
+/// contents into every frame that has a picker open. What a caller can act on is
+/// *which* float is up and whether it has the keys — Design Language §9's
+/// *"at most one has focus"* — and that is a surface fact.
+fn float_rows(surface: Surface) -> Vec<Value> {
+    let named = match surface {
+        Surface::Boot => Some(("boot", true)),
+        Surface::Help => Some(("help", true)),
+        Surface::Picker => Some(("picker", true)),
+        Surface::Float => Some(("float", true)),
+        Surface::Fixture(_) => Some(("fixture", true)),
+        // The buffer, the ex line and the REPL are not floats. A passive float
+        // over the buffer — completion, signature help, `1d`'s notice — is
+        // deliberately *not* listed as focused, because §9's rule is about
+        // which surface takes the keys and `Mood::Passive` takes none.
+        Surface::Buffer | Surface::Ex | Surface::Repl => None,
+    };
+    named
+        .map(|(name, focused)| {
+            Value::Record(
+                Args::new()
+                    .with("surface", Value::Text(name.to_owned()))
+                    .with("focused", Value::Bool(focused)),
+            )
+        })
+        .into_iter()
+        .collect()
 }
 
 /// §5's `[+]`, wired to the edit stream.

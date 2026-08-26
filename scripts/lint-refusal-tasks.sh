@@ -231,7 +231,33 @@ if sum(len(t) for _, t in production) < 10_000:
     fail("read almost no production source — the crate layout moved.")
 
 body = "\n".join(text for _, text in production)
-named = {variant for variant, _, _, _ in declared if re.search(rf"\b{variant}\b", body)}
+
+# **A bare word is not an arm, and reading it as one hid eight rows.**
+#
+# This was `re.search(rf"\b{variant}\b", body)` — *"does the variant's name
+# appear anywhere in production?"* — and the answer is yes for every variant
+# whose name is also an ordinary Rust identifier. `Theme`, `Buffer`, `Buffers`,
+# `Cursor`, `Selection`, `Viewport`, `Keymap` and `ReviewBlock` are all types,
+# fields or locals in `main.rs` (`Buffers` alone occurs 28 times), so all eight
+# read as armed while `(theme)`, `(buffers)` and `(cursor …)` each answered
+# *"not built yet"* against a **ticked** task — measured on the built binary
+# on 2026-08-25, the same way `T111`'s twelve were found a day earlier.
+#
+# The narrower pattern is the one the code actually writes: an arm names a
+# variant through its domain enum — `BufferQuery::Buffers`,
+# `MotionAction::SetCursor` — so the name has to be preceded by a domain type
+# ending in `Query` or `Action`. `phosphor_ui::theme::Theme` does not match
+# that and `UiQuery::Theme` does, which is exactly the distinction the bare
+# word could not draw.
+#
+# **This is the third time this lint has been widened by measuring the binary
+# rather than reading the lint**, and the shape repeats: check (A) was
+# actions-only, then both tables, and now both tables read precisely. A lint
+# that answers *"probably armed"* reports clean on a real refusal.
+ARM = re.compile(
+    r"\w*(?:Query|Action)::(" + "|".join(sorted({v for v, _, _, _ in declared})) + r")\b"
+)
+named = set(ARM.findall(body))
 
 unarmed = {
     variant: (verb, task)
