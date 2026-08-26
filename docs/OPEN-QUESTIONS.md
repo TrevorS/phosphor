@@ -3887,6 +3887,12 @@ tests make than inotify does, which is `T069`'s recorded asymmetry and the reaso
 only ever appears on CI. A clean run here is not evidence of absence; a failure here would have
 been evidence of presence, and there was none to have.
 
+**And the re-run settled the determinism question, if not the cause.** `gh run rerun --failed` on
+the *same commit* — no code change at all — came back **green**. So whatever this is, it is
+probabilistic rather than deterministic: the identical tree both fails and passes. That is
+consistent with a background flake and equally consistent with a change that *raised the odds* of
+one, which is why it narrows the question without closing it.
+
 **What would settle it** is the same loop **on Linux**, at the commit before this work and at the
 commit after, ten runs a side — enough to separate a 20% background rate from something new.
 Nobody has spent that, and it is the only measurement that would. Until it exists, this entry
