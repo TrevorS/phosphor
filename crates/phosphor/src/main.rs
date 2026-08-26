@@ -1151,11 +1151,13 @@ struct EditorSnapshot {
     /// as many words: *"a clone per frame would make an idle editor's cost a
     /// function of how much claude has said to it."*
     ///
-    /// It surfaced as an editor that **never stopped drawing** in
-    /// `spc_r_r_takes_what_is_on_disk` on CI and nowhere on this machine — the
-    /// `notify`/inotify asymmetry `T069` already recorded, with a live watcher
-    /// posting events faster than a loop carrying this cost could reach the
-    /// harness's 250ms of quiet.
+    /// **It was found while blaming it for something it did not do.** A CI run
+    /// failed with *"the editor never stopped drawing"* on a live-watcher pty
+    /// test, this was reached for as the cause, and the base rate was measured
+    /// afterwards: `main` fails about one run in five, across unrelated tests,
+    /// and had done so for many commits. `OPEN-QUESTIONS.md` §67 has the
+    /// numbers. The cost is real and worth removing; it is not the explanation
+    /// for that failure, and the doc that first sat here said it was.
     ///
     /// Shared rather than owned, so publishing an unchanged map is a refcount
     /// bump and the loop keeps the only mutable handle. `Arc::make_mut` clones

@@ -3836,7 +3836,7 @@ lets an agent act on the editor you are using, live, rather than on a copy. The 
 machinery for it already exists (`McpPolicy`, the ask queue, `7a`'s always-allow), which is what
 makes the step smaller than it sounds — and also what makes it worth deciding on purpose.
 
-### 67 · A per-frame clone reddened `main`, and `gh run watch --exit-status` said it was green
+### 67 · A per-frame clone, a lying exit status, and a red `main` that was neither's fault
 
 Two findings from one failure, and the second is the more dangerous.
 
@@ -3849,18 +3849,29 @@ refuses one field up, in as many words: *"a clone per frame would make an idle e
 function of how much claude has said to it."* The doc was quoted while the code was written and
 the rule was still broken.
 
-**How it surfaced.** `spc_r_r_takes_what_is_on_disk` failed on CI with *"the editor never stopped
-drawing"* — `settle`'s message, the infinite-redraw signature — and passed on this machine every
-time. That is `T069`'s `notify`/inotify asymmetry a second time: a live watcher on Linux posts
-events macOS does not, and a loop carrying this cost could not reach the harness's 250ms of quiet
-between them.
+**How it was noticed — and the attribution was wrong, which is the more useful half.**
+`spc_r_r_takes_what_is_on_disk` failed on CI with *"the editor never stopped drawing"* —
+`settle`'s message, the infinite-redraw signature — and passed on this machine every time. It was
+written up here as *caused by* the clone above, on the reasoning that a live watcher on Linux posts
+events macOS does not and a loop carrying this cost could not reach the harness's 250ms of quiet
+between them. That reasoning is plausible and it was not checked.
 
-**It was load-sensitive rather than deterministic**, which is what makes it worth an entry. The
-*identical SHA* had passed a branch run twenty minutes earlier. A failure that passes on the same
-commit is the exact shape that gets waved through as a flake — and `OPEN-QUESTIONS.md` §63 gives a
-standing, legitimate reason to do so. What separated this one from that cluster is the *message*:
-§63's three fail on off-by-one keystrokes, and this said the editor never stopped drawing, which is
-a spin rather than a starve.
+**Then the base rate was measured, and it dissolved the claim.** Over the last thirty runs on
+`main`: **23 success, 6 failure, 1 cancelled** — a ~20% failure rate, spread across unrelated
+tests (`opening_a_peek_while_a_review_is_open_replaces_it_not_layers_it` among them) and running
+for many commits before any of this work. Two failures in the four runs that followed these
+commits is *higher* than 20% and, at n=4, entirely ordinary variance. There is no evidence here
+that the clone caused either failure.
+
+**What the clone was, then, is a real cost defect found for the wrong reason** — and worth fixing
+on its own terms, which is why the entry stays. What it is not is the explanation for a red `main`.
+
+**The lesson is the one this file keeps teaching in different clothes.** A red CI run on an
+intermittent suite is not evidence about the commit that happens to be on top of it, and *"my
+change broke this"* is a claim like any other: it needs the base rate before it needs a fix. The
+base rate was one `gh run list --json conclusion` away for the whole time it went unasked. §63
+already gives the standing remedy for this suite — `gh run rerun <id> --failed` — and the reason
+that remedy is legitimate is exactly the number above.
 
 **The fix** is `Arc<BTreeMap<…>>`: the loop owns the map, `Arc::make_mut` clones on the frames that
 actually edit, and publishing an unchanged map is a refcount bump. The regression test is
