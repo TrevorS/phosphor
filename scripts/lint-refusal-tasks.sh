@@ -113,14 +113,19 @@ RECORDED = {
         "fails safe. If the fixture text changes, check (3) fires and this entry goes.",
     ),
     'const RUNTIME_TASK: &str = "T021";': (
-        "T103",
+        "",
         "`T021` is genuinely the task that embeds the VM, and it is ticked — but this arm only "
         "fires for `Action::Runtime(Eval)` when the evaluator is `None`, which the shipping "
         "binary never does: `main`'s `dispatch` builds a real host on every route. So the "
         "sentence is unreachable rather than wrong, and re-stamping it would make the const's "
-        "own prose false. `T103` is the task that reworks `door.rs::apply` — its entry records "
-        "that the door refuses every Action but `Eval` while a live host sits beside it — and it "
-        "is where this arm either gains a caller or goes.",
+        "own prose false.\n"
+        "    **This waited on `T103` and `T103` landed, which is the update.** That task "
+        "reworked `door.rs::apply` so the verb route dispatches to the host — and it "
+        "deliberately *kept* this arm, because the two branches answer different questions: "
+        "with no evaluator there is no VM to hand source to, and naming `T021` is the honest "
+        "answer to that. It has no creditor now and is not expected to gain one. What keeps it "
+        "from rotting is that `door.rs`'s own tests are the caller — they pass `None` on "
+        "purpose, which is the shape a unit test of this door has.",
     ),
     'return Outcome::Refused(Refusal::NotYetImplemented { task: "T058" });': (
         "",

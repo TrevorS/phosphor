@@ -787,7 +787,7 @@
  '("normal" "visual")
  (list
   (list "/" (key/run (key/cmd "open-prompt" "kind" "search")) "search forward")
-  (list "?" (key/run (key/cmd "open-prompt" "kind" "search")) "search backward")
+  (list "?" (key/run (key/cmd "open-prompt" "kind" "search" "backward" #true)) "search backward")
   (list "n" (key/run (key/cmd "goto-sequence" "sequence" "search-match" "seek" "next"))
         "next match")
   (list "N" (key/run (key/cmd "goto-sequence" "sequence" "search-match" "seek" "prev"))
@@ -1590,8 +1590,15 @@
                         (key/cmd "open-help")
                         (key/cmd "open-help" "topic" rest)))))
 
-(ex-set! "th[eme]" "switch theme"
-         (lambda (rest bang) (key/run (key/cmd "set-theme" "slug" rest))))
+;; T092 — `:theme <slug>` switches, `:theme` alone re-reads the one that is
+;; drawing. Two capabilities behind one spelling, because "reload the theme" and
+;; "switch to this theme" are the same question with and without an answer, and
+;; a person who types `:theme` with nothing after it means the first.
+(ex-set! "th[eme]" "switch theme — :theme alone re-reads the current one"
+         (lambda (rest bang)
+           (key/run (if (equal? rest "")
+                        (key/cmd "reload-theme")
+                        (key/cmd "set-theme" "slug" rest)))))
 
 ;; T094 — invariant 1's "redefinable at runtime", reachable by typing.
 ;;

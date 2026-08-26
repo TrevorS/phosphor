@@ -6620,7 +6620,7 @@ RULED: add the tasks."* An unowned debt recorded in a lint is a debt nobody is g
   that file rather than declining — for the walks and for `jump` alike — and a pty test presses
   all eight. *Needs:* T049, T063, T064, T068, T085
 
-- [ ] **T110 · Search machinery** 📌
+- [x] **T110 · Search machinery** 📌
   `/` and `?` are bound to `open-prompt` with `kind` `search`, and `n`/`N` to `goto-sequence` over
   `search-match`. **All four refuse**, and until 2026-08-24 all four named `T058` — whose *done
   when* is `1c` raising from a keystroke, which shipped. `T058`'s own record says it plainly:
@@ -6638,6 +6638,56 @@ RULED: add the tasks."* An unowned debt recorded in a lint is a debt nobody is g
   *Done when:* `/` and `?` search the buffer from the cursor in the running binary, `n` and `N`
   walk the matches and wrap, the ruling above is recorded at this entry, and a pty test presses
   all four. *Needs:* T058, T049
+
+  > **DONE 2026-08-25. THE RULING: regex, not literal — and the argument against it was true of
+  > phosphor's source and false of the binary.**
+  >
+  > The entry's case for the narrow road is *"nothing in this tree parses a regex"*. `cargo tree`
+  > says otherwise: **`regex` 1.13.1 is already linked**, pulled in by `tree-sitter`, which every
+  > phosphor crate depends on. Naming it directly adds no crate to the graph, no licence for
+  > `cargo deny` and no MSRV movement — it is a `Cargo.toml` line over code that is already
+  > compiled into the binary.
+  >
+  > That is what separates this from `broadcast-thread` (`T068`), whose narrow road was right
+  > *there* because the alternative was a real new dependency. Here it is not, and the entry's own
+  > warning decides it: *"a `/` that silently matched literally would be the worse version of that
+  > choice, because vim users will type a regex on the first day."* The cost of the ruling is that
+  > a pattern can be **wrong**, so an invalid one reports the crate's own message and **leaves the
+  > previous search standing** — `T094`'s reload rule at a smaller scale.
+  >
+  > **`open-prompt` grew a `backward` argument** rather than the vocabulary growing a second
+  > capability: `/` and `?` differ in which way `n` walks and in nothing else. The direction
+  > belongs to the *search*, not to the key, which is vim — `?foo` then `n` goes up.
+  >
+  > **Two submit paths had to learn it, and only one is reachable by typing.** `PromptStep::Submit`
+  > is what a door or a binding uses; while the prompt is open the **ex surface owns every key**,
+  > so a typed `\r` goes through `ExStep::Submit` instead. Wiring the first alone left `/target`
+  > being looked up in the ex command table and answered *"no such command — :target"*, which is
+  > what the pty test found. Both route now.
+  >
+  > **Offsets are characters, not bytes.** `regex` answers byte offsets and `Editor::set_cursor`
+  > takes a character index; one non-ASCII character above the cursor would put every jump wrong,
+  > and every ASCII fixture would pass. The conversion is one pass rather than a
+  > `chars().count()` per match, because searching for `a` in a large file is exactly the
+  > quadratic case.
+  >
+  > **Matches are recomputed when the buffer has moved under them**, on the same `Editing::edits`
+  > gate `T111`'s text snapshot and the LSP document sync use. Stale offsets would send `n` to a
+  > position the text no longer has — worse than finding nothing, because it looks like it worked.
+  >
+  > **What the tests had to work around, and it is not a defect.** A notice occupies the
+  > statusline row while it is up, so the `line:col` readout is *not* on the frame that says
+  > *"3 matches"* — the landing position is read from where the next `n` goes, which is a stronger
+  > assertion anyway: `4:1` after one `n` is only true if `/` landed on line 2.
+  >
+  > **Two tests elsewhere had to give up their rows**, both for the happy reason: `?` and `N` left
+  > `a_deferred_binding_names_the_task_that_builds_it`'s table, and `/` and `n` left
+  > `a_deferred_key_names_the_task_that_builds_it`. What stayed is the refusal that is still
+  > honest — `n` before any search declines with *"no search yet — / or ?"*.
+  >
+  > **Not built, and not in the *done when*: the highlight.** The entry names *"the highlight that
+  > shows where the matches are"* in its prose and does not ask for it in the criterion. It is not
+  > here. `T087`'s marks side table is where it would go.
 
 ---
 

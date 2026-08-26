@@ -1985,10 +1985,9 @@ impl AppHost {
     /// argument only ever moves the position within it. See the arm for the
     /// ruling that follows from this.
     fn published_place(&self) -> Option<(PathBuf, Position)> {
-        let cursor = <Position as phosphor_core::value::Wire>::from_value(&self.pane_field(
-            &PaneRef::Focused {},
-            "cursor",
-        ))
+        let cursor = <Position as phosphor_core::value::Wire>::from_value(
+            &self.pane_field(&PaneRef::Focused {}, "cursor"),
+        )
         .ok()?;
         let path = self.editor(|held| {
             held.focused
@@ -2620,12 +2619,9 @@ impl Answers for AppHost {
             // a vocabulary that declares plenty.
             Query::Ui(phosphor_core::query::UiQuery::Options {}) => Ok(Answer {
                 value: Value::Record(self.state.lock().ok().map_or_else(Args::new, |state| {
-                    state
-                        .options
-                        .iter()
-                        .fold(Args::new(), |args, (key, held)| {
-                            args.with(key, held.clone())
-                        })
+                    state.options.iter().fold(Args::new(), |args, (key, held)| {
+                        args.with(key, held.clone())
+                    })
                 })),
                 revision: Revision::INITIAL,
             }),
@@ -2685,14 +2681,13 @@ impl Answers for AppHost {
             Query::Buffer(phosphor_core::query::BufferQuery::BufferText { target }) => {
                 Ok(self.answered(Value::Text(self.target_lines(target).join("\n"))))
             }
-            Query::Buffer(phosphor_core::query::BufferQuery::BufferLines { target }) => {
-                Ok(self.answered(Value::List(
+            Query::Buffer(phosphor_core::query::BufferQuery::BufferLines { target }) => Ok(self
+                .answered(Value::List(
                     self.target_lines(target)
                         .into_iter()
                         .map(Value::Text)
                         .collect(),
-                )))
-            }
+                ))),
             // The three per-pane reads. `PaneRef`'s five arms are resolved by
             // the *loop* and published — see [`EditorSnapshot::refs`] for why a
             // compass direction cannot be answered from this side.
@@ -2813,15 +2808,14 @@ impl Answers for AppHost {
             // One block: its files, groups and annotations. The same
             // [`block_value`] `review-blocks` answers with, so the list and the
             // single read cannot disagree about a block.
-            Query::Review(phosphor_core::query::ReviewQuery::ReviewBlock { block }) => {
-                Ok(self.answered(
+            Query::Review(phosphor_core::query::ReviewQuery::ReviewBlock { block }) => Ok(self
+                .answered(
                     self.store
                         .blocks()
                         .iter()
                         .find(|candidate| candidate.id == *block)
                         .map_or(Value::Null, block_value),
-                ))
-            }
+                )),
             // Everything else, by its own row. Derived, never listed.
             query => Err(QueryError::NotYetImplemented {
                 task: query.spec().since.task,
@@ -2868,12 +2862,12 @@ impl Host for AppHost {
             // locks. A theme loaded from disk would re-read the file here; none
             // is, and saying so is better than pretending the two cases differ.
             Action::Runtime(RuntimeAction::ReloadTheme {}) => {
-                self.ask(Intent::SetTheme(
-                    self.editor(|held| match field_of(&held.theme, "slug") {
+                self.ask(Intent::SetTheme(self.editor(|held| {
+                    match field_of(&held.theme, "slug") {
                         Value::Text(slug) => slug,
                         _ => String::new(),
-                    }),
-                ));
+                    }
+                })));
                 done(Value::Null)
             }
             // **`T094` — invariant 1, made true.** *"The editor layer is Steel
@@ -4039,6 +4033,191 @@ impl Layer {
     }
 }
 
+/// One search, and where it matched (`T110`).
+///
+/// # The ruling, and why it is not the narrow road
+///
+/// **Regex, not literal.** `T110` asks for the decision to be made before the
+/// code and recorded at the entry, and the argument it offers against regex is
+/// *"nothing in this tree parses a regex"* — which was true of phosphor's own
+/// source and false of the binary. `regex` 1.13.1 is already linked: `tree-sitter`
+/// depends on it and every phosphor crate depends on `tree-sitter`. Naming it
+/// directly adds no crate, no licence for `cargo deny`, and no MSRV movement.
+///
+/// So the precedent `broadcast-thread` set — take the narrow road and say so
+/// rather than treat `.*` as three characters — does not carry here. It was
+/// right *there* because the alternative was a real new dependency. The task's
+/// own warning is what decides it: *"a `/` that silently matched literally
+/// would be the worse version of that choice, because vim users will type a
+/// regex on the first day."*
+///
+/// **An invalid pattern says so** and leaves the previous search standing,
+/// which is the same shape `T094`'s reload keeps: a thing you typed wrong does
+/// not cost you the thing that was working.
+struct Search {
+    /// What was typed, kept as typed so the notice can quote it back.
+    pattern: String,
+    /// Character offsets of every match, ascending.
+    ///
+    /// **Characters, not bytes.** `regex` answers byte offsets and the fork's
+    /// `Editor::set_cursor` takes a character index; a buffer with one
+    /// non-ASCII character above the cursor would put every jump in the wrong
+    /// place, and every test over ASCII fixtures would pass.
+    at: Vec<usize>,
+    /// Which buffer they are offsets into.
+    buffer: BufferId,
+    /// The edit counter they were computed at — see [`Search::stale`].
+    edits: u64,
+    /// Which way `n` walks. `N` is always the other way.
+    backward: bool,
+}
+
+impl Search {
+    /// Whether these matches describe a buffer that has since changed.
+    ///
+    /// **The same `edits` gate `T111`'s text snapshot and the LSP document sync
+    /// both use.** A search that kept stale offsets would send `n` to a
+    /// position the text no longer has — which is worse than finding nothing,
+    /// because it looks like it worked.
+    fn stale(&self, buffer: BufferId, edits: u64) -> bool {
+        self.buffer != buffer || self.edits != edits
+    }
+
+    /// The match to move to from `cursor`, wrapping.
+    ///
+    /// `reverse` is `N` — *the other way from whichever way this search
+    /// walks*, which is vim and is why the direction lives on the search rather
+    /// than on the key. `?foo` then `n` goes up; `?foo` then `N` goes down.
+    ///
+    /// **Strictly past the cursor**, so `n` on a match moves off it instead of
+    /// finding the one it is already sitting on — the difference between a walk
+    /// and a no-op, and the thing a same-position fixture cannot tell apart.
+    fn step(&self, cursor: usize, reverse: bool) -> Option<usize> {
+        if self.at.is_empty() {
+            return None;
+        }
+        let up = self.backward != reverse;
+        if up {
+            self.at
+                .iter()
+                .rev()
+                .find(|at| **at < cursor)
+                // Wrapping is what makes it a walk. `]u` already behaves this
+                // way and a search that stopped at the last match would be the
+                // one motion in the editor that silently did nothing.
+                .or_else(|| self.at.last())
+                .copied()
+        } else {
+            self.at
+                .iter()
+                .find(|at| **at > cursor)
+                .or_else(|| self.at.first())
+                .copied()
+        }
+    }
+}
+
+/// Runs a submitted search and moves to the first match (`T110`).
+///
+/// Answers the notice row, because every outcome here is something the person
+/// needs told: how many matches, that there are none, or that the pattern does
+/// not compile.
+///
+/// **An invalid pattern leaves the previous search standing**, which is
+/// `T094`'s reload rule at a smaller scale: a thing you typed wrong should not
+/// cost you the thing that was working. `n` goes on meaning the last search
+/// that compiled.
+fn start_search(
+    editing: &mut Editing,
+    shell: &mut Shell,
+    buffer: BufferId,
+    pattern: &str,
+    backward: bool,
+) -> Option<String> {
+    // An empty pattern repeats the last one, which is vim's `//`. With no last
+    // one there is nothing to repeat and saying so beats matching everything.
+    if pattern.is_empty() {
+        return match shell.search.as_mut() {
+            Some(held) => {
+                held.backward = backward;
+                Some(format!("/{}", held.pattern))
+            }
+            None => Some("no previous search".to_owned()),
+        };
+    }
+    let compiled = match regex::Regex::new(pattern) {
+        Ok(compiled) => compiled,
+        // The crate's own message, not one invented here: it names the offset
+        // and the construct, which is more than any sentence written at this
+        // distance could.
+        Err(error) => {
+            let said = error.to_string();
+            let first = said.lines().last().unwrap_or("invalid pattern").trim();
+            return Some(format!("bad pattern — {first}"));
+        }
+    };
+    let text = editing.contents();
+    let at = matches_of(&compiled, &text);
+    if at.is_empty() {
+        // **The search is still recorded**, so `n` after a miss repeats the
+        // miss rather than silently walking the search before it.
+        shell.search = Some(Search {
+            pattern: pattern.to_owned(),
+            at,
+            buffer,
+            edits: editing.edits.get(),
+            backward,
+        });
+        return Some(format!("no match — {pattern}"));
+    }
+    let found = at.len();
+    let search = Search {
+        pattern: pattern.to_owned(),
+        at,
+        buffer,
+        edits: editing.edits.get(),
+        backward,
+    };
+    // Vim's `/` lands on the first match *after* the cursor rather than on the
+    // first match in the file, and wraps. `step` is the same walk `n` takes, so
+    // submitting and pressing `n` cannot disagree about what "next" means.
+    let landed = search.step(editing.editor.get_cursor(), false);
+    shell.search = Some(search);
+    landed.map(|to| {
+        editing.editor.set_cursor(to);
+        match found {
+            1 => format!("/{pattern} — 1 match"),
+            many => format!("/{pattern} — {many} matches"),
+        }
+    })
+}
+
+/// Every match of `pattern` in `text`, as character offsets.
+///
+/// A free function over captured text, which is the discipline `read_jj_timeline`
+/// and its neighbours already keep: the scan is testable with no editor, no
+/// buffer and no terminal.
+fn matches_of(pattern: &regex::Regex, text: &str) -> Vec<usize> {
+    // One pass converting byte offsets to character offsets, rather than a
+    // `chars().count()` per match — which is quadratic on a buffer with many
+    // matches, and a search for `a` in a large file is exactly that case.
+    let mut at = Vec::new();
+    let mut found = pattern.find_iter(text).map(|hit| hit.start()).peekable();
+    let mut chars = 0usize;
+    for (byte, _) in text.char_indices() {
+        while found.peek().is_some_and(|start| *start == byte) {
+            found.next();
+            at.push(chars);
+        }
+        chars += 1;
+    }
+    // A match at the very end of the text has no `char_indices` entry after it.
+    while found.next().is_some() {
+        at.push(chars);
+    }
+    at
+}
+
 /// The evaluator the CLI door takes, over the one layer **and the one host**
 /// this process has.
 ///
@@ -4454,6 +4633,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // already ran, for the reason spelled out at the refresh:
     // [`Layer::entries`] is not a call that may happen every frame.
     let mut keymap_rows: Vec<Value> = Vec::new();
+    // Starts true so the first pass fills it in — an editor that has drawn a
+    // frame should be able to answer `keymap` without waiting for a rebind.
+    let mut keymap_dirty = true;
     // `T092` — a theme change is pending, and every open buffer has to be
     // handed the new one before the next frame is assembled.
     let mut rethemed = false;
@@ -4527,6 +4709,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         // `Watch::idle` and the editor runs without `✱` — so there is nothing
         // to handle and nothing that can stop the loop from booting.
         watch: watch::Watch::spawn(poster.clone()),
+        searching: None,
+        search: None,
         asks: BTreeMap::new(),
         next_ask: Arc::clone(&host.next_ask),
         held: BTreeMap::new(),
@@ -5186,13 +5370,29 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         //   `keymap-entries` is a name the layer owns and may redefine — so
         //   calling it every frame would recompose the statusline every frame
         //   and delete the whole point of `T079`'s cache and `CP-2`'s
-        //   benchmark. It is refreshed only on a frame where scheme had
-        //   *already* run, and the flag its own call raises is taken back
-        //   immediately: this call is bookkeeping and letting its flag survive
-        //   would ratchet the editor into permanently-stale. The narrow cost is
-        //   recorded rather than hidden — a `keymap-entries` that mutated state
-        //   would not invalidate the following frame.
-        if ran_scheme {
+        //   benchmark.
+        //
+        //   **The first version of this refreshed on every frame where scheme
+        //   had run, and that is nearly every keystroke** — `Layer::resolve`
+        //   sets the flag whenever a binding *ran*. A pty test caught it as one
+        //   extra frame, which is the harness's whole synchronisation contract,
+        //   and the frame was the symptom rather than the problem: it was a VM
+        //   call per keypress, exactly the cost `entries`' own doc says it must
+        //   not become. The trigger is the three things that can actually
+        //   change a keymap — a `keymap-set!` arriving from a door and a
+        //   runtime reload — plus the first pass, so the answer is populated
+        //   before anyone asks.
+        //
+        //   **The gap, recorded rather than papered over:** `keymap-set!` typed
+        //   at the *REPL* is not one of them. It is a function the layer
+        //   defines and writes its own table with, not a capability, so no
+        //   Intent is posted and nothing here learns of it — the `keymap` query
+        //   goes on answering the table as of the last rebind through a door.
+        //   The `SPC` popup is unaffected and stays live, because it calls
+        //   `Layer::entries` directly on the frame that draws it
+        //   (`a_repl_rebind_reaches_the_leader_popup` is the test); it is only
+        //   the *published* answer that lags.
+        if core::mem::take(&mut keymap_dirty) {
             keymap_rows = layer
                 .entries()
                 .iter()
@@ -5432,6 +5632,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 surface = Surface::Buffer;
                 ex_line.clear();
                 shell.recalled = None;
+                // A cancelled search is not a search. Leaving this set would
+                // make the *next* `:` submit route into the matcher.
+                shell.searching = None;
             }
             Some(PromptStep::Submit) => {
                 surface = Surface::Buffer;
@@ -5439,12 +5642,30 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     shell.history.push(ex_line.clone());
                 }
                 shell.recalled = None;
-                notice = submit_ex(
-                    &mut layer,
-                    editing,
-                    &mut Cx::new(held, focus, &mut panes, &mut shell),
-                    &ex_line,
-                );
+                // **`T110` — a submitted search is not an ex line.** This
+                // called `submit_ex` unconditionally, which was right while
+                // every prompt was one; a `/` submitted that way looked up the
+                // pattern in the ex command table and answered *"no such
+                // command"*.
+                // **Both places, because a whole prompt can arrive in one
+                // pass.** `Shell::searching` is set where the prompt *opens*
+                // (further down this same loop body), and `Editing::searching`
+                // is set by the arm. Typing `/target\r` writes every byte at
+                // once, so the machine runs all of them before the loop reaches
+                // the open-block — and `Submit` is handled *above* it. Reading
+                // the arm's field as well is what makes the two orderings the
+                // same behaviour; taking from both is what stops a stale one
+                // routing the next `:` into the matcher.
+                let searching = shell.searching.take().or_else(|| editing.searching.take());
+                notice = match searching {
+                    Some(backward) => start_search(editing, &mut shell, held, &ex_line, backward),
+                    None => submit_ex(
+                        &mut layer,
+                        editing,
+                        &mut Cx::new(held, focus, &mut panes, &mut shell),
+                        &ex_line,
+                    ),
+                };
             }
             Some(PromptStep::History(delta)) => {
                 // **Positive walks back**, which is the row's own wording and
@@ -6153,7 +6374,14 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                     Event::Key(key) if matches!(surface, Surface::Ex) => {
                         match ex_key(key, &mut ex_line) {
                             ExStep::Typing => shell.recalled = None,
-                            ExStep::Cancel => surface = Surface::Buffer,
+                            ExStep::Cancel => {
+                                surface = Surface::Buffer;
+                                // A cancelled search is not a search — leaving
+                                // this set would route the next `:` into the
+                                // matcher.
+                                shell.searching = None;
+                                editing.searching = None;
+                            }
                             ExStep::Submit => {
                                 surface = Surface::Buffer;
                                 // `T058` — ex-style history. Recorded before it
@@ -6164,12 +6392,30 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                                     shell.history.push(ex_line.clone());
                                 }
                                 shell.recalled = None;
-                                notice = submit_ex(
-                                    &mut layer,
-                                    editing,
-                                    &mut Cx::new(held, focus, &mut panes, &mut shell),
-                                    &ex_line,
-                                );
+                                // **`T110` — a submitted search is not an ex
+                                // line**, and this is the path a *typed* one
+                                // actually takes. The prompt-verb route below
+                                // (`PromptStep::Submit`) is what a door or a
+                                // binding uses; while the line is open the ex
+                                // surface owns every key, so `\r` arrives
+                                // here. Both had to learn it, and only this one
+                                // is exercised by pressing keys — which is why
+                                // the pty test found `/target` being looked up
+                                // in the ex command table and answered *"no
+                                // such command"*.
+                                let searching =
+                                    shell.searching.take().or_else(|| editing.searching.take());
+                                notice = match searching {
+                                    Some(backward) => {
+                                        start_search(editing, &mut shell, held, &ex_line, backward)
+                                    }
+                                    None => submit_ex(
+                                        &mut layer,
+                                        editing,
+                                        &mut Cx::new(held, focus, &mut panes, &mut shell),
+                                        &ex_line,
+                                    ),
+                                };
                             }
                         }
                     }
@@ -6563,6 +6809,10 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
         if editing.prompt.take().is_some() {
             ex_line.clear();
             surface = Surface::Ex;
+            // `T110` — which way this one walks, kept until it is submitted or
+            // cancelled. `None` here means the prompt that just opened is an ex
+            // line or a message to claude, and `Submit` routes on exactly that.
+            shell.searching = editing.searching.take();
         }
         // `T097` — `:help`, composed from the live table. A topic that narrows
         // to nothing says so on the statusline rather than opening an empty
@@ -6878,6 +7128,8 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 // were.
                 Intent::ReloadRuntime => match layer.reload(Runtime::root().as_deref(), &host) {
                     Ok(units) => {
+                        // A new layer is a new keymap.
+                        keymap_dirty = true;
                         editing.note = Some(match units {
                             1 => "runtime reloaded — 1 file".to_owned(),
                             many => format!("runtime reloaded — {many} files"),
@@ -6897,9 +7149,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                         if boot.is_some() {
                             surface = Surface::Boot;
                         }
-                        editing.note =
-                            Some("runtime not reloaded — the previous layer is still running"
-                                .to_owned());
+                        editing.note = Some(
+                            "runtime not reloaded — the previous layer is still running".to_owned(),
+                        );
                     }
                 },
                 // One file, on top of what is already loaded. **Not a
@@ -6936,6 +7188,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
                 // that a compile error the way it did at the other two sites.
                 // The shared reduction is what closes it.
                 Intent::Keymap(form) => {
+                    // `T111` — the table this writes is what `keymap` and
+                    // `describe-key` answer from.
+                    keymap_dirty = true;
                     if let Some(said) = phosphor_steel::answer::trouble(&layer.evaluate(&form)) {
                         notice = Some(said);
                     }
@@ -7861,7 +8116,7 @@ fn direction_name(direction: Direction) -> &'static str {
 
 /// An edit mode's wire spelling, for the `mode` query and the keymap filter.
 ///
-/// Through [`Wire`] rather than a second `match`, because `wire_choice!` already
+/// Through [`phosphor_core::value::Wire`] rather than a second `match`, because `wire_choice!` already
 /// declares these names and a hand-written copy is the drift `PERSIST_VERB`'s
 /// doc refuses: *"two spellings of one name drift, and the one that drifts
 /// silently is the Rust one."*
@@ -7879,13 +8134,15 @@ fn mode_name(mode: EditMode) -> String {
 /// `lint-one-registry.sh` holds the three doors to, arriving at the query that
 /// *enumerates* them: a field invented in this function would be a second
 /// definition of a row that already exists, and the door-parity test could not
-/// see it drift. Every value below is read off [`Capability`].
+/// see it drift. Every value below is read off
+/// [`phosphor_core::registry::Capability`].
 ///
 /// **The three door names are the point.** `capabilities` is what `6b`'s help
 /// surface is built on, and a help page that could not say *"this is
 /// `mark-seen!` in scheme, `phosphor/mark-seen` over MCP and `phosphor
 /// mark-seen` at the shell"* would be a list of names with no way to use them.
-/// [`Capability::name_in`] is a total function over [`Door`], so a fourth door
+/// [`phosphor_core::registry::Capability::name_in`] is a total function over
+/// [`phosphor_core::registry::Door`], so a fourth door
 /// is a compile error here rather than a column that silently goes missing.
 fn capability_value(cap: &phosphor_core::registry::Capability) -> Value {
     use phosphor_core::registry::{CapabilityKind, Door, McpPolicy};
@@ -10344,7 +10601,10 @@ fn editor_snapshot(
         if fresh {
             text.insert(
                 id.0,
-                (edits, editing.contents().lines().map(str::to_owned).collect()),
+                (
+                    edits,
+                    editing.contents().lines().map(str::to_owned).collect(),
+                ),
             );
         }
     }
@@ -10355,15 +10615,16 @@ fn editor_snapshot(
         .map(|(id, editing)| {
             Value::Record(
                 Args::new()
-                    .with("buffer", Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)))
+                    .with(
+                        "buffer",
+                        Value::Int(i64::try_from(id.0).unwrap_or(i64::MAX)),
+                    )
                     .with(
                         "path",
                         editing
                             .file
                             .as_ref()
-                            .map_or(Value::Null, |path| {
-                                Value::Text(path.display().to_string())
-                            }),
+                            .map_or(Value::Null, |path| Value::Text(path.display().to_string())),
                     )
                     .with(
                         "language",
@@ -11205,6 +11466,20 @@ struct Shell {
     /// thread handle there would make the barrier's own rule — plain data,
     /// no locks it did not ask for — untrue for one field.
     watch: watch::Watch,
+    /// Whether the open prompt is a search, and which way it walks (`T110`).
+    ///
+    /// Set when the prompt opens and read when it is submitted, because
+    /// `PromptStep::Submit` carries no kind — it used to have no need of one,
+    /// since every prompt was an ex line.
+    searching: Option<bool>,
+    /// `T110`'s matcher — the last search, and where its matches are.
+    ///
+    /// **On `Shell` rather than on `Editing`**, because `n` and `N` are a
+    /// *session's* last search in vim and not a buffer's: you search in one
+    /// file, switch, and `n` goes on meaning what you typed. The matches are
+    /// per buffer and recomputed when the walk finds the buffer has moved —
+    /// see [`Search::stale`].
+    search: Option<Search>,
     /// `T059`'s questions, oldest first, by id.
     ///
     /// **A map on `Shell` rather than widget state**, which is `T060`'s rule
@@ -12383,6 +12658,11 @@ struct Editing {
     /// A `:help` `open-help` asked for (`T097`), drained the same way — the
     /// page is composed from the live keymap and the keymap is the layer's.
     help: Option<Help>,
+    /// A search `open-prompt` asked for, and which way it walks (`T110`).
+    ///
+    /// Drained beside [`Editing::prompt`], because the two are one ask: the
+    /// prompt that opens is the search that will be submitted.
+    searching: Option<bool>,
     /// A theme `set-theme` asked for (`T092`), drained the same way.
     ///
     /// **Because there are two appliers and a keystroke reaches the other
@@ -12659,6 +12939,7 @@ impl Editing {
             prompt: None,
             anchor: None,
             help: None,
+            searching: None,
             theme: None,
             refused: None,
             note: None,
@@ -13414,7 +13695,12 @@ impl Editing {
             // The ex line. `T058` builds the message and search prompts and the
             // anchor chip that rides with them; the ex half is `T033`'s, because
             // an editor you cannot type `:write` into is not one CP-3 can judge.
-            Action::Prompt(PromptAction::OpenPrompt { kind, anchor, .. }) => match kind {
+            Action::Prompt(PromptAction::OpenPrompt {
+                kind,
+                anchor,
+                backward,
+                ..
+            }) => match kind {
                 PromptKind::Ex | PromptKind::Claude => {
                     self.prompt = Some(*kind);
                     // `T058` — `1c`'s whole caption: *"visual-select, hit the
@@ -13429,7 +13715,20 @@ impl Editing {
                     self.anchor = anchor.as_ref().and_then(|target| self.file_span(target));
                     done()
                 }
-                PromptKind::Search => declined("search needs the matcher — T110 builds it"),
+                // **`T110`.** The prompt line was `T058`'s and shipped; what did
+                // not exist was anything to search *with*. It opens like the
+                // other two now, and the direction rides along — `/` and `?`
+                // are one capability with one argument rather than two, because
+                // they differ in which way `n` walks and in nothing else.
+                PromptKind::Search => {
+                    self.prompt = Some(*kind);
+                    self.searching = Some(backward.unwrap_or(false));
+                    // A search is about a *position*, not a range, so the
+                    // anchor chip `1c` draws for `:claude` has nothing to say
+                    // here and would be a stale range from the last prompt.
+                    self.anchor = None;
+                    done()
+                }
             },
             // `T058`'s four surface verbs. Each posts a step the loop
             // performs — see [`Shell::prompt_step`] for why an arm cannot do
@@ -15972,10 +16271,56 @@ impl Editing {
                     None => declined("nothing pushed back — the question is already up"),
                 };
             }
-            // **`T110`.** This named `T058`, whose *done when* is `1c` raising
-            // from a keystroke and which shipped; `T058`'s own record says the
-            // search machinery was the half it did not build.
-            Sequence::SearchMatch => Some("T110"),
+            // **`T110` — `n` and `N`.**
+            //
+            // The matches are recomputed when the buffer has moved under them,
+            // on the same `edits` gate `T111`'s text snapshot and the LSP
+            // document sync use. Keeping stale offsets would send `n` to a
+            // position the text no longer has — worse than finding nothing,
+            // because it looks like it worked.
+            Sequence::SearchMatch => {
+                let Some(held) = cx.shell.search.as_ref() else {
+                    return declined("no search yet — / or ?");
+                };
+                let pattern = held.pattern.clone();
+                let backward = held.backward;
+                if held.stale(cx.buffer, self.edits.get()) {
+                    let Ok(compiled) = regex::Regex::new(&pattern) else {
+                        // It compiled once to get here, so this is
+                        // unreachable — and answering rather than unwrapping is
+                        // what keeps a search from being able to end the
+                        // process.
+                        return declined("the search no longer compiles");
+                    };
+                    let at = matches_of(&compiled, &self.contents());
+                    cx.shell.search = Some(Search {
+                        pattern: pattern.clone(),
+                        at,
+                        buffer: cx.buffer,
+                        edits: self.edits.get(),
+                        backward,
+                    });
+                }
+                let Some(held) = cx.shell.search.as_ref() else {
+                    return declined("no search yet — / or ?");
+                };
+                let reverse = matches!(seek, Seek::Prev);
+                return match held.step(self.editor.get_cursor(), reverse) {
+                    Some(to) => {
+                        self.editor.set_cursor(to);
+                        self.editor.fit_cursor();
+                        Outcome::Done(Receipt {
+                            capability: "goto-sequence",
+                            value: Value::Int(i64::try_from(to).unwrap_or(i64::MAX)),
+                            note: None,
+                        })
+                    }
+                    // **Says which search found nothing**, because a bare
+                    // *"no match"* after switching buffers is indistinguishable
+                    // from a search that was never run.
+                    None => declined(&format!("no match — {pattern}")),
+                };
+            }
             // A jumplist entry is an anchor and `jump` already walks them, so
             // this arm would be a second spelling of one behaviour.
             Sequence::Jump => return self.jump(cx, seek),

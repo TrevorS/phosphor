@@ -1328,8 +1328,11 @@ impl Shared {
         });
         let after = |region: &Region| {
             let path = key_for(&region.path);
-            (path.as_path(), region.span.start.line, region.span.start.column)
-                > (here.as_path(), at.line, at.column)
+            (
+                path.as_path(),
+                region.span.start.line,
+                region.span.start.column,
+            ) > (here.as_path(), at.line, at.column)
         };
         ordered
             .iter()

@@ -2314,6 +2314,7 @@ dependencies = [
  "ratatui",
  "ratatui-code-editor",
  "ratatui-core",
+ "regex",
  "rustix",
  "serde_json",
  "similar",

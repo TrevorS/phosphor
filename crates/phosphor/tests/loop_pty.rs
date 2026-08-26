@@ -1792,30 +1792,26 @@ mod driven {
         // `search is T058's oth  half`, the `er` on the far side of an escape.
         // That is `OPEN-QUESTIONS.md` §54's lesson arriving in a test that
         // predates it.
-        editor.press_quietly(b"/");
-        let frame = shown_on_grid_text(&editor, "the matcher");
-        assert!(
-            shows(&frame, "search needs the matcher — T110 builds it"),
-            "a deferred key names its task on the statusline; frame was: {frame}"
-        );
-
-        // `n` walks the search matches, and walking a sequence is
-        // `goto-sequence`.
+        // **`/` and `n` used to be here and have moved out** (`T110`).
         //
-        // **The task it names moved twice, and the second move is the
-        // interesting one.** It went from `T049` to `T058` when
-        // `goto-sequence` learned to answer per *sequence* rather than per
-        // verb — the refusal getting more precise. It went from `T058` to
-        // `T110` on 2026-08-24 for the opposite reason: `T058` had been ticked
-        // for three phases, so *"not built yet — T058 builds it"* was pointing
-        // a reader at work that shipped. Precision is worth nothing if the
-        // address is stale, which is why `scripts/lint-refusal-tasks.sh` now
-        // fails when any of these names a ticked task.
+        // They were two of this test's deferred keys: `/` answered *"search
+        // needs the matcher — T110 builds it"* and `n` answered *"not built yet
+        // — T110 builds it"*, and the task id on each had already been
+        // re-stamped twice as its creditor changed. `T110` built the matcher,
+        // so neither sentence exists any more and asserting them here would be
+        // asserting that search does not work.
+        //
+        // What replaced them is three tests that press all four keys —
+        // `search_walks_the_matches_and_wraps`, `a_backward_search_walks_upward`
+        // and `a_bad_pattern_is_refused_and_the_last_search_survives`. The
+        // refusal that *remains* worth pressing is the one for a search that
+        // was never run, because it is the honest no rather than an unbuilt
+        // one.
         editor.press_quietly(b"n");
-        let frame = shown_on_grid_text(&editor, "T110 builds it");
+        let frame = shown_on_grid_text(&editor, "no search yet");
         assert!(
-            shows(&frame, "not built yet — T110 builds it"),
-            "the task comes off the *sequence*, not the verb; frame was: {frame}"
+            shows(&frame, "no search yet — / or ?"),
+            "n before any search declines by saying so; frame was: {frame}"
         );
         editor.quit();
     }
@@ -2190,9 +2186,14 @@ mod driven {
         // that_builds_it`'s failure looked like: `T054` was passed as the
         // wanted needle and the frame it got back was `1b` itself, splitting
         // open rather than refusing.
+        // **`?` and `N` left this table when `T110` built the matcher**, which
+        // is the second time a row here has had to go for the happy reason
+        // rather than the sad one — `SPC t` went when `T054` built the
+        // transcript pane. Both are now pressed in earnest by
+        // `a_backward_search_walks_upward`, which is a better assertion than a
+        // refusal was: it checks the key does the thing rather than that it
+        // says which task will make it.
         let deferred: &[(&[u8], &str, &str)] = &[
-            (b"?", "search backward", "T110"),
-            (b"N", "previous search match", "T110"),
             // The review-block walk. Added when the audit noticed the table had
             // nine rows and the deferred surface had eleven, and re-pointed on
             // 2026-08-24: `goto_sequence` named `T053` for `BlockFile` while
@@ -2800,20 +2801,22 @@ mod driven {
             "`:edit` opened the file it names; frame was: {opened}"
         );
 
-        // `:theme` — **not built**, and it says so by name. Written expecting
-        // it to work and corrected by running it: `set-theme` answers *"not
-        // built yet — T092 builds it"* even for a slug the layer ships, which
-        // is why the theme tapes set the theme on the command line instead.
+        // `:theme` — **built by `T092`**, and this line is a small history of
+        // the refusal it used to assert. It named `T012` until 2026-08-24, when
+        // that turned out to be a ticked task; it was re-stamped `T092`, the
+        // task whose own *done when* is this exact keystroke; and `T092`
+        // landed, so there is no refusal left to assert.
         //
-        // **It named `T012` until 2026-08-24, and `T012` is ticked** — the
-        // refusal sent a reader to a task that shipped three phases earlier.
-        // `set-theme`'s row is stamped `T092` now, the task whose own *done
-        // when* is this exact keystroke, and `scripts/lint-refusal-tasks.sh`
-        // is what stops the stamp drifting back.
-        let themed = editor.press_until(b":theme phosphor-light\r", "T092");
+        // What it asserts now is that the switch is *accepted* — the palette
+        // actually changing is
+        // `switching_theme_redraws_the_buffer_in_the_new_ground`, which reads
+        // the background escape rather than the text, because a theme switch
+        // changes no characters and every text assertion would pass without it.
+        let themed = editor.shown_on_grid(b":theme phosphor-light\r", "theme phosphor-light");
         assert!(
-            shows(&themed, "T092"),
-            "`:theme` is deferred and names the task that builds it; frame was: {themed}"
+            shows(&whole(&themed), "theme phosphor-light"),
+            "`:theme` switches and says so; frame was: {}",
+            whole(&themed)
         );
 
         // `:quit` — and the child exits. `leave_by` fails if it does not.
@@ -11315,6 +11318,169 @@ fn retry_with_backoff(base: u64) -> u64 {
             before,
             editor.screen().background(0, SCREEN.ws_col - 1),
             "a refused switch leaves the palette it had"
+        );
+
+        editor.leave_by(b":q!\r");
+    }
+
+    // -----------------------------------------------------------------------
+    // `T110` — search
+    // -----------------------------------------------------------------------
+
+    /// **`/`, `n`, `N` and `?` — all four, through the loop** (`T110`).
+    ///
+    /// All four were bound and all four refused. `T058` built the prompt line,
+    /// the anchor chip and the history; what did not exist was a matcher, a
+    /// match sequence for `goto-sequence` to walk, and anywhere to keep them.
+    ///
+    /// **The fixture puts every match on its own line on purpose.** The
+    /// statusline's `line:col` readout is the honest witness for a cursor —
+    /// `Screen::row` is the *terminal's* cursor and survives a `set_cursor`
+    /// that the editor ignored, which is how three cursor assertions in this
+    /// file once passed against the defect they were written to catch. Matches
+    /// on distinct lines make each step a different reading.
+    #[test]
+    fn search_walks_the_matches_and_wraps() {
+        let scratch = Scratch::new("search-walk");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\ntarget\nbeta\ntarget\ngamma\ntarget\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+
+        // `/` lands on the first match **after** the cursor, which is vim and
+        // not "the first match in the file" — the cursor starts on line 1 and
+        // the first match is on line 2, so the two answers differ here.
+        // The key on its own, then the pattern — which is how it is typed,
+        // and what `lint-key-coverage.sh` reads: it matches a press against a
+        // bound key by bytes, and only for presses short enough that a
+        // containment test means something.
+        editor.press_quietly(b"/");
+        let found = editor.shown_on_grid(b"target\r", "3 matches");
+        let grid = (0..SCREEN.ws_row)
+            .map(|row| found.line(row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            grid.contains("/target — 3 matches"),
+            "the search says how many it found: {grid}"
+        );
+        // **Where it landed is read from where the next step goes**, and that
+        // is forced rather than chosen: a notice occupies the statusline row
+        // while it is up, so the `line:col` readout is not on the frame that
+        // says *"3 matches"*. Pressing `n` clears the notice and puts the strip
+        // back — and `4:1` after one `n` is only true if `/` landed on line 2,
+        // because `n` from line 1 would give 2 and from line 4 would give 6.
+        let next = editor.shown_on_grid(b"n", "4:1");
+        assert!(
+            shows(&whole(&next), "4:1"),
+            "/ landed on the first match after the cursor, and n moved to the second: {}",
+            whole(&next)
+        );
+
+        // And **wraps**, which is what makes it a walk. Two more `n` from the
+        // last match: one to line 6, one back round to line 2.
+        let last = editor.shown_on_grid(b"n", "6:1");
+        assert!(shows(&whole(&last), "6:1"), "{}", whole(&last));
+        let wrapped = editor.shown_on_grid(b"n", "2:1");
+        assert!(
+            shows(&whole(&wrapped), "2:1"),
+            "n off the end wraps to the first match: {}",
+            whole(&wrapped)
+        );
+
+        // `N` is the other way — and from the first match that is a wrap too,
+        // to the last.
+        let back = editor.shown_on_grid(b"N", "6:1");
+        assert!(
+            shows(&whole(&back), "6:1"),
+            "N walks back and wraps: {}",
+            whole(&back)
+        );
+
+        editor.leave_by(b":q!\r");
+    }
+
+    /// **`?` searches upward, and `n` keeps going that way** (`T110`).
+    ///
+    /// The direction belongs to the *search*, not to the key: vim's `?foo` then
+    /// `n` goes up, and `N` goes down. That is why `open-prompt` grew a
+    /// `backward` argument rather than the vocabulary growing a second
+    /// capability — `/` and `?` differ in which way `n` walks and in nothing
+    /// else.
+    #[test]
+    fn a_backward_search_walks_upward() {
+        let scratch = Scratch::new("search-backward");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\ntarget\nbeta\ntarget\ngamma\ntarget\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        // Down to line 5 first, so "the match above" and "the match below" are
+        // different lines and the direction is observable.
+        editor.press_quietly(b"jjjj");
+
+        // Upward from line 5 is the match on line 4 — and the reading comes
+        // from the next step for the reason the forward test gives: the notice
+        // holds the statusline row while it is up.
+        editor.press_quietly(b"?");
+        let found = editor.shown_on_grid(b"target\r", "matches");
+        assert!(
+            shows(&whole(&found), "?target"),
+            "the notice quotes the search back with its direction: {}",
+            whole(&found)
+        );
+
+        // `n` keeps going *up*, which is the whole claim: the direction belongs
+        // to the search, not to the key. Landing on 4 and stepping up gives 2;
+        // a forward walk from 4 would give 6, and a `?` that had searched
+        // downward would have landed on 6 and stepped to 2 as well — so the
+        // second reading alone does not separate them, and the first does.
+        let up = editor.shown_on_grid(b"n", "2:1");
+        assert!(
+            shows(&whole(&up), "2:1"),
+            "n continues in the search's own direction: {}",
+            whole(&up)
+        );
+
+        editor.leave_by(b":q!\r");
+    }
+
+    /// **A pattern that does not compile says so and keeps the last search**
+    /// (`T110`).
+    ///
+    /// The ruling recorded at `T110` is *regex, not literal* — `regex` is
+    /// already linked through `tree-sitter`, so the "narrow road" argument that
+    /// justified `broadcast-thread` taking the literal path does not apply. The
+    /// cost of that ruling is that a pattern can be **wrong**, and this is what
+    /// happens when it is: the crate's own message, and the previous search
+    /// still walks.
+    #[test]
+    fn a_bad_pattern_is_refused_and_the_last_search_survives() {
+        let scratch = Scratch::new("search-bad");
+        let runtime = copy_layer(&scratch.path);
+        let file = scratch.path.join("sample.txt");
+        fs::write(&file, "alpha\ntarget\nbeta\ntarget\ngamma\ntarget\n").expect("a fixture");
+
+        let editor = Editor::open(&file, &scratch.state(), &runtime);
+        editor.press_quietly(b"/");
+        editor.shown_on_grid(b"target\r", "3 matches");
+
+        editor.press_quietly(b"/");
+        let said = editor.shown_on_grid(b"[unclosed\r", "bad pattern");
+        assert!(
+            shows(&whole(&said), "bad pattern"),
+            "an invalid pattern says so: {}",
+            whole(&said)
+        );
+
+        // And the search that worked is still the one `n` walks — a thing you
+        // typed wrong does not cost you the thing that was working.
+        let still = editor.shown_on_grid(b"n", "4:1");
+        assert!(
+            shows(&whole(&still), "4:1"),
+            "the previous search still walks: {}",
+            whole(&still)
         );
 
         editor.leave_by(b":q!\r");

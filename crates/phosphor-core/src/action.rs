@@ -703,6 +703,7 @@ actions! {
             kind: PromptKind = "ex, claude, or search",
             seed: Option<String> = "prefill",
             anchor: Option<Target> = "what the message is about",
+            backward: Option<bool> = "search upward from the cursor — vim's ? against /",
         }
         SetPromptText = "set-prompt-text" [S6 / "T058" / Deny]
             "replaces the prompt's text" {

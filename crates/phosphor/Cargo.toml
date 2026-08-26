@@ -24,6 +24,7 @@ crossterm.workspace = true
 # enters the graph, which is what `deny.toml`'s `deny-multiple-versions` on that
 # crate would otherwise catch.
 nucleo = "0.5.0"
+regex.workspace = true
 # `T069`'s disk watcher, and it is here rather than in a library crate for
 # `nucleo`'s reason one entry up: it owns a background thread, and a crate that
 # spawns one is a crate that outlives a frame. The binary owns the loop that

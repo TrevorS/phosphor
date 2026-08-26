@@ -469,9 +469,7 @@ pub(crate) fn answer(call: &Call, runtime: Option<&mut dyn Evaluate>) -> Result<
             match runtime {
                 Some(runtime) => match runtime.ask(&query) {
                     Ok(answered) => Ok(Answer::Read(answered.value)),
-                    Err(QueryError::NotYetImplemented { task }) => {
-                        Ok(Answer::Acted(not_yet(task)))
-                    }
+                    Err(QueryError::NotYetImplemented { task }) => Ok(Answer::Acted(not_yet(task))),
                     Err(other) => Err(DoorError::Query(other)),
                 },
                 None => Ok(Answer::Acted(not_yet(query.spec().since.task))),

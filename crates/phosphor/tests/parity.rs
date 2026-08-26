@@ -886,8 +886,8 @@ fn cli_door(capability: &Capability, verb: &Verb) -> Result<(), String> {
             .iter()
             .find(|(name, _)| *name == capability.name)
             .map(|(_, task)| *task);
-        let invented = printed.contains("not built yet")
-            && !owed.is_some_and(|task| printed.contains(task));
+        let invented =
+            printed.contains("not built yet") && !owed.is_some_and(|task| printed.contains(task));
         if !invented {
             return Ok(());
         }
@@ -917,15 +917,6 @@ fn cli_door(capability: &Capability, verb: &Verb) -> Result<(), String> {
         "`phosphor {}` answered {printed:?} / {diagnostics:?}, expected {expected:?}",
         argv.join(" ")
     ))
-}
-
-/// The task id the CLI door reports for this capability.
-///
-/// Every capability answers its own row's task — `door.rs` derives it from the
-/// decoded Action rather than listing it — except the one whose implementation
-/// *is* a runtime. See [`is_the_vm`].
-fn task_of(capability: &Capability) -> &'static str {
-    capability.since.task
 }
 
 /// The text a flag's value takes, from the same canonical example every other
@@ -967,8 +958,8 @@ fn scalar_text(ty: &ParamType) -> String {
 /// Under `target/`, so `cargo clean` takes it and no lint that walks the
 /// worktree sees a stray file.
 fn config_home() -> std::path::PathBuf {
-    let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/parity-config-home");
+    let home =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/parity-config-home");
     std::fs::create_dir_all(&home).expect("a config home under target/");
     home
 }
@@ -1552,8 +1543,7 @@ fn eval_row(registration: &Registration) -> Option<String> {
     // the **capability** instead. That is the better discriminator either way:
     // 21 rows share `T026` and no two rows share a name.
     let unanswered = printed.contains("refused") || printed.contains("raised");
-    let names_itself =
-        printed.contains(capability.since.task) || printed.contains(capability.name);
+    let names_itself = printed.contains(capability.since.task) || printed.contains(capability.name);
     if unanswered && !names_itself {
         return Some(format!(
             "{} — `--eval {source}` answered {printed:?}, which names neither its task nor itself",
@@ -1629,7 +1619,11 @@ fn steel_literal(value: &Value) -> String {
         Value::Text(text) => format!("{text:?}"),
         Value::List(items) => format!(
             "(list {})",
-            items.iter().map(steel_literal).collect::<Vec<_>>().join(" ")
+            items
+                .iter()
+                .map(steel_literal)
+                .collect::<Vec<_>>()
+                .join(" ")
         ),
         Value::Record(fields) => format!(
             "(hash {})",

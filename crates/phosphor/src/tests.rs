@@ -336,6 +336,8 @@ fn one_pane() -> Panes {
 /// themselves and there is no loop to wake.
 fn shell() -> Shell {
     Shell {
+        searching: None,
+        search: None,
         store: Arc::new(store::Shared::default()),
         timeline: None,
         disk_change_diff: None,
@@ -1448,13 +1450,34 @@ fn the_host_carries_out_what_s2_can_and_names_the_task_for_the_rest() {
     );
     assert!(host.intents().is_empty(), "a drain empties the queue");
 
+    // **`reload-runtime` was this example until `T094` built it**, which is the
+    // ordinary way a fixture like this expires: the capability picked to stand
+    // for *"unbuilt"* stops being unbuilt. It is an ask the loop drains now,
+    // like its two neighbours above.
+    assert!(matches!(
+        ask(&host, Action::Runtime(RuntimeAction::ReloadRuntime {})),
+        Outcome::Done(_)
+    ));
+    assert_eq!(host.intents(), vec![Intent::ReloadRuntime]);
+
     // Everything else answers its own row's task — derived, never listed.
-    let Outcome::Refused(Refusal::NotYetImplemented { task }) =
-        ask(&host, Action::Runtime(RuntimeAction::ReloadRuntime {}))
-    else {
+    //
+    // **A capability in a phase this build has not reached**, chosen for that
+    // property rather than for being handy: `T103` made the fallthrough answer
+    // *"no editor in this process"* for a capability that is built but needs a
+    // running editor, and `place-watch` is `S8` — genuinely unbuilt, so the
+    // task id is the honest answer and stays the honest answer until `S8`
+    // lands.
+    let Outcome::Refused(Refusal::NotYetImplemented { task }) = ask(
+        &host,
+        Action::Watch(phosphor_core::action::WatchAction::PlaceWatch {
+            anchor: phosphor_core::request::Target::Cursor {},
+            expr: "1 + 1".to_owned(),
+        }),
+    ) else {
         panic!("an unbuilt capability names the task that builds it");
     };
-    assert_eq!(task, "T094");
+    assert_eq!(task, "T077");
 }
 
 #[test]
@@ -2980,6 +3003,7 @@ fn the_prompt_key_opens_the_ex_line_and_nothing_else_does() {
             kind,
             seed: None,
             anchor: None,
+            backward: None,
         })
     };
     assert!(matches!(
@@ -3006,17 +3030,31 @@ fn the_prompt_key_opens_the_ex_line_and_nothing_else_does() {
         editing.prompt,
         Some(phosphor_core::request::PromptKind::Claude),
     );
-    // Search is the half `T058` did not build: a search prompt needs
-    // somewhere to search, which is the search machinery and not the line.
-    // **The refusal names `T110`, not `T058`** — `T058` is ticked, and a
-    // sentence that sends the reader to a finished task is the defect
-    // `scripts/lint-refusal-tasks.sh` exists to catch.
-    let Outcome::Refused(Refusal::Declined { reason }) =
-        editing.apply(&open(phosphor_core::request::PromptKind::Search))
-    else {
-        panic!("search has no machinery behind it yet");
-    };
-    assert!(reason.contains("T110"), "{reason}");
+    // **Search was the half `T058` did not build, and `T110` built it.** This
+    // asserted a refusal naming `T110` — the third task id this one sentence
+    // has carried, after `T058` and before it `T049`. It opens like the other
+    // two now, and what is worth asserting is the thing that is *different*
+    // about it: the direction rides along, and the anchor does not.
+    assert!(
+        matches!(
+            editing.apply(&open(phosphor_core::request::PromptKind::Search)),
+            Outcome::Done(_)
+        ),
+        "a search raises the prompt line like the other two kinds"
+    );
+    assert_eq!(
+        editing.prompt,
+        Some(phosphor_core::request::PromptKind::Search),
+    );
+    assert_eq!(
+        editing.searching,
+        Some(false),
+        "`/` walks forward; `?` is the same capability with `backward` set"
+    );
+    // **The anchor is cleared rather than carried.** `1c`'s chip names a range
+    // a message to claude is *about*; a search is about a position, so a chip
+    // here would be the last prompt's range still on screen.
+    assert_eq!(editing.anchor, None, "a search carries no anchor chip");
 }
 
 /// **Two panes over one buffer keep two jumplists**, which is the whole of
@@ -5257,10 +5295,15 @@ fn a_reload_runs_the_load_order_again_against_the_file_on_disk() {
 
     // The file changes on disk, the way a person editing their own layer
     // changes it. Nothing has restarted.
-    std::fs::write(root.join("extra.scm"), "(define phosphor/probe \"after\")\n")
-        .expect("the layer is writable");
+    std::fs::write(
+        root.join("extra.scm"),
+        "(define phosphor/probe \"after\")\n",
+    )
+    .expect("the layer is writable");
 
-    let units = layer.reload(Some(&root), &host).expect("a clean layer reloads");
+    let units = layer
+        .reload(Some(&root), &host)
+        .expect("a clean layer reloads");
     // `init.scm` is a unit too — the load order is a file that runs, not a
     // manifest that is parsed — so a one-entry `phosphor/boot-files` is two.
     assert_eq!(units, 2, "init.scm and the one file it names");
@@ -5333,8 +5376,11 @@ fn a_reload_runs_the_users_own_layer_again() {
     // loaded nothing; the first version of this test asserted the reload and
     // would have passed on an editor that never ran the user's file at all.
     std::fs::create_dir_all(&config).expect("a config home");
-    std::fs::write(config.join(super::INIT), "(define phosphor/mine \"yours\")\n")
-        .expect("a user layer");
+    std::fs::write(
+        config.join(super::INIT),
+        "(define phosphor/mine \"yours\")\n",
+    )
+    .expect("a user layer");
 
     let (mut layer, host) = booted_with_config(Some(&root), &config);
     assert_eq!(
@@ -5349,7 +5395,9 @@ fn a_reload_runs_the_users_own_layer_again() {
     )
     .expect("the user layer is writable");
 
-    layer.reload(Some(&root), &host).expect("a clean layer reloads");
+    layer
+        .reload(Some(&root), &host)
+        .expect("a clean layer reloads");
     assert_eq!(
         answered(layer.evaluate("phosphor/mine")),
         Some(Value::Text("still yours".to_owned())),

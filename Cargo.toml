@@ -139,6 +139,13 @@ ratatui = "0.30.2"
 # not `[patch.crates-io]` (plan §2). Provenance for each is in its own VENDOR.md.
 ratatui-code-editor = { path = "vendor/ratatui-code-editor", default-features = false }
 ratatui-core = "0.1.2"
+# `T110`'s matcher. **Already compiled into this binary** — `tree-sitter` depends
+# on it and every phosphor crate depends on `tree-sitter` — so naming it directly
+# adds no crate to the graph, no licence to `cargo deny`, and does not move the
+# MSRV. That is what decided the ruling recorded at `T110`: the argument for a
+# literal-only `/` was *"nothing in this tree parses a regex"*, and the tree
+# already links a regex engine.
+regex = { version = "1.13.1", default-features = false, features = ["std", "unicode"] }
 ratatui-markdown = { path = "vendor/ratatui-markdown", default-features = false }
 ropey = "1.6.1"
 # `T036` **names a type** with it, and that is the whole of it: a language
