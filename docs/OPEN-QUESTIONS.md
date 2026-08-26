@@ -3880,9 +3880,16 @@ So the state is **undetermined**, and both tidy stories are wrong:
 * *"the signature convicts it"* — no; n=2, and only two tests in the suite run a live watcher, so
   any watcher-adjacent perturbation lands on exactly those two.
 
-**What would settle it** is cheap and nobody has spent it: run the two live-watcher tests in a loop
-on Linux, at the commit before this work and at the commit after, and compare the failure counts.
-Ten runs a side separates a 20% background rate from something new. Until that exists, this entry
+**The local half was spent and answered nothing, which was predictable.** Fifteen consecutive runs
+of the two live-watcher tests on this machine: **0 failures**. That is weak by construction and the
+script that ran it says so in its own header — macOS's `notify` reports fewer of the writes these
+tests make than inotify does, which is `T069`'s recorded asymmetry and the reason this whole class
+only ever appears on CI. A clean run here is not evidence of absence; a failure here would have
+been evidence of presence, and there was none to have.
+
+**What would settle it** is the same loop **on Linux**, at the commit before this work and at the
+commit after, ten runs a side — enough to separate a 20% background rate from something new.
+Nobody has spent that, and it is the only measurement that would. Until it exists, this entry
 records a suspicion with its evidence and not a cause.
 
 **The lesson is the one this file keeps teaching in different clothes.** A red CI run on an
