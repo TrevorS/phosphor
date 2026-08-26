@@ -3866,12 +3866,33 @@ that the clone caused either failure.
 **What the clone was, then, is a real cost defect found for the wrong reason** — and worth fixing
 on its own terms, which is why the entry stays. What it is not is the explanation for a red `main`.
 
+**And then the base rate did not settle it either, which is the part worth being careful about.**
+The six historical failures are on *different tests at different assertions* —
+`a_case_change_that_grows_leaves_the_cursor_past_what_it_wrote`,
+`a_declared_review_block_becomes_markers_and_a_notice`,
+`opening_a_peek_while_a_review_is_open_replaces_it_not_layers_it`, at four different lines. The two
+that followed this work are both **live-watcher** tests at the **same line** — `settle`'s *"the
+editor never stopped drawing"*. A shared signature is not explained by a general 20% flake rate.
+
+So the state is **undetermined**, and both tidy stories are wrong:
+
+* *"the base rate exonerates it"* — no; the clustering is unaccounted for.
+* *"the signature convicts it"* — no; n=2, and only two tests in the suite run a live watcher, so
+  any watcher-adjacent perturbation lands on exactly those two.
+
+**What would settle it** is cheap and nobody has spent it: run the two live-watcher tests in a loop
+on Linux, at the commit before this work and at the commit after, and compare the failure counts.
+Ten runs a side separates a 20% background rate from something new. Until that exists, this entry
+records a suspicion with its evidence and not a cause.
+
 **The lesson is the one this file keeps teaching in different clothes.** A red CI run on an
 intermittent suite is not evidence about the commit that happens to be on top of it, and *"my
 change broke this"* is a claim like any other: it needs the base rate before it needs a fix. The
 base rate was one `gh run list --json conclusion` away for the whole time it went unasked. §63
 already gives the standing remedy for this suite — `gh run rerun <id> --failed` — and the reason
-that remedy is legitimate is exactly the number above.
+that remedy is legitimate is exactly the numbers above. **The second mistake is the twin of the
+first**: reaching for the base rate as an acquittal, as fast as the cost was reached for as a
+conviction.
 
 **The fix** is `Arc<BTreeMap<…>>`: the loop owns the map, `Arc::make_mut` clones on the frames that
 actually edit, and publishing an unchanged map is a refcount bump. The regression test is
