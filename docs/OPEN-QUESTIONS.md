@@ -3771,3 +3771,67 @@ it.
   `v1.5` was a hole in the vocabulary test's task-column check. It is not: `v1.5` is an explicit
   exemption at `crates/phosphor-core/tests/vocabulary.rs:313`, and every other capability's task
   must exist in `TASKS.md` or the test fails.
+
+## Raised by asking what it takes for Claude to connect
+
+### 66 · The two agent doors are not connected to each other, and the MCP one is a different editor
+
+Asked directly on 2026-08-25: *what does it take for Claude to connect via MCP / ACP?* Answering
+it required reading both halves, and the halves turn out not to meet.
+
+**ACP is the door where phosphor is the client.** `Session::attach` spawns the agent as a child
+over stdio (`crates/phosphor-agent/src/session.rs`, the `tokio::process::Command` in the session
+loop) and speaks ACP to it. What names the child is the `agent-command` option — nothing sets a
+default, so an editor with the option unset has no agent and says so honestly. The loop reads the
+option every pass and acts only when it *changes*, so `(set-option! "agent-command" "")` is a way
+to end a session rather than only a way to stop naming one. Two details worth knowing because
+neither is guessable: the child's stderr goes to `/dev/null` on purpose — this process owns a
+terminal in raw mode and a child writing to the inherited stderr paints over the frame — and the
+spawn carries `kill_on_drop(true)`, so the editor leaving cannot leave an agent behind.
+
+**MCP is the door where phosphor is the server.** `phosphor --mcp` speaks MCP over stdio and
+exposes the whole registry as tools, derived rather than listed
+(`crates/phosphor-agent/src/mcp.rs`: *"this module contains no capability name at all"*).
+
+**They do not meet, and there are two separate reasons.**
+
+1. **The ACP client never advertises the MCP server.** The session is created with
+   `cx.build_session(&cwd)` and nothing else — no `mcp_servers` on the request — so the agent
+   phosphor spawns is never told phosphor has tools.
+2. **`phosphor --mcp` is a different editor.** `serve_mcp` calls `vm()`, which builds its own
+   `Runtime` and its own `AppHost`, which restores its own store from the journal. It is a fresh
+   headless process, not a channel into the editor on your screen. An agent driving it shares
+   persisted seen-state and nothing else — not your buffers, not your cursor, not your session.
+
+**What that means today**, and it is not a defect so much as a missing joint: Claude attached over
+ACP can be prompted, can stream a turn into the transcript, and can ask permission — but cannot
+call a single editor capability against the editor you are looking at. Claude given
+`phosphor --mcp` in its own config can call all 220, against an editor nobody is looking at.
+
+Since `T103` the second half at least *says so*: an editor-scoped capability in a process that has
+drawn no frame answers *"no editor in this process — `set-case` needs a running session"* rather
+than naming a task that shipped.
+
+**The mechanism to close it exists in the SDK and is not enabled.**
+`agent-client-protocol` 2.0.0 carries an `unstable_mcp_over_acp` feature whose
+`McpSessionHandler::into_dynamic_handler` appends an `McpServerAcp` declaration to the
+`NewSessionRequest` and registers a handler for that server's traffic — MCP *over* the ACP
+connection, so the agent reaches back into **this** process rather than spawning a second one.
+The workspace takes the crate with `default-features = false` and does not name that feature.
+
+**What it would take, stated as scope rather than as effort.**
+
+- Files: `Cargo.toml` (feature), `crates/phosphor-agent/src/session.rs` (declare the server on the
+  session request, keep the handler guard alive for the session), `crates/phosphor-agent/src/mcp.rs`
+  (a transport that is not stdio), `crates/phosphor/src/main.rs` (hand the *loop's* host to it
+  rather than `vm()`'s).
+- Named units: 1 feature flag, 1 session-request field, `McpSessionHandler` and its guard, the
+  `Editor` seam `mcp.rs` already has.
+- Verification: an ACP session in which a tool call moves the cursor in the buffer on screen.
+- Risk: public API no · data migration no · cross-module **yes** (`phosphor-agent` and the binary's
+  loop) · reversible yes · external blocker **yes — the SDK feature is `unstable_` and may move**.
+
+**The decision inside it is Teej's**, and it is the same shape as `T112`'s: this is the step that
+lets an agent act on the editor you are using, live, rather than on a copy. The permission
+machinery for it already exists (`McpPolicy`, the ask queue, `7a`'s always-allow), which is what
+makes the step smaller than it sounds — and also what makes it worth deciding on purpose.
