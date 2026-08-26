@@ -3835,3 +3835,47 @@ The workspace takes the crate with `default-features = false` and does not name 
 lets an agent act on the editor you are using, live, rather than on a copy. The permission
 machinery for it already exists (`McpPolicy`, the ask queue, `7a`'s always-allow), which is what
 makes the step smaller than it sounds — and also what makes it worth deciding on purpose.
+
+### 67 · A per-frame clone reddened `main`, and `gh run watch --exit-status` said it was green
+
+Two findings from one failure, and the second is the more dangerous.
+
+**What broke.** `T111`'s editor snapshot is guarded on `Editing::edits` so a buffer nobody typed
+into is not copied — and that guard was true of the *rebuild* and false of the *publish*. The loop
+read the previous text map back out from behind the mutex, cloned it, handed it to the builder and
+published the result, **every frame, whether anything had changed or not**. So an idle editor's
+per-frame cost was a function of how much text was open — the exact thing `HostState::transcript`
+refuses one field up, in as many words: *"a clone per frame would make an idle editor's cost a
+function of how much claude has said to it."* The doc was quoted while the code was written and
+the rule was still broken.
+
+**How it surfaced.** `spc_r_r_takes_what_is_on_disk` failed on CI with *"the editor never stopped
+drawing"* — `settle`'s message, the infinite-redraw signature — and passed on this machine every
+time. That is `T069`'s `notify`/inotify asymmetry a second time: a live watcher on Linux posts
+events macOS does not, and a loop carrying this cost could not reach the harness's 250ms of quiet
+between them.
+
+**It was load-sensitive rather than deterministic**, which is what makes it worth an entry. The
+*identical SHA* had passed a branch run twenty minutes earlier. A failure that passes on the same
+commit is the exact shape that gets waved through as a flake — and `OPEN-QUESTIONS.md` §63 gives a
+standing, legitimate reason to do so. What separated this one from that cluster is the *message*:
+§63's three fail on off-by-one keystrokes, and this said the editor never stopped drawing, which is
+a spin rather than a starve.
+
+**The fix** is `Arc<BTreeMap<…>>`: the loop owns the map, `Arc::make_mut` clones on the frames that
+actually edit, and publishing an unchanged map is a refcount bump. The regression test is
+`two_snapshots_of_an_unchanged_buffer_share_one_text`, and `Arc::ptr_eq` is the assertion because
+it is the only one that can tell a share from a copy — a `==` between the two maps passes either
+way.
+
+**And the second finding, which is about the tooling rather than the build.**
+`gh run watch <id> --exit-status` **returned 0 for a run whose conclusion was `failure`.** The
+merge to `main` had already happened on the strength of a green branch run; the exit code was then
+read as confirmation that `main` was green, and only an explicit `gh run list --json conclusion`
+showed otherwise. Whatever the cause — a race between the watch attaching and the run concluding,
+or the flag's semantics — the rule that follows is unconditional:
+
+> **The run's `conclusion` is the authority. An exit code from `gh run watch` is not.**
+
+Every place this repository's practice says *"a local gate is NOT a CI result"* now has a
+companion: *a watcher's exit status is not a CI result either*. Ask for the conclusion and read it.

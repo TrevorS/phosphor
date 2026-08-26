@@ -5095,6 +5095,7 @@ fn snapshot_carrying(
     text: &str,
     carried: BTreeMap<u64, (u64, Vec<String>)>,
 ) -> super::EditorSnapshot {
+    let mut carried = Arc::new(carried);
     let bench = editing(text);
     let (buffers, _) = Buffers::new(bench.editing);
     super::editor_snapshot(
@@ -5106,7 +5107,7 @@ fn snapshot_carrying(
         "phosphor-dark",
         Surface::Buffer,
         Vec::new(),
-        carried,
+        &mut carried,
     )
 }
 
@@ -5529,4 +5530,60 @@ fn compacting_names_the_scope_it_can_reach() {
         panic!("a path that is not this buffer is not this arm's to sweep");
     };
     assert!(reason.contains("focused buffer"), "{reason}");
+}
+
+/// **An unchanged frame does not copy the text** (`T111`).
+///
+/// The guard on `EditorSnapshot::text` was true of the *rebuild* and false of
+/// the *publish*: the loop read the previous map back through the mutex, cloned
+/// it and republished it every frame, so an idle editor's per-frame cost was a
+/// function of how much text was open — the exact thing `HostState::transcript`
+/// refuses one field up.
+///
+/// **It cost a red `main`.** `spc_r_r_takes_what_is_on_disk` failed on CI with
+/// *"the editor never stopped drawing"* and passed on this machine every time,
+/// which is `T069`'s `notify`/inotify asymmetry again: a live watcher posting
+/// events faster than a loop carrying this cost could reach the harness's 250ms
+/// of quiet. The same commit had passed a branch run, so it was load-sensitive
+/// rather than deterministic — which is precisely the shape that gets waved
+/// through as a flake.
+///
+/// `Arc::ptr_eq` is the assertion because it is the *only* one that can tell a
+/// share from a copy: a `==` between the two maps passes either way, and that
+/// is what makes this a regression test rather than a restatement.
+#[test]
+fn two_snapshots_of_an_unchanged_buffer_share_one_text() {
+    let bench = editing("one\ntwo\nthree\n");
+    let (buffers, _) = Buffers::new(bench.editing);
+    let mut text: Arc<BTreeMap<u64, (u64, Vec<String>)>> = Arc::default();
+
+    let build = |text: &mut Arc<BTreeMap<u64, (u64, Vec<String>)>>| {
+        super::editor_snapshot(
+            &buffers,
+            &bench.panes,
+            phosphor_core::request::EditMode::Normal,
+            "",
+            &super::builtin("phosphor-dark").expect("a shipped theme"),
+            "phosphor-dark",
+            Surface::Buffer,
+            Vec::new(),
+            text,
+        )
+    };
+
+    let first = build(&mut text);
+    let second = build(&mut text);
+
+    assert!(
+        Arc::ptr_eq(&first.text, &second.text),
+        "nothing changed between the two frames, so the second shares the first's text \
+         rather than copying it"
+    );
+    // And it is not empty — a snapshot that shared *nothing* would also pass
+    // the assertion above, which is the way this test could have been useless.
+    assert_eq!(
+        first.text.get(&0).map(|(_, lines)| lines.len()),
+        Some(3),
+        "the shared map is the buffer's actual text"
+    );
 }

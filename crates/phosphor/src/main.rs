@@ -1138,7 +1138,30 @@ struct EditorSnapshot {
     /// order the LSP document sync in this loop already pays, for the same
     /// buffers, off the same counter. A buffer nobody typed into is not copied
     /// at all.
-    text: BTreeMap<u64, (u64, Vec<String>)>,
+    ///
+    /// # `Arc`, and the frame this cost before it was one
+    ///
+    /// **The guard above was true of the rebuild and false of the publish**,
+    /// which is a distinction the first version of this missed entirely. The
+    /// loop read the previous map back out from behind the mutex, cloned it,
+    /// handed it to the builder and published the result — **every frame**,
+    /// whether anything had changed or not. So the per-frame cost was a
+    /// function of how much text was open, which is exactly what
+    /// [`HostState::transcript`] refuses one field up and what its doc says in
+    /// as many words: *"a clone per frame would make an idle editor's cost a
+    /// function of how much claude has said to it."*
+    ///
+    /// It surfaced as an editor that **never stopped drawing** in
+    /// `spc_r_r_takes_what_is_on_disk` on CI and nowhere on this machine — the
+    /// `notify`/inotify asymmetry `T069` already recorded, with a live watcher
+    /// posting events faster than a loop carrying this cost could reach the
+    /// harness's 250ms of quiet.
+    ///
+    /// Shared rather than owned, so publishing an unchanged map is a refcount
+    /// bump and the loop keeps the only mutable handle. `Arc::make_mut` clones
+    /// on the frames that actually edit, which is the cost the guard was always
+    /// meant to bound.
+    text: Arc<BTreeMap<u64, (u64, Vec<String>)>>,
     /// One record per pane: cursor, selection and viewport.
     panes: BTreeMap<u64, Value>,
     /// What each non-`Id` [`PaneRef`] resolved to on this frame.
@@ -1923,19 +1946,6 @@ impl AppHost {
         if let Ok(mut state) = self.state.lock() {
             state.editor = Some(snapshot);
         }
-    }
-
-    /// What was published last frame, for the text carry-forward above.
-    ///
-    /// Returns the map rather than the whole snapshot because that is the only
-    /// part that is expensive to rebuild; everything else is a handful of
-    /// fields the loop already has in hand.
-    fn published_text(&self) -> BTreeMap<u64, (u64, Vec<String>)> {
-        self.state
-            .lock()
-            .ok()
-            .and_then(|state| state.editor.as_ref().map(|held| held.text.clone()))
-            .unwrap_or_default()
     }
 
     /// Reads one thing out of the published snapshot, or its default.
@@ -4653,6 +4663,10 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
     // Starts true so the first pass fills it in — an editor that has drawn a
     // frame should be able to answer `keymap` without waiting for a rebind.
     let mut keymap_dirty = true;
+    // `T111`'s text, owned by the loop and shared with the host. See
+    // [`EditorSnapshot::text`] — reading it back out through the mutex every
+    // frame is what made an idle editor's cost a function of file size.
+    let mut text_snapshot: Arc<BTreeMap<u64, (u64, Vec<String>)>> = Arc::default();
     // `T092` — a theme change is pending, and every open buffer has to be
     // handed the new one before the next frame is assembled.
     let mut rethemed = false;
@@ -5270,7 +5284,7 @@ fn run(cli: &Cli) -> Result<(), Box<dyn Error>> {
             &cli.theme,
             surface,
             keymap_rows.clone(),
-            host.published_text(),
+            &mut text_snapshot,
         ));
         let editing = buffers.at_mut(held);
 
@@ -10629,25 +10643,37 @@ fn editor_snapshot(
     slug: &str,
     surface: Surface,
     keymap: Vec<Value>,
-    mut text: BTreeMap<u64, (u64, Vec<String>)>,
+    text: &mut Arc<BTreeMap<u64, (u64, Vec<String>)>>,
 ) -> EditorSnapshot {
     let focused = panes.get(panes.focus).and_then(|pane| pane.buffer);
 
     // **The text, only where the edit stream moved.** Same gate as the LSP
     // document sync — see [`EditorSnapshot::text`]. A closed buffer's entry is
     // dropped so the map cannot grow without bound across a long session.
-    text.retain(|id, _| buffers.map.contains_key(&BufferId(*id)));
-    for (id, editing) in &buffers.map {
-        let edits = editing.edits.get();
-        let fresh = text.get(&id.0).is_none_or(|(at, _)| *at != edits);
-        if fresh {
-            text.insert(
-                id.0,
-                (
-                    edits,
-                    editing.contents().lines().map(str::to_owned).collect(),
-                ),
-            );
+    // **Nothing is touched on a frame that changed nothing**, which is the
+    // whole of the fix recorded on [`EditorSnapshot::text`]: `Arc::make_mut`
+    // is reached only when a buffer's edit counter has moved or one has
+    // closed, so an idle editor pays a refcount bump and no copy at all.
+    let stale = buffers.map.len() != text.len()
+        || buffers.map.iter().any(|(id, editing)| {
+            text.get(&id.0)
+                .is_none_or(|(at, _)| *at != editing.edits.get())
+        });
+    if stale {
+        let text = Arc::make_mut(text);
+        text.retain(|id, _| buffers.map.contains_key(&BufferId(*id)));
+        for (id, editing) in &buffers.map {
+            let edits = editing.edits.get();
+            let fresh = text.get(&id.0).is_none_or(|(at, _)| *at != edits);
+            if fresh {
+                text.insert(
+                    id.0,
+                    (
+                        edits,
+                        editing.contents().lines().map(str::to_owned).collect(),
+                    ),
+                );
+            }
         }
     }
 
@@ -10779,7 +10805,7 @@ fn editor_snapshot(
     EditorSnapshot {
         buffers: rows,
         focused: focused.map(|id| id.0),
-        text,
+        text: Arc::clone(text),
         panes: pane_rows,
         refs,
         mode: mode_name(mode),
