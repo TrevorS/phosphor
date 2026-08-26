@@ -106,6 +106,24 @@ const RUNTIME_TASK: &str = "T021";
 pub(crate) trait Evaluate {
     /// Evaluates scheme source, answering what `6b` draws after `⇒`.
     fn eval(&mut self, source: &str) -> Outcome;
+
+    /// Applies an Action through the same host the REPL and MCP reach
+    /// (`T103`).
+    ///
+    /// **This is the method that made the verb route a door rather than a
+    /// stub.** Without it `phosphor open-repl` answered *"not built yet — T022
+    /// builds it"* while `phosphor --eval '(open-repl!)'` answered `#ok` — one
+    /// binary, one process, two answers for one capability, and 56 Action rows
+    /// were in that position. The refusal was invented by the door: `dispatch`
+    /// had already built a host and bound it to `_host`.
+    fn act(&mut self, request: &Request) -> Outcome;
+
+    /// Answers a query through that host.
+    ///
+    /// Separate from [`Evaluate::act`] because the registry has two kinds and
+    /// [`answer`] picks by `CapabilityKind`, so neither can be reached through
+    /// the other's path — the property this door already had and kept.
+    fn ask(&mut self, query: &Query) -> Result<phosphor_core::query::Answer, QueryError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,17 +142,19 @@ pub(crate) enum Answer {
     Acted(Outcome),
     /// A query's result, a snapshot of owned data.
     ///
-    /// Nothing constructs this yet, and the compiler saying so is the truthful
-    /// state of the read side: a query is a projection of a store snapshot
-    /// (`query.rs`), the store is `S5`, and until then every query answers
-    /// `Acted(Refused(NotYetImplemented))` naming the task that builds it. The
-    /// variant is here rather than added later because the *rendering* differs —
-    /// a query answers a value, not a receipt — and that is a shape `T024`'s
-    /// parity test reads.
-    #[expect(
-        dead_code,
-        reason = "the read side has no store to project until S5; see above"
-    )]
+    /// **Constructed since `T103`, and the `#[expect(dead_code)]` that used to
+    /// sit here is the thing worth recording.** Its reason read *"the read side
+    /// has no store to project until `S5`"*, which was true when it was
+    /// written and stopped being true at `T041` — the store landed, the queries
+    /// were answered, and this door went on refusing every one of them because
+    /// nothing had reason to revisit an attribute that was silently still
+    /// correct. An `#[expect]` is a claim with an expiry date and no alarm on
+    /// it; the compiler only complains once the claim becomes *wrong*, which
+    /// took eleven tasks.
+    ///
+    /// The variant is separate from [`Answer::Acted`] because the *rendering*
+    /// differs — a query answers a value, not a receipt — and that is a shape
+    /// `T024`'s parity test reads.
     Read(Value),
 }
 
@@ -441,26 +461,46 @@ pub(crate) fn answer(call: &Call, runtime: Option<&mut dyn Evaluate>) -> Result<
         }
         CapabilityKind::Query => {
             let query = Query::from_call(capability.name, &call.args).map_err(DoorError::Query)?;
-            // The read side needs the store, which is `S5`. Until then a query
-            // answers the same refusal an Action does, naming the task that
-            // builds it — `T041` and its neighbours.
-            Ok(Answer::Acted(not_yet(query.spec().since.task)))
+            // **The read side, through the host** (`T103`). This answered the
+            // same blanket refusal an Action did — *"the read side needs the
+            // store, which is `S5`"* — and `S5` landed. A query that the host
+            // cannot answer still refuses, but now it is the *host's* refusal
+            // naming the *query's* task, rather than this door inventing one.
+            match runtime {
+                Some(runtime) => match runtime.ask(&query) {
+                    Ok(answered) => Ok(Answer::Read(answered.value)),
+                    Err(QueryError::NotYetImplemented { task }) => {
+                        Ok(Answer::Acted(not_yet(task)))
+                    }
+                    Err(other) => Err(DoorError::Query(other)),
+                },
+                None => Ok(Answer::Acted(not_yet(query.spec().since.task))),
+            }
         }
     }
 }
 
 /// The one dispatcher this door has, and it is not a match on capability names.
 ///
-/// At `S2` there is no store, so every Action that touches one answers
-/// [`Refusal::NotYetImplemented`] carrying **its own row's task id** — derived,
-/// not listed, which is why 220 capabilities need no table here. The single
-/// special case is the one capability whose implementation *is* a runtime rather
-/// than a store: scheme source needs a VM, and the VM is [`Evaluate`].
+/// **`T103` made it dispatch.** It used to answer
+/// [`Refusal::NotYetImplemented`] for every Action but `Eval`, carrying the
+/// row's own task id — derived, not listed, which is why 220 capabilities need
+/// no table here. That was right at `S2`, when there was no store and no host;
+/// it stopped being right the moment `T022` wired a real host in, and it went
+/// on refusing for eleven more tasks. The consequence a user met was `phosphor
+/// set-case --target cursor --case upper` answering *"not built yet — T026
+/// builds it"* about a ticked task with a live arm and working keys.
+///
+/// **The refusal that remains is the honest one**: with no host — the shape a
+/// unit test uses — there is nothing to apply against, and `Eval` names the VM
+/// that is missing rather than the store.
 fn apply(request: &Request, runtime: Option<&mut dyn Evaluate>) -> Outcome {
     match (&request.action, runtime) {
         (Action::Runtime(RuntimeAction::Eval { source }), Some(runtime)) => runtime.eval(source),
         (Action::Runtime(RuntimeAction::Eval { .. }), None) => not_yet(RUNTIME_TASK),
-        (action, _) => not_yet(action.spec().since.task),
+        // Everything else, through the host this process already built.
+        (_, Some(runtime)) => runtime.act(request),
+        (action, None) => not_yet(action.spec().since.task),
     }
 }
 

@@ -3300,9 +3300,67 @@ impl Host for AppHost {
                 .map_or_else(|reason| declined(&reason), |_| done(Value::Null)),
             // Everything else, by its own row: `not built yet — T041 builds it`.
             // Derived, never listed, so this arm cannot rot.
-            action => Outcome::Refused(Refusal::NotYetImplemented {
-                task: action.spec().since.task,
-            }),
+            //
+            // **`T103` split it in two, because one sentence was answering two
+            // different questions.** There are two appliers in this binary that
+            // do not fall through to each other — this one, which the three
+            // doors reach, and `Editing::act`, which the loop reaches — and a
+            // capability armed only in the second one landed here. So
+            // `phosphor set-case --target cursor --case upper` answered *"not
+            // built yet — T026 builds it"* about a ticked task with a live arm
+            // and working keys, and the reader was sent to finished work.
+            //
+            // The distinguishing fact is **not** which capability it is — a
+            // list of those here is the table this arm exists to avoid. It is
+            // whether this process has an editor at all, which `T111`'s
+            // published snapshot already answers: a `phosphor <verb>`
+            // invocation starts, applies, and exits without ever drawing a
+            // frame, so there is no buffer, no cursor and nothing for an
+            // editor-scoped Action to act on. A running editor is unaffected —
+            // there the snapshot exists and the refusal is the same one it
+            // always was.
+            action => {
+                // **Genuinely unbuilt outranks no-editor**, and the row carries
+                // the fact that separates them. A capability in a phase this
+                // build has not reached is unbuilt wherever it is called from,
+                // and the task id is the useful answer — `remove-watch` is
+                // `S8`/`T074` and *"not built yet — T074 builds it"* is true in
+                // a session and out of one. A capability in a phase that
+                // *shipped* is armed somewhere, and in a process with no editor
+                // the honest refusal is the one below.
+                //
+                // Derived from `Since::phase`, so the list shrinks by itself:
+                // when `S8` lands, its capabilities stop matching and start
+                // answering like every other built row. Nothing here names a
+                // capability.
+                let unreached = matches!(
+                    action.spec().since.phase,
+                    phosphor_core::registry::Phase::S8 | phosphor_core::registry::Phase::V15
+                );
+                let no_editor = !unreached
+                    && self.editor(|held| held.focused).is_none()
+                    && self.state.lock().is_ok_and(|state| state.editor.is_none());
+                if no_editor {
+                    // **It names the capability, and that is load-bearing rather
+                    // than friendly.** The three door-parity walks proved a verb
+                    // reached the dispatcher *as itself* by reading the task id
+                    // out of the refusal — the only per-row thing the line
+                    // carried. With the doors dispatching there is no task id to
+                    // read, and without a replacement every walk would be
+                    // asserting that *some* capability answered. The name is
+                    // unique per row where the task is not — 21 rows share
+                    // `T026` — so this is a better discriminator than the one it
+                    // replaces, not merely an equal one.
+                    declined(&format!(
+                        "no editor in this process — `{}` needs a running session",
+                        action.spec().name
+                    ))
+                } else {
+                    Outcome::Refused(Refusal::NotYetImplemented {
+                        task: action.spec().since.task,
+                    })
+                }
+            }
         }
     }
 }
@@ -3848,12 +3906,36 @@ impl Layer {
     }
 }
 
-/// The evaluator the CLI door takes, over the one layer this process has.
-struct Vm<'a>(&'a mut Layer);
+/// The evaluator the CLI door takes, over the one layer **and the one host**
+/// this process has.
+///
+/// **`T103` gave it the host.** It used to be the layer alone, and the door's
+/// verb route therefore had nothing to dispatch *to*: `dispatch` built a host,
+/// bound it to `_host`, and the door answered *"not built yet"* for every
+/// Action but `Eval` — 56 rows, each naming a task that had shipped. The two
+/// halves are here together because they are the two halves of one editor, and
+/// a door holding one of them can only answer half the vocabulary.
+struct Vm<'a> {
+    layer: &'a mut Layer,
+    host: &'a AppHost,
+}
 
 impl door::Evaluate for Vm<'_> {
     fn eval(&mut self, source: &str) -> Outcome {
-        self.0.evaluate(source)
+        self.layer.evaluate(source)
+    }
+
+    /// **The same `Host::apply` the REPL and the MCP server reach**, so the
+    /// three doors cannot answer differently about one capability. That is
+    /// invariant 2 as a property of the arrangement rather than a thing three
+    /// call sites have to be careful about.
+    fn act(&mut self, request: &Request) -> Outcome {
+        Host::apply(self.host, request)
+    }
+
+    /// And the same `Answers::answer`, for the read side.
+    fn ask(&mut self, query: &Query) -> Result<Answer, QueryError> {
+        Answers::answer(self.host, query)
     }
 }
 
@@ -4048,9 +4130,18 @@ fn serve_mcp() -> Result<ExitCode, Box<dyn Error>> {
     let holding = std::thread::Builder::new()
         .name("phosphor-mcp-vm".to_owned())
         .spawn(move || {
-            let (mut runtime, _host) = vm();
+            // **The host, not just the layer** (`T103`). This bound the host
+            // to `_host` and handed the door the layer alone, so every MCP
+            // tool call but `eval` answered *"not built yet"* naming a task
+            // that had shipped — the same defect as the CLI verb route, in the
+            // door an agent actually talks through.
+            let (mut runtime, host) = vm();
             while let Ok((tool, args, reply)) = orders.recv() {
-                let answered = door::mcp_call(&tool, &args, Some(&mut Vm(&mut runtime)));
+                let mut door = Vm {
+                    layer: &mut runtime,
+                    host: &host,
+                };
+                let answered = door::mcp_call(&tool, &args, Some(&mut door));
                 drop(reply.send(answered));
             }
         })?;
@@ -4089,15 +4180,27 @@ fn serve_mcp() -> Result<ExitCode, Box<dyn Error>> {
 fn dispatch(matches: &ArgMatches) -> Result<ExitCode, Box<dyn Error>> {
     if let Some((verb, supplied)) = matches.subcommand() {
         let call = door::call(verb, supplied)?;
-        let (mut runtime, _host) = vm();
-        return Ok(door::run(&call, Some(&mut Vm(&mut runtime)))?);
+        let (mut runtime, host) = vm();
+        return Ok(door::run(
+            &call,
+            Some(&mut Vm {
+                layer: &mut runtime,
+                host: &host,
+            }),
+        )?);
     }
 
     let cli = Cli::from_arg_matches(matches)?;
     if let Some(source) = &cli.eval {
         let call = door::eval_call(source)?;
-        let (mut runtime, _host) = vm();
-        return Ok(door::run(&call, Some(&mut Vm(&mut runtime)))?);
+        let (mut runtime, host) = vm();
+        return Ok(door::run(
+            &call,
+            Some(&mut Vm {
+                layer: &mut runtime,
+                host: &host,
+            }),
+        )?);
     }
     // `T052`. Before [`Term`] exists, for `--eval`'s reason and one more: this
     // process's stdout **is** the protocol, so anything that printed to it

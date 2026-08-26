@@ -5642,7 +5642,7 @@ Numbered `T101`+ and appended rather than renumbered, like `T099` and `T100` bef
   applied, the regression tests fail on the unpatched crate, and `just gate` runs them.
   *Needs:* T003, T029
 
-- [ ] **T103 · The CLI verb route dispatches to the host** 📌
+- [x] **T103 · The CLI verb route dispatches to the host** 📌
   Found by `T100` and **deliberately not folded into it**, with the reasoning at
   [OPEN-QUESTIONS.md](OPEN-QUESTIONS.md)'s §33. `T100` was scoped to the door's voice; this is the
   behaviour underneath one of the two sentences it was sent to fix, and no wording repairs it.
@@ -5677,6 +5677,67 @@ Numbered `T101`+ and appended rather than renumbered, like `T099` and `T100` bef
   verb claims a ticked-and-armed capability is unbuilt for a reason the door invented, the parity
   walk discriminates by capability name rather than by a shared task id, and no gate run writes to
   a real config home. *Needs:* T023, T024, T101
+
+  > **DONE 2026-08-25 — and the MCP door had the same defect, undiscovered.**
+  >
+  > `dispatch` built a host and bound it to `_host` on both the verb path *and* the `--mcp` path.
+  > The CLI half is what the task describes; **the agent-facing half was the same line, and
+  > nothing named it**. Every MCP tool call but `eval` answered *"not built yet"* naming a task
+  > that had shipped, which means the door an agent talks through was a stub for eleven tasks.
+  > Found by fixing the CLI call site and grepping for the shape.
+  >
+  > `Evaluate` widened rather than went — the Scope's own *"which may widen or go"*. It has
+  > `act` and `ask` beside `eval` now, and `Vm` carries `&AppHost` beside `&mut Layer`, so all
+  > three doors reach one `Host::apply` and one `Answers::answer`.
+  >
+  > **The refusal had to split, and the splitting fact is not a table.** There are two appliers
+  > that do not fall through to each other — `AppHost::apply`, which the doors reach, and
+  > `Editing::act`, which the loop reaches — so a capability armed only in the second landed on
+  > the first's fallthrough and answered *"not built yet — T026 builds it"* about a ticked task
+  > with working keys. What separates the two cases is whether the **process has an editor at
+  > all**, which `T111`'s published snapshot already answers: a `phosphor <verb>` invocation
+  > starts, applies and exits without drawing a frame. So the arm reads that, and a running
+  > editor is unaffected.
+  >
+  > **One more distinction was needed and the row already carried it.** `remove-watch` is
+  > `S8`/`T074` and genuinely unbuilt, so *"no editor"* buried the useful answer — the door test
+  > caught it. Unbuilt now outranks no-editor, keyed on `Since::phase` rather than on a list of
+  > capabilities, so the set shrinks by itself when `S8` lands.
+  >
+  > **The refusal names the capability, and that is load-bearing.** All three parity walks proved
+  > a call reached the dispatcher *as itself* by reading the task id out of the refusal — the
+  > only per-row thing the line carried. With the doors dispatching there is no task id to read,
+  > and the walks would have degraded to *"some capability answered"*. The name is the better
+  > discriminator anyway: **21 rows share `T026` and no two rows share a name**, which is the
+  > sharpening the entry above asked to carry either way.
+  >
+  > **Four walks had to learn what proves reach**, and getting it wrong first is where the
+  > understanding came from. The strong form — *"both routes answer byte for byte"* — failed on
+  > three rows that are **not defects**: `--eval` is itself an Action whose value is whatever the
+  > expression produced, so a query answering `Null` prints `#ok` there and `#nil` through the
+  > verb, and `vcs-status` diverges because the `--eval` answer passes through a Steel hash,
+  > which prints fields sorted. Both are true sentences about different questions. The byte
+  > compare is kept for Actions; a query is held to *"the door did not invent a refusal"*. And a
+  > refusal in the capability's own terms — `no such thread` — is **stronger** evidence of reach
+  > than any string match, so only a `not built yet` has to name this row.
+  >
+  > **A fourth cause was mine**: `eval_args` filtered on `required` while `cli_door` pushes every
+  > flag the verb declares, so the two routes were handed different calls and then compared for
+  > agreement. Three rows failed on that alone.
+  >
+  > **The side effect was ruled, and then it happened anyway.** The ruling is that the door is
+  > *not* the place to refuse a write — writing is what `persist-form` is for — and the test is
+  > the place to be isolated, via `Command::env`, since `std::env::set_var` is `unsafe` in
+  > edition 2024 and this workspace denies `unsafe_code`. Isolating `parity.rs`'s `run` and
+  > `door.rs`'s `phosphor()` helper left **one spawn uncovered — the `--mcp` server** — and a
+  > green run wrote four lines of the literal word `sample` into a real
+  > `~/.config/phosphor/init.scm`. That file is not merely untidy: `sample` is an unbound
+  > identifier, so it raises a boot fault float on every subsequent start. Removed, the third
+  > spawn isolated, and **verified by looking at the directory after a green run** rather than by
+  > reasoning about which helpers were covered — which is the check that found it both times.
+  >
+  > Both isolated homes live under `target/`, so `cargo clean` takes them and no lint that walks
+  > the worktree sees a stray file.
 
 ---
 

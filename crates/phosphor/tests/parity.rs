@@ -167,6 +167,14 @@ impl McpServer {
     fn start() -> Result<Self, String> {
         let mut child = Command::new(env!("CARGO_BIN_EXE_phosphor"))
             .arg("--mcp")
+            // **The MCP door writes too, and it was the leak that survived the
+            // first fix** (`T103`). Isolating [`run`] covered the CLI verbs and
+            // left this one spawning with the developer's own environment —
+            // and this is the door an *agent* talks through, so it calls every
+            // capability including `persist-form`. Found by looking at
+            // `~/.config/phosphor` after a green run rather than by reasoning
+            // about which helpers were covered.
+            .env("XDG_CONFIG_HOME", config_home())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -342,12 +350,50 @@ impl Doors {
         if is_the_vm(capability) {
             return Ok(());
         }
+        // **The row names itself, by task or by name** (`T103`). This read the
+        // task id alone, which was the only per-row thing an unbuilt door's
+        // refusal carried. The MCP door dispatches to the host now — it bound
+        // the host to `_host` and handed the door the layer alone until this
+        // task — so a capability the host cannot carry out here answers a
+        // refusal naming the **capability**, and one it can carry out answers a
+        // receipt. Both are stronger evidence than the task id was, and the
+        // name is unique per row where the task is not.
+        // **A capability that was carried out needs no name in its answer**,
+        // which is `eval_row`'s rule and the one this walk was missing. An
+        // answer that is not a refusal *is* the proof of reach — `(timeline)`
+        // answering `()` in a git repository and `vcs-status` answering a
+        // record both mean the tool call went through the host and came back
+        // with data. Requiring the row's own name there would fail every query
+        // that works.
+        //
+        // Only an **unanswered** call has to identify itself, and there the
+        // discriminator is the task id or the capability name. See the host's
+        // no-editor refusal in `main.rs` for why the name is the better of the
+        // two: 21 rows share `T026` and no two rows share a name.
         let task = capability.since.task;
-        if said.contains(task) {
+        // **What proves reach, now that the door dispatches.**
+        //
+        // Three kinds of answer come back and only one of them is evidence of a
+        // problem. A **receipt or a value** means the host carried the call out.
+        // A refusal in the capability's *own terms* — `no such thread`, `no
+        // such group`, `cursor is not a place a note can point at` — is the
+        // host having decoded the arguments and judged them, which is stronger
+        // evidence of reach than any string match: nothing but that arm
+        // produces that sentence. Only **`not built yet`** is the door talking
+        // rather than the editor, and there the line carries a task id that has
+        // to be this row's.
+        //
+        // **The limit, stated:** three thread capabilities all answer `no such
+        // thread`, so this does not tell them apart. What does is the tool
+        // *name*, which `registrations()` derives per row and the walk above
+        // calls by. This check is about reach; naming is the registry's.
+        let unbuilt = said.contains("not built yet");
+        if !unbuilt || said.contains(task) {
             return Ok(());
         }
         Err(format!(
-            "the tool answered {said:?}, which does not name this row's task `{task}`"
+            "the tool answered {said:?} — a `not built yet` that names some other row's task, \
+             not `{task}`, so the call reached a neighbour"
         ))
     }
 
@@ -782,17 +828,76 @@ fn cli_door(capability: &Capability, verb: &Verb) -> Result<(), String> {
         };
     }
 
-    let expected = format!(
-        "#refused · not built yet — {} builds it\n",
-        task_of(capability)
-    );
+    // **`T103` replaced the task-id compare, and the reason is in the task.**
+    // This expected `#refused · not built yet — {task} builds it` — which the
+    // door printed for every Action but `eval`, because the verb route never
+    // dispatched. Two things were wrong with it as a check. It asserted the
+    // door *refuses*, so it could only ever pass while the door was a stub; and
+    // **21 rows share `T026`**, so a verb wired to a neighbour with the same
+    // task passed.
+    //
+    // What replaces it is the process test `T103`'s own Scope asks for: the
+    // verb and `--eval` of the *same row* must answer identically. The `--eval`
+    // expression is built from this capability's own Steel name, so a verb
+    // dispatching to a neighbour compares that neighbour's answer against this
+    // row's and disagrees wherever the two capabilities do.
+    //
+    // **The limit, stated rather than hidden:** two capabilities that answer
+    // the *same sentence* — both `no editor in this process`, say — are not
+    // told apart by this. What still separates them is the assertion at the top
+    // of this function, that the verb's name is the row's name, and the
+    // registry's own uniqueness. This is strictly more than the task id
+    // discriminated, and it is not everything.
+    let steel = format!("({} {})", capability.steel_name(), eval_args(capability));
+    let through_eval = run(&["--eval".to_owned(), steel.clone()]);
+    let evalled = String::from_utf8_lossy(&through_eval.stdout).into_owned();
 
-    if printed == expected {
-        // The line names this row's own task, which `door.rs` reads off the
-        // decoded Action — so the verb reached the dispatcher as this
-        // capability and not as a neighbour.
-        return Ok(());
+    // **Actions compare byte for byte; queries compare by whether they refuse.**
+    //
+    // The strong form was tried first and it failed on three rows — and the
+    // three are not defects, which is the finding. `--eval` is itself an
+    // **Action** whose value is whatever the expression produced, so a query
+    // answering `Value::Null` reaches `answer::line` as a receipt with no value
+    // and prints `#ok`, while the verb route reaches `answer::value` with the
+    // null itself and prints `#nil`. Both are true sentences about different
+    // questions: *"the expression ran and produced nothing"* against *"the
+    // query's value is nil"*. `vcs-status` diverges for the neighbouring
+    // reason — the `--eval` answer passes through a Steel hash, which prints
+    // its fields sorted, and the verb route writes the record in declaration
+    // order.
+    //
+    // So the byte compare is kept where it means something — an Action, where
+    // both routes produce an `Outcome` through the same `answer::line` — and a
+    // query is held to the thing `T103` is actually about: that the verb route
+    // reaches the host at all rather than inventing a refusal.
+    if capability.kind == CapabilityKind::Action {
+        if printed == evalled && output.status.code() == through_eval.status.code() {
+            // One binary, one capability, two front-ends, one answer — `T023`'s
+            // acceptance criterion arriving at the verb route eleven tasks after
+            // it arrived at `--eval`.
+            return Ok(());
+        }
+    } else {
+        // A query owed to an open task is allowed to say so — the same
+        // shrink-only `OWED` table `every_query_answers_or_names_a_task_that_is_open`
+        // keeps, so the two walks cannot disagree about which rows are still
+        // honestly unbuilt.
+        let owed = OWED
+            .iter()
+            .find(|(name, _)| *name == capability.name)
+            .map(|(_, task)| *task);
+        let invented = printed.contains("not built yet")
+            && !owed.is_some_and(|task| printed.contains(task));
+        if !invented {
+            return Ok(());
+        }
+        return Err(format!(
+            "`phosphor {}` answered {printed:?}, which is a refusal this door invented — \
+             the query route reaches the host since `T103`",
+            argv.join(" ")
+        ));
     }
+    let expected = evalled;
 
     // The registry names the parameters with no flag form and routes them to
     // `--eval` (`registry::cli`, `Verb::unreachable`). A verb that says so,
@@ -847,9 +952,33 @@ fn scalar_text(ty: &ParamType) -> String {
     }
 }
 
+/// A config home no test shares and nothing outside the target directory.
+///
+/// **`T103`'s ruled side effect.** With the verb route dispatching to the host,
+/// `phosphor persist-form --form '(…)'` *writes* — and this walk runs every
+/// verb with its canonical example, so a `just gate` would have appended to the
+/// developer's own `init.scm` once per run. The door is not the right place to
+/// refuse that: writing is what the capability is for, and a door that declined
+/// it would be lying about what it can do. The test is the right place to be
+/// isolated, and `Command::env` is how — `std::env::set_var` is `unsafe` in
+/// edition 2024 and this workspace denies `unsafe_code`, so an in-process test
+/// could not point `$XDG_CONFIG_HOME` anywhere. A subprocess can.
+///
+/// Under `target/`, so `cargo clean` takes it and no lint that walks the
+/// worktree sees a stray file.
+fn config_home() -> std::path::PathBuf {
+    let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/parity-config-home");
+    std::fs::create_dir_all(&home).expect("a config home under target/");
+    home
+}
+
 fn run(argv: &[String]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_phosphor"))
         .args(argv)
+        // See [`config_home`]: this walk calls every verb, and since `T103`
+        // some of them write.
+        .env("XDG_CONFIG_HOME", config_home())
         .stdin(Stdio::null())
         .output()
         .expect("the binary runs")
@@ -1243,19 +1372,26 @@ fn a_verb_the_binary_does_not_accept_is_caught() {
 #[test]
 fn a_verb_that_answers_for_another_capability_is_caught() {
     // The failure a hand-written parity list cannot see: the verb runs, prints
-    // a well-formed refusal, and it is the wrong capability's. The task id in
-    // the line is what tells them apart.
+    // a well-formed answer, and it is the wrong capability's.
+    //
+    // **`T103` changed what tells them apart, because the old discriminator
+    // stopped discriminating.** This planted a fake task id and asserted the
+    // printed line carried it — which worked only while the door refused
+    // everything by naming a task, and was weak even then: **21 rows share
+    // `T026`**, so a verb wired to a neighbour with the same task passed. The
+    // capability *name* is unique per row and equally derived, and it is what
+    // `cli_door` checks first.
     let close = lookup("close-float").expect("registered");
     let planted = Capability {
-        since: phosphor_core::registry::Since {
-            task: "T999",
-            ..close.since
-        },
+        name: "not-a-capability",
         ..close
     };
     let error = cli_door(&planted, &phosphor_core::registry::cli::verb(&close))
-        .expect_err("the printed task id is the row's, not a constant");
-    assert!(error.contains("T999"), "{error}");
+        .expect_err("the verb's name is the row's name, not a neighbour's");
+    assert!(
+        error.contains("not-a-capability") && error.contains("close-float"),
+        "the mismatch names both sides: {error}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1409,10 +1545,18 @@ fn eval_row(registration: &Registration) -> Option<String> {
     // a number is the composable answer for something a script calls — so
     // the narrow form started failing on capabilities that had just been
     // built. The claim was never about the shape of a success.
+    // **`T103` changed what "its own" means.** This read the *task id* out of
+    // the refusal, which was the only per-row thing the line carried while the
+    // doors refused everything. Now they dispatch, and a capability the host
+    // cannot carry out in a process with no editor answers a refusal that names
+    // the **capability** instead. That is the better discriminator either way:
+    // 21 rows share `T026` and no two rows share a name.
     let unanswered = printed.contains("refused") || printed.contains("raised");
-    if unanswered && !printed.contains(capability.since.task) {
+    let names_itself =
+        printed.contains(capability.since.task) || printed.contains(capability.name);
+    if unanswered && !names_itself {
         return Some(format!(
-            "{} — `--eval {source}` answered {printed:?}, which names no task of its own",
+            "{} — `--eval {source}` answered {printed:?}, which names neither its task nor itself",
             capability.name
         ));
     }
@@ -1497,6 +1641,26 @@ fn steel_literal(value: &Value) -> String {
                 .join(" ")
         ),
     }
+}
+
+/// This capability's arguments as Steel source, from the same canonical example
+/// every other door is checked with (`T103`).
+///
+/// **Every parameter, not just the required ones**, and the first version got
+/// this wrong in a way worth keeping: it filtered on `required` while
+/// `cli_door` pushes *every flag the verb declares*, so the two routes were
+/// handed different calls and then compared for agreement. Three rows failed —
+/// `goto-location` raised *"takes 3 argument(s), got 2"* through `--eval` while
+/// the verb answered `#ok`, and `notify` acted on a different anchor
+/// altogether. The comparison is only meaningful if both sides make the same
+/// call, and the verb side is the one that cannot omit anything.
+fn eval_args(capability: &Capability) -> String {
+    capability
+        .params
+        .iter()
+        .map(|param| steel_literal(&sample(&param.ty)))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The queries that are still allowed to answer *"not built yet"*, and the task

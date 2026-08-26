@@ -31,8 +31,27 @@ use std::process::{Command, Output, Stdio};
 /// one is stable for as long as anything in this file can be.
 const EXPR: &str = "(watches)";
 
+/// The binary, with a config home that is **never the developer's** (`T103`).
+///
+/// **Isolation belongs in the spawn helper, not in the tests that remember
+/// it.** Two tests below already set `$XDG_CONFIG_HOME` for their own reasons
+/// and every other one inherited the real environment — which cost nothing
+/// while the CLI verb route refused every Action, and stopped costing nothing
+/// the moment it dispatched: `persist-form` *writes*, and a walk that calls
+/// verbs with canonical examples wrote four lines of the literal word `sample`
+/// into a real `~/.config/phosphor/init.scm` during this task's own
+/// development. That file is not merely untidy — `sample` is an unbound
+/// identifier, so it raises a boot fault float on every subsequent start.
+///
+/// A later `.env` on the returned `Command` still wins, so the tests that vary
+/// this deliberately are unaffected.
 fn phosphor() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_phosphor"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_phosphor"));
+    let home =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/door-config-home");
+    let _ = fs::create_dir_all(&home);
+    command.env("XDG_CONFIG_HOME", home);
+    command
 }
 
 fn run(args: &[&str]) -> Output {
